@@ -9,7 +9,8 @@
     "check": "tsc --project tsconfig.json && vite build",
     "dev": "vite --host 0.0.0.0",
     "preview": "vite preview --host 0.0.0.0",
-    "serve": "bun scripts/serve.mjs"
+    "serve": "bun scripts/serve.mjs",
+    "start": "bun run serve"
   },
   "dependencies": {
     "preact": "^10.27.2"
