@@ -1,0 +1,39 @@
+{
+  "accountAssociation": {
+    "header": "",
+    "payload": "",
+    "signature": ""
+  },
+  "miniapp": {
+    "version": "1",
+    "name": "Veydrift",
+    "homeUrl": "https://veydrift.com",
+    "iconUrl": "https://veydrift.com/assets/miniapp/icon.png",
+    "imageUrl": "https://veydrift.com/assets/miniapp/embed.jpg",
+    "buttonTitle": "Join testers",
+    "splashImageUrl": "https://veydrift.com/assets/miniapp/splash.png",
+    "splashBackgroundColor": "#05070d",
+    "subtitle": "Onchain space awaits",
+    "description": "A new onchain space project is coming soon.",
+    "screenshotUrls": [
+      "https://veydrift.com/assets/miniapp/screenshot-1.jpg"
+    ],
+    "primaryCategory": "games",
+    "tags": [
+      "space",
+      "onchain",
+      "base",
+      "game"
+    ],
+    "heroImageUrl": "https://veydrift.com/assets/miniapp/og-image.png",
+    "tagline": "Onchain space awaits",
+    "ogTitle": "Veydrift",
+    "ogDescription": "A new onchain space project is coming soon.",
+    "ogImageUrl": "https://veydrift.com/assets/miniapp/og-image.png",
+    "requiredChains": [
+      "eip155:8453"
+    ],
+    "canonicalDomain": "veydrift.com",
+    "noindex": false
+  }
+}

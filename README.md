@@ -113,6 +113,11 @@ cd apps/frontend && bun run serve
 Deploy only the frontend package until backend, contract, circuit, indexing, and
 game-specific systems have separate implementation scopes.
 
+The frontend also publishes Farcaster Mini App metadata at
+`/.well-known/farcaster.json`. Before submitting it to Farcaster/Base discovery,
+generate the signed `accountAssociation` for `veydrift.com` with the owning
+Farcaster/Base account and replace the empty manifest values.
+
 ## Operating Rules
 
 - Keep public copy non-specific until the game direction is approved.
