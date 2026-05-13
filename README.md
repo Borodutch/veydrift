@@ -1,51 +1,113 @@
 # Veydrift
 
-Veydrift is an onchain space strategy project targeting Base.
+Veydrift is an onchain space project targeting Base. The public surface is
+intentionally quiet for now: the website should signal that something is coming
+without describing gameplay mechanics, economy details, factions, resources, or
+release promises before those systems are approved.
 
-The repository is intentionally quiet for now: the public site should only signal
-that something is coming, without committing to specific gameplay, visual
-mechanics, economy details, or release promises before those systems are ready.
-
-## Planned Repository Shape
+## Repository Layout
 
 ```text
 apps/
-  backend/       Bun + TypeScript GraphQL API
-  frontend/      Preact + TypeScript + Tailwind public web app
+  backend/       Bun + TypeScript HTTP service with health and GraphQL endpoints
+  frontend/      Preact + TypeScript + Tailwind public coming-soon app
 packages/
-  contracts/     EVM smart contracts targeting Base
-  circuits/      Zero-knowledge circuit boilerplate and proof tooling
+  contracts/     Foundry Solidity boilerplate oriented toward Base deployments
+  circuits/      zk circuit placeholder workspace and proving stack notes
 ```
 
-The first implementation slice should keep each part minimal and independently
-buildable:
+## Requirements
 
-- `apps/backend`: Bun service with a health endpoint and GraphQL entrypoint.
-- `apps/frontend`: lightweight Preact/Tailwind coming-soon page for
-  `https://veydrift.com`.
-- `packages/contracts`: Base-oriented Solidity or Foundry boilerplate with
-  placeholder contracts and local checks.
-- `packages/circuits`: zk circuit workspace with placeholder inputs, proving
-  notes, and an explicit decision log for the eventual proving stack.
+- Bun 1.1 or newer
+- Node.js 20 or newer for frontend tooling launched by Bun
+- Foundry for contract checks
+
+## Setup
+
+```sh
+bun install
+```
+
+## Commands
+
+Run all available checks:
+
+```sh
+bun run check
+```
+
+Run all tests:
+
+```sh
+bun run test
+```
+
+Build all packages:
+
+```sh
+bun run build
+```
+
+Start local development servers:
+
+```sh
+bun run dev:backend
+bun run dev:frontend
+```
+
+## Package Notes
+
+### Backend
+
+`apps/backend` exposes:
+
+- `GET /health`
+- `GET /graphql`
+- `POST /graphql`
+
+The GraphQL endpoint is intentionally minimal and returns only public service
+status until the API contract is designed.
+
+### Frontend
+
+`apps/frontend` is a Vite Preact app with Tailwind CSS. The current production
+surface is a space-themed coming-soon page for `https://veydrift.com` with no
+game-specific details.
+
+### Contracts
+
+`packages/contracts` contains Foundry boilerplate and a small placeholder
+registry contract for future public commitments. The contract deliberately avoids
+gameplay assumptions until the onchain architecture is approved.
+
+```sh
+cd packages/contracts
+forge fmt --check
+forge build
+forge test
+```
+
+### Circuits
+
+`packages/circuits` contains placeholder circuit inputs, proof artifact notes,
+and a proving-stack decision log. It does not commit to a concrete zk use case or
+proving system yet.
+
+```sh
+cd packages/circuits
+bun run check
+```
 
 ## Deployment
 
-The initial production target is the existing Hetzner Easypanel instance. The
-frontend placeholder should be published first and mapped to:
-
-- `https://veydrift.com`
-
-Backend, contracts, circuits, indexing, and game-specific systems should remain
-undeployed until their scopes are defined in Kaneo and validated.
+The initial production target is the existing Hetzner Easypanel instance. Deploy
+only the frontend package until backend, contract, circuit, indexing, and
+game-specific systems have separate implementation scopes.
 
 ## Operating Rules
 
 - Keep public copy non-specific until the game direction is approved.
-- Avoid committing secrets, private strategy, credentials, generated proving
-  artifacts, or deployment tokens.
-- Prefer small, reviewable pull requests with clear validation notes.
-- Track implementation through the Veydrift Kaneo project and Symphony.
-
-## Status
-
-Coming soon.
+- Do not commit secrets, credentials, generated proving artifacts, or deployment
+  tokens.
+- Keep implementation PRs small and include validation evidence.
+- Track work through the Veydrift Kaneo project and Symphony.
