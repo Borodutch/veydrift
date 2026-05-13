@@ -25,11 +25,11 @@
       "base",
       "game"
     ],
-    "heroImageUrl": "https://veydrift.com/assets/miniapp/og-image.png",
+    "heroImageUrl": "https://veydrift.com/assets/miniapp/og-image.jpg",
     "tagline": "Onchain space awaits",
     "ogTitle": "Veydrift",
     "ogDescription": "A new onchain space project is coming soon.",
-    "ogImageUrl": "https://veydrift.com/assets/miniapp/og-image.png",
+    "ogImageUrl": "https://veydrift.com/assets/miniapp/og-image.jpg",
     "requiredChains": [
       "eip155:8453"
     ],
