@@ -4,11 +4,7 @@ EVM smart contracts targeting Base.
 
 ## Setup
 
-Install Foundry and dependencies:
-
-```bash
-forge install
-```
+Install Foundry before running the local contract checks.
 
 ## Scripts
 

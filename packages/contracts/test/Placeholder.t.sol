@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "forge-std/Test.sol";
 import "../src/Placeholder.sol";
 
-contract PlaceholderTest is Test {
+contract PlaceholderTest {
     Placeholder public placeholder;
 
     function setUp() public {
@@ -12,11 +11,15 @@ contract PlaceholderTest is Test {
     }
 
     function test_InitialMessage() public view {
-        assertEq(placeholder.message(), "Veydrift Season 0");
+        assertStringEq(placeholder.message(), "Veydrift Season 0");
     }
 
     function test_SetMessage() public {
         placeholder.setMessage("hello");
-        assertEq(placeholder.message(), "hello");
+        assertStringEq(placeholder.message(), "hello");
+    }
+
+    function assertStringEq(string memory actual, string memory expected) internal pure {
+        require(keccak256(bytes(actual)) == keccak256(bytes(expected)), "strings not equal");
     }
 }
