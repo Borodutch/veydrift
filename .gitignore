@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build outputs
+dist/
+build/
+out/
+coverage/
+cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Tooling
+.DS_Store
+*.log
+
+# Blockchain / zk generated artifacts
+broadcast/
+artifacts/
+typechain-types/
+proofs/
+witness/
+*.r1cs
+*.sym
+*.ptau
+*.zkey
+verification_key.json
