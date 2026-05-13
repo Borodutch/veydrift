@@ -5,7 +5,7 @@ cmds = ["bun install --frozen-lockfile"]
 cmds = ["bun run build:frontend"]
 
 [start]
-cmd = "cd apps/frontend && bun run preview -- --port ${PORT:-8080}"
+cmd = "cd apps/frontend && bun run preview -- --port 80"
 
 [variables]
 NODE_ENV = "production"
