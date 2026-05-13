@@ -1,0 +1,10 @@
+{
+  "name": "@veydrift/circuits",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "echo 'Run: circom circuits/placeholder.circom --r1cs --wasm --sym'",
+    "test": "echo 'Placeholder: no automated tests configured yet'",
+    "clean": "rm -rf *.r1cs *.wasm *.sym proofs/ witness/"
+  }
+}

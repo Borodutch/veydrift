@@ -1,0 +1,9 @@
+{
+  "extends": "@veydrift/config/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*"]
+}
