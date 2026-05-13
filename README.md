@@ -102,12 +102,13 @@ bun run check
 
 The initial production target is the existing Hetzner Easypanel instance. The
 `veydrift/frontend` service is sourced from this GitHub repository on `main`,
-uses Nixpacks, and runs the root `nixpacks.toml`:
+uses build path `/apps/frontend`, and runs the frontend `nixpacks.toml`:
 
 ```sh
+cd apps/frontend
 bun install --frozen-lockfile
-bun run build:frontend
-cd apps/frontend && bun run serve
+bun run build
+bun run serve
 ```
 
 Deploy only the frontend package until backend, contract, circuit, indexing, and

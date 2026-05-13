@@ -2,6 +2,7 @@
   "name": "@veydrift/frontend",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "bun@1.1.42",
   "type": "module",
   "scripts": {
     "build": "vite build",

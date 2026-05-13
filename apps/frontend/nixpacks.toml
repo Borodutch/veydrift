@@ -2,10 +2,10 @@
 cmds = ["bun install --frozen-lockfile"]
 
 [phases.build]
-cmds = ["bun run build:frontend"]
+cmds = ["bun run build"]
 
 [start]
-cmd = "cd apps/frontend && bun run serve"
+cmd = "bun run serve"
 
 [variables]
 NODE_ENV = "production"
