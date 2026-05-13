@@ -1,4 +1,4 @@
-import heroUrl from "./assets/veydrift-hero.png";
+import heroUrl from "./assets/veydrift-hero.webp";
 
 const statusItems = [
   "Base",
