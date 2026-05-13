@@ -107,7 +107,7 @@ uses Nixpacks, and runs the root `nixpacks.toml`:
 ```sh
 bun install --frozen-lockfile
 bun run build:frontend
-cd apps/frontend && bun run preview -- --port 80
+cd apps/frontend && bun run serve
 ```
 
 Deploy only the frontend package until backend, contract, circuit, indexing, and
