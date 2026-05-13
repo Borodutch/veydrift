@@ -1,0 +1,11 @@
+[phases.install]
+cmds = ["bun install --frozen-lockfile"]
+
+[phases.build]
+cmds = ["bun run build:frontend"]
+
+[start]
+cmd = "cd apps/frontend && bun run preview -- --port ${PORT:-8080}"
+
+[variables]
+NODE_ENV = "production"

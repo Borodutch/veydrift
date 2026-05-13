@@ -100,8 +100,17 @@ bun run check
 
 ## Deployment
 
-The initial production target is the existing Hetzner Easypanel instance. Deploy
-only the frontend package until backend, contract, circuit, indexing, and
+The initial production target is the existing Hetzner Easypanel instance. The
+`veydrift/frontend` service is sourced from this GitHub repository on `main`,
+uses Nixpacks, and runs the root `nixpacks.toml`:
+
+```sh
+bun install --frozen-lockfile
+bun run build:frontend
+cd apps/frontend && bun run preview -- --port ${PORT:-8080}
+```
+
+Deploy only the frontend package until backend, contract, circuit, indexing, and
 game-specific systems have separate implementation scopes.
 
 ## Operating Rules
