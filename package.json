@@ -1,18 +1,31 @@
 {
   "name": "veydrift",
+  "version": "0.1.0",
   "private": true,
+  "packageManager": "bun@1.1.42",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev",
-    "lint": "turbo run lint",
-    "test": "turbo run test",
-    "clean": "turbo run clean"
+    "build": "bun run build:backend && bun run build:frontend && bun run build:contracts && bun run build:circuits",
+    "build:backend": "cd apps/backend && bun run build",
+    "build:frontend": "cd apps/frontend && bun run build",
+    "build:contracts": "cd packages/contracts && bun run build",
+    "build:circuits": "cd packages/circuits && bun run build",
+    "check": "bun run check:backend && bun run check:frontend && bun run check:contracts && bun run check:circuits",
+    "check:backend": "cd apps/backend && bun run check",
+    "check:frontend": "cd apps/frontend && bun run check",
+    "check:contracts": "cd packages/contracts && bun run check",
+    "check:circuits": "cd packages/circuits && bun run check",
+    "dev:backend": "cd apps/backend && bun run dev",
+    "dev:frontend": "cd apps/frontend && bun run dev",
+    "test": "bun run test:backend && bun run test:contracts && bun run test:circuits",
+    "test:backend": "cd apps/backend && bun test",
+    "test:contracts": "cd packages/contracts && bun run test",
+    "test:circuits": "cd packages/circuits && bun run test"
   },
   "devDependencies": {
-    "turbo": "^2.5.0"
-  },
-  "packageManager": "pnpm@10.9.2",
-  "engines": {
-    "node": ">=22"
+    "typescript": "^5.9.3"
   }
 }

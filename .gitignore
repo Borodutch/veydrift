@@ -23,6 +23,8 @@ broadcast/
 artifacts/
 typechain-types/
 proofs/
+!packages/circuits/proofs/
+!packages/circuits/proofs/README.md
 witness/
 *.r1cs
 *.sym

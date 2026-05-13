@@ -1,18 +1,10 @@
-import { createYoga } from 'graphql-yoga'
-import { schema } from './graphql/schema'
-import { healthHandler } from './routes/health'
+import { createRequestHandler } from "./server";
 
-const yoga = createYoga({ schema })
+const port = Number.parseInt(process.env.PORT ?? "4000", 10);
 
-const server = Bun.serve({
-  port: process.env.PORT || 4000,
-  fetch(req) {
-    const url = new URL(req.url)
-    if (url.pathname === '/health') {
-      return healthHandler(req)
-    }
-    return yoga.handle(req)
-  },
-})
+Bun.serve({
+  port,
+  fetch: createRequestHandler()
+});
 
-console.log(`🚀 Server ready at http://localhost:${server.port}`)
+console.log(`Veydrift backend listening on http://localhost:${port}`);

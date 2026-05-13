@@ -1,24 +1,17 @@
 {
   "name": "@veydrift/backend",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun run src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target bun",
-    "start": "bun dist/index.js",
-    "lint": "tsc --noEmit && eslint src",
-    "test": "bun test",
-    "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "graphql": "^16.10.0",
-    "graphql-yoga": "^5.13.0"
+    "build": "tsc --project tsconfig.json",
+    "check": "tsc --project tsconfig.json",
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@veydrift/config": "workspace:*",
-    "@veydrift/types": "workspace:*",
-    "typescript": "^5.8.0"
+    "@types/bun": "^1.2.23",
+    "typescript": "^5.9.3"
   }
 }

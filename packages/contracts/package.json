@@ -1,10 +1,10 @@
 {
   "name": "@veydrift/contracts",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "build": "forge build",
-    "test": "forge test",
-    "clean": "forge clean"
+    "check": "forge fmt --check && forge build",
+    "test": "forge test"
   }
 }

@@ -1,8 +1,15 @@
 {
-  "extends": "@veydrift/config/tsconfig.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "bun-types"
+    ]
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*.ts"
+  ]
 }
