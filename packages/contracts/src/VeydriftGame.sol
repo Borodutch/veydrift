@@ -257,19 +257,17 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function settlePlanet(uint256 planetId) public {
         _requirePlanetOwner(planetId);
-        Planet storage planetRef = _planets[planetId];
-        planetRef.resources = previewResources(planetId);
-        planetRef.lastSettledAt = uint64(block.timestamp);
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
+        _collectReadyOutputs(planetId, msg.sender);
     }
 
     function collectResources(uint256 planetId) external {
         settlePlanet(planetId);
+    }
+
+    function collectShips(uint256 planetId) external {
+        _requirePlanetOwner(planetId);
+        _settleResources(planetId);
+        _collectReadyShips(planetId);
     }
 
     function startBuildingUpgrade(uint256 planetId, uint8 buildingId) external {
@@ -592,6 +590,78 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _collectReadyOutputs(uint256 planetId, address player) private {
+        _settleResources(planetId);
+        _collectReadyBuilding(planetId);
+        _collectReadyDefense(planetId);
+        _collectReadyShips(planetId);
+        _collectReadyResearch(player);
+    }
+
+    function _settleResources(uint256 planetId) private {
+        Planet storage planetRef = _planets[planetId];
+        planetRef.resources = previewResources(planetId);
+        planetRef.lastSettledAt = uint64(block.timestamp);
+        emit PlanetSettled(
+            planetId,
+            planetRef.resources.metal,
+            planetRef.resources.crystal,
+            planetRef.resources.deuterium
+        );
+    }
+
+    function _collectReadyBuilding(uint256 planetId) private {
+        BuildQueue memory queue = buildingQueues[planetId];
+        // forge-lint: disable-next-line(block-timestamp)
+        if (!queue.active || block.timestamp < queue.readyAt) {
+            return;
+        }
+
+        delete buildingQueues[planetId];
+        _buildingLevels[planetId][queue.buildingId] = queue.targetLevel;
+        emit BuildingCompleted(planetId, queue.buildingId, queue.targetLevel);
+    }
+
+    function _collectReadyDefense(uint256 planetId) private {
+        UnitQueue memory queue = defenseQueues[planetId];
+        // forge-lint: disable-next-line(block-timestamp)
+        if (!queue.active || block.timestamp < queue.readyAt) {
+            return;
+        }
+
+        delete defenseQueues[planetId];
+        _defenseCounts[planetId][queue.unitId] += queue.quantity;
+        emit DefenseCompleted(
+            planetId, queue.unitId, queue.quantity, _defenseCounts[planetId][queue.unitId]
+        );
+    }
+
+    function _collectReadyShips(uint256 planetId) private {
+        UnitQueue memory queue = shipQueues[planetId];
+        // forge-lint: disable-next-line(block-timestamp)
+        if (!queue.active || block.timestamp < queue.readyAt) {
+            return;
+        }
+
+        delete shipQueues[planetId];
+        _shipCounts[planetId][queue.unitId] += queue.quantity;
+        emit ShipCompleted(
+            planetId, queue.unitId, queue.quantity, _shipCounts[planetId][queue.unitId]
+        );
+    }
+
+    function _collectReadyResearch(address player) private {
+        ResearchQueue memory queue = researchQueues[player];
+        // forge-lint: disable-next-line(block-timestamp)
+        if (!queue.active || block.timestamp < queue.readyAt) {
+            return;
+        }
+
+        delete researchQueues[player];
+        _technologyLevels[player][queue.technologyId] = queue.targetLevel;
+        emit ResearchCompleted(player, queue.technologyId, queue.targetLevel);
+    }
 
     function _generatePlanet(address player, uint256 planetId)
         private

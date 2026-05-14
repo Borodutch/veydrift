@@ -63,6 +63,11 @@ Planet state:
 Resources:
 
 - Resources accrue lazily and are claimed with `settlePlanet` or `collectResources`.
+- `settlePlanet` / `collectResources` are idempotent collection calls: they can be called
+  before queues are ready, apply any ready building, defense, ship, and research outputs, and
+  leave not-yet-ready queues active.
+- `collectShips` is a ship-focused wrapper for claiming ready ship production without reverting
+  when no ships are ready.
 - Production depends on mine levels, planet multipliers, and available solar energy.
 - Storage caps are enforced when resources are settled.
 
