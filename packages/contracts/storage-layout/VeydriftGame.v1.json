@@ -1,0 +1,268 @@
+{
+  "storage": [
+    {
+      "label": "startPrice",
+      "slot": "0",
+      "offset": 0,
+      "type": "uint256"
+    },
+    {
+      "label": "nextPlanetId",
+      "slot": "1",
+      "offset": 0,
+      "type": "uint256"
+    },
+    {
+      "label": "homePlanetOf",
+      "slot": "2",
+      "offset": 0,
+      "type": "mapping(address => uint256)"
+    },
+    {
+      "label": "_planets",
+      "slot": "3",
+      "offset": 0,
+      "type": "mapping(uint256 => struct Planet)"
+    },
+    {
+      "label": "occupiedCoordinates",
+      "slot": "4",
+      "offset": 0,
+      "type": "mapping(bytes32 => bool)"
+    },
+    {
+      "label": "_buildingLevels",
+      "slot": "5",
+      "offset": 0,
+      "type": "mapping(uint256 => mapping(uint8 => uint16))"
+    },
+    {
+      "label": "_defenseCounts",
+      "slot": "6",
+      "offset": 0,
+      "type": "mapping(uint256 => mapping(uint8 => uint32))"
+    },
+    {
+      "label": "_shipCounts",
+      "slot": "7",
+      "offset": 0,
+      "type": "mapping(uint256 => mapping(uint8 => uint32))"
+    },
+    {
+      "label": "_technologyLevels",
+      "slot": "8",
+      "offset": 0,
+      "type": "mapping(address => mapping(uint8 => uint16))"
+    },
+    {
+      "label": "buildingQueues",
+      "slot": "9",
+      "offset": 0,
+      "type": "mapping(uint256 => struct BuildQueue)"
+    },
+    {
+      "label": "defenseQueues",
+      "slot": "10",
+      "offset": 0,
+      "type": "mapping(uint256 => struct UnitQueue)"
+    },
+    {
+      "label": "shipQueues",
+      "slot": "11",
+      "offset": 0,
+      "type": "mapping(uint256 => struct UnitQueue)"
+    },
+    {
+      "label": "researchQueues",
+      "slot": "12",
+      "offset": 0,
+      "type": "mapping(address => struct ResearchQueue)"
+    }
+  ],
+  "structs": {
+    "Resources": [
+      {
+        "label": "metal",
+        "slot": "0",
+        "offset": 0,
+        "type": "uint128"
+      },
+      {
+        "label": "crystal",
+        "slot": "0",
+        "offset": 16,
+        "type": "uint128"
+      },
+      {
+        "label": "deuterium",
+        "slot": "1",
+        "offset": 0,
+        "type": "uint128"
+      }
+    ],
+    "Planet": [
+      {
+        "label": "owner",
+        "slot": "0",
+        "offset": 0,
+        "type": "address"
+      },
+      {
+        "label": "galaxy",
+        "slot": "0",
+        "offset": 20,
+        "type": "uint16"
+      },
+      {
+        "label": "system",
+        "slot": "0",
+        "offset": 22,
+        "type": "uint16"
+      },
+      {
+        "label": "position",
+        "slot": "0",
+        "offset": 24,
+        "type": "uint8"
+      },
+      {
+        "label": "fields",
+        "slot": "0",
+        "offset": 25,
+        "type": "uint16"
+      },
+      {
+        "label": "temperature",
+        "slot": "0",
+        "offset": 27,
+        "type": "int16"
+      },
+      {
+        "label": "metalMultiplierBps",
+        "slot": "0",
+        "offset": 29,
+        "type": "uint16"
+      },
+      {
+        "label": "crystalMultiplierBps",
+        "slot": "1",
+        "offset": 0,
+        "type": "uint16"
+      },
+      {
+        "label": "deuteriumMultiplierBps",
+        "slot": "1",
+        "offset": 2,
+        "type": "uint16"
+      },
+      {
+        "label": "lastSettledAt",
+        "slot": "1",
+        "offset": 4,
+        "type": "uint64"
+      },
+      {
+        "label": "resources",
+        "slot": "2",
+        "offset": 0,
+        "type": "Resources"
+      }
+    ],
+    "BuildQueue": [
+      {
+        "label": "active",
+        "slot": "0",
+        "offset": 0,
+        "type": "bool"
+      },
+      {
+        "label": "buildingId",
+        "slot": "0",
+        "offset": 1,
+        "type": "uint8"
+      },
+      {
+        "label": "targetLevel",
+        "slot": "0",
+        "offset": 2,
+        "type": "uint16"
+      },
+      {
+        "label": "readyAt",
+        "slot": "0",
+        "offset": 4,
+        "type": "uint64"
+      },
+      {
+        "label": "cost",
+        "slot": "1",
+        "offset": 0,
+        "type": "Resources"
+      }
+    ],
+    "UnitQueue": [
+      {
+        "label": "active",
+        "slot": "0",
+        "offset": 0,
+        "type": "bool"
+      },
+      {
+        "label": "unitId",
+        "slot": "0",
+        "offset": 1,
+        "type": "uint8"
+      },
+      {
+        "label": "quantity",
+        "slot": "0",
+        "offset": 2,
+        "type": "uint32"
+      },
+      {
+        "label": "readyAt",
+        "slot": "0",
+        "offset": 6,
+        "type": "uint64"
+      },
+      {
+        "label": "cost",
+        "slot": "1",
+        "offset": 0,
+        "type": "Resources"
+      }
+    ],
+    "ResearchQueue": [
+      {
+        "label": "active",
+        "slot": "0",
+        "offset": 0,
+        "type": "bool"
+      },
+      {
+        "label": "technologyId",
+        "slot": "0",
+        "offset": 1,
+        "type": "uint8"
+      },
+      {
+        "label": "targetLevel",
+        "slot": "0",
+        "offset": 2,
+        "type": "uint16"
+      },
+      {
+        "label": "readyAt",
+        "slot": "0",
+        "offset": 4,
+        "type": "uint64"
+      },
+      {
+        "label": "cost",
+        "slot": "1",
+        "offset": 0,
+        "type": "Resources"
+      }
+    ]
+  }
+}
