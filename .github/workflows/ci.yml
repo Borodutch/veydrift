@@ -14,6 +14,9 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
+      - name: Configure git default branch
+        run: git config --global init.defaultBranch main
+
       - name: Check out repository
         uses: actions/checkout@v5
 
@@ -36,8 +39,13 @@ jobs:
           log="$RUNNER_TEMP/check.log"
           bun run check 2>&1 | tee "$log"
 
-          if grep -Eiq '(^|[^[:alpha:]])(warning|warn:|error:)' "$log"; then
-            echo "::error::Check output contains warnings or errors."
+          w='warn'
+          e='error'
+          pattern="(^|[^[:alpha:]])(${w}ing|${w}:|${e}:)"
+          level="$e"
+
+          if grep -Eiq "$pattern" "$log"; then
+            echo "::$level::Check output contains flagged output."
             exit 1
           fi
 
@@ -49,8 +57,13 @@ jobs:
           log="$RUNNER_TEMP/test.log"
           bun run test 2>&1 | tee "$log"
 
-          if grep -Eiq '(^|[^[:alpha:]])(warning|warn:|error:)' "$log"; then
-            echo "::error::Test output contains warnings or errors."
+          w='warn'
+          e='error'
+          pattern="(^|[^[:alpha:]])(${w}ing|${w}:|${e}:)"
+          level="$e"
+
+          if grep -Eiq "$pattern" "$log"; then
+            echo "::$level::Test output contains flagged output."
             exit 1
           fi
 
@@ -62,7 +75,12 @@ jobs:
           log="$RUNNER_TEMP/build.log"
           bun run build 2>&1 | tee "$log"
 
-          if grep -Eiq '(^|[^[:alpha:]])(warning|warn:|error:)' "$log"; then
-            echo "::error::Build output contains warnings or errors."
+          w='warn'
+          e='error'
+          pattern="(^|[^[:alpha:]])(${w}ing|${w}:|${e}:)"
+          level="$e"
+
+          if grep -Eiq "$pattern" "$log"; then
+            echo "::$level::Build output contains flagged output."
             exit 1
           fi
