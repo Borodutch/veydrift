@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {Building, Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
 contract VeydriftGameTest is Test {
     address internal admin = address(0xA11CE);
@@ -71,62 +72,63 @@ contract VeydriftGameTest is Test {
         assertGt(afterResources.deuterium, beforeResources.deuterium);
     }
 
-    function testBuildingUpgradeQueueAndCompletion() public {
+    function testBuildingConstructionAndCompletion() public {
         uint256 planetId = _startPlanet(player);
 
         vm.prank(player);
-        game.startBuildingUpgrade(planetId, uint8(VeydriftGame.Building.MetalMine));
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
 
-        VeydriftGame.BuildQueue memory queue = game.buildingQueue(planetId);
-        assertTrue(queue.active);
-        assertEq(queue.targetLevel, 1);
+        VeydriftGame.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        assertTrue(construction.active);
+        assertEq(construction.targetLevel, 1);
 
         vm.prank(player);
         vm.expectRevert();
         game.finishBuildingUpgrade(planetId);
 
-        vm.warp(queue.readyAt);
+        vm.warp(construction.readyAt);
         vm.prank(player);
         game.finishBuildingUpgrade(planetId);
 
-        assertEq(game.buildingLevel(planetId, uint8(VeydriftGame.Building.MetalMine)), 1);
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 1);
     }
 
     function testDefenseProduction() public {
         uint256 planetId = _preparePlanetWithShipyard(player);
 
         vm.prank(player);
-        game.startDefenseProduction(planetId, uint8(VeydriftGame.Defense.RocketLauncher), 3);
-        VeydriftGame.UnitQueue memory queue = game.defenseQueue(planetId);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
+        VeydriftGame.DefenseQueue memory queue = game.defenseQueue(planetId);
 
         vm.warp(queue.readyAt);
         vm.prank(player);
         game.finishDefenseProduction(planetId);
 
-        assertEq(game.defenseCount(planetId, uint8(VeydriftGame.Defense.RocketLauncher)), 3);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 3);
     }
 
     function testShipProduction() public {
         uint256 planetId = _preparePlanetWithShipyardAndResearch(player);
-        _research(player, planetId, uint8(VeydriftGame.Technology.CombustionDrive));
+        _research(player, planetId, Technology.CombustionDrive);
 
         vm.prank(player);
-        game.startShipProduction(planetId, uint8(VeydriftGame.Ship.SmallCargo), 1);
-        VeydriftGame.UnitQueue memory queue = game.shipQueue(planetId);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+        VeydriftGame.ShipQueue memory queue = game.shipQueue(planetId);
 
         vm.warp(queue.readyAt);
         vm.prank(player);
         game.finishShipProduction(planetId);
 
-        assertEq(game.shipCount(planetId, uint8(VeydriftGame.Ship.SmallCargo)), 1);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
     }
 
     function testTechnologyResearch() public {
         uint256 planetId = _preparePlanetWithShipyardAndResearch(player);
 
-        _research(player, planetId, uint8(VeydriftGame.Technology.Energy));
+        _research(player, planetId, Technology.Energy);
 
-        assertEq(game.technologyLevel(player, uint8(VeydriftGame.Technology.Energy)), 1);
+        assertEq(game.technologyLevel(player, Technology.Energy), 1);
     }
 
     function testDependencyResourceAndAccessFailures() public {
@@ -134,19 +136,19 @@ contract VeydriftGameTest is Test {
 
         vm.prank(player);
         vm.expectRevert();
-        game.startBuildingUpgrade(planetId, uint8(VeydriftGame.Building.Shipyard));
+        game.startBuildingUpgrade(planetId, Building.Shipyard);
 
         vm.prank(address(0xCAFE));
         vm.expectRevert(VeydriftGame.NotPlanetOwner.selector);
         game.collectResources(planetId);
 
-        _build(player, planetId, uint8(VeydriftGame.Building.RoboticsFactory));
-        _build(player, planetId, uint8(VeydriftGame.Building.RoboticsFactory));
-        _build(player, planetId, uint8(VeydriftGame.Building.Shipyard));
+        _build(player, planetId, Building.RoboticsFactory);
+        _build(player, planetId, Building.RoboticsFactory);
+        _build(player, planetId, Building.Shipyard);
 
         vm.prank(player);
         vm.expectRevert();
-        game.startShipProduction(planetId, uint8(VeydriftGame.Ship.SmallCargo), 1);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
 
         vm.prank(admin);
         game.setStartPrice(0.07 ether);
@@ -174,7 +176,7 @@ contract VeydriftGameTest is Test {
         assertEq(colony.resources.deuterium, 0);
         assertEq(game.planetCountOf(player), 2);
         assertEq(game.maxPlanets(player), 2);
-        assertEq(game.shipCount(originPlanetId, uint8(VeydriftGame.Ship.ColonyShip)), 0);
+        assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 0);
         assertFalse(game.isCoordinateAvailable(galaxy, system, position));
     }
 
@@ -213,7 +215,7 @@ contract VeydriftGameTest is Test {
         assertEq(fleet.owner, player);
         assertEq(fleet.arrivesAt, dispatchedAt + travelSeconds);
         assertEq(fleet.fuelCost, fuelCost);
-        assertEq(game.shipCount(originPlanetId, uint8(VeydriftGame.Ship.SmallCargo)), 0);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
         VeydriftGame.Planet memory originAfter = game.planet(originPlanetId);
         assertEq(originAfter.resources.metal, originBefore.resources.metal - cargo.metal);
         assertEq(originAfter.resources.crystal, originBefore.resources.crystal - cargo.crystal);
@@ -234,7 +236,7 @@ contract VeydriftGameTest is Test {
 
         VeydriftGame.Fleet memory settledFleet = game.fleet(fleetId);
         assertFalse(settledFleet.active);
-        assertEq(game.shipCount(colonyPlanetId, uint8(VeydriftGame.Ship.SmallCargo)), 1);
+        assertEq(game.shipCount(colonyPlanetId, Ship.SmallCargo), 1);
         VeydriftGame.Planet memory colony = game.planet(colonyPlanetId);
         assertGe(colony.resources.metal, 1_500);
         assertGe(colony.resources.crystal, 1_000);
@@ -271,7 +273,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.settleFleetArrival(fleetId);
 
-        assertEq(game.shipCount(originPlanetId, uint8(VeydriftGame.Ship.SmallCargo)), 1);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
         VeydriftGame.Planet memory origin = game.planet(originPlanetId);
         assertGe(origin.resources.metal, cargo.metal);
         assertGe(origin.resources.crystal, cargo.crystal);
@@ -284,9 +286,9 @@ contract VeydriftGameTest is Test {
 
     function _preparePlanetWithShipyard(address account) internal returns (uint256 planetId) {
         planetId = _startPlanet(account);
-        _build(account, planetId, uint8(VeydriftGame.Building.RoboticsFactory));
-        _build(account, planetId, uint8(VeydriftGame.Building.RoboticsFactory));
-        _build(account, planetId, uint8(VeydriftGame.Building.Shipyard));
+        _build(account, planetId, Building.RoboticsFactory);
+        _build(account, planetId, Building.RoboticsFactory);
+        _build(account, planetId, Building.Shipyard);
     }
 
     function _preparePlanetWithShipyardAndResearch(address account)
@@ -294,21 +296,22 @@ contract VeydriftGameTest is Test {
         returns (uint256 planetId)
     {
         planetId = _preparePlanetWithShipyard(account);
-        _build(account, planetId, uint8(VeydriftGame.Building.ResearchLab));
+        _build(account, planetId, Building.ResearchLab);
     }
 
-    function _build(address account, uint256 planetId, uint8 buildingId) internal {
+    function _build(address account, uint256 planetId, Building building) internal {
         vm.prank(account);
-        game.startBuildingUpgrade(planetId, buildingId);
-        VeydriftGame.BuildQueue memory queue = game.buildingQueue(planetId);
-        vm.warp(queue.readyAt);
+        game.startBuildingUpgrade(planetId, building);
+        VeydriftGame.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        vm.warp(construction.readyAt);
         vm.prank(account);
         game.finishBuildingUpgrade(planetId);
     }
 
-    function _research(address account, uint256 planetId, uint8 technologyId) internal {
+    function _research(address account, uint256 planetId, Technology technology) internal {
         vm.prank(account);
-        game.startResearch(planetId, technologyId);
+        game.startResearch(planetId, technology);
         VeydriftGame.ResearchQueue memory queue = game.researchQueue(account);
         vm.warp(queue.readyAt);
         vm.prank(account);
@@ -317,12 +320,12 @@ contract VeydriftGameTest is Test {
 
     function _prepareColonizer(address account) internal returns (uint256 planetId) {
         planetId = _preparePlanetWithShipyardAndResearch(account);
-        _buildWithAccrual(account, planetId, uint8(VeydriftGame.Building.CrystalStorage));
-        _researchWithAccrual(account, planetId, uint8(VeydriftGame.Technology.Computer));
-        _researchWithAccrual(account, planetId, uint8(VeydriftGame.Technology.CombustionDrive));
-        _researchWithAccrual(account, planetId, uint8(VeydriftGame.Technology.CombustionDrive));
-        _researchWithAccrual(account, planetId, uint8(VeydriftGame.Technology.CombustionDrive));
-        _produceShipWithAccrual(account, planetId, uint8(VeydriftGame.Ship.ColonyShip), 1);
+        _buildWithAccrual(account, planetId, Building.CrystalStorage);
+        _researchWithAccrual(account, planetId, Technology.Computer);
+        _researchWithAccrual(account, planetId, Technology.CombustionDrive);
+        _researchWithAccrual(account, planetId, Technology.CombustionDrive);
+        _researchWithAccrual(account, planetId, Technology.CombustionDrive);
+        _produceShipWithAccrual(account, planetId, Ship.ColonyShip, 1);
     }
 
     function _prepareTransportRoute(address account)
@@ -330,7 +333,7 @@ contract VeydriftGameTest is Test {
         returns (uint256 originPlanetId, uint256 colonyPlanetId)
     {
         originPlanetId = _prepareColonizer(account);
-        _produceShipWithAccrual(account, originPlanetId, uint8(VeydriftGame.Ship.SmallCargo), 1);
+        _produceShipWithAccrual(account, originPlanetId, Ship.SmallCargo, 1);
         _accrueToCaps(account, originPlanetId);
 
         (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(account, 101);
@@ -338,26 +341,25 @@ contract VeydriftGameTest is Test {
         colonyPlanetId = game.createColony(originPlanetId, galaxy, system, position);
     }
 
-    function _buildWithAccrual(address account, uint256 planetId, uint8 buildingId) internal {
+    function _buildWithAccrual(address account, uint256 planetId, Building building) internal {
         _accrueToCaps(account, planetId);
-        _build(account, planetId, buildingId);
+        _build(account, planetId, building);
     }
 
-    function _researchWithAccrual(address account, uint256 planetId, uint8 technologyId) internal {
+    function _researchWithAccrual(address account, uint256 planetId, Technology technology)
+        internal
+    {
         _accrueToCaps(account, planetId);
-        _research(account, planetId, technologyId);
+        _research(account, planetId, technology);
     }
 
-    function _produceShipWithAccrual(
-        address account,
-        uint256 planetId,
-        uint8 shipId,
-        uint32 quantity
-    ) internal {
+    function _produceShipWithAccrual(address account, uint256 planetId, Ship ship, uint32 quantity)
+        internal
+    {
         _accrueToCaps(account, planetId);
         vm.prank(account);
-        game.startShipProduction(planetId, shipId, quantity);
-        VeydriftGame.UnitQueue memory queue = game.shipQueue(planetId);
+        game.startShipProduction(planetId, ship, quantity);
+        VeydriftGame.ShipQueue memory queue = game.shipQueue(planetId);
         vm.warp(queue.readyAt);
         vm.prank(account);
         game.finishShipProduction(planetId);

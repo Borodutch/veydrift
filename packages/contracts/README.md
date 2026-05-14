@@ -67,9 +67,9 @@ Resources:
 - Production depends on mine levels, planet multipliers, and available solar energy.
 - Storage caps are enforced when resources are settled.
 
-Queues:
+Production:
 
-- One active building queue per planet
+- One active building construction per planet; buildings are not queued on-chain
 - One active defense queue per planet
 - One active ship queue per planet
 - One active research queue per player
@@ -114,6 +114,11 @@ Buildings:
 | 7 | MetalStorage |
 | 8 | CrystalStorage |
 | 9 | DeuteriumTank |
+| 10 | FusionReactor |
+| 11 | NaniteFactory |
+| 12 | Terraformer |
+| 13 | AllianceDepot |
+| 14 | MissileSilo |
 
 Defenses:
 
@@ -123,6 +128,12 @@ Defenses:
 | 1 | LightLaser |
 | 2 | HeavyLaser |
 | 3 | SmallShieldDome |
+| 4 | GaussCannon |
+| 5 | IonCannon |
+| 6 | PlasmaTurret |
+| 7 | LargeShieldDome |
+| 8 | AntiBallisticMissile |
+| 9 | InterplanetaryMissile |
 
 Ships:
 
@@ -132,6 +143,18 @@ Ships:
 | 1 | LightFighter |
 | 2 | Recycler |
 | 3 | ColonyShip |
+| 4 | LargeCargo |
+| 5 | HeavyFighter |
+| 6 | Cruiser |
+| 7 | Battleship |
+| 8 | EspionageProbe |
+| 9 | Bomber |
+| 10 | SolarSatellite |
+| 11 | Destroyer |
+| 12 | Deathstar |
+| 13 | Battlecruiser |
+| 14 | Reaper |
+| 15 | Pathfinder |
 
 Technologies:
 
@@ -146,6 +169,22 @@ Technologies:
 | 6 | Weapons |
 | 7 | Shielding |
 | 8 | Armor |
+| 9 | Hyperspace |
+| 10 | ImpulseDrive |
+| 11 | HyperspaceDrive |
+| 12 | Plasma |
+| 13 | Astrophysics |
+| 14 | IntergalacticResearchNetwork |
+| 15 | Graviton |
+
+Resources:
+
+| ID | Name |
+| --- | --- |
+| 0 | Metal |
+| 1 | Crystal |
+| 2 | Deuterium |
+| 3 | Energy |
 
 ## Deployment
 
@@ -184,4 +223,4 @@ This ticket intentionally leaves these systems for later work:
 - NFTs or transferable planet ownership
 - Commit-reveal or private-orderflow protections for future hidden fleet intent
 
-The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, one active queue per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.
+The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, one active construction or production slot per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.
