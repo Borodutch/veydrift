@@ -18,6 +18,10 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint16 public constant MAX_LEVEL = 50;
     uint16 public constant BPS = 10_000;
     uint32 public constant MIN_QUEUE_SECONDS = 60;
+    uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
+    uint16 public constant MAX_GALAXY = 9;
+    uint16 public constant MAX_SYSTEM = 499;
+    uint8 public constant MAX_POSITION = 15;
 
     enum Building {
         MetalMine,
@@ -102,11 +106,29 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         Resources cost;
     }
 
+    struct Fleet {
+        bool active;
+        bool returning;
+        address owner;
+        uint256 originPlanetId;
+        uint256 destinationPlanetId;
+        uint64 dispatchedAt;
+        uint64 arrivesAt;
+        uint128 fuelCost;
+        Resources cargo;
+        uint32 smallCargo;
+        uint32 recycler;
+        uint32 colonyShip;
+    }
+
     uint256 public startPrice;
     uint256 public nextPlanetId;
+    uint256 public nextFleetId;
 
     mapping(address player => uint256 planetId) public homePlanetOf;
+    mapping(address player => uint256 count) public planetCountOf;
     mapping(uint256 planetId => Planet planet) private _planets;
+    mapping(uint256 fleetId => Fleet fleet) private _fleets;
     mapping(bytes32 coordinateKey => bool occupied) public occupiedCoordinates;
     mapping(uint256 planetId => mapping(uint8 buildingId => uint16 level)) private _buildingLevels;
     mapping(uint256 planetId => mapping(uint8 defenseId => uint32 count)) private _defenseCounts;
@@ -175,6 +197,51 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint128 deuterium
     );
     event ResearchCompleted(address indexed player, uint8 indexed technologyId, uint16 level);
+    event ColonyCreated(
+        address indexed player,
+        uint256 indexed originPlanetId,
+        uint256 indexed colonyPlanetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint16 fields,
+        int16 temperature
+    );
+    event FleetDispatched(
+        uint256 indexed fleetId,
+        address indexed player,
+        uint256 indexed originPlanetId,
+        uint256 destinationPlanetId,
+        uint64 arrivesAt,
+        uint32 smallCargo,
+        uint32 recycler,
+        uint32 colonyShip,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium,
+        uint128 fuelCost
+    );
+    event FleetRecalled(
+        uint256 indexed fleetId,
+        address indexed player,
+        uint256 indexed originPlanetId,
+        uint256 destinationPlanetId,
+        uint64 arrivesAt
+    );
+    event FleetArrived(
+        uint256 indexed fleetId,
+        address indexed player,
+        uint256 indexed destinationPlanetId,
+        bool returning
+    );
+    event ResourcesTransferred(
+        uint256 indexed fleetId,
+        uint256 indexed originPlanetId,
+        uint256 indexed destinationPlanetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
     event FeesWithdrawn(address indexed to, uint256 amount);
 
     error AlreadyStarted();
@@ -191,6 +258,17 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error MissingDependency(bytes32 dependency);
     error FieldCapacityReached();
     error LevelTooHigh();
+    error InvalidCoordinates();
+    error CoordinatesOccupied();
+    error PlanetLimitReached(uint256 limit);
+    error InsufficientShips(uint8 shipId, uint32 available, uint32 required);
+    error SamePlanet();
+    error CargoCapacityExceeded(uint256 capacity, uint256 cargo);
+    error FleetInactive();
+    error FleetNotOwner();
+    error FleetNotArrived(uint64 arrivesAt);
+    error FleetAlreadyReturning();
+    error FleetAlreadyArrived();
     error TransferFailed();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -202,6 +280,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         __Ownable_init(admin);
         startPrice = DEFAULT_START_PRICE;
         nextPlanetId = 1;
+        nextFleetId = 1;
     }
 
     function setStartPrice(uint256 nextPrice) external onlyOwner {
@@ -240,6 +319,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint16 deuteriumMultiplier = uint16(10_800 - temperatureIndex * 3);
 
         homePlanetOf[msg.sender] = planetId;
+        planetCountOf[msg.sender] = 1;
         _planets[planetId] = Planet({
             owner: msg.sender,
             galaxy: galaxy,
@@ -460,8 +540,141 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit ResearchCompleted(msg.sender, queue.technologyId, queue.targetLevel);
     }
 
+    function createColonyAtNextSlot(uint256 originPlanetId, uint256 salt)
+        external
+        returns (uint256 colonyPlanetId)
+    {
+        (uint16 galaxy, uint16 system, uint8 position) = nextColonyCoordinates(msg.sender, salt);
+        colonyPlanetId = _createColony(originPlanetId, galaxy, system, position);
+    }
+
+    function createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
+        external
+        returns (uint256 colonyPlanetId)
+    {
+        colonyPlanetId = _createColony(originPlanetId, galaxy, system, position);
+    }
+
+    function dispatchTransport(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        uint32 smallCargo,
+        uint32 recycler,
+        uint32 colonyShip,
+        Resources calldata cargo
+    ) external returns (uint256 fleetId) {
+        _requirePlanetOwner(originPlanetId);
+        _requirePlanetOwner(destinationPlanetId);
+        if (originPlanetId == destinationPlanetId) {
+            revert SamePlanet();
+        }
+        if (smallCargo == 0 && recycler == 0 && colonyShip == 0) {
+            revert InvalidQuantity();
+        }
+
+        settlePlanet(originPlanetId);
+        settlePlanet(destinationPlanetId);
+
+        uint128 fuelCost = _debitTransportDeparture(
+            originPlanetId, destinationPlanetId, smallCargo, recycler, colonyShip, cargo
+        );
+        _spend(
+            originPlanetId,
+            Resources({
+                metal: cargo.metal,
+                crystal: cargo.crystal,
+                deuterium: _toUint128(uint256(cargo.deuterium) + uint256(fuelCost))
+            })
+        );
+
+        uint64 arrivesAt =
+            uint64(block.timestamp + transportTravelSeconds(originPlanetId, destinationPlanetId));
+        fleetId = nextFleetId++;
+        Fleet memory launched = Fleet({
+            active: true,
+            returning: false,
+            owner: msg.sender,
+            originPlanetId: originPlanetId,
+            destinationPlanetId: destinationPlanetId,
+            dispatchedAt: uint64(block.timestamp),
+            arrivesAt: arrivesAt,
+            fuelCost: fuelCost,
+            cargo: cargo,
+            smallCargo: smallCargo,
+            recycler: recycler,
+            colonyShip: colonyShip
+        });
+        _fleets[fleetId] = launched;
+
+        _emitFleetDispatched(fleetId, launched);
+    }
+
+    function recallFleet(uint256 fleetId) external {
+        Fleet storage fleetRef = _fleets[fleetId];
+        _requireActiveFleetOwner(fleetRef);
+        if (fleetRef.returning) {
+            revert FleetAlreadyReturning();
+        }
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp >= fleetRef.arrivesAt) {
+            revert FleetAlreadyArrived();
+        }
+
+        uint256 elapsed = block.timestamp - fleetRef.dispatchedAt;
+        if (elapsed < MIN_QUEUE_SECONDS) {
+            elapsed = MIN_QUEUE_SECONDS;
+        }
+        fleetRef.returning = true;
+        fleetRef.dispatchedAt = uint64(block.timestamp);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        fleetRef.arrivesAt = uint64(block.timestamp + elapsed);
+
+        emit FleetRecalled(
+            fleetId,
+            msg.sender,
+            fleetRef.originPlanetId,
+            fleetRef.destinationPlanetId,
+            fleetRef.arrivesAt
+        );
+    }
+
+    function settleFleetArrival(uint256 fleetId) external {
+        Fleet storage fleetRef = _fleets[fleetId];
+        _requireActiveFleetOwner(fleetRef);
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < fleetRef.arrivesAt) {
+            revert FleetNotArrived(fleetRef.arrivesAt);
+        }
+
+        uint256 arrivalPlanetId =
+            fleetRef.returning ? fleetRef.originPlanetId : fleetRef.destinationPlanetId;
+        settlePlanet(arrivalPlanetId);
+
+        Resources memory nextResources = _add(_planets[arrivalPlanetId].resources, fleetRef.cargo);
+        _planets[arrivalPlanetId].resources = _capResources(arrivalPlanetId, nextResources);
+        _shipCounts[arrivalPlanetId][uint8(Ship.SmallCargo)] += fleetRef.smallCargo;
+        _shipCounts[arrivalPlanetId][uint8(Ship.Recycler)] += fleetRef.recycler;
+        _shipCounts[arrivalPlanetId][uint8(Ship.ColonyShip)] += fleetRef.colonyShip;
+
+        fleetRef.active = false;
+
+        emit FleetArrived(fleetId, msg.sender, arrivalPlanetId, fleetRef.returning);
+        emit ResourcesTransferred(
+            fleetId,
+            fleetRef.originPlanetId,
+            arrivalPlanetId,
+            fleetRef.cargo.metal,
+            fleetRef.cargo.crystal,
+            fleetRef.cargo.deuterium
+        );
+    }
+
     function planet(uint256 planetId) external view returns (Planet memory) {
         return _planets[planetId];
+    }
+
+    function fleet(uint256 fleetId) external view returns (Fleet memory) {
+        return _fleets[fleetId];
     }
 
     function buildingQueue(uint256 planetId) external view returns (BuildQueue memory) {
@@ -498,6 +711,104 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function technologyLevel(address player, uint8 technologyId) external view returns (uint16) {
         _validateId(technologyId, MAX_TECHNOLOGY_ID);
         return _technologyLevels[player][technologyId];
+    }
+
+    function maxPlanets(address player) public view returns (uint256) {
+        return 1 + uint256(_technologyLevels[player][uint8(Technology.Computer)]);
+    }
+
+    function coordinateKey(uint16 galaxy, uint16 system, uint8 position)
+        public
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(galaxy, system, position));
+    }
+
+    function isCoordinateAvailable(uint16 galaxy, uint16 system, uint8 position)
+        external
+        view
+        returns (bool)
+    {
+        _validateCoordinates(galaxy, system, position);
+        return !occupiedCoordinates[coordinateKey(galaxy, system, position)];
+    }
+
+    function nextColonyCoordinates(address player, uint256 salt)
+        public
+        view
+        returns (uint16 galaxy, uint16 system, uint8 position)
+    {
+        for (uint256 attempt = 0; attempt < 64; attempt++) {
+            bytes32 seed = keccak256(
+                abi.encode(block.chainid, address(this), player, nextPlanetId, salt, attempt)
+            );
+            galaxy = uint16((uint256(seed) % MAX_GALAXY) + 1);
+            system = uint16(((uint256(seed) >> 16) % MAX_SYSTEM) + 1);
+            position = uint8(((uint256(seed) >> 32) % MAX_POSITION) + 1);
+            if (!occupiedCoordinates[coordinateKey(galaxy, system, position)]) {
+                return (galaxy, system, position);
+            }
+        }
+        revert CoordinatesExhausted();
+    }
+
+    function shipCargoCapacity(uint8 shipId) public pure returns (uint256) {
+        if (shipId == uint8(Ship.SmallCargo)) return 5_000;
+        if (shipId == uint8(Ship.LightFighter)) return 50;
+        if (shipId == uint8(Ship.Recycler)) return 20_000;
+        if (shipId == uint8(Ship.ColonyShip)) return 7_500;
+        revert InvalidId();
+    }
+
+    function transportCargoCapacity(uint32 smallCargo, uint32 recycler, uint32 colonyShip)
+        public
+        pure
+        returns (uint256)
+    {
+        return uint256(smallCargo) * shipCargoCapacity(uint8(Ship.SmallCargo)) + uint256(recycler)
+            * shipCargoCapacity(uint8(Ship.Recycler)) + uint256(colonyShip)
+            * shipCargoCapacity(uint8(Ship.ColonyShip));
+    }
+
+    function transportTravelSeconds(uint256 originPlanetId, uint256 destinationPlanetId)
+        public
+        view
+        returns (uint256)
+    {
+        Planet storage origin = _planets[originPlanetId];
+        Planet storage destination = _planets[destinationPlanetId];
+        if (origin.owner == address(0) || destination.owner == address(0)) {
+            revert NoPlanet();
+        }
+        uint256 driveLevel = _technologyLevels[origin.owner][uint8(Technology.CombustionDrive)];
+        return MIN_FLEET_TRAVEL_SECONDS + (_coordinateDistance(origin, destination) * 60)
+            / (driveLevel + 1);
+    }
+
+    function transportFuelCost(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        uint32 smallCargo,
+        uint32 recycler,
+        uint32 colonyShip
+    ) public view returns (uint128) {
+        Planet storage origin = _planets[originPlanetId];
+        Planet storage destination = _planets[destinationPlanetId];
+        if (origin.owner == address(0) || destination.owner == address(0)) {
+            revert NoPlanet();
+        }
+        uint256 ships = uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
+        if (ships == 0) {
+            return 0;
+        }
+        uint256 consumption =
+            uint256(smallCargo) * 10 + uint256(recycler) * 50 + uint256(colonyShip) * 100;
+        uint256 cost = (consumption * _coordinateDistance(origin, destination)) / 1_000;
+        if (cost < ships) {
+            cost = ships;
+        }
+        return _toUint128(cost);
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
@@ -616,6 +927,94 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
+    function _createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
+        private
+        returns (uint256 colonyPlanetId)
+    {
+        _requirePlanetOwner(originPlanetId);
+        _validateCoordinates(galaxy, system, position);
+
+        uint256 limit = maxPlanets(msg.sender);
+        if (planetCountOf[msg.sender] >= limit) {
+            revert PlanetLimitReached(limit);
+        }
+
+        bytes32 key = coordinateKey(galaxy, system, position);
+        if (occupiedCoordinates[key]) {
+            revert CoordinatesOccupied();
+        }
+
+        settlePlanet(originPlanetId);
+        _removeShips(originPlanetId, uint8(Ship.ColonyShip), 1);
+
+        colonyPlanetId = nextPlanetId++;
+        (
+            uint16 fields,
+            int16 temperature,
+            uint16 metalMultiplier,
+            uint16 crystalMultiplier,
+            uint16 deuteriumMultiplier
+        ) = _planetTraits(msg.sender, colonyPlanetId, galaxy, system, position);
+
+        occupiedCoordinates[key] = true;
+        planetCountOf[msg.sender] += 1;
+        _planets[colonyPlanetId] = Planet({
+            owner: msg.sender,
+            galaxy: galaxy,
+            system: system,
+            position: position,
+            fields: fields,
+            temperature: temperature,
+            metalMultiplierBps: metalMultiplier,
+            crystalMultiplierBps: crystalMultiplier,
+            deuteriumMultiplierBps: deuteriumMultiplier,
+            lastSettledAt: uint64(block.timestamp),
+            resources: Resources({metal: 500, crystal: 500, deuterium: 0})
+        });
+
+        emit ColonyCreated(
+            msg.sender,
+            originPlanetId,
+            colonyPlanetId,
+            galaxy,
+            system,
+            position,
+            fields,
+            temperature
+        );
+    }
+
+    function _planetTraits(
+        address player,
+        uint256 planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position
+    )
+        private
+        view
+        returns (
+            uint16 fields,
+            int16 temperature,
+            uint16 metalMultiplier,
+            uint16 crystalMultiplier,
+            uint16 deuteriumMultiplier
+        )
+    {
+        bytes32 seed = keccak256(
+            abi.encode(block.chainid, address(this), player, planetId, galaxy, system, position)
+        );
+        fields = uint16(160 + (uint256(seed) % 80));
+        temperature =
+            int16(int256(20) - int256(uint256(position) * 5) + int256((uint256(seed) >> 16) % 21));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint256 temperatureIndex = uint256(int256(temperature) + 80);
+        metalMultiplier = uint16(9_500 + ((temperatureIndex * 4) % 1_000));
+        crystalMultiplier = uint16(9_600 + (uint256(fields) * 3) % 800);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        deuteriumMultiplier = uint16(10_800 - temperatureIndex * 3);
+    }
+
     function _generatePlanet(address player, uint256 planetId)
         private
         returns (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature)
@@ -623,10 +1022,10 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         for (uint256 attempt = 0; attempt < 64; attempt++) {
             bytes32 seed =
                 keccak256(abi.encode(block.chainid, address(this), player, planetId, attempt));
-            galaxy = uint16((uint256(seed) % 9) + 1);
-            system = uint16(((uint256(seed) >> 16) % 499) + 1);
-            position = uint8(((uint256(seed) >> 32) % 15) + 1);
-            bytes32 key = keccak256(abi.encode(galaxy, system, position));
+            galaxy = uint16((uint256(seed) % MAX_GALAXY) + 1);
+            system = uint16(((uint256(seed) >> 16) % MAX_SYSTEM) + 1);
+            position = uint8(((uint256(seed) >> 32) % MAX_POSITION) + 1);
+            bytes32 key = coordinateKey(galaxy, system, position);
             if (!occupiedCoordinates[key]) {
                 occupiedCoordinates[key] = true;
                 fields = uint16(160 + ((uint256(seed) >> 48) % 80));
@@ -647,6 +1046,76 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (planetRef.owner != msg.sender) {
             revert NotPlanetOwner();
         }
+    }
+
+    function _requireActiveFleetOwner(Fleet storage fleetRef) private view {
+        if (!fleetRef.active) {
+            revert FleetInactive();
+        }
+        if (fleetRef.owner != msg.sender) {
+            revert FleetNotOwner();
+        }
+    }
+
+    function _validateCoordinates(uint16 galaxy, uint16 system, uint8 position) private pure {
+        if (
+            galaxy == 0 || galaxy > MAX_GALAXY || system == 0 || system > MAX_SYSTEM
+                || position == 0 || position > MAX_POSITION
+        ) {
+            revert InvalidCoordinates();
+        }
+    }
+
+    function _removeShips(uint256 planetId, uint8 shipId, uint32 quantity) private {
+        if (quantity == 0) {
+            return;
+        }
+        uint32 available = _shipCounts[planetId][shipId];
+        if (available < quantity) {
+            revert InsufficientShips(shipId, available, quantity);
+        }
+        _shipCounts[planetId][shipId] = available - quantity;
+    }
+
+    function _debitTransportDeparture(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        uint32 smallCargo,
+        uint32 recycler,
+        uint32 colonyShip,
+        Resources calldata cargo
+    ) private returns (uint128 fuelCost) {
+        uint256 cargoAmount = uint256(cargo.metal) + uint256(cargo.crystal)
+            + uint256(cargo.deuterium);
+        uint256 capacity = transportCargoCapacity(smallCargo, recycler, colonyShip);
+        if (cargoAmount > capacity) {
+            revert CargoCapacityExceeded(capacity, cargoAmount);
+        }
+
+        _removeShips(originPlanetId, uint8(Ship.SmallCargo), smallCargo);
+        _removeShips(originPlanetId, uint8(Ship.Recycler), recycler);
+        _removeShips(originPlanetId, uint8(Ship.ColonyShip), colonyShip);
+
+        fuelCost = transportFuelCost(
+            originPlanetId, destinationPlanetId, smallCargo, recycler, colonyShip
+        );
+    }
+
+    function _emitFleetDispatched(uint256 fleetId, Fleet memory fleetData) private {
+        emit FleetDispatched(
+            fleetId,
+            fleetData.owner,
+            fleetData.originPlanetId,
+            fleetData.destinationPlanetId,
+            fleetData.arrivesAt,
+            fleetData.smallCargo,
+            fleetData.recycler,
+            fleetData.colonyShip,
+            fleetData.cargo.metal,
+            fleetData.cargo.crystal,
+            fleetData.cargo.deuterium,
+            fleetData.fuelCost
+        );
     }
 
     function _requireBuildingDependencies(uint256 planetId, uint8 buildingId) private view {
@@ -860,6 +1329,24 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function _scaleByBps(uint256 value, uint256 multiplierBps) private pure returns (uint256) {
         return (value * multiplierBps) / BPS;
+    }
+
+    function _coordinateDistance(Planet storage origin, Planet storage destination)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 distance = _absDiff(origin.galaxy, destination.galaxy) * 20_000
+            + _absDiff(origin.system, destination.system) * 95
+            + _absDiff(origin.position, destination.position) * 5;
+        if (distance == 0) {
+            return 5;
+        }
+        return distance;
+    }
+
+    function _absDiff(uint256 a, uint256 b) private pure returns (uint256) {
+        return a >= b ? a - b : b - a;
     }
 
     function _validateId(uint8 id, uint8 maxId) private pure {

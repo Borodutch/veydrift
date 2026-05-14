@@ -157,6 +157,126 @@ contract VeydriftGameTest is Test {
         game.startPlanet{value: 0.05 ether}();
     }
 
+    function testColonyCreationConsumesColonyShipAndReservesCoordinates() public {
+        uint256 originPlanetId = _prepareColonizer(player);
+        (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(player, 42);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColony(originPlanetId, galaxy, system, position);
+
+        VeydriftGame.Planet memory colony = game.planet(colonyPlanetId);
+        assertEq(colony.owner, player);
+        assertEq(colony.galaxy, galaxy);
+        assertEq(colony.system, system);
+        assertEq(colony.position, position);
+        assertEq(colony.resources.metal, 500);
+        assertEq(colony.resources.crystal, 500);
+        assertEq(colony.resources.deuterium, 0);
+        assertEq(game.planetCountOf(player), 2);
+        assertEq(game.maxPlanets(player), 2);
+        assertEq(game.shipCount(originPlanetId, uint8(VeydriftGame.Ship.ColonyShip)), 0);
+        assertFalse(game.isCoordinateAvailable(galaxy, system, position));
+    }
+
+    function testColonyCreationRejectsOccupiedCoordinatesAndPlanetLimit() public {
+        uint256 originPlanetId = _prepareColonizer(player);
+        VeydriftGame.Planet memory home = game.planet(originPlanetId);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.CoordinatesOccupied.selector);
+        game.createColony(originPlanetId, home.galaxy, home.system, home.position);
+
+        (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(player, 7);
+        vm.prank(player);
+        game.createColony(originPlanetId, galaxy, system, position);
+
+        (galaxy, system, position) = game.nextColonyCoordinates(player, 8);
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGame.PlanetLimitReached.selector, 2));
+        game.createColony(originPlanetId, galaxy, system, position);
+    }
+
+    function testTransportDispatchCapacityFuelTimingAndArrivalSettlement() public {
+        (uint256 originPlanetId, uint256 colonyPlanetId) = _prepareTransportRoute(player);
+        VeydriftGame.Resources memory cargo =
+            VeydriftGame.Resources({metal: 1_000, crystal: 500, deuterium: 100});
+        uint128 fuelCost = game.transportFuelCost(originPlanetId, colonyPlanetId, 1, 0, 0);
+        uint256 travelSeconds = game.transportTravelSeconds(originPlanetId, colonyPlanetId);
+        VeydriftGame.Planet memory originBefore = game.planet(originPlanetId);
+        uint256 dispatchedAt = block.timestamp;
+
+        vm.prank(player);
+        uint256 fleetId = game.dispatchTransport(originPlanetId, colonyPlanetId, 1, 0, 0, cargo);
+
+        VeydriftGame.Fleet memory fleet = game.fleet(fleetId);
+        assertTrue(fleet.active);
+        assertEq(fleet.owner, player);
+        assertEq(fleet.arrivesAt, dispatchedAt + travelSeconds);
+        assertEq(fleet.fuelCost, fuelCost);
+        assertEq(game.shipCount(originPlanetId, uint8(VeydriftGame.Ship.SmallCargo)), 0);
+        VeydriftGame.Planet memory originAfter = game.planet(originPlanetId);
+        assertEq(originAfter.resources.metal, originBefore.resources.metal - cargo.metal);
+        assertEq(originAfter.resources.crystal, originBefore.resources.crystal - cargo.crystal);
+        assertEq(
+            originAfter.resources.deuterium,
+            originBefore.resources.deuterium - cargo.deuterium - fuelCost
+        );
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.FleetNotArrived.selector, fleet.arrivesAt)
+        );
+        game.settleFleetArrival(fleetId);
+
+        vm.warp(fleet.arrivesAt);
+        vm.prank(player);
+        game.settleFleetArrival(fleetId);
+
+        VeydriftGame.Fleet memory settledFleet = game.fleet(fleetId);
+        assertFalse(settledFleet.active);
+        assertEq(game.shipCount(colonyPlanetId, uint8(VeydriftGame.Ship.SmallCargo)), 1);
+        VeydriftGame.Planet memory colony = game.planet(colonyPlanetId);
+        assertGe(colony.resources.metal, 1_500);
+        assertGe(colony.resources.crystal, 1_000);
+        assertGe(colony.resources.deuterium, 100);
+    }
+
+    function testTransportRejectsOverCapacityAndCanRecall() public {
+        (uint256 originPlanetId, uint256 colonyPlanetId) = _prepareTransportRoute(player);
+        VeydriftGame.Resources memory tooMuchCargo =
+            VeydriftGame.Resources({metal: 5_001, crystal: 0, deuterium: 0});
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.CargoCapacityExceeded.selector, 5_000, 5_001)
+        );
+        game.dispatchTransport(originPlanetId, colonyPlanetId, 1, 0, 0, tooMuchCargo);
+
+        VeydriftGame.Resources memory cargo =
+            VeydriftGame.Resources({metal: 700, crystal: 300, deuterium: 0});
+        vm.prank(player);
+        uint256 fleetId = game.dispatchTransport(originPlanetId, colonyPlanetId, 1, 0, 0, cargo);
+
+        vm.warp(block.timestamp + 90 seconds);
+        vm.prank(player);
+        game.recallFleet(fleetId);
+        VeydriftGame.Fleet memory recalled = game.fleet(fleetId);
+        assertTrue(recalled.returning);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.FleetAlreadyReturning.selector);
+        game.recallFleet(fleetId);
+
+        vm.warp(recalled.arrivesAt);
+        vm.prank(player);
+        game.settleFleetArrival(fleetId);
+
+        assertEq(game.shipCount(originPlanetId, uint8(VeydriftGame.Ship.SmallCargo)), 1);
+        VeydriftGame.Planet memory origin = game.planet(originPlanetId);
+        assertGe(origin.resources.metal, cargo.metal);
+        assertGe(origin.resources.crystal, cargo.crystal);
+    }
+
     function _startPlanet(address account) internal returns (uint256 planetId) {
         vm.prank(account);
         planetId = game.startPlanet{value: 0.05 ether}();
@@ -193,5 +313,59 @@ contract VeydriftGameTest is Test {
         vm.warp(queue.readyAt);
         vm.prank(account);
         game.finishResearch();
+    }
+
+    function _prepareColonizer(address account) internal returns (uint256 planetId) {
+        planetId = _preparePlanetWithShipyardAndResearch(account);
+        _buildWithAccrual(account, planetId, uint8(VeydriftGame.Building.CrystalStorage));
+        _researchWithAccrual(account, planetId, uint8(VeydriftGame.Technology.Computer));
+        _researchWithAccrual(account, planetId, uint8(VeydriftGame.Technology.CombustionDrive));
+        _researchWithAccrual(account, planetId, uint8(VeydriftGame.Technology.CombustionDrive));
+        _researchWithAccrual(account, planetId, uint8(VeydriftGame.Technology.CombustionDrive));
+        _produceShipWithAccrual(account, planetId, uint8(VeydriftGame.Ship.ColonyShip), 1);
+    }
+
+    function _prepareTransportRoute(address account)
+        internal
+        returns (uint256 originPlanetId, uint256 colonyPlanetId)
+    {
+        originPlanetId = _prepareColonizer(account);
+        _produceShipWithAccrual(account, originPlanetId, uint8(VeydriftGame.Ship.SmallCargo), 1);
+        _accrueToCaps(account, originPlanetId);
+
+        (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(account, 101);
+        vm.prank(account);
+        colonyPlanetId = game.createColony(originPlanetId, galaxy, system, position);
+    }
+
+    function _buildWithAccrual(address account, uint256 planetId, uint8 buildingId) internal {
+        _accrueToCaps(account, planetId);
+        _build(account, planetId, buildingId);
+    }
+
+    function _researchWithAccrual(address account, uint256 planetId, uint8 technologyId) internal {
+        _accrueToCaps(account, planetId);
+        _research(account, planetId, technologyId);
+    }
+
+    function _produceShipWithAccrual(
+        address account,
+        uint256 planetId,
+        uint8 shipId,
+        uint32 quantity
+    ) internal {
+        _accrueToCaps(account, planetId);
+        vm.prank(account);
+        game.startShipProduction(planetId, shipId, quantity);
+        VeydriftGame.UnitQueue memory queue = game.shipQueue(planetId);
+        vm.warp(queue.readyAt);
+        vm.prank(account);
+        game.finishShipProduction(planetId);
+    }
+
+    function _accrueToCaps(address account, uint256 planetId) internal {
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(account);
+        game.collectResources(planetId);
     }
 }
