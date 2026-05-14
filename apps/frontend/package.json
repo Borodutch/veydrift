@@ -10,9 +10,11 @@
     "dev": "vite --host 0.0.0.0",
     "preview": "vite preview --host 0.0.0.0",
     "serve": "bun scripts/serve.mjs",
-    "start": "bun run serve"
+    "start": "bun run serve",
+    "test": "bun test tests"
   },
   "dependencies": {
+    "@farcaster/miniapp-sdk": "^0.3.0",
     "preact": "^10.27.2"
   },
   "devDependencies": {
