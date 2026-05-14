@@ -6,10 +6,14 @@ import {
     OwnableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @notice Playable Veydrift MVP: one home planet, lazy resources, queues, units, and research.
 /// @dev MVP simplifications: no colonies, fleet movement, combat, espionage reports, markets, or NFTs.
 contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+    using SafeCast for int256;
+    using SafeCast for uint256;
+
     uint256 public constant DEFAULT_START_PRICE = 0.05 ether;
     uint8 public constant MAX_BUILDING_ID = uint8(type(Building).max);
     uint8 public constant MAX_DEFENSE_ID = uint8(type(Defense).max);
@@ -310,13 +314,10 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
             _generatePlanet(msg.sender, planetId);
 
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 temperatureIndex = uint256(int256(temperature) + 80);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint16 metalMultiplier = uint16(9_500 + ((temperatureIndex * 4) % 1_000));
+        uint256 temperatureIndex = (int256(temperature) + 80).toUint256();
+        uint16 metalMultiplier = (9_500 + ((temperatureIndex * 4) % 1_000)).toUint16();
         uint16 crystalMultiplier = uint16(9_600 + (uint256(fields) * 3) % 800);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint16 deuteriumMultiplier = uint16(10_800 - temperatureIndex * 3);
+        uint16 deuteriumMultiplier = (10_800 - temperatureIndex * 3).toUint16();
 
         homePlanetOf[msg.sender] = planetId;
         planetCountOf[msg.sender] = 1;
@@ -330,7 +331,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             metalMultiplierBps: metalMultiplier,
             crystalMultiplierBps: crystalMultiplier,
             deuteriumMultiplierBps: deuteriumMultiplier,
-            lastSettledAt: uint64(block.timestamp),
+            lastSettledAt: _currentTimestamp(),
             resources: Resources({metal: 5_000, crystal: 5_000, deuterium: 5_000})
         });
 
@@ -341,7 +342,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         _requirePlanetOwner(planetId);
         Planet storage planetRef = _planets[planetId];
         planetRef.resources = previewResources(planetId);
-        planetRef.lastSettledAt = uint64(block.timestamp);
+        planetRef.lastSettledAt = _currentTimestamp();
         emit PlanetSettled(
             planetId,
             planetRef.resources.metal,
@@ -374,7 +375,8 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         Resources memory cost = buildingUpgradeCost(planetId, buildingId);
         _spend(planetId, cost);
 
-        uint64 readyAt = uint64(block.timestamp + _buildingDuration(planetId, cost));
+        uint64 readyAt =
+            (uint256(_currentTimestamp()) + _buildingDuration(planetId, cost)).toUint64();
         uint16 targetLevel = currentLevel + 1;
         buildingQueues[planetId] = BuildQueue({
             active: true,
@@ -395,8 +397,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (!queue.active) {
             revert QueueInactive();
         }
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < queue.readyAt) {
+        if (_currentTimestamp() < queue.readyAt) {
             revert QueueNotReady(queue.readyAt);
         }
 
@@ -420,7 +421,8 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
         Resources memory cost = _multiply(defenseCost(defenseId), quantity);
         _spend(planetId, cost);
-        uint64 readyAt = uint64(block.timestamp + _unitDuration(planetId, cost, quantity));
+        uint64 readyAt =
+            (uint256(_currentTimestamp()) + _unitDuration(planetId, cost, quantity)).toUint64();
         defenseQueues[planetId] = UnitQueue({
             active: true, unitId: defenseId, quantity: quantity, readyAt: readyAt, cost: cost
         });
@@ -436,8 +438,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (!queue.active) {
             revert QueueInactive();
         }
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < queue.readyAt) {
+        if (_currentTimestamp() < queue.readyAt) {
             revert QueueNotReady(queue.readyAt);
         }
 
@@ -463,7 +464,8 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
         Resources memory cost = _multiply(shipCost(shipId), quantity);
         _spend(planetId, cost);
-        uint64 readyAt = uint64(block.timestamp + _unitDuration(planetId, cost, quantity));
+        uint64 readyAt =
+            (uint256(_currentTimestamp()) + _unitDuration(planetId, cost, quantity)).toUint64();
         shipQueues[planetId] = UnitQueue({
             active: true, unitId: shipId, quantity: quantity, readyAt: readyAt, cost: cost
         });
@@ -479,8 +481,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (!queue.active) {
             revert QueueInactive();
         }
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < queue.readyAt) {
+        if (_currentTimestamp() < queue.readyAt) {
             revert QueueNotReady(queue.readyAt);
         }
 
@@ -510,7 +511,8 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
         Resources memory cost = researchCost(msg.sender, technologyId);
         _spend(planetId, cost);
-        uint64 readyAt = uint64(block.timestamp + _researchDuration(planetId, cost));
+        uint64 readyAt =
+            (uint256(_currentTimestamp()) + _researchDuration(planetId, cost)).toUint64();
         uint16 targetLevel = currentLevel + 1;
         researchQueues[msg.sender] = ResearchQueue({
             active: true,
@@ -530,8 +532,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (!queue.active) {
             revert QueueInactive();
         }
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < queue.readyAt) {
+        if (_currentTimestamp() < queue.readyAt) {
             revert QueueNotReady(queue.readyAt);
         }
 
@@ -587,8 +588,9 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             })
         );
 
-        uint64 arrivesAt =
-            uint64(block.timestamp + transportTravelSeconds(originPlanetId, destinationPlanetId));
+        uint64 currentTime = _currentTimestamp();
+        uint256 travelSeconds = transportTravelSeconds(originPlanetId, destinationPlanetId);
+        uint64 arrivesAt = (uint256(currentTime) + travelSeconds).toUint64();
         fleetId = nextFleetId++;
         Fleet memory launched = Fleet({
             active: true,
@@ -596,7 +598,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             owner: msg.sender,
             originPlanetId: originPlanetId,
             destinationPlanetId: destinationPlanetId,
-            dispatchedAt: uint64(block.timestamp),
+            dispatchedAt: currentTime,
             arrivesAt: arrivesAt,
             fuelCost: fuelCost,
             cargo: cargo,
@@ -615,19 +617,18 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (fleetRef.returning) {
             revert FleetAlreadyReturning();
         }
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= fleetRef.arrivesAt) {
+        uint64 currentTime = _currentTimestamp();
+        if (currentTime >= fleetRef.arrivesAt) {
             revert FleetAlreadyArrived();
         }
 
-        uint256 elapsed = block.timestamp - fleetRef.dispatchedAt;
+        uint256 elapsed = uint256(currentTime) - fleetRef.dispatchedAt;
         if (elapsed < MIN_QUEUE_SECONDS) {
             elapsed = MIN_QUEUE_SECONDS;
         }
         fleetRef.returning = true;
-        fleetRef.dispatchedAt = uint64(block.timestamp);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        fleetRef.arrivesAt = uint64(block.timestamp + elapsed);
+        fleetRef.dispatchedAt = currentTime;
+        fleetRef.arrivesAt = (uint256(currentTime) + elapsed).toUint64();
 
         emit FleetRecalled(
             fleetId,
@@ -641,8 +642,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function settleFleetArrival(uint256 fleetId) external {
         Fleet storage fleetRef = _fleets[fleetId];
         _requireActiveFleetOwner(fleetRef);
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < fleetRef.arrivesAt) {
+        if (_currentTimestamp() < fleetRef.arrivesAt) {
             revert FleetNotArrived(fleetRef.arrivesAt);
         }
 
@@ -818,7 +818,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         }
 
         resources = planetRef.resources;
-        uint256 elapsed = block.timestamp - planetRef.lastSettledAt;
+        uint256 elapsed = uint256(_currentTimestamp()) - planetRef.lastSettledAt;
         if (elapsed == 0) {
             return resources;
         }
@@ -968,7 +968,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             metalMultiplierBps: metalMultiplier,
             crystalMultiplierBps: crystalMultiplier,
             deuteriumMultiplierBps: deuteriumMultiplier,
-            lastSettledAt: uint64(block.timestamp),
+            lastSettledAt: _currentTimestamp(),
             resources: Resources({metal: 500, crystal: 500, deuterium: 0})
         });
 
@@ -1007,12 +1007,10 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         fields = uint16(160 + (uint256(seed) % 80));
         temperature =
             int16(int256(20) - int256(uint256(position) * 5) + int256((uint256(seed) >> 16) % 21));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 temperatureIndex = uint256(int256(temperature) + 80);
-        metalMultiplier = uint16(9_500 + ((temperatureIndex * 4) % 1_000));
+        uint256 temperatureIndex = (int256(temperature) + 80).toUint256();
+        metalMultiplier = (9_500 + ((temperatureIndex * 4) % 1_000)).toUint16();
         crystalMultiplier = uint16(9_600 + (uint256(fields) * 3) % 800);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        deuteriumMultiplier = uint16(10_800 - temperatureIndex * 3);
+        deuteriumMultiplier = (10_800 - temperatureIndex * 3).toUint16();
     }
 
     function _generatePlanet(address player, uint256 planetId)
@@ -1359,7 +1357,10 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (value > type(uint128).max) {
             revert LevelTooHigh();
         }
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return uint128(value);
+        return value.toUint128();
+    }
+
+    function _currentTimestamp() private view returns (uint64) {
+        return block.timestamp.toUint64();
     }
 }
