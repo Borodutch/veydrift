@@ -12,7 +12,7 @@ apps/
   backend/       Bun + TypeScript HTTP service with health and GraphQL endpoints
   frontend/      Preact + TypeScript + Tailwind public coming-soon app
 packages/
-  contracts/     Foundry Solidity boilerplate oriented toward Base deployments
+  contracts/     Foundry Solidity playable smart-contract MVP for Base deployments
   circuits/      zk circuit placeholder workspace and proving stack notes
 ```
 
@@ -76,9 +76,11 @@ game-specific details.
 
 ### Contracts
 
-`packages/contracts` contains Foundry boilerplate and a small placeholder
-registry contract for future public commitments. The contract deliberately avoids
-gameplay assumptions until the onchain architecture is approved.
+`packages/contracts` contains the first playable Solidity MVP. `VeydriftGame`
+is an OpenZeppelin UUPS upgradeable contract behind an ERC1967 proxy with one
+home planet per wallet, deterministic coordinates, lazy resource settlement,
+building upgrades, defense and ship production, technology research, and
+deployment/upgrade scripts.
 
 ```sh
 cd packages/contracts
