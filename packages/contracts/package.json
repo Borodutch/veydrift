@@ -6,7 +6,8 @@
     "build": "forge build",
     "fmt": "forge fmt",
     "fmt:check": "forge fmt --check",
-    "check": "forge fmt --check && forge build",
+    "check": "forge fmt --check && forge build && bun run storage:check",
+    "storage:check": "forge build --force --extra-output storageLayout && node scripts/check-storage-layout.mjs",
     "test": "forge test"
   }
 }

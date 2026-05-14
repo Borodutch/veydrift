@@ -6,6 +6,9 @@ import {
     OwnableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
+import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 
 /// @notice Playable Veydrift MVP: one home planet, lazy resources, queues, units, and research.
 /// @dev MVP simplifications: no colonies, fleet movement, combat, espionage reports, markets, or NFTs.
@@ -118,6 +121,22 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     mapping(uint256 planetId => UnitQueue queue) public shipQueues;
     mapping(address player => ResearchQueue queue) public researchQueues;
 
+    error AlreadyStarted();
+    error BadStartPayment();
+    error CoordinatesExhausted();
+    error InvalidId();
+    error InvalidQuantity();
+    error NoPlanet();
+    error NotPlanetOwner();
+    error QueueActive();
+    error QueueInactive();
+    error QueueNotReady(uint64 readyAt);
+    error InsufficientResources(uint128 metal, uint128 crystal, uint128 deuterium);
+    error MissingDependency(bytes32 dependency);
+    error FieldCapacityReached();
+    error LevelTooHigh();
+    error TransferFailed();
+
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
         address indexed player,
@@ -177,22 +196,6 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event ResearchCompleted(address indexed player, uint8 indexed technologyId, uint16 level);
     event FeesWithdrawn(address indexed to, uint256 amount);
 
-    error AlreadyStarted();
-    error BadStartPayment();
-    error CoordinatesExhausted();
-    error InvalidId();
-    error InvalidQuantity();
-    error NoPlanet();
-    error NotPlanetOwner();
-    error QueueActive();
-    error QueueInactive();
-    error QueueNotReady(uint64 readyAt);
-    error InsufficientResources(uint128 metal, uint128 crystal, uint128 deuterium);
-    error MissingDependency(bytes32 dependency);
-    error FieldCapacityReached();
-    error LevelTooHigh();
-    error TransferFailed();
-
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -231,13 +234,8 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
             _generatePlanet(msg.sender, planetId);
 
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 temperatureIndex = uint256(int256(temperature) + 80);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint16 metalMultiplier = uint16(9_500 + ((temperatureIndex * 4) % 1_000));
-        uint16 crystalMultiplier = uint16(9_600 + (uint256(fields) * 3) % 800);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint16 deuteriumMultiplier = uint16(10_800 - temperatureIndex * 3);
+        (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
+            VeydriftFormulas.planetMultipliers(temperature, fields);
 
         homePlanetOf[msg.sender] = planetId;
         _planets[planetId] = Planet({
@@ -532,31 +530,16 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             revert NoPlanet();
         }
 
-        uint256 metalLevel = _buildingLevels[planetId][uint8(Building.MetalMine)];
-        uint256 crystalLevel = _buildingLevels[planetId][uint8(Building.CrystalMine)];
-        uint256 deutLevel = _buildingLevels[planetId][uint8(Building.DeuteriumSynthesizer)];
-        uint256 requiredEnergy = (metalLevel * 10) + (crystalLevel * 12) + (deutLevel * 20);
-        uint256 producedEnergy = _buildingLevels[planetId][uint8(Building.SolarPlant)] * 30;
-        uint256 energyScale = requiredEnergy == 0 || producedEnergy >= requiredEnergy
-            ? BPS
-            : (producedEnergy * BPS) / requiredEnergy;
-
-        metalPerHour = _scaleByBps(
-            (30 + (metalLevel * 20) + (metalLevel * metalLevel * 5)), planetRef.metalMultiplierBps
+        return VeydriftFormulas.productionPerHour(
+            _buildingLevels[planetId][uint8(Building.MetalMine)],
+            _buildingLevels[planetId][uint8(Building.CrystalMine)],
+            _buildingLevels[planetId][uint8(Building.DeuteriumSynthesizer)],
+            _buildingLevels[planetId][uint8(Building.SolarPlant)],
+            planetRef.metalMultiplierBps,
+            planetRef.crystalMultiplierBps,
+            planetRef.deuteriumMultiplierBps,
+            BPS
         );
-        crystalPerHour = _scaleByBps(
-            (15 + (crystalLevel * 15) + (crystalLevel * crystalLevel * 4)),
-            planetRef.crystalMultiplierBps
-        );
-        deuteriumPerHour = _scaleByBps(
-            (8 + (deutLevel * 10) + (deutLevel * deutLevel * 3)), planetRef.deuteriumMultiplierBps
-        );
-
-        if (requiredEnergy != 0) {
-            metalPerHour = _scaleByBps(metalPerHour, energyScale);
-            crystalPerHour = _scaleByBps(crystalPerHour, energyScale);
-            deuteriumPerHour = _scaleByBps(deuteriumPerHour, energyScale);
-        }
     }
 
     function storageCaps(uint256 planetId)
@@ -567,14 +550,10 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (_planets[planetId].owner == address(0)) {
             revert NoPlanet();
         }
-        metalCap = _toUint128(
-            10_000 + uint256(_buildingLevels[planetId][uint8(Building.MetalStorage)]) * 10_000
-        );
-        crystalCap = _toUint128(
-            10_000 + uint256(_buildingLevels[planetId][uint8(Building.CrystalStorage)]) * 10_000
-        );
-        deuteriumCap = _toUint128(
-            10_000 + uint256(_buildingLevels[planetId][uint8(Building.DeuteriumTank)]) * 10_000
+        return VeydriftFormulas.storageCaps(
+            _buildingLevels[planetId][uint8(Building.MetalStorage)],
+            _buildingLevels[planetId][uint8(Building.CrystalStorage)],
+            _buildingLevels[planetId][uint8(Building.DeuteriumTank)]
         );
     }
 
@@ -585,23 +564,19 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     {
         _validateId(buildingId, MAX_BUILDING_ID);
         uint16 currentLevel = _buildingLevels[planetId][buildingId];
-        return _scaleByLevel(_buildingBaseCost(buildingId), currentLevel);
+        (uint128 metal, uint128 crystal, uint128 deuterium) =
+            VeydriftCatalog.buildingBaseCost(buildingId);
+        return _scaleByLevel(Resources(metal, crystal, deuterium), currentLevel);
     }
 
     function defenseCost(uint8 defenseId) public pure returns (Resources memory) {
-        if (defenseId == uint8(Defense.RocketLauncher)) return Resources(200, 0, 0);
-        if (defenseId == uint8(Defense.LightLaser)) return Resources(1_500, 500, 0);
-        if (defenseId == uint8(Defense.HeavyLaser)) return Resources(6_000, 2_000, 0);
-        if (defenseId == uint8(Defense.SmallShieldDome)) return Resources(10_000, 10_000, 0);
-        revert InvalidId();
+        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.defenseCost(defenseId);
+        return Resources(metal, crystal, deuterium);
     }
 
     function shipCost(uint8 shipId) public pure returns (Resources memory) {
-        if (shipId == uint8(Ship.SmallCargo)) return Resources(2_000, 2_000, 0);
-        if (shipId == uint8(Ship.LightFighter)) return Resources(3_000, 1_000, 0);
-        if (shipId == uint8(Ship.Recycler)) return Resources(10_000, 6_000, 2_000);
-        if (shipId == uint8(Ship.ColonyShip)) return Resources(10_000, 20_000, 10_000);
-        revert InvalidId();
+        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.shipCost(shipId);
+        return Resources(metal, crystal, deuterium);
     }
 
     function researchCost(address player, uint8 technologyId)
@@ -611,7 +586,9 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     {
         _validateId(technologyId, MAX_TECHNOLOGY_ID);
         uint16 currentLevel = _technologyLevels[player][technologyId];
-        return _scaleByLevel(_researchBaseCost(technologyId), currentLevel);
+        (uint128 metal, uint128 crystal, uint128 deuterium) =
+            VeydriftCatalog.researchBaseCost(technologyId);
+        return _scaleByLevel(Resources(metal, crystal, deuterium), currentLevel);
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
@@ -650,119 +627,39 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     function _requireBuildingDependencies(uint256 planetId, uint8 buildingId) private view {
-        if (
-            buildingId == uint8(Building.Shipyard)
-                && _buildingLevels[planetId][uint8(Building.RoboticsFactory)] < 2
-        ) {
-            revert MissingDependency("ROBOTICS_FACTORY_2");
-        }
-        if (
-            buildingId == uint8(Building.ResearchLab)
-                && _buildingLevels[planetId][uint8(Building.RoboticsFactory)] < 1
-        ) {
-            revert MissingDependency("ROBOTICS_FACTORY_1");
-        }
+        VeydriftDependencies.requireBuilding(
+            buildingId, _buildingLevels[planetId][uint8(Building.RoboticsFactory)]
+        );
     }
 
     function _requireDefenseDependencies(uint256 planetId, uint8 defenseId) private view {
-        if (_buildingLevels[planetId][uint8(Building.Shipyard)] == 0) {
-            revert MissingDependency("SHIPYARD");
-        }
         address player = _planets[planetId].owner;
-        if (
-            defenseId == uint8(Defense.LightLaser)
-                && _technologyLevels[player][uint8(Technology.Laser)] < 1
-        ) {
-            revert MissingDependency("LASER_1");
-        }
-        if (
-            defenseId == uint8(Defense.HeavyLaser)
-                && _technologyLevels[player][uint8(Technology.Laser)] < 3
-        ) {
-            revert MissingDependency("LASER_3");
-        }
-        if (
-            defenseId == uint8(Defense.SmallShieldDome)
-                && _technologyLevels[player][uint8(Technology.Shielding)] < 2
-        ) {
-            revert MissingDependency("SHIELDING_2");
-        }
+        VeydriftDependencies.requireDefense(
+            defenseId,
+            _buildingLevels[planetId][uint8(Building.Shipyard)],
+            _technologyLevels[player][uint8(Technology.Laser)],
+            _technologyLevels[player][uint8(Technology.Shielding)]
+        );
     }
 
     function _requireShipDependencies(uint256 planetId, uint8 shipId) private view {
-        if (_buildingLevels[planetId][uint8(Building.Shipyard)] == 0) {
-            revert MissingDependency("SHIPYARD");
-        }
         address player = _planets[planetId].owner;
-        if (
-            (shipId == uint8(Ship.SmallCargo) || shipId == uint8(Ship.LightFighter))
-                && _technologyLevels[player][uint8(Technology.CombustionDrive)] < 1
-        ) {
-            revert MissingDependency("COMBUSTION_1");
-        }
-        if (
-            shipId == uint8(Ship.Recycler)
-                && _technologyLevels[player][uint8(Technology.CombustionDrive)] < 2
-        ) {
-            revert MissingDependency("COMBUSTION_2");
-        }
-        if (
-            shipId == uint8(Ship.ColonyShip)
-                && _technologyLevels[player][uint8(Technology.CombustionDrive)] < 3
-        ) {
-            revert MissingDependency("COMBUSTION_3");
-        }
+        VeydriftDependencies.requireShip(
+            shipId,
+            _buildingLevels[planetId][uint8(Building.Shipyard)],
+            _technologyLevels[player][uint8(Technology.CombustionDrive)]
+        );
     }
 
     function _requireResearchDependencies(address player, uint256, uint8 technologyId)
         private
         view
     {
-        if (
-            technologyId == uint8(Technology.Laser)
-                && _technologyLevels[player][uint8(Technology.Energy)] < 1
-        ) {
-            revert MissingDependency("ENERGY_1");
-        }
-        if (
-            technologyId == uint8(Technology.Ion)
-                && _technologyLevels[player][uint8(Technology.Laser)] < 2
-        ) {
-            revert MissingDependency("LASER_2");
-        }
-        if (
-            technologyId == uint8(Technology.Shielding)
-                && _technologyLevels[player][uint8(Technology.Energy)] < 1
-        ) {
-            revert MissingDependency("ENERGY_1");
-        }
-    }
-
-    function _buildingBaseCost(uint8 buildingId) private pure returns (Resources memory) {
-        if (buildingId == uint8(Building.MetalMine)) return Resources(60, 15, 0);
-        if (buildingId == uint8(Building.CrystalMine)) return Resources(48, 24, 0);
-        if (buildingId == uint8(Building.DeuteriumSynthesizer)) return Resources(225, 75, 0);
-        if (buildingId == uint8(Building.SolarPlant)) return Resources(75, 30, 0);
-        if (buildingId == uint8(Building.RoboticsFactory)) return Resources(400, 120, 0);
-        if (buildingId == uint8(Building.Shipyard)) return Resources(400, 200, 100);
-        if (buildingId == uint8(Building.ResearchLab)) return Resources(200, 400, 200);
-        if (buildingId == uint8(Building.MetalStorage)) return Resources(1_000, 0, 0);
-        if (buildingId == uint8(Building.CrystalStorage)) return Resources(1_000, 500, 0);
-        if (buildingId == uint8(Building.DeuteriumTank)) return Resources(1_000, 1_000, 0);
-        revert InvalidId();
-    }
-
-    function _researchBaseCost(uint8 technologyId) private pure returns (Resources memory) {
-        if (technologyId == uint8(Technology.Energy)) return Resources(0, 800, 400);
-        if (technologyId == uint8(Technology.Laser)) return Resources(200, 100, 0);
-        if (technologyId == uint8(Technology.Ion)) return Resources(1_000, 300, 100);
-        if (technologyId == uint8(Technology.CombustionDrive)) return Resources(400, 0, 600);
-        if (technologyId == uint8(Technology.Espionage)) return Resources(200, 1_000, 200);
-        if (technologyId == uint8(Technology.Computer)) return Resources(0, 400, 600);
-        if (technologyId == uint8(Technology.Weapons)) return Resources(800, 200, 0);
-        if (technologyId == uint8(Technology.Shielding)) return Resources(200, 600, 0);
-        if (technologyId == uint8(Technology.Armor)) return Resources(1_000, 0, 0);
-        revert InvalidId();
+        VeydriftDependencies.requireResearch(
+            technologyId,
+            _technologyLevels[player][uint8(Technology.Energy)],
+            _technologyLevels[player][uint8(Technology.Laser)]
+        );
     }
 
     function _buildingDuration(uint256 planetId, Resources memory cost)
@@ -770,9 +667,12 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         view
         returns (uint256)
     {
-        uint256 robotics = _buildingLevels[planetId][uint8(Building.RoboticsFactory)];
-        uint256 raw = (uint256(cost.metal) + uint256(cost.crystal)) / (100 * (robotics + 1));
-        return raw < MIN_QUEUE_SECONDS ? MIN_QUEUE_SECONDS : raw;
+        return VeydriftFormulas.buildingDuration(
+            _buildingLevels[planetId][uint8(Building.RoboticsFactory)],
+            cost.metal,
+            cost.crystal,
+            MIN_QUEUE_SECONDS
+        );
     }
 
     function _unitDuration(uint256 planetId, Resources memory cost, uint32 quantity)
@@ -780,11 +680,14 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         view
         returns (uint256)
     {
-        uint256 shipyard = _buildingLevels[planetId][uint8(Building.Shipyard)];
-        uint256 raw = (uint256(cost.metal) + uint256(cost.crystal) + uint256(cost.deuterium))
-            / (200 * (shipyard + 1));
-        raw += quantity * 10;
-        return raw < MIN_QUEUE_SECONDS ? MIN_QUEUE_SECONDS : raw;
+        return VeydriftFormulas.unitDuration(
+            _buildingLevels[planetId][uint8(Building.Shipyard)],
+            cost.metal,
+            cost.crystal,
+            cost.deuterium,
+            quantity,
+            MIN_QUEUE_SECONDS
+        );
     }
 
     function _researchDuration(uint256 planetId, Resources memory cost)
@@ -792,10 +695,13 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         view
         returns (uint256)
     {
-        uint256 lab = _buildingLevels[planetId][uint8(Building.ResearchLab)];
-        uint256 raw = (uint256(cost.metal) + uint256(cost.crystal) + uint256(cost.deuterium))
-            / (120 * (lab + 1));
-        return raw < MIN_QUEUE_SECONDS ? MIN_QUEUE_SECONDS : raw;
+        return VeydriftFormulas.researchDuration(
+            _buildingLevels[planetId][uint8(Building.ResearchLab)],
+            cost.metal,
+            cost.crystal,
+            cost.deuterium,
+            MIN_QUEUE_SECONDS
+        );
     }
 
     function _usedFields(uint256 planetId) private view returns (uint256 used) {
@@ -856,10 +762,6 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     {
         uint256 multiplier = 2 ** uint256(currentLevel);
         return _multiply(baseCost, multiplier);
-    }
-
-    function _scaleByBps(uint256 value, uint256 multiplierBps) private pure returns (uint256) {
-        return (value * multiplierBps) / BPS;
     }
 
     function _validateId(uint8 id, uint8 maxId) private pure {
