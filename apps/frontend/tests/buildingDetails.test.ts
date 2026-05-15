@@ -29,6 +29,20 @@ describe("building detail helpers", () => {
     });
   });
 
+  test("uses chain/API unavailable reason before local affordability", () => {
+    expect(
+      buildingUpgradeStatus(
+        createInitialPlayableState(1_000),
+        "metalMine",
+        { actionUnavailableReason: "Chain/API resources unavailable; upgrades are disabled until real wallet resources load." },
+      ),
+    ).toMatchObject({
+      disabled: true,
+      reason: "Chain/API resources unavailable; upgrades are disabled until real wallet resources load.",
+      targetLevel: 1,
+    });
+  });
+
   test("reports queue and energy details from modeled building state", () => {
     const queued = startBuildingUpgrade(createInitialPlayableState(1_000), "metalMine", 1_000);
 
