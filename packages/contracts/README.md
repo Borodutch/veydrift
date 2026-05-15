@@ -46,12 +46,19 @@ bun run test:contracts
 `VeydriftGame` is an upgradeable MVP contract with one paid home planet per wallet,
 player-owned colonies, lazy resource settlement, and non-combat transport fleets.
 
+`VeydriftSettlement` is the compact Base Sepolia first-planet settlement contract used for the
+initial wallet-connect MVP while `VeydriftGame` continues to grow. It supports one settlement per
+wallet, weak on-chain entropy for first coordinate assignment, canonical coordinate ownership, and
+`FirstPlanetSettled` indexer events.
+
 Starting a planet:
 
 - `startPlanet()` costs exactly `0.05 ether` by default.
 - The owner can intentionally change the price with `setStartPrice`.
 - Each player can create one home planet with payment, then additional colonies with colony ships.
-- Coordinates are generated deterministically from chain id, contract address, player, planet id, and attempt.
+- Home-planet coordinates are generated from weak on-chain entropy: chain id, contract address,
+  player, planet id, block number, timestamp, `block.prevrandao`, the attempt number, and the
+  `veydrift.first-planet.v1` domain.
 - The first coordinate model uses `galaxy` 1-9, `system` 1-499, and `position` 1-15 with collision prevention.
 
 Planet state:
@@ -97,11 +104,16 @@ Transport fleets:
 
 Indexer-facing events:
 
+- `FirstPlanetSettled(player, planetId, galaxy, system, position, coordinateKey, planetSeed)`
 - `ColonyCreated(player, originPlanetId, colonyPlanetId, galaxy, system, position, fields, temperature)`
 - `FleetDispatched(fleetId, player, originPlanetId, destinationPlanetId, arrivesAt, smallCargo, recycler, colonyShip, metal, crystal, deuterium, fuelCost)`
 - `FleetRecalled(fleetId, player, originPlanetId, destinationPlanetId, arrivesAt)`
 - `FleetArrived(fleetId, player, destinationPlanetId, returning)`
 - `ResourcesTransferred(fleetId, originPlanetId, destinationPlanetId, metal, crystal, deuterium)`
+
+`coordinateKey(galaxy, system, position)` and `planetSeed(galaxy, system, position)` are exposed
+for frontend/backend mapping. `planetSeed` is coordinate-only and domain-separated so the same
+coordinate maps to the same deterministic planet metadata for every reader.
 
 ## IDs
 
@@ -199,6 +211,13 @@ Deploy a proxy to Base Sepolia:
 
 ```bash
 PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin forge script script/Deploy.s.sol:Deploy \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
+```
+
+Deploy the compact first-planet settlement contract to Base Sepolia:
+
+```bash
+PRIVATE_KEY=... forge script script/DeploySettlement.s.sol:DeploySettlement \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
 ```
 

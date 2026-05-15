@@ -11,6 +11,16 @@ contract VeydriftGameTest is Test {
     address internal player = address(0xB0B);
     VeydriftGame internal game;
 
+    event FirstPlanetSettled(
+        address indexed player,
+        uint256 indexed planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        bytes32 coordinateKey,
+        bytes32 planetSeed
+    );
+
     function setUp() public {
         VeydriftGame implementation = new VeydriftGame();
         bytes memory initData = abi.encodeCall(VeydriftGame.initialize, (admin));
@@ -56,6 +66,50 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         vm.expectRevert(VeydriftGame.AlreadyStarted.selector);
         game.startPlanet{value: 0.05 ether}();
+    }
+
+    function testFirstPlanetSettlementEmitsCanonicalCoordinateAndSeed() public {
+        vm.roll(12_345);
+        vm.warp(1_800_000_000);
+        vm.prevrandao(keccak256("first settlement entropy"));
+
+        vm.expectEmit(true, true, false, false, address(game));
+        emit FirstPlanetSettled(player, 1, 0, 0, 0, bytes32(0), bytes32(0));
+
+        uint256 planetId = _startPlanet(player);
+        VeydriftGame.Planet memory planet = game.planet(planetId);
+
+        assertEq(game.homePlanetOf(player), planetId);
+        assertEq(
+            game.planetSeed(planet.galaxy, planet.system, planet.position), _planetSeed(planet)
+        );
+        assertFalse(game.isCoordinateAvailable(planet.galaxy, planet.system, planet.position));
+    }
+
+    function testFirstPlanetWeakEntropyChangesSettlementMoment() public {
+        vm.roll(20_000);
+        vm.warp(1_800_000_000);
+        vm.prevrandao(keccak256("entropy A"));
+        uint256 firstPlanetId = _startPlanet(player);
+        VeydriftGame.Planet memory firstPlanet = game.planet(firstPlanetId);
+
+        address secondPlayer = address(0xD00D);
+        vm.deal(secondPlayer, 1 ether);
+        vm.roll(20_001);
+        vm.warp(1_800_000_030);
+        vm.prevrandao(keccak256("entropy B"));
+        uint256 secondPlanetId = _startPlanet(secondPlayer);
+        VeydriftGame.Planet memory secondPlanet = game.planet(secondPlanetId);
+
+        assertFalse(
+            firstPlanet.galaxy == secondPlanet.galaxy && firstPlanet.system == secondPlanet.system
+                && firstPlanet.position == secondPlanet.position
+        );
+    }
+
+    function testPlanetSeedRejectsInvalidCoordinates() public {
+        vm.expectRevert(VeydriftGame.InvalidCoordinates.selector);
+        game.planetSeed(0, 1, 1);
     }
 
     function testResourceAccrualOverElapsedTime() public {
@@ -449,5 +503,13 @@ contract VeydriftGameTest is Test {
         vm.warp(block.timestamp + 365 days);
         vm.prank(account);
         game.collectResources(planetId);
+    }
+
+    function _planetSeed(VeydriftGame.Planet memory planet) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("veydrift.planet.v1"), planet.galaxy, planet.system, planet.position
+            )
+        );
     }
 }
