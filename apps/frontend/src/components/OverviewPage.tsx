@@ -1,5 +1,6 @@
 import type { PlayableState, Resources, QueueItem } from "../playableMvp";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
+import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -43,9 +44,10 @@ export function OverviewPage({
       {/* Planet hero */}
       <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
         <div className="relative min-h-[220px] sm:min-h-[260px]">
-          <img
+          <OptimizedImage
             alt=""
             className="absolute inset-0 h-full w-full object-cover"
+            sizes="hero"
             src="/assets/game/planets/lush-temperate.webp"
           />
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,9,19,0.2),rgba(7,9,19,0.9))]" />

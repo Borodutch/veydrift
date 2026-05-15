@@ -3,6 +3,7 @@ import type { Planet, Coordinates } from "../types";
 import { generateSystem, GALAXY_COUNT, SYSTEM_COUNT, POSITION_COUNT, planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
+import { OptimizedImage } from "./OptimizedImage";
 
 interface Props {
   galaxy: number;
@@ -192,11 +193,12 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
                         className="group flex items-center gap-2.5 text-left transition-opacity hover:opacity-80"
                       >
                         <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30">
-                          <img
-                            src={planet.image}
+                          <OptimizedImage
                             alt={planet.name}
                             className="h-full w-full object-cover"
                             loading="lazy"
+                            sizes="icon"
+                            src={planet.image}
                           />
                         </div>
                         <div className="min-w-0">

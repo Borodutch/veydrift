@@ -1,5 +1,6 @@
 import type { PlayableState, ShipKey, Resources } from "../playableMvp";
 import { shipCatalog, canAfford } from "../playableMvp";
+import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -87,7 +88,7 @@ function ShipTile({
 }) {
   return (
     <article className="flex gap-4 overflow-hidden rounded-lg border border-white/10 bg-[#101624] p-4">
-      <img alt="" className="h-20 w-32 shrink-0 rounded object-cover sm:h-24 sm:w-40" src={asset} />
+      <OptimizedImage alt="" className="h-20 w-32 shrink-0 rounded object-cover sm:h-24 sm:w-40" sizes="shipThumbnail" src={asset} />
       <div className="flex min-w-0 flex-1 flex-col justify-between">
         <div>
           <div className="flex items-start justify-between gap-3">

@@ -8,6 +8,7 @@ import {
   researchRequirementsFor,
   unmetResearchRequirement,
 } from "../playableMvp";
+import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const researchGroups = ["Basic", "Drive", "Advanced", "Combat"];
@@ -125,7 +126,7 @@ function ResearchTile({
   return (
     <article className={`border bg-[#101624] p-3 ${disabled ? "border-white/10" : "border-cyan-300/40"}`}>
       <div className="grid grid-cols-[4.25rem_minmax(0,1fr)] gap-3">
-        <img alt="" className="h-16 w-16 border border-white/10 object-cover" src={asset} />
+        <OptimizedImage alt="" className="h-16 w-16 border border-white/10 object-cover" sizes="researchCard" src={asset} width={64} height={64} />
         <div className="min-w-0">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
