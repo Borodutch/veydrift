@@ -1,3 +1,4 @@
+import { isPlanetSlotPopulated, parsePlanetSlot } from "@veydrift/universe";
 import type { OccupiedPlanet, Planet, PlanetType, Resources } from "../types";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
@@ -27,6 +28,8 @@ const PLANET_NAMES = [
   "Obsidian", "Pulsar", "Quasar", "Rift", "Sable",
   "Titan", "Utopia", "Vega", "Wisp", "Xerxes",
 ];
+
+const FRONTEND_UNIVERSE_SEED = "veydrift-mainnet-preview";
 
 function seededRandom(seed: number): number {
   const x = Math.sin(seed * 9301 + 49297) * 233280;
@@ -102,37 +105,23 @@ export function generateSystem(galaxy: number, system: number): Planet[] {
   const planets: Planet[] = [];
 
   for (let position = 1; position <= 15; position++) {
-    const seed = galaxy * 10000 + system * 100 + position;
-    const type = pickPlanetType(position, seed + 1);
-    const nameIdx = Math.floor(seededRandom(seed + 3) * PLANET_NAMES.length);
-    const name = `${PLANET_NAMES[nameIdx]}-${galaxy}.${system}.${position}`;
-    const hasMoon = seededRandom(seed + 8) > 0.85;
-    const temperature = generateTemperature(position, seed + 9);
-    const diameter = Math.floor(seededRandom(seed + 10) * 15000) + 5000;
-    const fields = Math.floor(seededRandom(seed + 11) * 80) + 160;
-
-    planets.push({
-      id: `${galaxy}-${system}-${position}`,
-      name,
-      type,
-      image: PLANET_IMAGES[type],
-      position,
-      galaxy,
-      system,
-      owner: null,
-      ownerId: null,
-      alliance: null,
-      occupiedBy: null,
-      resources: generateResources(type),
-      temperature,
-      diameter,
-      fields,
-      hasMoon,
-      ...(hasMoon ? { moonName: `${name} Moon` } : {}),
-    });
+    if (isFallbackPositionPopulated(galaxy, system, position)) {
+      planets.push(planetFromCoordinates(galaxy, system, position));
+    }
   }
 
   return planets;
+}
+
+export function ensurePlanetAtCoordinates(
+  planets: Planet[],
+  coordinates: { galaxy: number; system: number; position: number } | undefined
+): Planet[] {
+  if (!coordinates) return planets;
+  if (planets.some((planet) => sameCoordinates(planet, coordinates))) return planets;
+
+  return [...planets, planetFromCoordinates(coordinates.galaxy, coordinates.system, coordinates.position)]
+    .sort((left, right) => left.position - right.position);
 }
 
 function planetFromApi(planet: ApiPlanet): Planet {
@@ -175,10 +164,59 @@ export function getPlanet(
   system: number,
   position: number
 ): Planet | null {
-  const planets = generateSystem(galaxy, system);
-  return planets.find((p) => p.position === position) || null;
+  if (!isFallbackPositionPopulated(galaxy, system, position)) return null;
+  return planetFromCoordinates(galaxy, system, position);
 }
 
 export const GALAXY_COUNT = 5;
 export const SYSTEM_COUNT = 200;
 export const POSITION_COUNT = 15;
+
+function planetFromCoordinates(galaxy: number, system: number, position: number): Planet {
+  const seed = galaxy * 10000 + system * 100 + position;
+  const type = pickPlanetType(position, seed + 1);
+  const nameIdx = Math.floor(seededRandom(seed + 3) * PLANET_NAMES.length);
+  const name = `${PLANET_NAMES[nameIdx]}-${galaxy}.${system}.${position}`;
+  const hasMoon = seededRandom(seed + 8) > 0.85;
+  const temperature = generateTemperature(position, seed + 9);
+  const diameter = Math.floor(seededRandom(seed + 10) * 15000) + 5000;
+  const fields = Math.floor(seededRandom(seed + 11) * 80) + 160;
+
+  return {
+    id: `${galaxy}-${system}-${position}`,
+    name,
+    type,
+    image: PLANET_IMAGES[type],
+    position,
+    galaxy,
+    system,
+    owner: null,
+    ownerId: null,
+    alliance: null,
+    occupiedBy: null,
+    resources: generateResources(type),
+    temperature,
+    diameter,
+    fields,
+    hasMoon,
+    ...(hasMoon ? { moonName: `${name} Moon` } : {}),
+  };
+}
+
+function isFallbackPositionPopulated(galaxy: number, system: number, position: number): boolean {
+  return isPlanetSlotPopulated({
+    seed: FRONTEND_UNIVERSE_SEED,
+    galaxyId: galaxy,
+    systemId: system,
+    slot: parsePlanetSlot(position)
+  });
+}
+
+function sameCoordinates(
+  planet: Planet,
+  coordinates: { galaxy: number; system: number; position: number }
+): boolean {
+  return planet.galaxy === coordinates.galaxy
+    && planet.system === coordinates.system
+    && planet.position === coordinates.position;
+}

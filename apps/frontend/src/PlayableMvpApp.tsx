@@ -352,7 +352,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           apiBaseUrl={apiBaseUrl}
           galaxy={galaxyNav.galaxy}
           homeCoords={homeCoords}
-          onBack={() => setPage("overview")}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}

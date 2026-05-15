@@ -1,3 +1,6 @@
+import { listPopulatedPlanetSlots } from "@veydrift/universe";
+import type { PlanetSlot } from "@veydrift/universe";
+
 export type Coordinates = {
   galaxy: number;
   system: number;
@@ -65,20 +68,39 @@ export function systemSnapshot(
   galaxy: number,
   system: number
 ): SystemSnapshot {
+  const seed = universeSeed(chainId, settlementContractAddress);
+
   return {
     generatorVersion: "veydrift-universe-v1",
     chainId,
     settlementContractAddress,
     galaxy,
     system,
-    planets: Array.from({ length: maxPosition }, (_, index) =>
+    planets: listPopulatedPlanetSlots({
+      seed,
+      galaxyId: galaxy,
+      systemId: system
+    }).map((position) =>
       planetMetadata(chainId, settlementContractAddress, {
         galaxy,
         system,
-        position: index + 1
+        position
       })
     )
   };
+}
+
+export function populatedPositions(
+  chainId: number,
+  settlementContractAddress: string,
+  galaxy: number,
+  system: number
+): readonly PlanetSlot[] {
+  return listPopulatedPlanetSlots({
+    seed: universeSeed(chainId, settlementContractAddress),
+    galaxyId: galaxy,
+    systemId: system
+  });
 }
 
 export function validateCoordinates(coordinates: Coordinates): void {
@@ -126,4 +148,8 @@ function hashSeed(input: string): bigint {
     hash = BigInt.asUintN(64, hash * 1099511628211n);
   }
   return hash;
+}
+
+function universeSeed(chainId: number, settlementContractAddress: string): string {
+  return `${chainId}:${settlementContractAddress.toLowerCase()}`;
 }

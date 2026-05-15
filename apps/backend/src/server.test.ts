@@ -27,7 +27,7 @@ const planet: PlanetState = {
   owner: player,
   galaxy: 2,
   system: 44,
-  position: 8,
+  position: 9,
   fields: 211,
   temperature: -8,
   metalMultiplierBps: 9788,
@@ -236,7 +236,7 @@ describe("Veydrift backend", () => {
       planet: {
         galaxy: 2,
         system: 44,
-        position: 8
+        position: 9
       }
     });
     expect(response.status).toBe(200);
@@ -292,8 +292,8 @@ describe("Veydrift backend", () => {
 
     const system = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
     const body = await system.json();
-    expect(body.planets[7]).toMatchObject({
-      position: 8,
+    expect(body.planets.find((item: { position: number }) => item.position === 9)).toMatchObject({
+      position: 9,
       occupiedBy: {
         planetId: "7",
         owner: player
@@ -311,7 +311,7 @@ describe("Veydrift backend", () => {
     const body = await response.json();
     expect(body.systems).toHaveLength(3);
     expect(body.systems.map((system: { system: number }) => system.system)).toEqual([43, 44, 45]);
-    expect(body.systems[1].planets[7]).toMatchObject({
+    expect(body.systems[1].planets.find((item: { position: number }) => item.position === 8)).toMatchObject({
       galaxy: 2,
       system: 44,
       position: 8,
@@ -329,9 +329,10 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
     expect(body.data.system.galaxyId).toBe(0);
     expect(body.data.system.systemId).toBe(1);
-    expect(body.data.system.slots).toHaveLength(15);
-    expect(body.data.system.slots[0].slot).toBe(1);
-    expect(body.data.system.slots[14].slot).toBe(15);
+    expect(body.data.system.slots.length).toBeGreaterThanOrEqual(5);
+    expect(body.data.system.slots.length).toBeLessThanOrEqual(11);
+    const populatedSlots = body.data.system.slots.map((slot: { slot: number }) => slot.slot);
+    expect(populatedSlots).toEqual([...populatedSlots].sort((left, right) => left - right));
     expect(body).toEqual(
       await (
         await handler(
