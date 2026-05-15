@@ -31,6 +31,8 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint16 public constant MAX_GALAXY = 9;
     uint16 public constant MAX_SYSTEM = 499;
     uint8 public constant MAX_POSITION = 15;
+    bytes32 public constant FIRST_PLANET_DOMAIN = keccak256("veydrift.first-planet.v1");
+    bytes32 public constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
 
     struct Resources {
         uint128 metal;
@@ -157,6 +159,15 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint8 position,
         uint16 fields,
         int16 temperature
+    );
+    event FirstPlanetSettled(
+        address indexed player,
+        uint256 indexed planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        bytes32 coordinateKey,
+        bytes32 planetSeed
     );
     event PlanetSettled(
         uint256 indexed planetId, uint128 metal, uint128 crystal, uint128 deuterium
@@ -309,6 +320,15 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         });
 
         emit PlanetStarted(msg.sender, planetId, galaxy, system, position, fields, temperature);
+        emit FirstPlanetSettled(
+            msg.sender,
+            planetId,
+            galaxy,
+            system,
+            position,
+            coordinateKey(galaxy, system, position),
+            planetSeed(galaxy, system, position)
+        );
     }
 
     function settlePlanet(uint256 planetId) public {
@@ -683,6 +703,15 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         return keccak256(abi.encode(galaxy, system, position));
     }
 
+    function planetSeed(uint16 galaxy, uint16 system, uint8 position)
+        public
+        pure
+        returns (bytes32)
+    {
+        _validateCoordinates(galaxy, system, position);
+        return keccak256(abi.encode(PLANET_SEED_DOMAIN, galaxy, system, position));
+    }
+
     function isCoordinateAvailable(uint16 galaxy, uint16 system, uint8 position)
         external
         view
@@ -1013,8 +1042,19 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         returns (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature)
     {
         for (uint256 attempt = 0; attempt < 64; attempt++) {
-            bytes32 seed =
-                keccak256(abi.encode(block.chainid, address(this), player, planetId, attempt));
+            bytes32 seed = keccak256(
+                abi.encode(
+                    FIRST_PLANET_DOMAIN,
+                    block.chainid,
+                    address(this),
+                    player,
+                    planetId,
+                    block.number,
+                    block.timestamp,
+                    block.prevrandao,
+                    attempt
+                )
+            );
             galaxy = uint16((uint256(seed) % MAX_GALAXY) + 1);
             system = uint16(((uint256(seed) >> 16) % MAX_SYSTEM) + 1);
             position = uint8(((uint256(seed) >> 32) % MAX_POSITION) + 1);

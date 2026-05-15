@@ -51,7 +51,9 @@ Starting a planet:
 - `startPlanet()` costs exactly `0.05 ether` by default.
 - The owner can intentionally change the price with `setStartPrice`.
 - Each player can create one home planet with payment, then additional colonies with colony ships.
-- Coordinates are generated deterministically from chain id, contract address, player, planet id, and attempt.
+- Home-planet coordinates are generated from weak on-chain entropy: chain id, contract address,
+  player, planet id, block number, timestamp, `block.prevrandao`, the attempt number, and the
+  `veydrift.first-planet.v1` domain.
 - The first coordinate model uses `galaxy` 1-9, `system` 1-499, and `position` 1-15 with collision prevention.
 
 Planet state:
@@ -97,11 +99,16 @@ Transport fleets:
 
 Indexer-facing events:
 
+- `FirstPlanetSettled(player, planetId, galaxy, system, position, coordinateKey, planetSeed)`
 - `ColonyCreated(player, originPlanetId, colonyPlanetId, galaxy, system, position, fields, temperature)`
 - `FleetDispatched(fleetId, player, originPlanetId, destinationPlanetId, arrivesAt, smallCargo, recycler, colonyShip, metal, crystal, deuterium, fuelCost)`
 - `FleetRecalled(fleetId, player, originPlanetId, destinationPlanetId, arrivesAt)`
 - `FleetArrived(fleetId, player, destinationPlanetId, returning)`
 - `ResourcesTransferred(fleetId, originPlanetId, destinationPlanetId, metal, crystal, deuterium)`
+
+`coordinateKey(galaxy, system, position)` and `planetSeed(galaxy, system, position)` are exposed
+for frontend/backend mapping. `planetSeed` is coordinate-only and domain-separated so the same
+coordinate maps to the same deterministic planet metadata for every reader.
 
 ## IDs
 
