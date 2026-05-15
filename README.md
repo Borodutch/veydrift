@@ -176,7 +176,7 @@ either `Dockerfile.test` or `nixpacks.test.toml`. Configure it with:
 ```text
 VEYDRIFT_ALLOWED_ORIGIN=https://test.veydrift.com
 VEYDRIFT_CHAIN_ID=84532
-VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia proxy address>
+VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia settlement address>
 VEYDRIFT_NETWORK_NAME=Base Sepolia
 VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
 VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql
