@@ -1,6 +1,6 @@
 import type { BackendConfig } from "./config";
 import type { Coordinates } from "./universe";
-import { planetMultipliers } from "./universe";
+import { planetMetadata, planetMultipliers } from "./universe";
 
 export type Address = `0x${string}`;
 
@@ -27,6 +27,7 @@ export type WalletSettlement = {
   hasFirstPlanet: boolean;
   homePlanetId: string | null;
   planet: PlanetState | null;
+  contractKind?: "game" | "settlement";
 };
 
 export type QueueState = {
@@ -51,6 +52,8 @@ export type PlayerQueues = {
 export type ShipyardState = {
   wallet: Address;
   homePlanetId: string | null;
+  productionAvailable: boolean;
+  unavailableReason?: string;
   resources: Resources | null;
   shipyardLevel: number;
   technologyLevels: Record<string, number>;
@@ -128,6 +131,7 @@ export class HttpJsonRpcTransport {
 export class VeydriftGameReader implements ChainReader {
   private readonly transport: Pick<HttpJsonRpcTransport, "request">;
   private readonly contractAddress: Address;
+  private readonly chainId: number;
 
   constructor(config: BackendConfig, transport?: Pick<HttpJsonRpcTransport, "request">) {
     if (!config.rpcUrl) {
@@ -139,19 +143,29 @@ export class VeydriftGameReader implements ChainReader {
 
     this.transport = transport ?? new HttpJsonRpcTransport(config.rpcUrl);
     this.contractAddress = config.settlementContractAddress;
+    this.chainId = config.chainId;
   }
 
   async getWalletSettlement(wallet: Address): Promise<WalletSettlement> {
     assertAddress(wallet);
-    const homePlanetId = decodeUint(await this.call("0x0ff79fa5", [encodeAddress(wallet)]));
-    const planet = homePlanetId === 0n ? null : await this.getPlanet(homePlanetId);
+    try {
+      const homePlanetId = decodeUint(await this.call("0x0ff79fa5", [encodeAddress(wallet)]));
+      const planet = homePlanetId === 0n ? null : await this.getPlanet(homePlanetId);
 
-    return {
-      wallet,
-      hasFirstPlanet: homePlanetId !== 0n,
-      homePlanetId: homePlanetId === 0n ? null : homePlanetId.toString(),
-      planet
-    };
+      return {
+        wallet,
+        hasFirstPlanet: homePlanetId !== 0n,
+        homePlanetId: homePlanetId === 0n ? null : homePlanetId.toString(),
+        planet,
+        contractKind: "game"
+      };
+    } catch (error) {
+      if (!isRpcRevert(error)) {
+        throw error;
+      }
+
+      return this.getCompactSettlement(wallet);
+    }
   }
 
   async getPlanet(planetId: bigint): Promise<PlanetState | null> {
@@ -179,7 +193,7 @@ export class VeydriftGameReader implements ChainReader {
 
   async getPlayerQueues(wallet: Address): Promise<PlayerQueues> {
     const settlement = await this.getWalletSettlement(wallet);
-    if (!settlement.homePlanetId) {
+    if (!settlement.homePlanetId || settlement.contractKind === "settlement") {
       return {
         wallet,
         homePlanetId: null,
@@ -210,10 +224,25 @@ export class VeydriftGameReader implements ChainReader {
 
   async getShipyardState(wallet: Address): Promise<ShipyardState> {
     const settlement = await this.getWalletSettlement(wallet);
+    if (settlement.contractKind === "settlement") {
+      return {
+        wallet,
+        homePlanetId: null,
+        productionAvailable: false,
+        unavailableReason: "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
+        resources: null,
+        shipyardLevel: 0,
+        technologyLevels: {},
+        ships: [],
+        queue: null
+      };
+    }
+
     if (!settlement.homePlanetId) {
       return {
         wallet,
         homePlanetId: null,
+        productionAvailable: true,
         resources: null,
         shipyardLevel: 0,
         technologyLevels: {},
@@ -238,6 +267,7 @@ export class VeydriftGameReader implements ChainReader {
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
+      productionAvailable: true,
       resources,
       shipyardLevel: Number(shipyardLevel),
       technologyLevels,
@@ -313,6 +343,48 @@ export class VeydriftGameReader implements ChainReader {
         };
       })
     );
+  }
+
+  private async getCompactSettlement(wallet: Address): Promise<WalletSettlement> {
+    const hasFirstPlanet = decodeBoolWord(wordAt(splitWords(await this.call("0x1d750846", [encodeAddress(wallet)])), 0));
+
+    if (!hasFirstPlanet) {
+      return {
+        wallet,
+        hasFirstPlanet: false,
+        homePlanetId: null,
+        planet: null,
+        contractKind: "settlement"
+      };
+    }
+
+    const words = splitWords(await this.call("0x29147f24", [encodeAddress(wallet)]));
+    const galaxy = Number(decodeUintWord(wordAt(words, 0)));
+    const system = Number(decodeUintWord(wordAt(words, 1)));
+    const position = Number(decodeUintWord(wordAt(words, 2)));
+    const settledAt = decodeUintWord(wordAt(words, 5)).toString();
+    const metadata = planetMetadata(this.chainId, this.contractAddress, { galaxy, system, position });
+
+    return {
+      wallet,
+      hasFirstPlanet: true,
+      homePlanetId: null,
+      planet: {
+        planetId: `${galaxy}:${system}:${position}`,
+        owner: wallet,
+        galaxy,
+        system,
+        position,
+        fields: metadata.fields,
+        temperature: metadata.temperature,
+        metalMultiplierBps: metadata.metalMultiplierBps,
+        crystalMultiplierBps: metadata.crystalMultiplierBps,
+        deuteriumMultiplierBps: metadata.deuteriumMultiplierBps,
+        lastSettledAt: settledAt,
+        resources: zeroResources()
+      },
+      contractKind: "settlement"
+    };
   }
 
   private async readResources(selector: string, firstArg: bigint): Promise<Resources> {
@@ -450,4 +522,8 @@ function zeroResources(): Resources {
     crystal: "0",
     deuterium: "0"
   };
+}
+
+function isRpcRevert(error: unknown): boolean {
+  return error instanceof Error && /execution reverted|revert|missing revert data/i.test(error.message);
 }
