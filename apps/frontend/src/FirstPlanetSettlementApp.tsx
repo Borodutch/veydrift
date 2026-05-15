@@ -340,7 +340,13 @@ export function FirstPlanetSettlementApp() {
   }
 
   if (hasOverview) {
-    return <PlayableMvpApp />;
+    return (
+      <PlayableMvpApp
+        provider={provider}
+        account={account}
+        planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
+      />
+    );
   }
 
   return (

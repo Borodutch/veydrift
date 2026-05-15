@@ -358,6 +358,24 @@ function decodeUintWord(word: string): bigint {
   return BigInt(`0x${word}`);
 }
 
+export async function fetchWalletSettlement(apiUrl: string, wallet: string): Promise<unknown> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/settlement`);
+  if (!response.ok) throw new Error(`Settlement API failed: ${response.status}`);
+  return response.json();
+}
+
+export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise<unknown> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/queues`);
+  if (!response.ok) throw new Error(`Queues API failed: ${response.status}`);
+  return response.json();
+}
+
+export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`);
+  if (!response.ok) throw new Error(`System API failed: ${response.status}`);
+  return response.json();
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
