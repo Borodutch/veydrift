@@ -41,7 +41,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
-  const gameContractAddress = parseAddress(env.VEYDRIFT_CONTRACT_ADDRESS, "VEYDRIFT_CONTRACT_ADDRESS", problems);
+  const gameContractAddress = parseAddress(
+    env.VEYDRIFT_GAME_CONTRACT_ADDRESS ?? env.VEYDRIFT_CONTRACT_ADDRESS,
+    env.VEYDRIFT_GAME_CONTRACT_ADDRESS ? "VEYDRIFT_GAME_CONTRACT_ADDRESS" : "VEYDRIFT_CONTRACT_ADDRESS",
+    problems
+  );
   const settlementContractAddress = parseAddress(
     env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS,
     "VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS",
@@ -58,7 +62,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 
   if (!gameContractAddress) {
     problems.push({
-      field: "VEYDRIFT_CONTRACT_ADDRESS",
+      field: "VEYDRIFT_GAME_CONTRACT_ADDRESS",
       message: "Set the deployed VeydriftGame proxy address."
     });
   }
