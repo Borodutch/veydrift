@@ -2,18 +2,15 @@ FROM oven/bun:1.1.42-alpine
 
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json bun.lockb tsconfig.base.json ./
+COPY apps/frontend/package.json apps/frontend/package.json
+COPY packages/universe/package.json packages/universe/package.json
 RUN bun install --frozen-lockfile
 
-COPY index.html ./
-COPY postcss.config.js ./
-COPY tailwind.config.ts ./
-COPY tsconfig.json ./
-COPY vite.config.ts ./
-COPY public ./public
-COPY scripts ./scripts
-COPY src ./src
+COPY apps/frontend apps/frontend
+COPY packages/universe packages/universe
 
+WORKDIR /app/apps/frontend
 RUN bun run build:test
 
 ENV NODE_ENV=production

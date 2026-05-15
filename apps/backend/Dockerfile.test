@@ -2,12 +2,15 @@ FROM oven/bun:1.1.42-alpine
 
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json bun.lockb tsconfig.base.json ./
+COPY apps/backend/package.json apps/backend/package.json
+COPY packages/universe/package.json packages/universe/package.json
 RUN bun install --frozen-lockfile
 
-COPY tsconfig.json ./
-COPY src ./src
+COPY apps/backend apps/backend
+COPY packages/universe packages/universe
 
+WORKDIR /app/apps/backend
 RUN bun run build
 
 ENV NODE_ENV=production

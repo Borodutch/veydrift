@@ -279,11 +279,15 @@ function getRuntimeConfig(): RuntimeConfig {
   const apiUrl = process.env.VEYDRIFT_PUBLIC_API_URL ?? "https://api-test.veydrift.com";
   const graphqlUrl = process.env.VEYDRIFT_PUBLIC_GRAPHQL_URL ?? `${apiUrl}/graphql`;
   const rpcUrl = process.env.VEYDRIFT_RPC_URL ?? "";
+  const contractAddress =
+    process.env.VEYDRIFT_CONTRACT_ADDRESS ??
+    process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS ??
+    null;
 
   return {
     apiUrl,
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
-    contractAddress: process.env.VEYDRIFT_CONTRACT_ADDRESS || null,
+    contractAddress,
     graphqlUrl,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
