@@ -16,6 +16,7 @@ import { createRequestHandler } from "./server";
 const configuredTestConfig: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
+  gameContractAddress: "0x3333333333333333333333333333333333333333",
   indexFromBlock: 100n,
   rpcSource: "custom-url",
   rpcUrl: "https://example.invalid/rpc",
@@ -147,6 +148,7 @@ describe("Veydrift backend", () => {
       chain: {
         chainId: 84532,
         deploymentMode: "local",
+        gameContractConfigured: false,
         hasRpcUrl: false,
         indexFromBlock: "0",
         rpcSource: "missing",
@@ -172,6 +174,34 @@ describe("Veydrift backend", () => {
       rpcProvider: "unknown"
     });
     expect(response.status).toBe(200);
+  });
+
+  test("publishes only the VeydriftGame contract in runtime config", async () => {
+    const previousGameAddress = process.env.VEYDRIFT_CONTRACT_ADDRESS;
+    const previousSettlementAddress = process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS;
+    process.env.VEYDRIFT_CONTRACT_ADDRESS = "0x3333333333333333333333333333333333333333";
+    process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS = "0x1111111111111111111111111111111111111111";
+
+    try {
+      const response = await handler(new Request("http://localhost/runtime-config"));
+
+      await expect(response.json()).resolves.toMatchObject({
+        contractAddress: "0x3333333333333333333333333333333333333333"
+      });
+      expect(response.status).toBe(200);
+    } finally {
+      if (previousGameAddress === undefined) {
+        delete process.env.VEYDRIFT_CONTRACT_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_CONTRACT_ADDRESS = previousGameAddress;
+      }
+
+      if (previousSettlementAddress === undefined) {
+        delete process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS = previousSettlementAddress;
+      }
+    }
   });
 
   test("returns a minimal GraphQL response", async () => {
@@ -219,6 +249,7 @@ describe("Veydrift backend", () => {
       configured: true,
       chain: {
         hasRpcUrl: true,
+        gameContractConfigured: true,
         rpcSource: "alchemy-key",
         settlementContractConfigured: true
       }

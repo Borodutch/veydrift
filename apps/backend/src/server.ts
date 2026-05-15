@@ -159,7 +159,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         baseSnapshot = systemSnapshot(
           loaded.config.chainId,
-          loaded.config.settlementContractAddress ?? "0x0000000000000000000000000000000000000000",
+          universeContractAddress(loaded.config),
           galaxy,
           system
         );
@@ -183,7 +183,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             baseSnapshot.planets,
             occupied,
             loaded.config.chainId,
-            loaded.config.settlementContractAddress ?? "0x0000000000000000000000000000000000000000",
+            universeContractAddress(loaded.config),
             galaxy,
             system
           ).map((planet) => ({
@@ -223,7 +223,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               );
               const snapshot = systemSnapshot(
                 loaded.config.chainId,
-                loaded.config.settlementContractAddress ?? "0x0000000000000000000000000000000000000000",
+                universeContractAddress(loaded.config),
                 galaxy,
                 system
               );
@@ -234,7 +234,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   snapshot.planets,
                   occupied,
                   loaded.config.chainId,
-                  loaded.config.settlementContractAddress ?? "0x0000000000000000000000000000000000000000",
+                  universeContractAddress(loaded.config),
                   galaxy,
                   system
                 ).map((planet) => ({
@@ -335,9 +335,7 @@ function getRuntimeConfig(): RuntimeConfig {
   const graphqlUrl = process.env.VEYDRIFT_PUBLIC_GRAPHQL_URL ?? `${apiUrl}/graphql`;
   const rpcUrl = process.env.VEYDRIFT_RPC_URL ?? "";
   const contractAddress =
-    process.env.VEYDRIFT_CONTRACT_ADDRESS ??
-    process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS ??
-    null;
+    process.env.VEYDRIFT_CONTRACT_ADDRESS ?? null;
 
   return {
     apiUrl,
@@ -347,6 +345,12 @@ function getRuntimeConfig(): RuntimeConfig {
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
   };
+}
+
+function universeContractAddress(config: BackendConfig): `0x${string}` {
+  return (
+    config.settlementContractAddress ?? config.gameContractAddress ?? "0x0000000000000000000000000000000000000000"
+  );
 }
 
 function requireChainReader(chainReader: ChainReader | undefined, problems: ConfigProblem[]): ChainReader | Response {
