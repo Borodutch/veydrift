@@ -11,7 +11,6 @@ interface TopBarProps {
   researchQueue?: QueueItem | undefined;
   account?: string | undefined;
   coordinates?: string | undefined;
-  onCollect: () => void;
   isWalletConnected: boolean;
 }
 
@@ -23,7 +22,6 @@ export function TopBar({
   researchQueue,
   account,
   coordinates,
-  onCollect,
   isWalletConnected,
 }: TopBarProps) {
   return (
@@ -64,25 +62,18 @@ export function TopBar({
           )}
         </div>
 
-        {/* Wallet / Coords / Collect */}
+        {/* Wallet / Coords */}
         <div className="flex items-center gap-2 sm:gap-3">
           {coordinates && (
-            <span className="hidden leading-none text-xs text-slate-400 sm:inline">
+            <span className="hidden leading-tight text-xs text-slate-400 sm:inline">
               {coordinates}
             </span>
           )}
           {isWalletConnected && account && (
-            <span className="font-mono leading-none text-xs text-slate-400">
+            <span className="font-mono leading-tight text-xs text-slate-400">
               {shortAddress(account)}
             </span>
           )}
-          <button
-            className="rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
-            onClick={onCollect}
-            type="button"
-          >
-            Collect
-          </button>
         </div>
       </div>
     </div>
