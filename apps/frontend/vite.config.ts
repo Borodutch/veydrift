@@ -30,6 +30,15 @@ export default defineConfig(({ mode }) => {
   const surface = mode === "playable" || mode === "settlement" ? mode : "";
 
   return {
+    build: {
+      rollupOptions: {
+        output: {
+          entryFileNames: isTestSurface
+            ? "assets/[name]-settlement-[hash].js"
+            : "assets/[name]-[hash].js",
+        },
+      },
+    },
     define: {
       "import.meta.env.VITE_VEYDRIFT_SURFACE": JSON.stringify(surface),
     },
