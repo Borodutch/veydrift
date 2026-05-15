@@ -23,7 +23,14 @@ import {
   type ShipKey,
 } from "./playableMvp";
 import { runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
-import type { Eip1193Provider, PlanetSummary } from "./walletFlow";
+import {
+  fetchWalletQueues,
+  fetchWalletSettlement,
+  type Eip1193Provider,
+  type PlanetSummary,
+  type PlayerQueuesResponse,
+  type WalletSettlementResponse,
+} from "./walletFlow";
 
 const PLAYABLE_STORAGE_KEY = "veydrift-playable-mvp-state";
 
@@ -69,6 +76,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   });
   const [page, setPage] = useState<Page>("overview");
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
+  const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
+  const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
+  const [onChainError, setOnChainError] = useState<string | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
       const [g, s] = planet.coordinates.split(":").map(Number);
@@ -91,12 +101,43 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
 
+  const onChainResources = useMemo(() => {
+    if (!onChainSettlement?.planet) return undefined;
+    return {
+      metal: Number(onChainSettlement.planet.resources.metal),
+      crystal: Number(onChainSettlement.planet.resources.crystal),
+      deuterium: Number(onChainSettlement.planet.resources.deuterium),
+    };
+  }, [onChainSettlement]);
+
   useEffect(() => {
     if (planet?.coordinates) {
       const [g, s] = planet.coordinates.split(":").map(Number);
       setGalaxyNav({ galaxy: g || 1, system: s || 1 });
     }
   }, [planet?.coordinates]);
+
+  useEffect(() => {
+    if (!apiBaseUrl || !account) return;
+
+    const load = async () => {
+      try {
+        const [settlement, queues] = await Promise.all([
+          fetchWalletSettlement(apiBaseUrl, account),
+          fetchWalletQueues(apiBaseUrl, account),
+        ]);
+        setOnChainSettlement(settlement);
+        setOnChainQueues(queues);
+        setOnChainError(undefined);
+      } catch (error) {
+        setOnChainError(error instanceof Error ? error.message : "Failed to load on-chain state");
+      }
+    };
+
+    void load();
+    const interval = window.setInterval(() => void load(), 30_000);
+    return () => window.clearInterval(interval);
+  }, [apiBaseUrl, account]);
 
   const settledState = useMemo(() => settleState(state, now), [state, now]);
   const rates = productionPerHour(settledState.buildings);
@@ -199,7 +240,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       queue={settledState.queue}
       rates={rates}
       researchQueue={settledState.researchQueue}
-      resources={settledState.resources}
+      resources={onChainResources ?? settledState.resources}
     />
   );
 
@@ -248,6 +289,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
               caps={caps}
               isWalletConnected={isWalletConnected}
               now={now}
+              onChainQueues={onChainQueues}
+              onChainSettlement={onChainSettlement}
               onCollect={handleCollectAll}
               onNavigate={(target) => handleNavigate(target)}
               planet={planet}

@@ -15,21 +15,61 @@ export type SettlementConfig = {
   address?: string;
 };
 
+export type OnChainResources = {
+  metal: string;
+  crystal: string;
+  deuterium: string;
+};
+
 export type PlanetSummary = {
   label: string;
   coordinates?: string;
   fields?: string;
   rarity?: string;
-  resources?: {
-    metal: string;
-    crystal: string;
-    deuterium: string;
-  };
+  resources?: OnChainResources;
   settledAt?: string;
   settledBlock?: string;
   temperature?: string;
   txHash?: string;
   source: "chain" | "transaction";
+};
+
+export type WalletSettlementResponse = {
+  wallet: string;
+  hasFirstPlanet: boolean;
+  homePlanetId: string | null;
+  planet: {
+    planetId: string;
+    owner: string;
+    galaxy: number;
+    system: number;
+    position: number;
+    fields: number;
+    temperature: number;
+    metalMultiplierBps: number;
+    crystalMultiplierBps: number;
+    deuteriumMultiplierBps: number;
+    lastSettledAt: string;
+    resources: OnChainResources;
+  } | null;
+};
+
+export type QueueStateResponse = {
+  active: boolean;
+  kind: string | null;
+  targetLevel?: number;
+  quantity?: number;
+  readyAt: string | null;
+  cost: OnChainResources;
+};
+
+export type PlayerQueuesResponse = {
+  wallet: string;
+  homePlanetId: string | null;
+  building: QueueStateResponse | null;
+  defense: QueueStateResponse | null;
+  ship: QueueStateResponse | null;
+  research: QueueStateResponse | null;
 };
 
 export type SettlementState =
@@ -328,6 +368,8 @@ function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
   const galaxy = words[0] ? Number(decodeUintWord(words[0])) : undefined;
   const system = words[1] ? Number(decodeUintWord(words[1])) : undefined;
   const position = words[2] ? Number(decodeUintWord(words[2])) : undefined;
+  const fields = words[3] ? Number(decodeUintWord(words[3])) : undefined;
+  const temperature = words[4] ? Number(decodeSignedWord(words[4])) : undefined;
   const settledAt = words[5] ? decodeUintWord(words[5]) : undefined;
   const settledBlock = words[6] ? decodeUintWord(words[6]) : undefined;
 
@@ -342,6 +384,14 @@ function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
     source: "chain"
   };
 
+  if (fields !== undefined && Number.isFinite(fields)) {
+    planet.fields = String(fields);
+  }
+
+  if (temperature !== undefined && Number.isFinite(temperature)) {
+    planet.temperature = `${temperature}°C`;
+  }
+
   if (settledAt && settledAt > 0n) {
     planet.settledAt = new Date(Number(settledAt) * 1_000).toISOString();
   }
@@ -350,7 +400,6 @@ function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
     planet.settledBlock = settledBlock.toString();
   }
 
-
   return planet;
 }
 
@@ -358,16 +407,20 @@ function decodeUintWord(word: string): bigint {
   return BigInt(`0x${word}`);
 }
 
-export async function fetchWalletSettlement(apiUrl: string, wallet: string): Promise<unknown> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/settlement`);
-  if (!response.ok) throw new Error(`Settlement API failed: ${response.status}`);
-  return response.json();
+function decodeSignedWord(word: string): bigint {
+  return BigInt.asIntN(256, BigInt(`0x${word}`));
 }
 
-export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise<unknown> {
+export async function fetchWalletSettlement(apiUrl: string, wallet: string): Promise<WalletSettlementResponse> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/settlement`);
+  if (!response.ok) throw new Error(`Settlement API failed: ${response.status}`);
+  return response.json() as Promise<WalletSettlementResponse>;
+}
+
+export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise<PlayerQueuesResponse> {
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/queues`);
   if (!response.ok) throw new Error(`Queues API failed: ${response.status}`);
-  return response.json();
+  return response.json() as Promise<PlayerQueuesResponse>;
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
