@@ -100,7 +100,8 @@ body {
 .building-footer button,
 .focus-panel button,
 .research-progress button,
-.cycle-card button {
+.cycle-card button,
+.state-action button {
   min-height: 42px;
   border: 1px solid rgba(236, 253, 245, 0.14);
   border-radius: 8px;
@@ -121,7 +122,8 @@ body {
 .building-footer button:hover,
 .focus-panel button:hover,
 .research-progress button:hover,
-.cycle-card button:hover {
+.cycle-card button:hover,
+.state-action button:hover {
   border-color: rgba(128, 241, 255, 0.58);
   background: rgba(128, 241, 255, 0.13);
   color: #80f1ff;
@@ -131,7 +133,8 @@ body {
 .building-footer button:disabled,
 .focus-panel button:disabled,
 .research-progress button:disabled,
-.cycle-card button:disabled {
+.cycle-card button:disabled,
+.state-action button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
 }
@@ -227,7 +230,8 @@ h4 {
 .building-footer button,
 .focus-panel button,
 .research-progress button,
-.cycle-card button {
+.cycle-card button,
+.state-action button {
   padding: 0 16px;
   font-weight: 700;
 }
@@ -238,6 +242,88 @@ h4 {
   margin: 0 auto;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 16px;
+}
+
+.wallet-panel {
+  display: grid;
+  max-width: 1180px;
+  margin: 0 auto 16px;
+  gap: 18px;
+  border: 1px solid rgba(128, 241, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(6, 17, 18, 0.82);
+  padding: 20px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(18px);
+}
+
+.wallet-panel.settled {
+  border-color: rgba(46, 204, 113, 0.3);
+}
+
+.wallet-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric {
+  min-width: 0;
+  border: 1px solid rgba(236, 253, 245, 0.1);
+  border-radius: 8px;
+  background: rgba(236, 253, 245, 0.055);
+  padding: 12px;
+}
+
+.metric span {
+  display: block;
+  color: #a8c5c1;
+  font-size: 0.76rem;
+}
+
+.metric strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: #ecfdf5;
+  font-size: 0.92rem;
+}
+
+.state-message {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid rgba(236, 253, 245, 0.1);
+  border-radius: 8px;
+  background: rgba(236, 253, 245, 0.045);
+  padding: 16px;
+}
+
+.state-message h4,
+.settlement-summary strong {
+  margin-bottom: 6px;
+  color: #80f1ff;
+}
+
+.state-message p {
+  margin-bottom: 0;
+  color: #d6e7e2;
+  line-height: 1.55;
+}
+
+.state-action {
+  flex: 0 0 auto;
+}
+
+.settlement-summary {
+  display: grid;
+  gap: 14px;
+}
+
+.settlement-summary > div:first-child span {
+  display: block;
+  color: #d6e7e2;
 }
 
 .planet-panel,
@@ -614,7 +700,16 @@ h4 {
 
   .topbar,
   .planet-panel,
-  .research-card {
+  .research-card,
+  .state-message {
+    grid-template-columns: 1fr;
+  }
+
+  .state-message {
+    align-items: stretch;
+  }
+
+  .wallet-steps {
     grid-template-columns: 1fr;
   }
 

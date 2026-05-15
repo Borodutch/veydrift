@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import heroUrl from "./assets/veydrift-hero.webp";
+import { PlayableMvpApp } from "./PlayableMvpApp";
 import {
   ensureBaseSepoliaNetwork,
   getChainId,
@@ -260,6 +261,10 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
+  if (hasOverview) {
+    return <PlayableMvpApp />;
+  }
+
   return (
     <main className="min-h-dvh bg-[#070a10] text-slate-100">
       <div className="fixed inset-0 -z-10">
@@ -330,7 +335,7 @@ export function FirstPlanetSettlementApp() {
               </div>
               <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.8)]" />
             </div>
-            {hasOverview ? <PlanetOverview planet={planet.planet} /> : <LockedOverview />}
+            <LockedOverview />
           </section>
         </div>
       </section>
@@ -443,38 +448,6 @@ function FlowBody({
       body="Settle the first planet for this connected wallet. The overview opens after the Base Sepolia transaction confirms."
       action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Settle first planet</PrimaryButton>}
     />
-  );
-}
-
-function PlanetOverview({ planet }: { planet: PlanetSummary }) {
-  return (
-    <div className="mt-5 space-y-5">
-      <div className="border border-cyan-300/25 bg-cyan-300/8 p-4">
-        <p className="text-sm text-cyan-100">{planet.source === "chain" ? "Onchain settlement" : "Confirmed transaction"}</p>
-        <h3 className="mt-1 text-2xl font-semibold text-white">{planet.label}</h3>
-        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-          <Metric label="Coordinates" value={planet.coordinates ?? "Assigned"} />
-          <Metric label="Class" value={planet.rarity ?? "Surveying"} />
-        </div>
-      </div>
-      <div className="grid gap-2 text-sm sm:grid-cols-3">
-        <Metric label="Metal" value={planet.resources?.metal ?? "Indexer"} />
-        <Metric label="Crystal" value={planet.resources?.crystal ?? "Indexer"} />
-        <Metric label="Deuterium" value={planet.resources?.deuterium ?? "Indexer"} />
-      </div>
-      <div className="grid gap-2 text-sm sm:grid-cols-2">
-        <Metric label="Settled at" value={planet.settledAt ?? "Pending"} />
-        <Metric label="Block" value={planet.settledBlock ?? "Pending"} />
-      </div>
-      <div className="grid gap-2 text-sm">
-        {["Command Center", "Shipyard", "Research Lab"].map((item, index) => (
-          <div className="flex items-center justify-between border border-white/10 bg-[#080c14] px-3 py-2" key={item}>
-            <span className="text-slate-300">{item}</span>
-            <span className="text-slate-500">Level {index === 0 ? 1 : 0}</span>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 
