@@ -18,6 +18,9 @@ cache/
 .DS_Store
 *.log
 
+# Generated image variants (build-time output)
+apps/frontend/public/assets/game/sizes/
+
 # Blockchain / zk generated artifacts
 broadcast/
 artifacts/

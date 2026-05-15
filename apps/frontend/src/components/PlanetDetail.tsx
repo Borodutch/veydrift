@@ -3,6 +3,7 @@ import type { Planet, Coordinates } from "../types";
 import { getPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
+import { OptimizedImage } from "./OptimizedImage";
 
 interface Props {
   coords: Coordinates;
@@ -77,10 +78,11 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
         {/* Planet image */}
         <div className="flex flex-col gap-3">
           <div className="relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/30">
-            <img
-              src={planet.image}
+            <OptimizedImage
               alt={planet.name}
               className="h-full w-full object-cover"
+              sizes="planetPreview"
+              src={planet.image}
             />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_80%,rgba(5,7,13,0.6),transparent_60%)]" />
             {isHome ? (

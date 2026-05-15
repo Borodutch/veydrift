@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildingEffectMetrics,
   buildingCost,
   canAfford,
   createInitialPlayableState,
+  energyBalance,
   productionPerHour,
+  researchCatalog,
+  researchRequirementsFor,
   settleState,
   shipCatalog,
   startBuildingUpgrade,
   startResearch,
   startShipProduction,
   storageCaps,
+  unmetResearchRequirement,
 } from "../src/playableMvp";
 
 describe("playable MVP simulation", () => {
@@ -97,10 +102,29 @@ describe("playable MVP simulation", () => {
     expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/"))).toBe(true);
   });
 
-  test("runs research in parallel with building production", () => {
+  test("requires Research Lab before any research can start", () => {
     const state = createInitialPlayableState(1_000);
+    const queued = startResearch(state, "energy", 1_000);
+
+    expect(queued.researchQueue).toBeUndefined();
+    expect(unmetResearchRequirement(state, "energy")).toEqual({
+      type: "building",
+      key: "researchLab",
+      level: 1,
+    });
+  });
+
+  test("runs unlocked research in parallel with building production", () => {
+    const initial = createInitialPlayableState(1_000);
+    const state = {
+      ...initial,
+      buildings: {
+        ...initial.buildings,
+        researchLab: 1,
+      },
+    };
     const buildingQueued = startBuildingUpgrade(state, "metalMine", 1_000);
-    const researchQueued = startResearch(buildingQueued, "orbitalCartography", 1_000);
+    const researchQueued = startResearch(buildingQueued, "energy", 1_000);
 
     expect(researchQueued.queue?.kind).toBe("building");
     expect(researchQueued.researchQueue?.kind).toBe("research");
@@ -108,9 +132,36 @@ describe("playable MVP simulation", () => {
     const settled = settleState(researchQueued, 62_000);
 
     expect(settled.buildings.metalMine).toBe(1);
-    expect(settled.research.orbitalCartography).toBe(1);
+    expect(settled.research.energy).toBe(1);
     expect(settled.queue).toBeUndefined();
     expect(settled.researchQueue).toBeUndefined();
+  });
+
+  test("mirrors the contract research catalog and prerequisites", () => {
+    expect(researchCatalog.map((item) => item.key)).toEqual([
+      "energy",
+      "laser",
+      "ion",
+      "hyperspace",
+      "plasma",
+      "combustionDrive",
+      "impulseDrive",
+      "hyperspaceDrive",
+      "espionage",
+      "computer",
+      "astrophysics",
+      "intergalacticResearchNetwork",
+      "graviton",
+      "weapons",
+      "shielding",
+      "armor",
+    ]);
+    expect(researchRequirementsFor("plasma")).toEqual([
+      { type: "building", key: "researchLab", level: 1 },
+      { type: "research", key: "energy", level: 8 },
+      { type: "research", key: "laser", level: 10 },
+      { type: "research", key: "ion", level: 5 },
+    ]);
   });
 
   test("checks affordability against all resource types", () => {
@@ -122,5 +173,54 @@ describe("playable MVP simulation", () => {
       { metal: 5_000, crystal: 5_000, deuterium: 5_000 },
       { metal: 4_000, crystal: 1_000, deuterium: 5_001 },
     )).toBe(false);
+  });
+
+  test("exposes building effect metrics from the same production and storage formulas", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      metalMine: 1,
+      solarPlant: 2,
+      metalStorage: 1,
+    };
+
+    const mineEffect = buildingEffectMetrics(buildings, "metalMine");
+    const storageEffect = buildingEffectMetrics(buildings, "metalStorage");
+
+    expect(mineEffect.kind).toBe("production");
+    if (mineEffect.kind === "production") {
+      expect(mineEffect.resource).toBe("metal");
+      expect(mineEffect.currentPerHour).toBe(productionPerHour(buildings).metal);
+      expect(mineEffect.deltaPerHour).toBeGreaterThan(0);
+    }
+
+    expect(storageEffect.kind).toBe("storage");
+    if (storageEffect.kind === "storage") {
+      expect(storageEffect.resource).toBe("metal");
+      expect(storageEffect.currentCapacity).toBe(storageCaps(buildings).metal);
+      expect(storageEffect.deltaCapacity).toBe(10_000);
+    }
+  });
+
+  test("reports modeled energy and unlock effects for utility buildings", () => {
+    const state = createInitialPlayableState(1_000);
+    const energyEffect = buildingEffectMetrics(state.buildings, "solarPlant");
+    const shipyardEffect = buildingEffectMetrics(state.buildings, "shipyard");
+
+    expect(energyBalance({ ...state.buildings, metalMine: 1 })).toMatchObject({
+      produced: 0,
+      required: 10,
+      scaleBps: 0,
+    });
+    expect(energyEffect.kind).toBe("energy");
+    if (energyEffect.kind === "energy") {
+      expect(energyEffect.deltaProduced).toBe(30);
+    }
+
+    expect(shipyardEffect.kind).toBe("shipyard");
+    if (shipyardEffect.kind === "shipyard") {
+      expect(shipyardEffect.unlocked).toBe(false);
+      expect(shipyardEffect.nextUnlocked).toBe(true);
+    }
   });
 });

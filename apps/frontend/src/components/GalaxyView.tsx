@@ -3,6 +3,7 @@ import type { Planet, Coordinates } from "../types";
 import { generateSystem, GALAXY_COUNT, SYSTEM_COUNT, POSITION_COUNT, planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
+import { OptimizedImage } from "./OptimizedImage";
 
 interface Props {
   galaxy: number;
@@ -112,7 +113,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
           <select
             value={galaxy}
             onChange={handleGalaxyChange}
-            className="rounded border border-white/15 bg-void px-2 py-1.5 text-sm text-white outline-none focus:border-signal/50"
+            className="rounded border border-white/15 bg-[#070913] px-2 py-1.5 text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
           >
             {Array.from({ length: GALAXY_COUNT }, (_, i) => i + 1).map((g) => (
               <option key={g} value={g}>
@@ -125,7 +126,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
           <select
             value={system}
             onChange={handleSystemChange}
-            className="rounded border border-white/15 bg-void px-2 py-1.5 text-sm text-white outline-none focus:border-signal/50"
+            className="rounded border border-white/15 bg-[#070913] px-2 py-1.5 text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
           >
             {Array.from({ length: SYSTEM_COUNT }, (_, i) => i + 1).map((s) => (
               <option key={s} value={s}>
@@ -192,11 +193,12 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
                         className="group flex items-center gap-2.5 text-left transition-opacity hover:opacity-80"
                       >
                         <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30">
-                          <img
-                            src={planet.image}
+                          <OptimizedImage
                             alt={planet.name}
                             className="h-full w-full object-cover"
                             loading="lazy"
+                            sizes="icon"
+                            src={planet.image}
                           />
                         </div>
                         <div className="min-w-0">

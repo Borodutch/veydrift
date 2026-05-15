@@ -3,6 +3,7 @@ import type { ComponentChildren } from "preact";
 import type { Resources, ShipKey } from "../playableMvp";
 import { canAfford, shipCatalog } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
+import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -212,9 +213,10 @@ function ShipTile({
 }) {
   return (
     <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
-      <img
+      <OptimizedImage
         alt=""
         className="aspect-square w-full rounded object-cover"
+        sizes="shipThumbnail"
         src={ship.asset}
       />
       <div className="min-w-0">

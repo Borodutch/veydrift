@@ -53,6 +53,18 @@ export type ResearchKey =
   | "orbitalCartography"
   | "baseRelaySecurity";
 
+export type ResearchRequirement =
+  | {
+      type: "building";
+      key: BuildingKey;
+      level: number;
+    }
+  | {
+      type: "research";
+      key: ResearchKey;
+      level: number;
+    };
+
 export type MainQueueItem =
   | {
       kind: "building";
@@ -91,6 +103,52 @@ export type PlayableState = {
   researchQueue?: ResearchQueueItem | undefined;
   lastSettledAt: number;
 };
+
+export type EnergyBalance = {
+  produced: number;
+  required: number;
+  scaleBps: number;
+};
+
+export type BuildingEffectMetrics =
+  | {
+      kind: "production";
+      resource: keyof Resources;
+      currentPerHour: number;
+      nextPerHour: number;
+      deltaPerHour: number;
+    }
+  | {
+      kind: "energy";
+      currentProduced: number;
+      nextProduced: number;
+      deltaProduced: number;
+      required: number;
+    }
+  | {
+      kind: "storage";
+      resource: keyof Resources;
+      currentCapacity: number;
+      nextCapacity: number;
+      deltaCapacity: number;
+    }
+  | {
+      kind: "constructionSpeed";
+      currentFactor: number;
+      nextFactor: number;
+    }
+  | {
+      kind: "shipyard";
+      currentFactor: number;
+      nextFactor: number;
+      unlocked: boolean;
+      nextUnlocked: boolean;
+    }
+  | {
+      kind: "researchSpeed";
+      currentFactor: number;
+      nextFactor: number;
+    };
 
 export const buildingCatalog: Array<{
   key: BuildingKey;
@@ -373,22 +431,145 @@ export const researchCatalog: Array<{
   label: string;
   lane: string;
   baseCost: Resources;
+  requirements?: ResearchRequirement[] | undefined;
   asset: string;
 }> = [
   {
-    key: "orbitalCartography",
-    label: "Orbital Cartography",
-    lane: "Exploration",
-    baseCost: { metal: 160, crystal: 120, deuterium: 0 },
-    asset: "/assets/game/buildings/research-lab-mid.webp",
+    key: "energy",
+    label: "Energy Technology",
+    lane: "Basic",
+    baseCost: { metal: 0, crystal: 800, deuterium: 400 },
+    asset: "/assets/game/style-pass/generated/buildings/solar-plant-mid.webp",
   },
   {
-    key: "baseRelaySecurity",
-    label: "Base Relay Security",
-    lane: "Network",
-    baseCost: { metal: 120, crystal: 180, deuterium: 40 },
-    asset: "/assets/game/buildings/robotics-factory-mid.webp",
+    key: "laser",
+    label: "Laser Technology",
+    lane: "Basic",
+    baseCost: { metal: 200, crystal: 100, deuterium: 0 },
+    requirements: [{ type: "research", key: "energy", level: 1 }],
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
   },
+  {
+    key: "ion",
+    label: "Ion Technology",
+    lane: "Basic",
+    baseCost: { metal: 1_000, crystal: 300, deuterium: 100 },
+    requirements: [{ type: "research", key: "laser", level: 2 }],
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "hyperspace",
+    label: "Hyperspace Technology",
+    lane: "Advanced",
+    baseCost: { metal: 0, crystal: 4_000, deuterium: 2_000 },
+    requirements: [{ type: "research", key: "energy", level: 5 }],
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "plasma",
+    label: "Plasma Technology",
+    lane: "Advanced",
+    baseCost: { metal: 2_000, crystal: 4_000, deuterium: 1_000 },
+    requirements: [
+      { type: "research", key: "energy", level: 8 },
+      { type: "research", key: "laser", level: 10 },
+      { type: "research", key: "ion", level: 5 },
+    ],
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "combustionDrive",
+    label: "Combustion Drive",
+    lane: "Drive",
+    baseCost: { metal: 400, crystal: 0, deuterium: 600 },
+    asset: "/assets/game/style-pass/generated/buildings/shipyard-mid.webp",
+  },
+  {
+    key: "impulseDrive",
+    label: "Impulse Drive",
+    lane: "Drive",
+    baseCost: { metal: 2_000, crystal: 4_000, deuterium: 600 },
+    requirements: [{ type: "research", key: "energy", level: 1 }],
+    asset: "/assets/game/style-pass/generated/buildings/shipyard-mid.webp",
+  },
+  {
+    key: "hyperspaceDrive",
+    label: "Hyperspace Drive",
+    lane: "Drive",
+    baseCost: { metal: 10_000, crystal: 20_000, deuterium: 6_000 },
+    requirements: [{ type: "research", key: "hyperspace", level: 3 }],
+    asset: "/assets/game/style-pass/generated/buildings/shipyard-mid.webp",
+  },
+  {
+    key: "espionage",
+    label: "Espionage Technology",
+    lane: "Advanced",
+    baseCost: { metal: 200, crystal: 1_000, deuterium: 200 },
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "computer",
+    label: "Computer Technology",
+    lane: "Advanced",
+    baseCost: { metal: 0, crystal: 400, deuterium: 600 },
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "astrophysics",
+    label: "Astrophysics",
+    lane: "Advanced",
+    baseCost: { metal: 4_000, crystal: 8_000, deuterium: 4_000 },
+    requirements: [
+      { type: "research", key: "espionage", level: 4 },
+      { type: "research", key: "impulseDrive", level: 3 },
+    ],
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "intergalacticResearchNetwork",
+    label: "Intergalactic Research Network",
+    lane: "Advanced",
+    baseCost: { metal: 240_000, crystal: 400_000, deuterium: 160_000 },
+    requirements: [
+      { type: "research", key: "computer", level: 8 },
+      { type: "research", key: "hyperspace", level: 8 },
+    ],
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "graviton",
+    label: "Graviton Technology",
+    lane: "Advanced",
+    baseCost: { metal: 0, crystal: 0, deuterium: 0 },
+    requirements: [{ type: "research", key: "energy", level: 12 }],
+    asset: "/assets/game/style-pass/generated/buildings/solar-plant-mid.webp",
+  },
+  {
+    key: "weapons",
+    label: "Weapons Technology",
+    lane: "Combat",
+    baseCost: { metal: 800, crystal: 200, deuterium: 0 },
+    asset: "/assets/game/style-pass/generated/buildings/shipyard-mid.webp",
+  },
+  {
+    key: "shielding",
+    label: "Shielding Technology",
+    lane: "Combat",
+    baseCost: { metal: 200, crystal: 600, deuterium: 0 },
+    requirements: [{ type: "research", key: "energy", level: 1 }],
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "armor",
+    label: "Armor Technology",
+    lane: "Combat",
+    baseCost: { metal: 1_000, crystal: 0, deuterium: 0 },
+    asset: "/assets/game/style-pass/generated/buildings/metal-mine-mid.webp",
+  },
+];
+
+const BASE_RESEARCH_REQUIREMENTS: ResearchRequirement[] = [
+  { type: "building", key: "researchLab", level: 1 },
 ];
 
 const BPS = 10_000;
@@ -459,15 +640,7 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
 }
 
 export function productionPerHour(buildings: Record<BuildingKey, number>): Resources {
-  const requiredEnergy = (
-    buildings.metalMine * 10
-    + buildings.crystalMine * 12
-    + buildings.deuteriumSynthesizer * 20
-  );
-  const producedEnergy = buildings.solarPlant * 30;
-  const energyScale = requiredEnergy === 0 || producedEnergy >= requiredEnergy
-    ? BPS
-    : Math.floor((producedEnergy * BPS) / requiredEnergy);
+  const energy = energyBalance(buildings);
 
   return {
     metal: scaleByBps(
@@ -475,14 +648,14 @@ export function productionPerHour(buildings: Record<BuildingKey, number>): Resou
         30 + buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
         PLANET.metalMultiplierBps,
       ),
-      energyScale,
+      energy.scaleBps,
     ),
     crystal: scaleByBps(
       scaleByBps(
         15 + buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
         PLANET.crystalMultiplierBps,
       ),
-      energyScale,
+      energy.scaleBps,
     ),
     deuterium: scaleByBps(
       scaleByBps(
@@ -491,8 +664,25 @@ export function productionPerHour(buildings: Record<BuildingKey, number>): Resou
           + buildings.deuteriumSynthesizer * buildings.deuteriumSynthesizer * 3,
         PLANET.deuteriumMultiplierBps,
       ),
-      energyScale,
+      energy.scaleBps,
     ),
+  };
+}
+
+export function energyBalance(buildings: Record<BuildingKey, number>): EnergyBalance {
+  const required = (
+    buildings.metalMine * 10
+    + buildings.crystalMine * 12
+    + buildings.deuteriumSynthesizer * 20
+  );
+  const produced = buildings.solarPlant * 30;
+
+  return {
+    produced,
+    required,
+    scaleBps: required === 0 || produced >= required
+      ? BPS
+      : Math.floor((produced * BPS) / required),
   };
 }
 
@@ -516,6 +706,81 @@ export function buildingCost(
   return scaleByLevel(entry.baseCost, buildings[key]);
 }
 
+export function buildingEffectMetrics(
+  buildings: Record<BuildingKey, number>,
+  key: BuildingKey,
+): BuildingEffectMetrics {
+  const nextBuildings = {
+    ...buildings,
+    [key]: buildings[key] + 1,
+  };
+
+  if (key === "metalMine" || key === "crystalMine" || key === "deuteriumSynthesizer") {
+    const current = productionPerHour(buildings);
+    const next = productionPerHour(nextBuildings);
+    const resource = productionResourceForBuilding(key);
+
+    return {
+      kind: "production",
+      resource,
+      currentPerHour: current[resource],
+      nextPerHour: next[resource],
+      deltaPerHour: next[resource] - current[resource],
+    };
+  }
+
+  if (key === "solarPlant") {
+    const current = energyBalance(buildings);
+    const next = energyBalance(nextBuildings);
+
+    return {
+      kind: "energy",
+      currentProduced: current.produced,
+      nextProduced: next.produced,
+      deltaProduced: next.produced - current.produced,
+      required: current.required,
+    };
+  }
+
+  if (key === "metalStorage" || key === "crystalStorage" || key === "deuteriumTank") {
+    const current = storageCaps(buildings);
+    const next = storageCaps(nextBuildings);
+    const resource = storageResourceForBuilding(key);
+
+    return {
+      kind: "storage",
+      resource,
+      currentCapacity: current[resource],
+      nextCapacity: next[resource],
+      deltaCapacity: next[resource] - current[resource],
+    };
+  }
+
+  if (key === "roboticsFactory") {
+    return {
+      kind: "constructionSpeed",
+      currentFactor: buildings.roboticsFactory + 1,
+      nextFactor: nextBuildings.roboticsFactory + 1,
+    };
+  }
+
+  if (key === "shipyard") {
+    return {
+      kind: "shipyard",
+      currentFactor: Math.max(1, buildings.shipyard + 1),
+      nextFactor: nextBuildings.shipyard + 1,
+      unlocked: buildings.shipyard > 0,
+      nextUnlocked: nextBuildings.shipyard > 0,
+    };
+  }
+
+  return {
+    kind: "researchSpeed",
+    currentFactor: buildings.researchLab + 1,
+    nextFactor: nextBuildings.researchLab + 1,
+  };
+}
+
 export function researchCost(
   research: Record<ResearchKey, number>,
   key: ResearchKey,
@@ -526,6 +791,35 @@ export function researchCost(
   }
 
   return scaleByLevel(entry.baseCost, research[key]);
+}
+
+export function researchRequirementsFor(key: ResearchKey): ResearchRequirement[] {
+  const entry = researchCatalog.find((item) => item.key === key);
+  if (!entry) {
+    return [...BASE_RESEARCH_REQUIREMENTS];
+  }
+
+  return [...BASE_RESEARCH_REQUIREMENTS, ...(entry.requirements ?? [])];
+}
+
+export function unmetResearchRequirement(
+  state: Pick<PlayableState, "buildings" | "research">,
+  key: ResearchKey,
+): ResearchRequirement | undefined {
+  return researchRequirementsFor(key).find((requirement) => {
+    if (requirement.type === "building") {
+      return state.buildings[requirement.key] < requirement.level;
+    }
+
+    return state.research[requirement.key] < requirement.level;
+  });
+}
+
+export function researchDurationEstimate(
+  buildings: Record<BuildingKey, number>,
+  cost: Resources,
+): number {
+  return researchDurationSeconds(buildings.researchLab, cost);
 }
 
 export function canAfford(resources: Resources, cost: Resources): boolean {
@@ -676,6 +970,10 @@ export function startResearch(
     return settled;
   }
 
+  if (unmetResearchRequirement(settled, key)) {
+    return settled;
+  }
+
   const cost = researchCost(settled.research, key);
   if (!canAfford(settled.resources, cost)) {
     return settled;
@@ -714,6 +1012,30 @@ function scaleByLevel(cost: Resources, currentLevel: number): Resources {
   return multiply(cost, 2 ** currentLevel);
 }
 
+function productionResourceForBuilding(key: BuildingKey): keyof Resources {
+  if (key === "metalMine") {
+    return "metal";
+  }
+
+  if (key === "crystalMine") {
+    return "crystal";
+  }
+
+  return "deuterium";
+}
+
+function storageResourceForBuilding(key: BuildingKey): keyof Resources {
+  if (key === "metalStorage") {
+    return "metal";
+  }
+
+  if (key === "crystalStorage") {
+    return "crystal";
+  }
+
+  return "deuterium";
+}
+
 function buildingDurationSeconds(roboticsLevel: number, cost: Resources): number {
   const raw = Math.floor((cost.metal + cost.crystal) / (100 * (roboticsLevel + 1)));
   return Math.max(MIN_QUEUE_SECONDS, raw);
@@ -727,7 +1049,7 @@ function unitDurationSeconds(shipyardLevel: number, cost: Resources, quantity: n
 }
 
 function researchDurationSeconds(researchLabLevel: number, cost: Resources): number {
-  const raw = Math.floor((cost.metal + cost.crystal + cost.deuterium) / (110 * (researchLabLevel + 1)));
+  const raw = Math.floor((cost.metal + cost.crystal + cost.deuterium) / (120 * (researchLabLevel + 1)));
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 
