@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildingEffectMetrics,
   buildingCost,
   canAfford,
   createInitialPlayableState,
+  energyBalance,
   productionPerHour,
   researchCatalog,
   researchRequirementsFor,
@@ -148,5 +150,54 @@ describe("playable MVP simulation", () => {
       { metal: 5_000, crystal: 5_000, deuterium: 5_000 },
       { metal: 4_000, crystal: 1_000, deuterium: 5_001 },
     )).toBe(false);
+  });
+
+  test("exposes building effect metrics from the same production and storage formulas", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      metalMine: 1,
+      solarPlant: 2,
+      metalStorage: 1,
+    };
+
+    const mineEffect = buildingEffectMetrics(buildings, "metalMine");
+    const storageEffect = buildingEffectMetrics(buildings, "metalStorage");
+
+    expect(mineEffect.kind).toBe("production");
+    if (mineEffect.kind === "production") {
+      expect(mineEffect.resource).toBe("metal");
+      expect(mineEffect.currentPerHour).toBe(productionPerHour(buildings).metal);
+      expect(mineEffect.deltaPerHour).toBeGreaterThan(0);
+    }
+
+    expect(storageEffect.kind).toBe("storage");
+    if (storageEffect.kind === "storage") {
+      expect(storageEffect.resource).toBe("metal");
+      expect(storageEffect.currentCapacity).toBe(storageCaps(buildings).metal);
+      expect(storageEffect.deltaCapacity).toBe(10_000);
+    }
+  });
+
+  test("reports modeled energy and unlock effects for utility buildings", () => {
+    const state = createInitialPlayableState(1_000);
+    const energyEffect = buildingEffectMetrics(state.buildings, "solarPlant");
+    const shipyardEffect = buildingEffectMetrics(state.buildings, "shipyard");
+
+    expect(energyBalance({ ...state.buildings, metalMine: 1 })).toMatchObject({
+      produced: 0,
+      required: 10,
+      scaleBps: 0,
+    });
+    expect(energyEffect.kind).toBe("energy");
+    if (energyEffect.kind === "energy") {
+      expect(energyEffect.deltaProduced).toBe(30);
+    }
+
+    expect(shipyardEffect.kind).toBe("shipyard");
+    if (shipyardEffect.kind === "shipyard") {
+      expect(shipyardEffect.unlocked).toBe(false);
+      expect(shipyardEffect.nextUnlocked).toBe(true);
+    }
   });
 });
