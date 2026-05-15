@@ -1,17 +1,15 @@
 {
-  "name": "@veydrift/backend",
+  "name": "@veydrift/universe",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "build": "tsc --project tsconfig.json",
-    "check": "tsc --project tsconfig.json",
-    "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts",
-    "test": "bun test"
+  "exports": {
+    ".": "./src/index.ts"
   },
-  "dependencies": {
-    "@veydrift/universe": "workspace:*"
+  "scripts": {
+    "build": "bun run check",
+    "check": "tsc --project tsconfig.json",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "^1.2.23",
