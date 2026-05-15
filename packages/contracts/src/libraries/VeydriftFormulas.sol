@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
 /// @notice Pure gameplay formulas used by the Veydrift MVP contract.
 library VeydriftFormulas {
+    using SafeCast for int256;
+    using SafeCast for uint256;
+
     error LevelTooHigh();
 
     function planetMultipliers(int16 temperature, uint16 fields)
@@ -10,13 +15,10 @@ library VeydriftFormulas {
         pure
         returns (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier)
     {
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 temperatureIndex = uint256(int256(temperature) + 80);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        metalMultiplier = uint16(9_500 + ((temperatureIndex * 4) % 1_000));
+        uint256 temperatureIndex = (int256(temperature) + 80).toUint256();
+        metalMultiplier = (9_500 + ((temperatureIndex * 4) % 1_000)).toUint16();
         crystalMultiplier = uint16(9_600 + (uint256(fields) * 3) % 800);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        deuteriumMultiplier = uint16(10_800 - temperatureIndex * 3);
+        deuteriumMultiplier = (10_800 - temperatureIndex * 3).toUint16();
     }
 
     function productionPerHour(
@@ -118,7 +120,6 @@ library VeydriftFormulas {
         if (value > type(uint128).max) {
             revert LevelTooHigh();
         }
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return uint128(value);
+        return value.toUint128();
     }
 }

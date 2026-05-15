@@ -43,13 +43,14 @@ bun run test:contracts
 
 ## Contract Model
 
-`VeydriftGame` is an upgradeable MVP contract with one home planet per wallet.
+`VeydriftGame` is an upgradeable MVP contract with one paid home planet per wallet,
+player-owned colonies, lazy resource settlement, and non-combat transport fleets.
 
 Starting a planet:
 
 - `startPlanet()` costs exactly `0.05 ether` by default.
 - The owner can intentionally change the price with `setStartPrice`.
-- Each player can create one home planet.
+- Each player can create one home planet with payment, then additional colonies with colony ships.
 - Coordinates are generated deterministically from chain id, contract address, player, planet id, and attempt.
 - The first coordinate model uses `galaxy` 1-9, `system` 1-499, and `position` 1-15 with collision prevention.
 
@@ -71,12 +72,36 @@ Resources:
 - Production depends on mine levels, planet multipliers, and available solar energy.
 - Storage caps are enforced when resources are settled.
 
-Queues:
+Production:
 
-- One active building queue per planet
+- One active building construction per planet; buildings are not queued on-chain
 - One active defense queue per planet
 - One active ship queue per planet
 - One active research queue per player
+
+Colonies:
+
+- `maxPlanets(player)` is `1 + Computer` technology level. A player needs `Computer` level 1 before their first colony.
+- `createColony(originPlanetId, galaxy, system, position)` consumes one `ColonyShip` from the origin planet and reserves the target coordinate.
+- `createColonyAtNextSlot(originPlanetId, salt)` picks the first unoccupied deterministic slot from `nextColonyCoordinates(player, salt)`.
+- `isCoordinateAvailable(galaxy, system, position)` and `coordinateKey(...)` are exposed for frontends/indexers.
+- New colonies start with `500 metal`, `500 crystal`, and `0 deuterium`; production and storage then follow normal planet settlement rules.
+
+Transport fleets:
+
+- `dispatchTransport(originPlanetId, destinationPlanetId, smallCargo, recycler, colonyShip, cargo)` moves ships/resources only between planets owned by the caller.
+- Departure settles both planets, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
+- `transportCargoCapacity(...)`, `shipCargoCapacity(shipId)`, `transportFuelCost(...)`, and `transportTravelSeconds(...)` are view helpers for UI previews.
+- Arrivals are lazy: call `settleFleetArrival(fleetId)` after `fleet(fleetId).arrivesAt` to settle the destination, credit cargo, and land the ships.
+- `recallFleet(fleetId)` can be called before arrival; recalled fleets return to the origin with their ships and cargo. Fuel remains spent.
+
+Indexer-facing events:
+
+- `ColonyCreated(player, originPlanetId, colonyPlanetId, galaxy, system, position, fields, temperature)`
+- `FleetDispatched(fleetId, player, originPlanetId, destinationPlanetId, arrivesAt, smallCargo, recycler, colonyShip, metal, crystal, deuterium, fuelCost)`
+- `FleetRecalled(fleetId, player, originPlanetId, destinationPlanetId, arrivesAt)`
+- `FleetArrived(fleetId, player, destinationPlanetId, returning)`
+- `ResourcesTransferred(fleetId, originPlanetId, destinationPlanetId, metal, crystal, deuterium)`
 
 ## IDs
 
@@ -94,6 +119,11 @@ Buildings:
 | 7 | MetalStorage |
 | 8 | CrystalStorage |
 | 9 | DeuteriumTank |
+| 10 | FusionReactor |
+| 11 | NaniteFactory |
+| 12 | Terraformer |
+| 13 | AllianceDepot |
+| 14 | MissileSilo |
 
 Defenses:
 
@@ -103,6 +133,12 @@ Defenses:
 | 1 | LightLaser |
 | 2 | HeavyLaser |
 | 3 | SmallShieldDome |
+| 4 | GaussCannon |
+| 5 | IonCannon |
+| 6 | PlasmaTurret |
+| 7 | LargeShieldDome |
+| 8 | AntiBallisticMissile |
+| 9 | InterplanetaryMissile |
 
 Ships:
 
@@ -112,6 +148,18 @@ Ships:
 | 1 | LightFighter |
 | 2 | Recycler |
 | 3 | ColonyShip |
+| 4 | LargeCargo |
+| 5 | HeavyFighter |
+| 6 | Cruiser |
+| 7 | Battleship |
+| 8 | EspionageProbe |
+| 9 | Bomber |
+| 10 | SolarSatellite |
+| 11 | Destroyer |
+| 12 | Deathstar |
+| 13 | Battlecruiser |
+| 14 | Reaper |
+| 15 | Pathfinder |
 
 Technologies:
 
@@ -126,6 +174,22 @@ Technologies:
 | 6 | Weapons |
 | 7 | Shielding |
 | 8 | Armor |
+| 9 | Hyperspace |
+| 10 | ImpulseDrive |
+| 11 | HyperspaceDrive |
+| 12 | Plasma |
+| 13 | Astrophysics |
+| 14 | IntergalacticResearchNetwork |
+| 15 | Graviton |
+
+Resources:
+
+| ID | Name |
+| --- | --- |
+| 0 | Metal |
+| 1 | Crystal |
+| 2 | Deuterium |
+| 3 | Energy |
 
 ## Deployment
 
@@ -160,10 +224,8 @@ The proxy owner must be the broadcasting account for upgrades.
 
 This ticket intentionally leaves these systems for later work:
 
-- Colonies beyond the initial home planet
-- Resource transport and fleet movement
-- Fleet travel, combat, espionage reports, debris fields, moons, alliances, and markets
+- Combat, attacks, espionage reports, debris fields, moons, alliances, and markets
 - NFTs or transferable planet ownership
 - Commit-reveal or private-orderflow protections for future hidden fleet intent
 
-The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, resource costs, one active queue per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.
+The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, one active construction or production slot per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.
