@@ -86,6 +86,52 @@ export type PlayableState = {
   lastSettledAt: number;
 };
 
+export type EnergyBalance = {
+  produced: number;
+  required: number;
+  scaleBps: number;
+};
+
+export type BuildingEffectMetrics =
+  | {
+      kind: "production";
+      resource: keyof Resources;
+      currentPerHour: number;
+      nextPerHour: number;
+      deltaPerHour: number;
+    }
+  | {
+      kind: "energy";
+      currentProduced: number;
+      nextProduced: number;
+      deltaProduced: number;
+      required: number;
+    }
+  | {
+      kind: "storage";
+      resource: keyof Resources;
+      currentCapacity: number;
+      nextCapacity: number;
+      deltaCapacity: number;
+    }
+  | {
+      kind: "constructionSpeed";
+      currentFactor: number;
+      nextFactor: number;
+    }
+  | {
+      kind: "shipyard";
+      currentFactor: number;
+      nextFactor: number;
+      unlocked: boolean;
+      nextUnlocked: boolean;
+    }
+  | {
+      kind: "researchSpeed";
+      currentFactor: number;
+      nextFactor: number;
+    };
+
 export const buildingCatalog: Array<{
   key: BuildingKey;
   label: string;
@@ -379,15 +425,7 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
 }
 
 export function productionPerHour(buildings: Record<BuildingKey, number>): Resources {
-  const requiredEnergy = (
-    buildings.metalMine * 10
-    + buildings.crystalMine * 12
-    + buildings.deuteriumSynthesizer * 20
-  );
-  const producedEnergy = buildings.solarPlant * 30;
-  const energyScale = requiredEnergy === 0 || producedEnergy >= requiredEnergy
-    ? BPS
-    : Math.floor((producedEnergy * BPS) / requiredEnergy);
+  const energy = energyBalance(buildings);
 
   return {
     metal: scaleByBps(
@@ -395,14 +433,14 @@ export function productionPerHour(buildings: Record<BuildingKey, number>): Resou
         30 + buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
         PLANET.metalMultiplierBps,
       ),
-      energyScale,
+      energy.scaleBps,
     ),
     crystal: scaleByBps(
       scaleByBps(
         15 + buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
         PLANET.crystalMultiplierBps,
       ),
-      energyScale,
+      energy.scaleBps,
     ),
     deuterium: scaleByBps(
       scaleByBps(
@@ -411,8 +449,25 @@ export function productionPerHour(buildings: Record<BuildingKey, number>): Resou
           + buildings.deuteriumSynthesizer * buildings.deuteriumSynthesizer * 3,
         PLANET.deuteriumMultiplierBps,
       ),
-      energyScale,
+      energy.scaleBps,
     ),
+  };
+}
+
+export function energyBalance(buildings: Record<BuildingKey, number>): EnergyBalance {
+  const required = (
+    buildings.metalMine * 10
+    + buildings.crystalMine * 12
+    + buildings.deuteriumSynthesizer * 20
+  );
+  const produced = buildings.solarPlant * 30;
+
+  return {
+    produced,
+    required,
+    scaleBps: required === 0 || produced >= required
+      ? BPS
+      : Math.floor((produced * BPS) / required),
   };
 }
 
@@ -434,6 +489,81 @@ export function buildingCost(
   }
 
   return scaleByLevel(entry.baseCost, buildings[key]);
+}
+
+export function buildingEffectMetrics(
+  buildings: Record<BuildingKey, number>,
+  key: BuildingKey,
+): BuildingEffectMetrics {
+  const nextBuildings = {
+    ...buildings,
+    [key]: buildings[key] + 1,
+  };
+
+  if (key === "metalMine" || key === "crystalMine" || key === "deuteriumSynthesizer") {
+    const current = productionPerHour(buildings);
+    const next = productionPerHour(nextBuildings);
+    const resource = productionResourceForBuilding(key);
+
+    return {
+      kind: "production",
+      resource,
+      currentPerHour: current[resource],
+      nextPerHour: next[resource],
+      deltaPerHour: next[resource] - current[resource],
+    };
+  }
+
+  if (key === "solarPlant") {
+    const current = energyBalance(buildings);
+    const next = energyBalance(nextBuildings);
+
+    return {
+      kind: "energy",
+      currentProduced: current.produced,
+      nextProduced: next.produced,
+      deltaProduced: next.produced - current.produced,
+      required: current.required,
+    };
+  }
+
+  if (key === "metalStorage" || key === "crystalStorage" || key === "deuteriumTank") {
+    const current = storageCaps(buildings);
+    const next = storageCaps(nextBuildings);
+    const resource = storageResourceForBuilding(key);
+
+    return {
+      kind: "storage",
+      resource,
+      currentCapacity: current[resource],
+      nextCapacity: next[resource],
+      deltaCapacity: next[resource] - current[resource],
+    };
+  }
+
+  if (key === "roboticsFactory") {
+    return {
+      kind: "constructionSpeed",
+      currentFactor: buildings.roboticsFactory + 1,
+      nextFactor: nextBuildings.roboticsFactory + 1,
+    };
+  }
+
+  if (key === "shipyard") {
+    return {
+      kind: "shipyard",
+      currentFactor: Math.max(1, buildings.shipyard + 1),
+      nextFactor: nextBuildings.shipyard + 1,
+      unlocked: buildings.shipyard > 0,
+      nextUnlocked: nextBuildings.shipyard > 0,
+    };
+  }
+
+  return {
+    kind: "researchSpeed",
+    currentFactor: buildings.researchLab + 1,
+    nextFactor: nextBuildings.researchLab + 1,
+  };
 }
 
 export function researchCost(
@@ -665,6 +795,30 @@ export function planetSummary() {
 
 function scaleByLevel(cost: Resources, currentLevel: number): Resources {
   return multiply(cost, 2 ** currentLevel);
+}
+
+function productionResourceForBuilding(key: BuildingKey): keyof Resources {
+  if (key === "metalMine") {
+    return "metal";
+  }
+
+  if (key === "crystalMine") {
+    return "crystal";
+  }
+
+  return "deuterium";
+}
+
+function storageResourceForBuilding(key: BuildingKey): keyof Resources {
+  if (key === "metalStorage") {
+    return "metal";
+  }
+
+  if (key === "crystalStorage") {
+    return "crystal";
+  }
+
+  return "deuterium";
 }
 
 function buildingDurationSeconds(roboticsLevel: number, cost: Resources): number {
