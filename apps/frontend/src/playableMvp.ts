@@ -822,6 +822,13 @@ export function researchDurationEstimate(
   return researchDurationSeconds(buildings.researchLab, cost);
 }
 
+export function buildingDurationEstimate(
+  buildings: Record<BuildingKey, number>,
+  cost: Resources,
+): number {
+  return buildingDurationSeconds(buildings.roboticsFactory, cost);
+}
+
 export function canAfford(resources: Resources, cost: Resources): boolean {
   return resources.metal >= cost.metal
     && resources.crystal >= cost.crystal
