@@ -1,0 +1,16 @@
+FROM oven/bun:1.1.42-alpine
+
+WORKDIR /app
+
+COPY package.json ./
+RUN bun install --frozen-lockfile
+
+COPY tsconfig.json ./
+COPY src ./src
+
+RUN bun run build
+
+ENV NODE_ENV=production
+ENV PORT=4000
+
+CMD ["bun", "run", "start"]
