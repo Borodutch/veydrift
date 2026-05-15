@@ -25,9 +25,14 @@ const playableHtmlEnv = {
 } satisfies HtmlEnv;
 
 export default defineConfig(({ mode }) => {
-  const htmlEnv = mode === "playable" ? playableHtmlEnv : baseHtmlEnv;
+  const isTestSurface = mode === "playable" || mode === "settlement";
+  const htmlEnv = isTestSurface ? playableHtmlEnv : baseHtmlEnv;
+  const surface = mode === "playable" || mode === "settlement" ? mode : "";
 
   return {
+    define: {
+      "import.meta.env.VITE_VEYDRIFT_SURFACE": JSON.stringify(surface),
+    },
     plugins: [
       preact(),
       htmlEnvDefaults(htmlEnv),

@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "build:playable": "VITE_VEYDRIFT_SURFACE=playable vite build --mode playable",
-    "build:test": "VITE_VEYDRIFT_SURFACE=settlement vite build --mode playable",
+    "build:playable": "vite build --mode playable",
+    "build:test": "vite build --mode settlement",
     "check": "tsc --project tsconfig.json && vite build",
     "dev": "vite --host 0.0.0.0",
     "preview": "vite preview --host 0.0.0.0",
