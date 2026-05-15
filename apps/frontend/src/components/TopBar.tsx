@@ -1,12 +1,14 @@
 import type { Resources, QueueItem } from "../playableMvp";
+import type { ChainLoadStatus } from "../overviewData";
 import { shortAddress } from "../walletFlow";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 interface TopBarProps {
-  resources: Resources;
+  resources?: Resources | undefined;
   rates: Resources;
   caps: Resources;
+  resourceStatus: ChainLoadStatus;
   queue?: QueueItem | undefined;
   researchQueue?: QueueItem | undefined;
   account?: string | undefined;
@@ -18,6 +20,7 @@ export function TopBar({
   resources,
   rates,
   caps,
+  resourceStatus,
   queue,
   researchQueue,
   account,
@@ -29,27 +32,35 @@ export function TopBar({
       <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 px-3 py-2 sm:flex-row sm:justify-between sm:gap-3 sm:px-4 lg:px-6">
         {/* Resources row */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <ResourcePip
-            label="Metal"
-            value={resources.metal}
-            rate={rates.metal}
-            cap={caps.metal}
-            color="text-amber-300"
-          />
-          <ResourcePip
-            label="Crystal"
-            value={resources.crystal}
-            rate={rates.crystal}
-            cap={caps.crystal}
-            color="text-cyan-300"
-          />
-          <ResourcePip
-            label="Deuterium"
-            value={resources.deuterium}
-            rate={rates.deuterium}
-            cap={caps.deuterium}
-            color="text-emerald-300"
-          />
+          {resourceStatus === "loading" ? (
+            <span className="text-xs text-slate-400">Resources loading</span>
+          ) : resourceStatus === "error" || !resources ? (
+            <span className="text-xs text-amber-200">Resources unavailable</span>
+          ) : (
+            <>
+              <ResourcePip
+                cap={resourceStatus === "local" ? caps.metal : undefined}
+                color="text-amber-300"
+                label="Metal"
+                rate={resourceStatus === "local" ? rates.metal : undefined}
+                value={resources.metal}
+              />
+              <ResourcePip
+                cap={resourceStatus === "local" ? caps.crystal : undefined}
+                color="text-cyan-300"
+                label="Crystal"
+                rate={resourceStatus === "local" ? rates.crystal : undefined}
+                value={resources.crystal}
+              />
+              <ResourcePip
+                cap={resourceStatus === "local" ? caps.deuterium : undefined}
+                color="text-emerald-300"
+                label="Deuterium"
+                rate={resourceStatus === "local" ? rates.deuterium : undefined}
+                value={resources.deuterium}
+              />
+            </>
+          )}
           {queue && (
             <span className="rounded bg-white/10 px-2 py-1 text-xs text-slate-300">
               {queue.label}
@@ -89,16 +100,16 @@ function ResourcePip({
 }: {
   label: string;
   value: number;
-  rate: number;
-  cap: number;
+  rate?: number | undefined;
+  cap?: number | undefined;
   color: string;
 }) {
-  const pct = cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
+  const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex min-w-0 items-center gap-1.5">
       <span className={`text-xs font-semibold ${color}`}>{label}</span>
-      <span className="text-xs text-white">{format(value)}</span>
-      <span className="text-[10px] text-slate-500">+{format(rate)}/h</span>
+      <span className="break-words text-xs text-white">{format(value)}</span>
+      {rate !== undefined && <span className="text-[10px] text-slate-500">+{format(rate)}/h</span>}
       {pct >= 90 && (
         <span className="text-[10px] text-amber-400">{pct}%</span>
       )}

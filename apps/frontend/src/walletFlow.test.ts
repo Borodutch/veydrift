@@ -11,6 +11,7 @@ import {
   isBaseSepoliaChain,
   isUserRejected,
   readSettlementState,
+  sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
   sendFinishShipProductionTransaction,
   sendSettlementTransaction,
@@ -128,7 +129,9 @@ describe("walletFlow", () => {
       throw new Error(`Unexpected call ${call.data}`);
     });
 
-    await expect(readSettlementState(provider, account, { address: contract })).resolves.toMatchObject({
+    const settlement = await readSettlementState(provider, account, { address: contract });
+
+    expect(settlement).toMatchObject({
       kind: "settled",
       planet: {
         coordinates: "1:42:7",
@@ -139,6 +142,8 @@ describe("walletFlow", () => {
         settledAt: "2027-01-15T08:00:00.000Z"
       }
     });
+    expect(settlement.kind === "settled" ? settlement.planet.fields : undefined).toBeUndefined();
+    expect(settlement.kind === "settled" ? settlement.planet.temperature : undefined).toBeUndefined();
   });
 
   test("reports unconfigured settlement when no address is present", async () => {
@@ -186,16 +191,29 @@ describe("walletFlow", () => {
     });
 
     await expect(
-      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
+      sendCollectResourcesTransaction(provider, account, contract, "7")
     ).resolves.toBe("0xtx1");
     await expect(
-      sendFinishShipProductionTransaction(provider, account, contract, "7")
+      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
     ).resolves.toBe("0xtx2");
     await expect(
-      sendCollectShipsTransaction(provider, account, contract, "7")
+      sendFinishShipProductionTransaction(provider, account, contract, "7")
     ).resolves.toBe("0xtx3");
+    await expect(
+      sendCollectShipsTransaction(provider, account, contract, "7")
+    ).resolves.toBe("0xtx4");
 
     expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      },
       {
         method: "eth_sendTransaction",
         params: [
