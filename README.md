@@ -79,14 +79,16 @@ VEYDRIFT_DEPLOYMENT_MODE=local
 VEYDRIFT_CHAIN_ID=84532
 VEYDRIFT_CONTRACT_ADDRESS=0x...
 VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=0x...
+VEYDRIFT_GAME_CONTRACT_ADDRESS=0x...
 VEYDRIFT_INDEX_FROM_BLOCK=0
 ALCHEMY_BASE_SEPOLIA_API_KEY=...
 ```
 
 The backend accepts `ALCHEMY_BASE_SEPOLIA_API_KEY`,
 `ALCHEMY_BASE_SEPOLIA_RPC_URL`, `BASE_SEPOLIA_RPC_URL`, or `VEYDRIFT_RPC_URL`.
-`VEYDRIFT_CONTRACT_ADDRESS` must point at the deployed `VeydriftGame` proxy for
-game-state APIs and runtime Shipyard transactions.
+`VEYDRIFT_GAME_CONTRACT_ADDRESS` or the legacy `VEYDRIFT_CONTRACT_ADDRESS` must
+point at the deployed `VeydriftGame` proxy for game-state APIs and runtime
+Shipyard transactions.
 `VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS` is the compact first-planet settlement
 contract used for settlement/universe context and must not be used as the game
 contract.
@@ -212,6 +214,7 @@ VEYDRIFT_ALLOWED_ORIGIN=https://test.veydrift.com
 VEYDRIFT_CHAIN_ID=84532
 VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
 VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia compact settlement address>
+VEYDRIFT_GAME_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
 VEYDRIFT_NETWORK_NAME=Base Sepolia
 VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
 VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql

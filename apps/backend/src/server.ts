@@ -29,6 +29,7 @@ type RuntimeConfig = {
   apiUrl: string;
   chainId: number;
   contractAddress: string | null;
+  gameContractAddress: string | null;
   graphqlUrl: string;
   network: string;
   rpcProvider: "alchemy" | "unknown";
@@ -335,12 +336,19 @@ function getRuntimeConfig(): RuntimeConfig {
   const graphqlUrl = process.env.VEYDRIFT_PUBLIC_GRAPHQL_URL ?? `${apiUrl}/graphql`;
   const rpcUrl = process.env.VEYDRIFT_RPC_URL ?? "";
   const contractAddress =
-    process.env.VEYDRIFT_CONTRACT_ADDRESS ?? null;
+    process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS ??
+    process.env.VEYDRIFT_CONTRACT_ADDRESS ??
+    null;
+  const gameContractAddress =
+    process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS ??
+    process.env.VEYDRIFT_CONTRACT_ADDRESS ??
+    null;
 
   return {
     apiUrl,
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
     contractAddress,
+    gameContractAddress,
     graphqlUrl,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
