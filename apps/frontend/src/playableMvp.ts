@@ -16,6 +16,19 @@ export type BuildingKey =
   | "crystalStorage"
   | "deuteriumTank";
 
+export const buildingContractIds: Record<BuildingKey, number> = {
+  metalMine: 0,
+  crystalMine: 1,
+  deuteriumSynthesizer: 2,
+  solarPlant: 3,
+  roboticsFactory: 4,
+  shipyard: 5,
+  researchLab: 6,
+  metalStorage: 7,
+  crystalStorage: 8,
+  deuteriumTank: 9,
+};
+
 export type ShipKey =
   | "smallCargo"
   | "lightFighter"

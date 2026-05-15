@@ -48,10 +48,21 @@ export type BuildingEnergyDetail =
 export function buildingUpgradeStatus(
   state: PlayableState,
   key: BuildingKey,
+  options: { actionUnavailableReason?: string | undefined } = {},
 ): BuildingUpgradeStatus {
   const cost = buildingCost(state.buildings, key);
   const targetLevel = state.buildings[key] + 1;
   const durationSeconds = buildingDurationEstimate(state.buildings, cost);
+
+  if (options.actionUnavailableReason) {
+    return {
+      cost,
+      disabled: true,
+      durationSeconds,
+      reason: options.actionUnavailableReason,
+      targetLevel,
+    };
+  }
 
   if (state.queue) {
     return {

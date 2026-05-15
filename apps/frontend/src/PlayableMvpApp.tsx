@@ -9,6 +9,7 @@ import { InfrastructurePage } from "./components/InfrastructurePage";
 import { ResearchPage } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import {
+  buildingContractIds,
   createInitialPlayableState,
   productionPerHour,
   progress,
@@ -33,6 +34,7 @@ import {
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
   sendFinishShipProductionTransaction,
+  sendStartBuildingUpgradeTransaction,
   sendStartShipProductionTransaction,
   waitForReceipt,
   type ChainShipyardState,
@@ -81,6 +83,8 @@ type ShipyardActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
+type BuildingActionState = ShipyardActionState;
+
 export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
@@ -100,6 +104,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
+  const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
       const [g, s] = planet.coordinates.split(":").map(Number);
@@ -161,14 +166,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       });
   }, [account, apiBaseUrl]);
 
-  useEffect(() => {
-    if (planet?.coordinates) {
-      const [g, s] = planet.coordinates.split(":").map(Number);
-      setGalaxyNav({ galaxy: g || 1, system: s || 1 });
-    }
-  }, [planet?.coordinates]);
-
-  useEffect(() => {
+  const refreshOnChainState = useCallback(async () => {
     if (!apiBaseUrl || !account) {
       setOnChainSettlement(undefined);
       setOnChainQueues(undefined);
@@ -177,29 +175,36 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return;
     }
 
-    const load = async () => {
-      setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
-      try {
-        const [settlement, queues] = await Promise.all([
-          fetchWalletSettlement(apiBaseUrl, account),
-          fetchWalletQueues(apiBaseUrl, account),
-        ]);
-        setOnChainSettlement(settlement);
-        setOnChainQueues(queues);
-        setOnChainError(undefined);
-        setOnChainStatus("ready");
-      } catch (error) {
-        setOnChainError(error instanceof Error ? error.message : "Failed to load on-chain state");
-        setOnChainSettlement(undefined);
-        setOnChainQueues(undefined);
-        setOnChainStatus("error");
-      }
-    };
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    try {
+      const [settlement, queues] = await Promise.all([
+        fetchWalletSettlement(apiBaseUrl, account),
+        fetchWalletQueues(apiBaseUrl, account),
+      ]);
+      setOnChainSettlement(settlement);
+      setOnChainQueues(queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+    } catch (error) {
+      setOnChainError(error instanceof Error ? error.message : "Failed to load on-chain state");
+      setOnChainSettlement(undefined);
+      setOnChainQueues(undefined);
+      setOnChainStatus("error");
+    }
+  }, [account, apiBaseUrl, isWalletConnected]);
 
-    void load();
-    const interval = window.setInterval(() => void load(), 30_000);
+  useEffect(() => {
+    if (planet?.coordinates) {
+      const [g, s] = planet.coordinates.split(":").map(Number);
+      setGalaxyNav({ galaxy: g || 1, system: s || 1 });
+    }
+  }, [planet?.coordinates]);
+
+  useEffect(() => {
+    void refreshOnChainState();
+    const interval = window.setInterval(() => void refreshOnChainState(), 30_000);
     return () => window.clearInterval(interval);
-  }, [apiBaseUrl, account, isWalletConnected]);
+  }, [refreshOnChainState]);
 
   const settledState = useMemo(() => settleState(state, now), [state, now]);
   const rates = productionPerHour(settledState.buildings);
@@ -209,6 +214,54 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const queueProgress = progress(buildingQueue, now);
   const researchProgress = progress(settledState.researchQueue, now);
   const shipProgress = progress(shipQueue, now);
+  const infrastructureState = useMemo<PlayableState>(() => {
+    if (!isWalletConnected || !onChainResources) {
+      return settledState;
+    }
+
+    return {
+      ...settledState,
+      resources: onChainResources,
+    };
+  }, [isWalletConnected, onChainResources, settledState]);
+  const infrastructureUnavailableReason = useMemo(() => {
+    if (!isWalletConnected) return undefined;
+    if (buildingAction.status === "pending") return buildingAction.label;
+    if (runtimeConfig.status === "loading" || onChainStatus === "loading") {
+      return "Loading real wallet resources";
+    }
+    if (runtimeConfig.status === "error" || onChainStatus === "error" || !onChainResources) {
+      return "Chain/API resources unavailable; upgrades are disabled until real wallet resources load.";
+    }
+    if (!gameContract) return "Game contract unavailable; upgrades are disabled.";
+    if (!onChainSettlement?.homePlanetId) return "No on-chain home planet found for this wallet.";
+    if (onChainQueues?.building?.active) {
+      const target = onChainQueues.building.targetLevel
+        ? ` to Level ${onChainQueues.building.targetLevel}`
+        : "";
+      return `Building upgrade${target} already pending on-chain.`;
+    }
+    return undefined;
+  }, [
+    buildingAction,
+    gameContract,
+    isWalletConnected,
+    onChainQueues?.building,
+    onChainResources,
+    onChainSettlement?.homePlanetId,
+    onChainStatus,
+    runtimeConfig.status,
+  ]);
+  const infrastructureActionNotice = buildingAction.status === "idle"
+    ? undefined
+    : {
+        label: buildingAction.label,
+        tone: buildingAction.status === "error"
+          ? "error"
+          : buildingAction.status === "success"
+            ? "success"
+            : "pending",
+      } as const;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -259,14 +312,59 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     setState((prev) => settleState(prev, currentNow));
   }, []);
 
+  const runBuildingTransaction = useCallback(async (key: BuildingKey) => {
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId || infrastructureUnavailableReason) {
+      setBuildingAction({
+        status: "error",
+        label: infrastructureUnavailableReason ?? "Wallet, game contract, or home planet is unavailable.",
+      });
+      return;
+    }
+
+    const building = buildingContractIds[key];
+    setBuildingAction({ status: "pending", label: "Waiting for wallet confirmation" });
+
+    try {
+      const txHash = await sendStartBuildingUpgradeTransaction(
+        provider,
+        account,
+        gameContract,
+        onChainSettlement.homePlanetId,
+        building,
+      );
+      setBuildingAction({ status: "pending", label: `Waiting for chain confirmation ${txHash.slice(0, 10)}...` });
+      await waitForReceipt(provider, txHash);
+      await refreshOnChainState();
+      setBuildingAction({ status: "success", label: "Building upgrade confirmed on-chain." });
+    } catch (error) {
+      console.error(error);
+      setBuildingAction({
+        status: "error",
+        label: error instanceof Error ? error.message : "Building upgrade transaction failed.",
+      });
+    }
+  }, [
+    account,
+    gameContract,
+    infrastructureUnavailableReason,
+    onChainSettlement?.homePlanetId,
+    provider,
+    refreshOnChainState,
+  ]);
+
   const handleUpgrade = useCallback((key: BuildingKey) => {
+    if (isWalletConnected) {
+      void runBuildingTransaction(key);
+      return;
+    }
+
     setState((prev) => {
       const currentNow = Date.now();
       const next = startBuildingUpgrade(prev, key, currentNow);
       setNow(currentNow);
       return next;
     });
-  }, []);
+  }, [isWalletConnected, runBuildingTransaction]);
 
   const handleResearch = useCallback((key: ResearchKey) => {
     setState((prev) => {
@@ -412,8 +510,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (page === "infrastructure") {
       return (
         <InfrastructurePage
+          actionNotice={infrastructureActionNotice}
+          actionUnavailableReason={infrastructureUnavailableReason}
           onUpgrade={handleUpgrade}
-          settledState={settledState}
+          settledState={infrastructureState}
           state={state}
         />
       );

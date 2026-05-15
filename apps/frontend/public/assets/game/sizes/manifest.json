@@ -1,0 +1,884 @@
+{
+  "/assets/game/ships/solar-satellite.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/solar-satellite.webp",
+      "256": "/assets/game/sizes/256/ships/solar-satellite.webp",
+      "512": "/assets/game/sizes/512/ships/solar-satellite.webp"
+    }
+  },
+  "/assets/game/ships/bomber.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/bomber.webp",
+      "256": "/assets/game/sizes/256/ships/bomber.webp",
+      "512": "/assets/game/sizes/512/ships/bomber.webp"
+    }
+  },
+  "/assets/game/ships/cruiser.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/cruiser.webp",
+      "256": "/assets/game/sizes/256/ships/cruiser.webp",
+      "512": "/assets/game/sizes/512/ships/cruiser.webp"
+    }
+  },
+  "/assets/game/ships/light-fighter.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/light-fighter.webp",
+      "256": "/assets/game/sizes/256/ships/light-fighter.webp",
+      "512": "/assets/game/sizes/512/ships/light-fighter.webp"
+    }
+  },
+  "/assets/game/ships/small-cargo.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/small-cargo.webp",
+      "256": "/assets/game/sizes/256/ships/small-cargo.webp",
+      "512": "/assets/game/sizes/512/ships/small-cargo.webp"
+    }
+  },
+  "/assets/game/ships/large-cargo.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/large-cargo.webp",
+      "256": "/assets/game/sizes/256/ships/large-cargo.webp",
+      "512": "/assets/game/sizes/512/ships/large-cargo.webp"
+    }
+  },
+  "/assets/game/ships/deathstar.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/deathstar.webp",
+      "256": "/assets/game/sizes/256/ships/deathstar.webp",
+      "512": "/assets/game/sizes/512/ships/deathstar.webp"
+    }
+  },
+  "/assets/game/ships/reaper.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/reaper.webp",
+      "256": "/assets/game/sizes/256/ships/reaper.webp",
+      "512": "/assets/game/sizes/512/ships/reaper.webp"
+    }
+  },
+  "/assets/game/ships/heavy-fighter.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/heavy-fighter.webp",
+      "256": "/assets/game/sizes/256/ships/heavy-fighter.webp",
+      "512": "/assets/game/sizes/512/ships/heavy-fighter.webp"
+    }
+  },
+  "/assets/game/ships/colony-ship.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/colony-ship.webp",
+      "256": "/assets/game/sizes/256/ships/colony-ship.webp",
+      "512": "/assets/game/sizes/512/ships/colony-ship.webp"
+    }
+  },
+  "/assets/game/ships/pathfinder.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/pathfinder.webp",
+      "256": "/assets/game/sizes/256/ships/pathfinder.webp",
+      "512": "/assets/game/sizes/512/ships/pathfinder.webp"
+    }
+  },
+  "/assets/game/ships/destroyer.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/destroyer.webp",
+      "256": "/assets/game/sizes/256/ships/destroyer.webp",
+      "512": "/assets/game/sizes/512/ships/destroyer.webp"
+    }
+  },
+  "/assets/game/ships/battleship.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/battleship.webp",
+      "256": "/assets/game/sizes/256/ships/battleship.webp",
+      "512": "/assets/game/sizes/512/ships/battleship.webp"
+    }
+  },
+  "/assets/game/ships/espionage-probe.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/espionage-probe.webp",
+      "256": "/assets/game/sizes/256/ships/espionage-probe.webp",
+      "512": "/assets/game/sizes/512/ships/espionage-probe.webp"
+    }
+  },
+  "/assets/game/ships/recycler.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/recycler.webp",
+      "256": "/assets/game/sizes/256/ships/recycler.webp",
+      "512": "/assets/game/sizes/512/ships/recycler.webp"
+    }
+  },
+  "/assets/game/ships/battlecruiser.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/ships/battlecruiser.webp",
+      "256": "/assets/game/sizes/256/ships/battlecruiser.webp",
+      "512": "/assets/game/sizes/512/ships/battlecruiser.webp"
+    }
+  },
+  "/assets/game/buildings/research-lab-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/research-lab-low.webp",
+      "256": "/assets/game/sizes/256/buildings/research-lab-low.webp",
+      "512": "/assets/game/sizes/512/buildings/research-lab-low.webp"
+    }
+  },
+  "/assets/game/buildings/deuterium-tank-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/deuterium-tank-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/deuterium-tank-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/deuterium-tank-mid.webp"
+    }
+  },
+  "/assets/game/buildings/robotics-factory-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/robotics-factory-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/robotics-factory-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/robotics-factory-mid.webp"
+    }
+  },
+  "/assets/game/buildings/terraformer-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/terraformer-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/terraformer-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/terraformer-mid.webp"
+    }
+  },
+  "/assets/game/buildings/metal-storage-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/metal-storage-low.webp",
+      "256": "/assets/game/sizes/256/buildings/metal-storage-low.webp",
+      "512": "/assets/game/sizes/512/buildings/metal-storage-low.webp"
+    }
+  },
+  "/assets/game/buildings/missile-silo-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/missile-silo-high.webp",
+      "256": "/assets/game/sizes/256/buildings/missile-silo-high.webp",
+      "512": "/assets/game/sizes/512/buildings/missile-silo-high.webp"
+    }
+  },
+  "/assets/game/buildings/robotics-factory-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/robotics-factory-high.webp",
+      "256": "/assets/game/sizes/256/buildings/robotics-factory-high.webp",
+      "512": "/assets/game/sizes/512/buildings/robotics-factory-high.webp"
+    }
+  },
+  "/assets/game/buildings/nanite-factory-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/nanite-factory-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/nanite-factory-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/nanite-factory-mid.webp"
+    }
+  },
+  "/assets/game/buildings/shipyard-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/shipyard-low.webp",
+      "256": "/assets/game/sizes/256/buildings/shipyard-low.webp",
+      "512": "/assets/game/sizes/512/buildings/shipyard-low.webp"
+    }
+  },
+  "/assets/game/buildings/deuterium-synthesizer-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/deuterium-synthesizer-low.webp",
+      "256": "/assets/game/sizes/256/buildings/deuterium-synthesizer-low.webp",
+      "512": "/assets/game/sizes/512/buildings/deuterium-synthesizer-low.webp"
+    }
+  },
+  "/assets/game/buildings/metal-mine-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/metal-mine-high.webp",
+      "256": "/assets/game/sizes/256/buildings/metal-mine-high.webp",
+      "512": "/assets/game/sizes/512/buildings/metal-mine-high.webp"
+    }
+  },
+  "/assets/game/buildings/nanite-factory-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/nanite-factory-high.webp",
+      "256": "/assets/game/sizes/256/buildings/nanite-factory-high.webp",
+      "512": "/assets/game/sizes/512/buildings/nanite-factory-high.webp"
+    }
+  },
+  "/assets/game/buildings/solar-plant-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/solar-plant-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/solar-plant-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/solar-plant-mid.webp"
+    }
+  },
+  "/assets/game/buildings/crystal-mine-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/crystal-mine-low.webp",
+      "256": "/assets/game/sizes/256/buildings/crystal-mine-low.webp",
+      "512": "/assets/game/sizes/512/buildings/crystal-mine-low.webp"
+    }
+  },
+  "/assets/game/buildings/missile-silo-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/missile-silo-low.webp",
+      "256": "/assets/game/sizes/256/buildings/missile-silo-low.webp",
+      "512": "/assets/game/sizes/512/buildings/missile-silo-low.webp"
+    }
+  },
+  "/assets/game/buildings/fusion-reactor-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/fusion-reactor-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/fusion-reactor-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/fusion-reactor-mid.webp"
+    }
+  },
+  "/assets/game/buildings/metal-storage-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/metal-storage-high.webp",
+      "256": "/assets/game/sizes/256/buildings/metal-storage-high.webp",
+      "512": "/assets/game/sizes/512/buildings/metal-storage-high.webp"
+    }
+  },
+  "/assets/game/buildings/solar-plant-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/solar-plant-high.webp",
+      "256": "/assets/game/sizes/256/buildings/solar-plant-high.webp",
+      "512": "/assets/game/sizes/512/buildings/solar-plant-high.webp"
+    }
+  },
+  "/assets/game/buildings/alliance-depot-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/alliance-depot-low.webp",
+      "256": "/assets/game/sizes/256/buildings/alliance-depot-low.webp",
+      "512": "/assets/game/sizes/512/buildings/alliance-depot-low.webp"
+    }
+  },
+  "/assets/game/buildings/alliance-depot-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/alliance-depot-high.webp",
+      "256": "/assets/game/sizes/256/buildings/alliance-depot-high.webp",
+      "512": "/assets/game/sizes/512/buildings/alliance-depot-high.webp"
+    }
+  },
+  "/assets/game/buildings/metal-mine-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/metal-mine-low.webp",
+      "256": "/assets/game/sizes/256/buildings/metal-mine-low.webp",
+      "512": "/assets/game/sizes/512/buildings/metal-mine-low.webp"
+    }
+  },
+  "/assets/game/buildings/crystal-storage-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/crystal-storage-low.webp",
+      "256": "/assets/game/sizes/256/buildings/crystal-storage-low.webp",
+      "512": "/assets/game/sizes/512/buildings/crystal-storage-low.webp"
+    }
+  },
+  "/assets/game/buildings/fusion-reactor-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/fusion-reactor-high.webp",
+      "256": "/assets/game/sizes/256/buildings/fusion-reactor-high.webp",
+      "512": "/assets/game/sizes/512/buildings/fusion-reactor-high.webp"
+    }
+  },
+  "/assets/game/buildings/fusion-reactor-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/fusion-reactor-low.webp",
+      "256": "/assets/game/sizes/256/buildings/fusion-reactor-low.webp",
+      "512": "/assets/game/sizes/512/buildings/fusion-reactor-low.webp"
+    }
+  },
+  "/assets/game/buildings/missile-silo-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/missile-silo-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/missile-silo-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/missile-silo-mid.webp"
+    }
+  },
+  "/assets/game/buildings/deuterium-synthesizer-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/deuterium-synthesizer-high.webp",
+      "256": "/assets/game/sizes/256/buildings/deuterium-synthesizer-high.webp",
+      "512": "/assets/game/sizes/512/buildings/deuterium-synthesizer-high.webp"
+    }
+  },
+  "/assets/game/buildings/alliance-depot-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/alliance-depot-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/alliance-depot-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/alliance-depot-mid.webp"
+    }
+  },
+  "/assets/game/buildings/metal-mine-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/metal-mine-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/metal-mine-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/metal-mine-mid.webp"
+    }
+  },
+  "/assets/game/buildings/deuterium-tank-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/deuterium-tank-high.webp",
+      "256": "/assets/game/sizes/256/buildings/deuterium-tank-high.webp",
+      "512": "/assets/game/sizes/512/buildings/deuterium-tank-high.webp"
+    }
+  },
+  "/assets/game/buildings/crystal-storage-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/crystal-storage-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/crystal-storage-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/crystal-storage-mid.webp"
+    }
+  },
+  "/assets/game/buildings/terraformer-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/terraformer-high.webp",
+      "256": "/assets/game/sizes/256/buildings/terraformer-high.webp",
+      "512": "/assets/game/sizes/512/buildings/terraformer-high.webp"
+    }
+  },
+  "/assets/game/buildings/nanite-factory-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/nanite-factory-low.webp",
+      "256": "/assets/game/sizes/256/buildings/nanite-factory-low.webp",
+      "512": "/assets/game/sizes/512/buildings/nanite-factory-low.webp"
+    }
+  },
+  "/assets/game/buildings/deuterium-synthesizer-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/deuterium-synthesizer-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/deuterium-synthesizer-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/deuterium-synthesizer-mid.webp"
+    }
+  },
+  "/assets/game/buildings/shipyard-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/shipyard-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/shipyard-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/shipyard-mid.webp"
+    }
+  },
+  "/assets/game/buildings/crystal-mine-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/crystal-mine-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/crystal-mine-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/crystal-mine-mid.webp"
+    }
+  },
+  "/assets/game/buildings/solar-plant-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/solar-plant-low.webp",
+      "256": "/assets/game/sizes/256/buildings/solar-plant-low.webp",
+      "512": "/assets/game/sizes/512/buildings/solar-plant-low.webp"
+    }
+  },
+  "/assets/game/buildings/research-lab-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/research-lab-high.webp",
+      "256": "/assets/game/sizes/256/buildings/research-lab-high.webp",
+      "512": "/assets/game/sizes/512/buildings/research-lab-high.webp"
+    }
+  },
+  "/assets/game/buildings/terraformer-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/terraformer-low.webp",
+      "256": "/assets/game/sizes/256/buildings/terraformer-low.webp",
+      "512": "/assets/game/sizes/512/buildings/terraformer-low.webp"
+    }
+  },
+  "/assets/game/buildings/crystal-storage-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/crystal-storage-high.webp",
+      "256": "/assets/game/sizes/256/buildings/crystal-storage-high.webp",
+      "512": "/assets/game/sizes/512/buildings/crystal-storage-high.webp"
+    }
+  },
+  "/assets/game/buildings/crystal-mine-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/crystal-mine-high.webp",
+      "256": "/assets/game/sizes/256/buildings/crystal-mine-high.webp",
+      "512": "/assets/game/sizes/512/buildings/crystal-mine-high.webp"
+    }
+  },
+  "/assets/game/buildings/metal-storage-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/metal-storage-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/metal-storage-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/metal-storage-mid.webp"
+    }
+  },
+  "/assets/game/buildings/shipyard-high.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/shipyard-high.webp",
+      "256": "/assets/game/sizes/256/buildings/shipyard-high.webp",
+      "512": "/assets/game/sizes/512/buildings/shipyard-high.webp"
+    }
+  },
+  "/assets/game/buildings/research-lab-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/research-lab-mid.webp",
+      "256": "/assets/game/sizes/256/buildings/research-lab-mid.webp",
+      "512": "/assets/game/sizes/512/buildings/research-lab-mid.webp"
+    }
+  },
+  "/assets/game/buildings/deuterium-tank-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/deuterium-tank-low.webp",
+      "256": "/assets/game/sizes/256/buildings/deuterium-tank-low.webp",
+      "512": "/assets/game/sizes/512/buildings/deuterium-tank-low.webp"
+    }
+  },
+  "/assets/game/buildings/robotics-factory-low.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/buildings/robotics-factory-low.webp",
+      "256": "/assets/game/sizes/256/buildings/robotics-factory-low.webp",
+      "512": "/assets/game/sizes/512/buildings/robotics-factory-low.webp"
+    }
+  },
+  "/assets/game/planets/crystal-violet.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/crystal-violet.webp",
+      "256": "/assets/game/sizes/256/planets/crystal-violet.webp",
+      "512": "/assets/game/sizes/512/planets/crystal-violet.webp"
+    }
+  },
+  "/assets/game/planets/outer-cryo.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/outer-cryo.webp",
+      "256": "/assets/game/sizes/256/planets/outer-cryo.webp",
+      "512": "/assets/game/sizes/512/planets/outer-cryo.webp"
+    }
+  },
+  "/assets/game/planets/lush-temperate.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/lush-temperate.webp",
+      "256": "/assets/game/sizes/256/planets/lush-temperate.webp",
+      "512": "/assets/game/sizes/512/planets/lush-temperate.webp"
+    }
+  },
+  "/assets/game/planets/deuterium-blue.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/deuterium-blue.webp",
+      "256": "/assets/game/sizes/256/planets/deuterium-blue.webp",
+      "512": "/assets/game/sizes/512/planets/deuterium-blue.webp"
+    }
+  },
+  "/assets/game/planets/cold-tundra.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/cold-tundra.webp",
+      "256": "/assets/game/sizes/256/planets/cold-tundra.webp",
+      "512": "/assets/game/sizes/512/planets/cold-tundra.webp"
+    }
+  },
+  "/assets/game/planets/frozen-ice.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/frozen-ice.webp",
+      "256": "/assets/game/sizes/256/planets/frozen-ice.webp",
+      "512": "/assets/game/sizes/512/planets/frozen-ice.webp"
+    }
+  },
+  "/assets/game/planets/hot-desert.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/hot-desert.webp",
+      "256": "/assets/game/sizes/256/planets/hot-desert.webp",
+      "512": "/assets/game/sizes/512/planets/hot-desert.webp"
+    }
+  },
+  "/assets/game/planets/cool-misty-blue.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/cool-misty-blue.webp",
+      "256": "/assets/game/sizes/256/planets/cool-misty-blue.webp",
+      "512": "/assets/game/sizes/512/planets/cool-misty-blue.webp"
+    }
+  },
+  "/assets/game/planets/scorching-molten.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/scorching-molten.webp",
+      "256": "/assets/game/sizes/256/planets/scorching-molten.webp",
+      "512": "/assets/game/sizes/512/planets/scorching-molten.webp"
+    }
+  },
+  "/assets/game/planets/warm-terracotta.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/warm-terracotta.webp",
+      "256": "/assets/game/sizes/256/planets/warm-terracotta.webp",
+      "512": "/assets/game/sizes/512/planets/warm-terracotta.webp"
+    }
+  },
+  "/assets/game/planets/metal-planetoid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/metal-planetoid.webp",
+      "256": "/assets/game/sizes/256/planets/metal-planetoid.webp",
+      "512": "/assets/game/sizes/512/planets/metal-planetoid.webp"
+    }
+  },
+  "/assets/game/planets/temperate-ocean.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/planets/temperate-ocean.webp",
+      "256": "/assets/game/sizes/256/planets/temperate-ocean.webp",
+      "512": "/assets/game/sizes/512/planets/temperate-ocean.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/light-fighter.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/light-fighter.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/light-fighter.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/light-fighter.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/colony-ship.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/colony-ship.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/colony-ship.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/colony-ship.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/deuterium-tank-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/deuterium-tank-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/deuterium-tank-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/deuterium-tank-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/robotics-factory-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/robotics-factory-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/robotics-factory-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/robotics-factory-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/solar-plant-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/solar-plant-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/solar-plant-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/solar-plant-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/metal-mine-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/metal-mine-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/metal-mine-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/metal-mine-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/crystal-storage-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/crystal-storage-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/crystal-storage-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/crystal-storage-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/deuterium-synthesizer-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/deuterium-synthesizer-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/deuterium-synthesizer-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/deuterium-synthesizer-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/shipyard-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/shipyard-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/shipyard-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/shipyard-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/crystal-mine-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/crystal-mine-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/crystal-mine-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/crystal-mine-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/metal-storage-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/metal-storage-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/metal-storage-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/metal-storage-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/research-lab-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/research-lab-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/research-lab-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/research-lab-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/crystal-violet.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/crystal-violet.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/crystal-violet.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/crystal-violet.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/outer-cryo.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/outer-cryo.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/outer-cryo.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/outer-cryo.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/lush-temperate.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/lush-temperate.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/lush-temperate.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/lush-temperate.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/deuterium-blue.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/deuterium-blue.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/deuterium-blue.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/deuterium-blue.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/cold-tundra.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/cold-tundra.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/cold-tundra.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/cold-tundra.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/frozen-ice.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/frozen-ice.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/frozen-ice.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/frozen-ice.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/hot-desert.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/hot-desert.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/hot-desert.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/hot-desert.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/cool-misty-blue.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/cool-misty-blue.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/cool-misty-blue.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/cool-misty-blue.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/scorching-molten.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/scorching-molten.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/scorching-molten.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/scorching-molten.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/warm-terracotta.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/warm-terracotta.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/warm-terracotta.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/warm-terracotta.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/metal-planetoid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/metal-planetoid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/metal-planetoid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/metal-planetoid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/planets/temperate-ocean.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/planets/temperate-ocean.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/planets/temperate-ocean.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/planets/temperate-ocean.webp"
+    }
+  },
+  "/assets/game/style-pass/high-res/small-cargo-alive-fullship-2k.webp": {
+    "width": 2048,
+    "height": 2048,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/high-res/small-cargo-alive-fullship-2k.webp",
+      "256": "/assets/game/sizes/256/style-pass/high-res/small-cargo-alive-fullship-2k.webp",
+      "512": "/assets/game/sizes/512/style-pass/high-res/small-cargo-alive-fullship-2k.webp"
+    }
+  }
+}
