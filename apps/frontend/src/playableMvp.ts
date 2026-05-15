@@ -62,9 +62,7 @@ export type ResearchKey =
   | "plasma"
   | "astrophysics"
   | "intergalacticResearchNetwork"
-  | "graviton"
-  | "orbitalCartography"
-  | "baseRelaySecurity";
+  | "graviton";
 
 export type ResearchRequirement =
   | {
@@ -441,6 +439,7 @@ export const shipCatalog: Array<{
 
 export const researchCatalog: Array<{
   key: ResearchKey;
+  id: number;
   label: string;
   lane: string;
   baseCost: Resources;
@@ -449,6 +448,7 @@ export const researchCatalog: Array<{
 }> = [
   {
     key: "energy",
+    id: 0,
     label: "Energy Technology",
     lane: "Basic",
     baseCost: { metal: 0, crystal: 800, deuterium: 400 },
@@ -456,6 +456,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "laser",
+    id: 1,
     label: "Laser Technology",
     lane: "Basic",
     baseCost: { metal: 200, crystal: 100, deuterium: 0 },
@@ -464,6 +465,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "ion",
+    id: 2,
     label: "Ion Technology",
     lane: "Basic",
     baseCost: { metal: 1_000, crystal: 300, deuterium: 100 },
@@ -472,6 +474,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "hyperspace",
+    id: 9,
     label: "Hyperspace Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 4_000, deuterium: 2_000 },
@@ -480,6 +483,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "plasma",
+    id: 12,
     label: "Plasma Technology",
     lane: "Advanced",
     baseCost: { metal: 2_000, crystal: 4_000, deuterium: 1_000 },
@@ -492,6 +496,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "combustionDrive",
+    id: 3,
     label: "Combustion Drive",
     lane: "Drive",
     baseCost: { metal: 400, crystal: 0, deuterium: 600 },
@@ -499,6 +504,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "impulseDrive",
+    id: 10,
     label: "Impulse Drive",
     lane: "Drive",
     baseCost: { metal: 2_000, crystal: 4_000, deuterium: 600 },
@@ -507,6 +513,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "hyperspaceDrive",
+    id: 11,
     label: "Hyperspace Drive",
     lane: "Drive",
     baseCost: { metal: 10_000, crystal: 20_000, deuterium: 6_000 },
@@ -515,6 +522,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "espionage",
+    id: 4,
     label: "Espionage Technology",
     lane: "Advanced",
     baseCost: { metal: 200, crystal: 1_000, deuterium: 200 },
@@ -522,6 +530,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "computer",
+    id: 5,
     label: "Computer Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 400, deuterium: 600 },
@@ -529,6 +538,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "astrophysics",
+    id: 13,
     label: "Astrophysics",
     lane: "Advanced",
     baseCost: { metal: 4_000, crystal: 8_000, deuterium: 4_000 },
@@ -540,6 +550,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "intergalacticResearchNetwork",
+    id: 14,
     label: "Intergalactic Research Network",
     lane: "Advanced",
     baseCost: { metal: 240_000, crystal: 400_000, deuterium: 160_000 },
@@ -551,6 +562,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "graviton",
+    id: 15,
     label: "Graviton Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 0, deuterium: 0 },
@@ -559,6 +571,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "weapons",
+    id: 6,
     label: "Weapons Technology",
     lane: "Combat",
     baseCost: { metal: 800, crystal: 200, deuterium: 0 },
@@ -566,6 +579,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "shielding",
+    id: 7,
     label: "Shielding Technology",
     lane: "Combat",
     baseCost: { metal: 200, crystal: 600, deuterium: 0 },
@@ -574,6 +588,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "armor",
+    id: 8,
     label: "Armor Technology",
     lane: "Combat",
     baseCost: { metal: 1_000, crystal: 0, deuterium: 0 },
@@ -627,8 +642,6 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       astrophysics: 0,
       intergalacticResearchNetwork: 0,
       graviton: 0,
-      orbitalCartography: 0,
-      baseRelaySecurity: 0,
     },
     ships: {
       smallCargo: 0,

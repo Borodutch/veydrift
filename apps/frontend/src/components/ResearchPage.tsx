@@ -1,4 +1,5 @@
 import { useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from "../playableMvp";
 import {
   buildingCatalog,
@@ -9,10 +10,17 @@ import {
   researchRequirementsFor,
   unmetResearchRequirement,
 } from "../playableMvp";
+import type { ChainResearchState } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const researchGroups = ["Basic", "Drive", "Advanced", "Combat"];
+
+export type ResearchActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
 
 const researchDescriptions: Partial<Record<ResearchKey, string>> = {
   energy: "Improves the science base for power systems and unlocks higher-energy technologies.",
@@ -34,19 +42,36 @@ const researchDescriptions: Partial<Record<ResearchKey, string>> = {
 };
 
 interface ResearchPageProps {
-  state: PlayableState;
+  actionState: ResearchActionState;
+  canTransact: boolean;
+  error: string | undefined;
+  loading: boolean;
+  onFinish: () => void;
+  onRefresh: () => void;
+  onResearch: (technologyId: number, key: ResearchKey) => void;
+  researchState: ChainResearchState | null;
   settledState: PlayableState;
-  onResearch: (key: ResearchKey) => void;
+  state: PlayableState;
 }
 
 export function ResearchPage({
-  settledState,
+  actionState,
+  canTransact,
+  error,
+  loading,
+  onFinish,
+  onRefresh,
   onResearch,
+  researchState,
+  settledState,
 }: ResearchPageProps) {
   const [selectedKey, setSelectedKey] = useState<ResearchKey>("energy");
   const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedResearch = researchCatalog.find((research) => research.key === selectedKey)
     ?? researchCatalog[0]!;
+  const viewState = researchViewState(settledState, researchState);
+  const queue = researchQueueForDisplay(researchState, viewState);
+  const queueReady = queue?.readyAt ? queue.readyAt <= Date.now() : false;
 
   function handleSelectResearch(key: ResearchKey) {
     setSelectedKey(key);
@@ -64,17 +89,39 @@ export function ResearchPage({
         <div>
           <h2 className="text-lg font-semibold text-white">Research</h2>
           <p className="text-xs text-slate-400">
-            OGame-style technologies unlock when the lab and prerequisite levels are ready.
+            Select a technology to inspect real levels, prerequisites, cost, and on-chain action state.
           </p>
         </div>
-        {settledState.researchQueue && (
-          <span className="w-fit rounded border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-200">
-            Research: {settledState.researchQueue.label}
-          </span>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {queue && (
+            <button
+              className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+              disabled={!canTransact || actionState.status === "pending" || !queueReady}
+              onClick={onFinish}
+              type="button"
+            >
+              {queueReady ? "Complete research" : `Ready ${formatReady(queue.readyAt)}`}
+            </button>
+          )}
+          <button
+            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            onClick={onRefresh}
+            type="button"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {settledState.buildings.researchLab === 0 ? (
+      <ResearchStatusPanel
+        actionState={actionState}
+        error={error}
+        loading={loading}
+        queue={queue}
+        researchState={researchState}
+      />
+
+      {viewState.buildings.researchLab === 0 ? (
         <div className="rounded border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
           Research Lab 1 is required before any technology can be queued.
         </div>
@@ -89,7 +136,16 @@ export function ResearchPage({
                 <h3 className="text-sm font-semibold uppercase tracking-normal text-slate-400">{group}</h3>
                 <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-3 2xl:grid-cols-4">
                   {entries.map((research) => {
-                    const status = researchActionStatus(settledState, research.key);
+                    const status = researchActionStatus({
+                      actionPending: actionState.status === "pending",
+                      canTransact,
+                      chainCost: chainCostFor(researchState, research.id),
+                      error,
+                      key: research.key,
+                      loading,
+                      researchState,
+                      state: viewState,
+                    });
                     return (
                       <ResearchSelectorTile
                         asset={research.asset}
@@ -111,12 +167,94 @@ export function ResearchPage({
 
         <div className="order-1 xl:order-2" ref={detailPanelRef}>
           <ResearchDetailPanel
-            onResearch={() => onResearch(selectedResearch.key)}
+            actionPending={actionState.status === "pending"}
+            canTransact={canTransact}
+            error={error}
+            loading={loading}
+            onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
             research={selectedResearch}
-            state={settledState}
+            researchState={researchState}
+            state={viewState}
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+function ResearchStatusPanel({
+  actionState,
+  error,
+  loading,
+  queue,
+  researchState,
+}: {
+  actionState: ResearchActionState;
+  error: string | undefined;
+  loading: boolean;
+  queue: ReturnType<typeof researchQueueForDisplay>;
+  researchState: ChainResearchState | null;
+}) {
+  if (loading) {
+    return <Notice tone="neutral">Reading on-chain research state.</Notice>;
+  }
+
+  if (error) {
+    return <Notice tone="danger">Research state could not be loaded from the backend. Actions are disabled until chain state is available.</Notice>;
+  }
+
+  if (!researchState) {
+    return <Notice tone="neutral">Reading on-chain research state.</Notice>;
+  }
+
+  if (researchState?.researchAvailable === false) {
+    return (
+      <Notice tone="neutral">
+        {researchState.unavailableReason ?? "Research is not available for the currently configured contract."}
+      </Notice>
+    );
+  }
+
+  if (!researchState?.homePlanetId) {
+    return (
+      <Notice tone="danger">
+        No VeydriftGame home planet was found for this wallet. Research levels and actions are not shown from local state.
+      </Notice>
+    );
+  }
+
+  if (actionState.status !== "idle") {
+    const tone = actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "neutral";
+    return <Notice tone={tone}>{actionState.label}</Notice>;
+  }
+
+  if (queue) {
+    return (
+      <Notice tone={queue.readyAt <= Date.now() ? "success" : "neutral"}>
+        {queue.label} to Level {queue.targetLevel} is queued, ready {formatReady(queue.readyAt)}.
+      </Notice>
+    );
+  }
+
+  return null;
+}
+
+function Notice({
+  children,
+  tone,
+}: {
+  children: ComponentChildren;
+  tone: "danger" | "neutral" | "success";
+}) {
+  const classes = {
+    danger: "border-rose-300/20 bg-rose-300/5 text-rose-200",
+    neutral: "border-sky-300/20 bg-sky-300/5 text-sky-200",
+    success: "border-emerald-300/20 bg-emerald-300/5 text-emerald-200",
+  } as const;
+
+  return (
+    <div className={`rounded border p-3 text-sm ${classes[tone]}`}>
+      {children}
     </div>
   );
 }
@@ -170,15 +308,34 @@ function ResearchSelectorTile({
 }
 
 function ResearchDetailPanel({
+  actionPending,
+  canTransact,
+  error,
+  loading,
   onResearch,
   research,
+  researchState,
   state,
 }: {
+  actionPending: boolean;
+  canTransact: boolean;
+  error: string | undefined;
+  loading: boolean;
   onResearch: () => void;
   research: (typeof researchCatalog)[number];
+  researchState: ChainResearchState | null;
   state: PlayableState;
 }) {
-  const status = researchActionStatus(state, research.key);
+  const status = researchActionStatus({
+    actionPending,
+    canTransact,
+    chainCost: chainCostFor(researchState, research.id),
+    error,
+    key: research.key,
+    loading,
+    researchState,
+    state,
+  });
   const requirements = researchRequirementsFor(research.key);
 
   return (
@@ -201,7 +358,7 @@ function ResearchDetailPanel({
             <div className="min-w-0">
               <h3 className="break-words text-lg font-semibold text-white">{research.label}</h3>
               <p className="mt-1 text-sm text-slate-400">
-                Level {status.currentLevel} → {status.targetLevel}
+                Level {status.currentLevel} to {status.targetLevel}
               </p>
             </div>
             <span className={`rounded px-2 py-1 text-xs font-semibold ${status.disabled ? "bg-white/5 text-slate-400" : "bg-emerald-300/10 text-emerald-200"}`}>
@@ -218,7 +375,7 @@ function ResearchDetailPanel({
       <dl className="mt-4 grid gap-2">
         <ResearchInfoRow label="Category" value={research.lane} />
         <ResearchInfoRow label="Requirements" value={requirements.length > 0 ? requirements.map(formatRequirement).join(" / ") : "None"} />
-        <ResearchInfoRow label="Research cost" value={formatCost(status.cost)} />
+        <ResearchInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
         <ResearchInfoRow label="Research time" value={status.durationSeconds ? formatDuration(status.durationSeconds) : "Requires Research Lab"} />
       </dl>
 
@@ -250,28 +407,65 @@ function ResearchInfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function researchActionStatus(state: PlayableState, key: ResearchKey) {
-  const cost = researchCost(state.research, key);
+function researchActionStatus({
+  actionPending,
+  canTransact,
+  chainCost,
+  error,
+  key,
+  loading,
+  researchState,
+  state,
+}: {
+  actionPending: boolean;
+  canTransact: boolean;
+  chainCost: Resources | undefined;
+  error: string | undefined;
+  key: ResearchKey;
+  loading: boolean;
+  researchState: ChainResearchState | null;
+  state: PlayableState;
+}) {
+  const cost = chainCost ?? (researchState ? researchCost(state.research, key) : undefined);
   const currentLevel = state.research[key];
   const targetLevel = currentLevel + 1;
   const missingRequirement = unmetResearchRequirement(state, key);
-  const affordable = canAfford(state.resources, cost);
+  const resourcesAvailable = Boolean(researchState?.resources);
+  const affordable = cost ? canAfford(state.resources, cost) : false;
   const active = state.researchQueue?.key === key;
   const queueOccupied = Boolean(state.researchQueue) && !active;
   const labMissing = state.buildings.researchLab === 0;
-  const durationSeconds = labMissing ? undefined : researchDurationEstimate(state.buildings, cost);
-  const disabled = active || queueOccupied || labMissing || Boolean(missingRequirement) || !affordable;
-  const reason = active
-    ? `Research to Level ${state.researchQueue?.targetLevel ?? targetLevel} in progress`
-    : queueOccupied
-      ? `Research queue occupied by ${state.researchQueue?.label ?? "another technology"}`
-      : labMissing
-        ? "Requires Research Lab 1"
-        : missingRequirement
-          ? `Requires ${formatRequirement(missingRequirement)}`
-          : !affordable
-            ? "Insufficient resources"
-            : `Ready for Level ${targetLevel}`;
+  const durationSeconds = !labMissing && cost ? researchDurationEstimate(state.buildings, cost) : undefined;
+
+  const reason = actionPending
+    ? "Waiting for wallet confirmation"
+    : loading
+      ? "Reading on-chain research state"
+      : error
+        ? "Research state unavailable"
+        : !researchState
+          ? "Reading on-chain research state"
+          : researchState.researchAvailable === false
+          ? researchState.unavailableReason ?? "Research unavailable on this contract"
+          : !researchState.homePlanetId
+            ? "No VeydriftGame home planet"
+            : !canTransact
+              ? "Wallet or game contract unavailable"
+              : active
+                ? `Research to Level ${state.researchQueue?.targetLevel ?? targetLevel} in progress`
+                : queueOccupied
+                  ? `Research queue occupied by ${state.researchQueue?.label ?? "another technology"}`
+                  : labMissing
+                    ? "Requires Research Lab 1"
+                    : missingRequirement
+                      ? `Requires ${formatRequirement(missingRequirement)}`
+                      : !resourcesAvailable
+                        ? "Resources unavailable"
+                        : !affordable
+                          ? "Insufficient resources"
+                          : `Ready for Level ${targetLevel}`;
+
+  const disabled = reason !== `Ready for Level ${targetLevel}`;
   const badge = active ? "In progress" : disabled ? "Locked" : "Available";
 
   return {
@@ -287,11 +481,86 @@ function researchActionStatus(state: PlayableState, key: ResearchKey) {
   };
 }
 
+function researchViewState(state: PlayableState, researchState: ChainResearchState | null): PlayableState {
+  if (!researchState) {
+    return {
+      ...state,
+      buildings: { ...state.buildings, researchLab: 0 },
+      research: zeroResearchLevels(),
+      researchQueue: undefined,
+      resources: { metal: 0, crystal: 0, deuterium: 0 },
+    };
+  }
+
+  return {
+    ...state,
+    buildings: {
+      ...state.buildings,
+      researchLab: researchState.researchLabLevel,
+    },
+    research: researchLevels(researchState),
+    researchQueue: researchQueueForDisplay(researchState, state) ?? undefined,
+    resources: toResources(researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
+  };
+}
+
+function zeroResearchLevels(): PlayableState["research"] {
+  return Object.fromEntries(researchCatalog.map((research) => [research.key, 0])) as PlayableState["research"];
+}
+
+function researchLevels(researchState: ChainResearchState): PlayableState["research"] {
+  return Object.fromEntries(
+    researchCatalog.map((research) => {
+      const row = researchState.technologies.find((item) => item.id === research.id);
+      return [research.key, row?.level ?? researchState.technologyLevels[research.id.toString()] ?? 0];
+    }),
+  ) as PlayableState["research"];
+}
+
+function researchQueueForDisplay(
+  researchState: ChainResearchState | null,
+  state: Pick<PlayableState, "researchQueue">,
+): PlayableState["researchQueue"] {
+  const queue = researchState?.queue;
+  if (!queue?.active || queue.itemId === undefined) {
+    return researchState ? undefined : state.researchQueue;
+  }
+
+  const research = researchCatalog.find((item) => item.id === queue.itemId);
+  if (!research) {
+    return undefined;
+  }
+
+  const readyAt = queue.readyAt ? Number(queue.readyAt) * 1_000 : Date.now();
+  return {
+    kind: "research",
+    key: research.key,
+    label: research.label,
+    readyAt,
+    startedAt: Date.now(),
+    targetLevel: queue.targetLevel ?? 0,
+  };
+}
+
+function chainCostFor(researchState: ChainResearchState | null, technologyId: number): Resources | undefined {
+  const row = researchState?.technologies.find((item) => item.id === technologyId);
+  return toResources(row?.cost);
+}
+
+function toResources(resources: ChainResearchState["resources"] | ChainResearchState["technologies"][number]["cost"] | null | undefined): Resources | undefined {
+  if (!resources) return undefined;
+  return {
+    metal: Number(resources.metal),
+    crystal: Number(resources.crystal),
+    deuterium: Number(resources.deuterium),
+  };
+}
+
 function formatCost(cost: Resources): string {
   const parts: Array<[string, number]> = [
-    ["M", cost.metal],
-    ["C", cost.crystal],
-    ["D", cost.deuterium],
+    ["Metal", cost.metal],
+    ["Crystal", cost.crystal],
+    ["Deut.", cost.deuterium],
   ];
   return parts
     .filter(([, v]) => v > 0)
@@ -311,6 +580,13 @@ function formatDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
+}
+
+function formatReady(readyAt: number): string {
+  return new Date(readyAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function formatRequirement(requirement: ResearchRequirement): string {

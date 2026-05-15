@@ -89,6 +89,22 @@ export type ChainShipyardState = {
   queue: QueueStateResponse | null;
 };
 
+export type ChainResearchState = {
+  wallet: string;
+  homePlanetId: string | null;
+  researchAvailable?: boolean;
+  unavailableReason?: string;
+  resources: OnChainResources | null;
+  researchLabLevel: number;
+  technologyLevels: Record<string, number>;
+  technologies: Array<{
+    id: number;
+    level: number;
+    cost: OnChainResources;
+  }>;
+  queue: QueueStateResponse | null;
+};
+
 export type SettlementState =
   | { kind: "unconfigured" }
   | { kind: "not-settled" }
@@ -124,6 +140,8 @@ const GAME_SELECTORS = {
   startBuildingUpgrade: "0x165715e3",
   collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
+  finishResearch: "0xba2fbdc8",
+  startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
 } as const;
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
@@ -323,6 +341,25 @@ export async function sendStartBuildingUpgradeTransaction(
   });
 }
 
+export async function sendStartResearchTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+  technologyId: number
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.startResearch, [planetId, technologyId])
+      }
+    ]
+  });
+}
+
 export async function sendFinishBuildingUpgradeTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -336,6 +373,23 @@ export async function sendFinishBuildingUpgradeTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId])
+      }
+    ]
+  });
+}
+
+export async function sendFinishResearchTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: GAME_SELECTORS.finishResearch
       }
     ]
   });
@@ -557,6 +611,12 @@ export async function fetchShipyardState(apiUrl: string, wallet: string): Promis
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/shipyard`);
   if (!response.ok) throw new Error(`Shipyard API failed: ${response.status}`);
   return response.json() as Promise<ChainShipyardState>;
+}
+
+export async function fetchResearchState(apiUrl: string, wallet: string): Promise<ChainResearchState> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/research`);
+  if (!response.ok) throw new Error(`Research API failed: ${response.status}`);
+  return response.json() as Promise<ChainResearchState>;
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
