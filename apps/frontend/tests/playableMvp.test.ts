@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildingEffectMetrics,
   buildingCost,
+  buildingDurationEstimate,
   canAfford,
   createInitialPlayableState,
   energyBalance,
@@ -173,6 +174,19 @@ describe("playable MVP simulation", () => {
       { metal: 5_000, crystal: 5_000, deuterium: 5_000 },
       { metal: 4_000, crystal: 1_000, deuterium: 5_001 },
     )).toBe(false);
+  });
+
+  test("exposes modeled building upgrade duration for UI detail panels", () => {
+    const state = createInitialPlayableState(1_000);
+    const cost = buildingCost(state.buildings, "metalStorage");
+    const upgradedRobotics = {
+      ...state.buildings,
+      roboticsFactory: 4,
+    };
+
+    expect(buildingDurationEstimate(state.buildings, cost)).toBe(60);
+    expect(buildingDurationEstimate(upgradedRobotics, { metal: 100_000, crystal: 50_000, deuterium: 0 }))
+      .toBe(300);
   });
 
   test("exposes building effect metrics from the same production and storage formulas", () => {
