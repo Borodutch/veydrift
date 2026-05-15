@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import type { Coordinates } from "./types";
+import { GalaxyView } from "./components/GalaxyView";
+import { UniverseView } from "./components/UniverseView";
+import { PlanetDetail } from "./components/PlanetDetail";
 import {
   buildingCatalog,
   buildingCost,
@@ -16,59 +20,99 @@ import {
   type Resources,
 } from "./playableMvp";
 import { runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
+import type { Eip1193Provider, PlanetSummary } from "./walletFlow";
+import { shortAddress } from "./walletFlow";
 
 const formatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-export function PlayableMvpApp() {
+const PLAYABLE_STORAGE_KEY = "veydrift-playable-mvp-state";
+
+type View = "management" | "galaxy" | "universe" | "planet";
+
+interface PlayableMvpAppProps {
+  provider?: Eip1193Provider | undefined;
+  account?: string | undefined;
+  planet?: PlanetSummary | undefined;
+}
+
+function loadPlayableState(): PlayableState | undefined {
+  try {
+    const raw = localStorage.getItem(PLAYABLE_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as PlayableState;
+    if (!parsed.resources || !parsed.buildings || !parsed.ships) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function savePlayableState(state: PlayableState): void {
+  try {
+    localStorage.setItem(PLAYABLE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+}
+
+export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProps = {}) {
+  const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
-  const [state, setState] = useState<PlayableState>(() => createInitialPlayableState(now));
+  const [state, setState] = useState<PlayableState>(() => {
+    const saved = loadPlayableState();
+    if (saved) return saved;
+    return createInitialPlayableState(now);
+  });
+  const [view, setView] = useState<View>("management");
+  const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
+  const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
+    if (planet?.coordinates) {
+      const [g, s] = planet.coordinates.split(":").map(Number);
+      return { galaxy: g || 1, system: s || 1 };
+    }
+    return { galaxy: 1, system: 1 };
+  });
+
+  useEffect(() => {
+    if (planet?.coordinates) {
+      const [g, s] = planet.coordinates.split(":").map(Number);
+      setGalaxyNav({ galaxy: g || 1, system: s || 1 });
+    }
+  }, [planet?.coordinates]);
+
   const settledState = useMemo(() => settleState(state, now), [state, now]);
   const rates = productionPerHour(settledState.buildings);
   const caps = storageCaps(settledState.buildings);
-  const planet = planetSummary();
+  const planetInfo = planetSummary();
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       setNow(Date.now());
     }, 1_000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
     const abortController = new AbortController();
-
     fetch(runtimeConfigUrl(), {
-      headers: {
-        accept: "application/json",
-      },
+      headers: { accept: "application/json" },
       signal: abortController.signal,
     })
       .then((response) => {
-        if (!response.ok) {
-          throw new Error(`Runtime config failed with ${response.status}`);
-        }
-
+        if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
         return response.json();
       })
-      .then((config) => {
-        setRuntimeConfig({ config, status: "ready" });
-      })
+      .then((config) => setRuntimeConfig({ config, status: "ready" }))
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
           setRuntimeConfig({ status: "error" });
         }
       });
-
-    return () => {
-      abortController.abort();
-    };
+    return () => abortController.abort();
   }, []);
 
   useEffect(() => {
@@ -77,37 +121,200 @@ export function PlayableMvpApp() {
     }
   }, [settledState, state.queue]);
 
+  useEffect(() => {
+    savePlayableState(state);
+  }, [state]);
+
+  const handleCollectAll = useCallback(() => {
+    const currentNow = Date.now();
+    setNow(currentNow);
+    setState((prev) => settleState(prev, currentNow));
+  }, []);
+
   const queueProgress = progress(settledState.queue, now);
 
+  // Galaxy view
+  if (view === "galaxy") {
+    return (
+      <div className="min-h-dvh bg-[#070913] text-slate-100">
+        {isWalletConnected && (
+          <div className="border-b border-white/10 bg-[#0c111b] px-4 py-3">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400">Wallet</span>
+                <span className="font-mono text-sm text-cyan-200">{shortAddress(account!)}</span>
+                {planet?.coordinates && (
+                  <span className="text-xs text-slate-400">Home: {planet.coordinates}</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <NavButton active={false} onClick={() => setView("management")}>Planet</NavButton>
+                <NavButton active={true} onClick={() => setView("galaxy")}>Galaxy</NavButton>
+                <NavButton active={false} onClick={() => setView("universe")}>Universe</NavButton>
+              </div>
+            </div>
+          </div>
+        )}
+        <GalaxyView
+          galaxy={galaxyNav.galaxy}
+          system={galaxyNav.system}
+          onSelectPlanet={(coords) => {
+            setSelectedCoords(coords);
+            setView("planet");
+          }}
+          onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
+          onBack={() => setView("management")}
+        />
+      </div>
+    );
+  }
+
+  // Universe view
+  if (view === "universe") {
+    return (
+      <div className="min-h-dvh bg-[#070913] text-slate-100">
+        {isWalletConnected && (
+          <div className="border-b border-white/10 bg-[#0c111b] px-4 py-3">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400">Wallet</span>
+                <span className="font-mono text-sm text-cyan-200">{shortAddress(account!)}</span>
+              </div>
+              <div className="flex gap-2">
+                <NavButton active={false} onClick={() => setView("management")}>Planet</NavButton>
+                <NavButton active={false} onClick={() => setView("galaxy")}>Galaxy</NavButton>
+                <NavButton active={true} onClick={() => setView("universe")}>Universe</NavButton>
+              </div>
+            </div>
+          </div>
+        )}
+        <UniverseView
+          onSelectGalaxy={(g) => {
+            setGalaxyNav({ galaxy: g, system: 1 });
+            setView("galaxy");
+          }}
+          onSelectSystem={(g, s) => {
+            setGalaxyNav({ galaxy: g, system: s });
+            setView("galaxy");
+          }}
+          onBack={() => setView("management")}
+        />
+      </div>
+    );
+  }
+
+  // Planet detail view
+  if (view === "planet" && selectedCoords) {
+    return (
+      <div className="min-h-dvh bg-[#070913] text-slate-100">
+        {isWalletConnected && (
+          <div className="border-b border-white/10 bg-[#0c111b] px-4 py-3">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400">Wallet</span>
+                <span className="font-mono text-sm text-cyan-200">{shortAddress(account!)}</span>
+              </div>
+              <div className="flex gap-2">
+                <NavButton active={false} onClick={() => setView("management")}>Planet</NavButton>
+                <NavButton active={false} onClick={() => setView("galaxy")}>Galaxy</NavButton>
+                <NavButton active={false} onClick={() => setView("universe")}>Universe</NavButton>
+              </div>
+            </div>
+          </div>
+        )}
+        <PlanetDetail
+          coords={selectedCoords}
+          onBack={() => setView("galaxy")}
+          onNavigateSystem={(g, s) => {
+            setGalaxyNav({ galaxy: g, system: s });
+            setView("galaxy");
+          }}
+        />
+      </div>
+    );
+  }
+
+  // Management view (default)
   return (
     <main className="min-h-dvh bg-[#070913] text-slate-100">
+      {/* Wallet bar */}
+      {isWalletConnected && (
+        <div className="border-b border-white/10 bg-[#0c111b] px-4 py-3">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-400">Wallet</span>
+              <span className="font-mono text-sm text-cyan-200">{shortAddress(account!)}</span>
+              {planet?.coordinates && (
+                <span className="text-xs text-slate-400">Home: {planet.coordinates}</span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <NavButton active={true} onClick={() => setView("management")}>Planet</NavButton>
+              <NavButton active={false} onClick={() => setView("galaxy")}>Galaxy</NavButton>
+              <NavButton active={false} onClick={() => setView("universe")}>Universe</NavButton>
+              <button
+                className="rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+                onClick={handleCollectAll}
+                type="button"
+              >
+                Collect All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col gap-5 px-4 py-4 sm:px-6 lg:px-8">
         <header className="grid gap-4 border-b border-white/10 pb-4 lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-signal">
-              test.veydrift.com
+              {isWalletConnected ? "test.veydrift.com" : "Veydrift Playable MVP"}
             </p>
             <h1 className="mt-2 text-3xl font-semibold leading-tight text-white sm:text-4xl">
-              Veydrift Playable MVP
+              {isWalletConnected ? "Planet Command" : "Veydrift Playable MVP"}
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
-              Start from a fresh home planet, collect lazy resources, upgrade
-              infrastructure, and open the first shipyard queue.
+              {isWalletConnected
+                ? `Home planet ${planet?.coordinates ? `[${planet.coordinates}]` : ""}. Collect resources, build infrastructure, and explore the galaxy.`
+                : "Start from a fresh home planet, collect lazy resources, upgrade infrastructure, and open the first shipyard queue."}
             </p>
             <RuntimeConfigBadge runtimeConfig={runtimeConfig} />
           </div>
 
-          <button
-            className="h-11 w-full rounded-md border border-white/15 bg-white/8 px-4 text-sm font-semibold text-white transition hover:bg-white/12 lg:w-auto"
-            onClick={() => {
-              setNow(Date.now());
-              setState(createInitialPlayableState(Date.now()));
-            }}
-            type="button"
-          >
-            Reset Planet
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {!isWalletConnected && (
+              <button
+                className="h-11 w-full rounded-md border border-white/15 bg-white/8 px-4 text-sm font-semibold text-white transition hover:bg-white/12 lg:w-auto"
+                onClick={() => {
+                  setNow(Date.now());
+                  setState(createInitialPlayableState(Date.now()));
+                  try { localStorage.removeItem(PLAYABLE_STORAGE_KEY); } catch {}
+                }}
+                type="button"
+              >
+                Reset Planet
+              </button>
+            )}
+            {isWalletConnected && (
+              <button
+                className="h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-4 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+                onClick={handleCollectAll}
+                type="button"
+              >
+                Collect Resources
+              </button>
+            )}
+          </div>
         </header>
+
+        {/* Simulated data notice */}
+        {isWalletConnected && (
+          <div className="rounded-md border border-amber-300/20 bg-amber-300/5 px-4 py-2">
+            <p className="text-xs text-amber-200">
+              MVP Note: Planet resources and buildings are simulated locally. Settlement and coordinates are onchain.
+            </p>
+          </div>
+        )}
 
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(340px,0.85fr)]">
           <div className="grid gap-4">
@@ -122,11 +329,13 @@ export function PlayableMvpApp() {
                 <div className="relative flex min-h-[280px] flex-col justify-end p-5">
                   <p className="text-sm font-medium text-slate-300">Home planet</p>
                   <h2 className="mt-1 text-2xl font-semibold text-white">
-                    Eos Relay
+                    {isWalletConnected && planet?.coordinates
+                      ? `Planet ${planet.coordinates}`
+                      : "Eos Relay"}
                   </h2>
                   <dl className="mt-4 grid max-w-xl grid-cols-3 gap-3 text-sm">
-                    <Metric label="Fields" value={planet.fields.toString()} />
-                    <Metric label="Temp" value={`${planet.temperature}C`} />
+                    <Metric label="Fields" value={planetInfo.fields.toString()} />
+                    <Metric label="Temp" value={`${planetInfo.temperature}C`} />
                     <Metric label="Queue" value={settledState.queue ? "Active" : "Ready"} />
                   </dl>
                 </div>
@@ -178,6 +387,15 @@ export function PlayableMvpApp() {
                       style={{ width: `${queueProgress * 100}%` }}
                     />
                   </div>
+                  {isWalletConnected && (
+                    <button
+                      className="mt-3 w-full rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+                      onClick={handleCollectAll}
+                      type="button"
+                    >
+                      Collect Completed
+                    </button>
+                  )}
                 </div>
               ) : (
                 <p className="mt-4 text-sm leading-6 text-slate-300">
@@ -267,6 +485,28 @@ export function PlayableMvpApp() {
         </section>
       </div>
     </main>
+  );
+}
+
+function NavButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: preact.ComponentChildren;
+}) {
+  return (
+    <button
+      className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+        active ? "bg-white/15 text-white" : "text-slate-400 hover:bg-white/10 hover:text-white"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </button>
   );
 }
 
