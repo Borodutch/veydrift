@@ -6,7 +6,7 @@ import { shortAddress } from "../walletFlow";
 
 interface Props {
   coords: Coordinates;
-  apiBaseUrl?: string;
+  apiBaseUrl?: string | undefined;
   homeCoords?: Coordinates | undefined;
   onBack: () => void;
   onNavigateSystem: (galaxy: number, system: number) => void;
@@ -15,7 +15,7 @@ interface Props {
 export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, onBack, onNavigateSystem }: Props) {
   const fallbackPlanet = useMemo(
     () => getPlanet(coords.galaxy, coords.system, coords.position),
-    [coords.galaxy, coords.position, coords.system]
+    [coords.galaxy, coords.position, coords.system],
   );
   const [planet, setPlanet] = useState<Planet | null>(fallbackPlanet);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
@@ -118,16 +118,14 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Owner
               </h3>
-              {planet.owner ? (
+              {planet.ownerId ? (
                 <div className="flex flex-col gap-1">
                   <span className="text-sm font-medium text-white">
                     Occupied
                   </span>
-                  {planet.ownerId && (
-                    <span className="font-mono text-xs text-slate-500">
-                      {shortAddress(planet.ownerId)}
-                    </span>
-                  )}
+                  <span className="font-mono text-xs text-slate-500">
+                    {shortAddress(planet.ownerId)}
+                  </span>
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
