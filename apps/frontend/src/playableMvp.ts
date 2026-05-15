@@ -17,8 +17,9 @@ export type BuildingKey =
   | "deuteriumTank";
 
 export type ShipKey = "smallCargo" | "lightFighter" | "colonyShip";
+export type ResearchKey = "orbitalCartography" | "baseRelaySecurity";
 
-export type QueueItem =
+export type MainQueueItem =
   | {
       kind: "building";
       key: BuildingKey;
@@ -36,11 +37,24 @@ export type QueueItem =
       startedAt: number;
     };
 
+export type ResearchQueueItem = {
+  kind: "research";
+  key: ResearchKey;
+  label: string;
+  readyAt: number;
+  startedAt: number;
+  targetLevel: number;
+};
+
+export type QueueItem = MainQueueItem | ResearchQueueItem;
+
 export type PlayableState = {
   resources: Resources;
   buildings: Record<BuildingKey, number>;
+  research: Record<ResearchKey, number>;
   ships: Record<ShipKey, number>;
-  queue?: QueueItem | undefined;
+  queue?: MainQueueItem | undefined;
+  researchQueue?: ResearchQueueItem | undefined;
   lastSettledAt: number;
 };
 
@@ -138,6 +152,29 @@ export const shipCatalog: Array<{
   },
 ];
 
+export const researchCatalog: Array<{
+  key: ResearchKey;
+  label: string;
+  lane: string;
+  baseCost: Resources;
+  asset: string;
+}> = [
+  {
+    key: "orbitalCartography",
+    label: "Orbital Cartography",
+    lane: "Exploration",
+    baseCost: { metal: 160, crystal: 120, deuterium: 0 },
+    asset: "/assets/game/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "baseRelaySecurity",
+    label: "Base Relay Security",
+    lane: "Network",
+    baseCost: { metal: 120, crystal: 180, deuterium: 40 },
+    asset: "/assets/game/buildings/robotics-factory-mid.webp",
+  },
+];
+
 const BPS = 10_000;
 const MIN_QUEUE_SECONDS = 60;
 const PLANET = {
@@ -162,6 +199,10 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       metalStorage: 0,
       crystalStorage: 0,
       deuteriumTank: 0,
+    },
+    research: {
+      orbitalCartography: 0,
+      baseRelaySecurity: 0,
     },
     ships: {
       smallCargo: 0,
@@ -230,6 +271,18 @@ export function buildingCost(
   return scaleByLevel(entry.baseCost, buildings[key]);
 }
 
+export function researchCost(
+  research: Record<ResearchKey, number>,
+  key: ResearchKey,
+): Resources {
+  const entry = researchCatalog.find((item) => item.key === key);
+  if (!entry) {
+    throw new Error(`Unknown research: ${key}`);
+  }
+
+  return scaleByLevel(entry.baseCost, research[key]);
+}
+
 export function canAfford(resources: Resources, cost: Resources): boolean {
   return resources.metal >= cost.metal
     && resources.crystal >= cost.crystal
@@ -250,28 +303,45 @@ export function settleState(state: PlayableState, now = Date.now()): PlayableSta
     lastSettledAt: now,
   };
 
-  if (!settled.queue || settled.queue.readyAt > now) {
-    return settled;
+  let next = settled;
+
+  if (settled.queue && settled.queue.readyAt <= now) {
+    if (settled.queue.kind === "building") {
+      next = {
+        ...settled,
+        buildings: {
+          ...settled.buildings,
+          [settled.queue.key]: settled.queue.targetLevel,
+        },
+        queue: undefined,
+      };
+    } else {
+      next = {
+        ...settled,
+        ships: {
+          ...settled.ships,
+          [settled.queue.key]: settled.ships[settled.queue.key] + settled.queue.quantity,
+        },
+        queue: undefined,
+      };
+    }
   }
 
-  if (settled.queue.kind === "building") {
-    return {
-      ...settled,
-      buildings: {
-        ...settled.buildings,
-        [settled.queue.key]: settled.queue.targetLevel,
-      },
-      queue: undefined,
-    };
+  if (!next.researchQueue || next.researchQueue.readyAt > now) {
+    return next;
+  }
+
+  if (next.researchQueue.kind !== "research") {
+    return next;
   }
 
   return {
-    ...settled,
-    ships: {
-      ...settled.ships,
-      [settled.queue.key]: settled.ships[settled.queue.key] + settled.queue.quantity,
+    ...next,
+    research: {
+      ...next.research,
+      [next.researchQueue.key]: next.researchQueue.targetLevel,
     },
-    queue: undefined,
+    researchQueue: undefined,
   };
 }
 
@@ -346,6 +416,41 @@ export function startShipProduction(
   };
 }
 
+export function startResearch(
+  state: PlayableState,
+  key: ResearchKey,
+  now = Date.now(),
+): PlayableState {
+  const settled = settleState(state, now);
+  if (settled.researchQueue) {
+    return settled;
+  }
+
+  const entry = researchCatalog.find((item) => item.key === key);
+  if (!entry) {
+    return settled;
+  }
+
+  const cost = researchCost(settled.research, key);
+  if (!canAfford(settled.resources, cost)) {
+    return settled;
+  }
+
+  const readyAt = now + researchDurationSeconds(settled.buildings.researchLab, cost) * 1_000;
+  return {
+    ...settled,
+    resources: spend(settled.resources, cost),
+    researchQueue: {
+      kind: "research",
+      key,
+      label: entry.label,
+      readyAt,
+      startedAt: now,
+      targetLevel: settled.research[key] + 1,
+    },
+  };
+}
+
 export function progress(queue: QueueItem | undefined, now = Date.now()): number {
   if (!queue) {
     return 0;
@@ -373,6 +478,11 @@ function unitDurationSeconds(shipyardLevel: number, cost: Resources, quantity: n
   const raw = Math.floor(
     (cost.metal + cost.crystal + cost.deuterium) / (200 * (shipyardLevel + 1)),
   ) + quantity * 10;
+  return Math.max(MIN_QUEUE_SECONDS, raw);
+}
+
+function researchDurationSeconds(researchLabLevel: number, cost: Resources): number {
+  const raw = Math.floor((cost.metal + cost.crystal + cost.deuterium) / (110 * (researchLabLevel + 1)));
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 
