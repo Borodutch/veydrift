@@ -62,11 +62,31 @@ bun run dev:frontend
 `apps/backend` exposes:
 
 - `GET /health`
-- `GET /graphql`
-- `POST /graphql`
+- `GET /debug/config`
+- `GET /wallet/:address/settlement`
+- `GET /wallet/:address/queues`
+- `GET /planets/:planetId`
+- `GET /universe/galaxies/:galaxy/systems/:system`
+- `GET /universe/systems?galaxy=1&center=250&radius=2`
+- `POST /index/rebuild`
+- `GET /graphql` / `POST /graphql` for the existing minimal service status response
 
-The GraphQL endpoint is intentionally minimal and returns only public service
-status until the API contract is designed.
+Copy `apps/backend/.env.example` to `apps/backend/.env` and provide the Base
+Sepolia RPC configuration before using chain-backed routes:
+
+```sh
+VEYDRIFT_DEPLOYMENT_MODE=local
+VEYDRIFT_CHAIN_ID=84532
+VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=0x...
+VEYDRIFT_INDEX_FROM_BLOCK=0
+ALCHEMY_BASE_SEPOLIA_API_KEY=...
+```
+
+The backend accepts `ALCHEMY_BASE_SEPOLIA_API_KEY`,
+`ALCHEMY_BASE_SEPOLIA_RPC_URL`, `BASE_SEPOLIA_RPC_URL`, or `VEYDRIFT_RPC_URL`.
+Health/debug responses only report safe configuration metadata and never echo
+RPC URLs or API keys. Ownership remains canonical onchain; the in-memory index
+can be rebuilt from settlement events with `POST /index/rebuild`.
 
 ### Frontend
 
