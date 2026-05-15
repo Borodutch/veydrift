@@ -57,6 +57,7 @@ export type WalletSettlementResponse = {
 export type QueueStateResponse = {
   active: boolean;
   kind: string | null;
+  itemId?: number;
   targetLevel?: number;
   quantity?: number;
   readyAt: string | null;
@@ -70,6 +71,20 @@ export type PlayerQueuesResponse = {
   defense: QueueStateResponse | null;
   ship: QueueStateResponse | null;
   research: QueueStateResponse | null;
+};
+
+export type ChainShipyardState = {
+  wallet: string;
+  homePlanetId: string | null;
+  resources: OnChainResources | null;
+  shipyardLevel: number;
+  technologyLevels: Record<string, number>;
+  ships: Array<{
+    id: number;
+    count: number;
+    cost: OnChainResources;
+  }>;
+  queue: QueueStateResponse | null;
 };
 
 export type SettlementState =
@@ -101,6 +116,11 @@ const READ_SELECTORS = {
 } as const;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
+const GAME_SELECTORS = {
+  collectShips: "0xb30a921c",
+  finishShipProduction: "0x7bd93154",
+  startShipProduction: "0x13aed9a2"
+} as const;
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
 
 export function getInjectedProvider(globalWindow: InjectedWindow | undefined): Eip1193Provider | undefined {
@@ -147,6 +167,10 @@ export function encodeAddressCall(selector: string, address: string): string {
 
 export function encodeUintCall(selector: string, value: bigint | number | string): string {
   return `${selector}${BigInt(value).toString(16).padStart(64, "0")}`;
+}
+
+export function encodeGameCall(selector: string, values: Array<bigint | number | string>): string {
+  return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
 }
 
 export function decodeUintResult(hex: string): bigint {
@@ -250,6 +274,62 @@ export async function sendSettlementTransaction(
         from: account,
         to: config.address,
         data: settlementTransactionData()
+      }
+    ]
+  });
+}
+
+export async function sendStartShipProductionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+  shipId: number,
+  quantity: number
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.startShipProduction, [planetId, shipId, quantity])
+      }
+    ]
+  });
+}
+
+export async function sendFinishShipProductionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.finishShipProduction, [planetId])
+      }
+    ]
+  });
+}
+
+export async function sendCollectShipsTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.collectShips, [planetId])
       }
     ]
   });
@@ -421,6 +501,12 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/queues`);
   if (!response.ok) throw new Error(`Queues API failed: ${response.status}`);
   return response.json() as Promise<PlayerQueuesResponse>;
+}
+
+export async function fetchShipyardState(apiUrl: string, wallet: string): Promise<ChainShipyardState> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/shipyard`);
+  if (!response.ok) throw new Error(`Shipyard API failed: ${response.status}`);
+  return response.json() as Promise<ChainShipyardState>;
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {

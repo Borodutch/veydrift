@@ -32,6 +32,7 @@ export type WalletSettlement = {
 export type QueueState = {
   active: boolean;
   kind: string | null;
+  itemId?: number;
   targetLevel?: number;
   quantity?: number;
   readyAt: string | null;
@@ -47,6 +48,20 @@ export type PlayerQueues = {
   research: QueueState | null;
 };
 
+export type ShipyardState = {
+  wallet: Address;
+  homePlanetId: string | null;
+  resources: Resources | null;
+  shipyardLevel: number;
+  technologyLevels: Record<string, number>;
+  ships: Array<{
+    id: number;
+    count: number;
+    cost: Resources;
+  }>;
+  queue: QueueState | null;
+};
+
 export type SettledPlanetEvent = PlanetState & {
   eventName: "PlanetStarted" | "ColonyCreated";
   transactionHash: string;
@@ -57,6 +72,7 @@ export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address): Promise<PlayerQueues>;
+  getShipyardState(wallet: Address): Promise<ShipyardState>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
 }
 
@@ -192,6 +208,44 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  async getShipyardState(wallet: Address): Promise<ShipyardState> {
+    const settlement = await this.getWalletSettlement(wallet);
+    if (!settlement.homePlanetId) {
+      return {
+        wallet,
+        homePlanetId: null,
+        resources: null,
+        shipyardLevel: 0,
+        technologyLevels: {},
+        ships: Array.from({ length: shipCount }, (_, id) => ({
+          id,
+          count: 0,
+          cost: zeroResources()
+        })),
+        queue: null
+      };
+    }
+
+    const planetId = BigInt(settlement.homePlanetId);
+    const [resources, shipyardLevel, queue, technologyLevels, ships] = await Promise.all([
+      this.readResources("0x0adbf924", planetId),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
+      this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
+      this.readTechnologyLevels(wallet),
+      this.readShipRows(planetId)
+    ]);
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      resources,
+      shipyardLevel: Number(shipyardLevel),
+      technologyLevels,
+      ships,
+      queue
+    };
+  }
+
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
     const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
       {
@@ -211,6 +265,7 @@ export class VeydriftGameReader implements ChainReader {
     return {
       active,
       kind: active ? kind : null,
+      ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
       ...(kind === "building"
         ? { targetLevel: Number(decodeUintWord(wordAt(words, 2))) }
         : { quantity: Number(decodeUintWord(wordAt(words, 2))) }),
@@ -225,10 +280,47 @@ export class VeydriftGameReader implements ChainReader {
     return {
       active,
       kind: active ? "research" : null,
+      ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
       targetLevel: Number(decodeUintWord(wordAt(words, 2))),
       readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
       cost: decodeResources(words.slice(4, 7))
     };
+  }
+
+  private async readTechnologyLevels(wallet: Address): Promise<Record<string, number>> {
+    const entries = await Promise.all(
+      Array.from({ length: technologyCount }, async (_, id) => [
+        id.toString(),
+        Number(await this.readUintCall("0xe512884c", [encodeAddress(wallet), encodeUint(BigInt(id))]))
+      ] as const)
+    );
+
+    return Object.fromEntries(entries);
+  }
+
+  private async readShipRows(planetId: bigint): Promise<ShipyardState["ships"]> {
+    return Promise.all(
+      Array.from({ length: shipCount }, async (_, id) => {
+        const [count, cost] = await Promise.all([
+          this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
+          this.readResources("0xc4222030", BigInt(id))
+        ]);
+
+        return {
+          id,
+          count: Number(count),
+          cost
+        };
+      })
+    );
+  }
+
+  private async readResources(selector: string, firstArg: bigint): Promise<Resources> {
+    return decodeResources(splitWords(await this.call(selector, [encodeUint(firstArg)])));
+  }
+
+  private async readUintCall(selector: string, args: string[]): Promise<bigint> {
+    return decodeUintWord(wordAt(splitWords(await this.call(selector, args)), 0));
   }
 
   private async call(selector: string, args: string[]): Promise<string> {
@@ -243,6 +335,8 @@ export class VeydriftGameReader implements ChainReader {
 }
 
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
+const shipCount = 16;
+const technologyCount = 16;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 
@@ -347,5 +441,13 @@ function decodeResources(words: string[]): Resources {
     metal: decodeUintWord(words[0] ?? "0").toString(),
     crystal: decodeUintWord(words[1] ?? "0").toString(),
     deuterium: decodeUintWord(words[2] ?? "0").toString()
+  };
+}
+
+function zeroResources(): Resources {
+  return {
+    metal: "0",
+    crystal: "0",
+    deuterium: "0"
   };
 }

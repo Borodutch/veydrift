@@ -9,6 +9,7 @@ import {
   researchCatalog,
   researchRequirementsFor,
   settleState,
+  shipCatalog,
   startBuildingUpgrade,
   startResearch,
   startShipProduction,
@@ -77,6 +78,28 @@ describe("playable MVP simulation", () => {
 
     expect(withoutShipyard.queue).toBeUndefined();
     expect(queued.queue?.kind).toBe("ship");
+  });
+
+  test("maps the full Solidity ship catalog for Shipyard display", () => {
+    expect(shipCatalog.map((ship) => [ship.id, ship.key, ship.label])).toEqual([
+      [0, "smallCargo", "Small Cargo"],
+      [1, "lightFighter", "Light Fighter"],
+      [2, "recycler", "Recycler"],
+      [3, "colonyShip", "Colony Ship"],
+      [4, "largeCargo", "Large Cargo"],
+      [5, "heavyFighter", "Heavy Fighter"],
+      [6, "cruiser", "Cruiser"],
+      [7, "battleship", "Battleship"],
+      [8, "espionageProbe", "Espionage Probe"],
+      [9, "bomber", "Bomber"],
+      [10, "solarSatellite", "Solar Satellite"],
+      [11, "destroyer", "Destroyer"],
+      [12, "deathstar", "Dreadstar"],
+      [13, "battlecruiser", "Battlecruiser"],
+      [14, "reaper", "Reaper"],
+      [15, "pathfinder", "Pathfinder"],
+    ]);
+    expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/"))).toBe(true);
   });
 
   test("requires Research Lab before any research can start", () => {

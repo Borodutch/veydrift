@@ -47,10 +47,16 @@ describe("tester universe display data", () => {
 
   test("visible MVP catalog uses the latest scoped style-pass assets", () => {
     expect(buildingCatalog.every((building) => building.asset.includes("/assets/game/style-pass/generated/buildings/"))).toBe(true);
-    expect(shipCatalog.map((ship) => ship.asset)).toEqual([
-      "/assets/game/style-pass/high-res/small-cargo-alive-fullship-2k.webp",
-      "/assets/game/style-pass/generated/ships/light-fighter.webp",
-      "/assets/game/style-pass/generated/ships/colony-ship.webp",
-    ]);
+    expect(shipCatalog).toHaveLength(16);
+    expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/"))).toBe(true);
+    expect(shipCatalog.find((ship) => ship.key === "smallCargo")?.asset).toBe(
+      "/assets/game/style-pass/high-res/small-cargo-alive-fullship-2k.webp"
+    );
+    expect(shipCatalog.find((ship) => ship.key === "lightFighter")?.asset).toBe(
+      "/assets/game/style-pass/generated/ships/light-fighter.webp"
+    );
+    expect(shipCatalog.find((ship) => ship.key === "colonyShip")?.asset).toBe(
+      "/assets/game/style-pass/generated/ships/colony-ship.webp"
+    );
   });
 });

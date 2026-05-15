@@ -16,24 +16,42 @@ export type BuildingKey =
   | "crystalStorage"
   | "deuteriumTank";
 
-export type ShipKey = "smallCargo" | "lightFighter" | "colonyShip";
+export type ShipKey =
+  | "smallCargo"
+  | "lightFighter"
+  | "recycler"
+  | "colonyShip"
+  | "largeCargo"
+  | "heavyFighter"
+  | "cruiser"
+  | "battleship"
+  | "espionageProbe"
+  | "bomber"
+  | "solarSatellite"
+  | "destroyer"
+  | "deathstar"
+  | "battlecruiser"
+  | "reaper"
+  | "pathfinder";
 export type ResearchKey =
   | "energy"
   | "laser"
   | "ion"
-  | "hyperspace"
-  | "plasma"
   | "combustionDrive"
-  | "impulseDrive"
-  | "hyperspaceDrive"
   | "espionage"
   | "computer"
+  | "weapons"
+  | "shielding"
+  | "armor"
+  | "hyperspace"
+  | "impulseDrive"
+  | "hyperspaceDrive"
+  | "plasma"
   | "astrophysics"
   | "intergalacticResearchNetwork"
   | "graviton"
-  | "weapons"
-  | "shielding"
-  | "armor";
+  | "orbitalCartography"
+  | "baseRelaySecurity";
 
 export type ResearchRequirement =
   | {
@@ -202,27 +220,209 @@ export const buildingCatalog: Array<{
 
 export const shipCatalog: Array<{
   key: ShipKey;
+  id: number;
   label: string;
+  group: "civil" | "combat" | "special";
   baseCost: Resources;
+  requirements: Array<{
+    label: string;
+    kind: "building" | "technology";
+    key?: BuildingKey | ResearchKey;
+    level: number;
+  }>;
   asset: string;
 }> = [
   {
     key: "smallCargo",
+    id: 0,
     label: "Small Cargo",
+    group: "civil",
     baseCost: { metal: 2_000, crystal: 2_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 1 },
+    ],
     asset: "/assets/game/style-pass/high-res/small-cargo-alive-fullship-2k.webp",
   },
   {
     key: "lightFighter",
+    id: 1,
     label: "Light Fighter",
+    group: "combat",
     baseCost: { metal: 3_000, crystal: 1_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 1 },
+    ],
     asset: "/assets/game/style-pass/generated/ships/light-fighter.webp",
   },
   {
+    key: "recycler",
+    id: 2,
+    label: "Recycler",
+    group: "civil",
+    baseCost: { metal: 10_000, crystal: 6_000, deuterium: 2_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
+    ],
+    asset: "/assets/game/ships/recycler.webp",
+  },
+  {
     key: "colonyShip",
+    id: 3,
     label: "Colony Ship",
+    group: "civil",
     baseCost: { metal: 10_000, crystal: 20_000, deuterium: 10_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 3 },
+    ],
     asset: "/assets/game/style-pass/generated/ships/colony-ship.webp",
+  },
+  {
+    key: "largeCargo",
+    id: 4,
+    label: "Large Cargo",
+    group: "civil",
+    baseCost: { metal: 6_000, crystal: 6_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 6 },
+    ],
+    asset: "/assets/game/ships/large-cargo.webp",
+  },
+  {
+    key: "heavyFighter",
+    id: 5,
+    label: "Heavy Fighter",
+    group: "combat",
+    baseCost: { metal: 6_000, crystal: 4_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 2 },
+    ],
+    asset: "/assets/game/ships/heavy-fighter.webp",
+  },
+  {
+    key: "cruiser",
+    id: 6,
+    label: "Cruiser",
+    group: "combat",
+    baseCost: { metal: 20_000, crystal: 7_000, deuterium: 2_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 4 },
+    ],
+    asset: "/assets/game/ships/cruiser.webp",
+  },
+  {
+    key: "battleship",
+    id: 7,
+    label: "Battleship",
+    group: "combat",
+    baseCost: { metal: 45_000, crystal: 15_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 4 },
+    ],
+    asset: "/assets/game/ships/battleship.webp",
+  },
+  {
+    key: "espionageProbe",
+    id: 8,
+    label: "Espionage Probe",
+    group: "special",
+    baseCost: { metal: 0, crystal: 1_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "espionage", label: "Espionage", level: 2 },
+    ],
+    asset: "/assets/game/ships/espionage-probe.webp",
+  },
+  {
+    key: "bomber",
+    id: 9,
+    label: "Bomber",
+    group: "combat",
+    baseCost: { metal: 50_000, crystal: 25_000, deuterium: 15_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 6 },
+    ],
+    asset: "/assets/game/ships/bomber.webp",
+  },
+  {
+    key: "solarSatellite",
+    id: 10,
+    label: "Solar Satellite",
+    group: "special",
+    baseCost: { metal: 0, crystal: 2_000, deuterium: 500 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+    ],
+    asset: "/assets/game/ships/solar-satellite.webp",
+  },
+  {
+    key: "destroyer",
+    id: 11,
+    label: "Destroyer",
+    group: "combat",
+    baseCost: { metal: 60_000, crystal: 50_000, deuterium: 15_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 6 },
+    ],
+    asset: "/assets/game/ships/destroyer.webp",
+  },
+  {
+    key: "deathstar",
+    id: 12,
+    label: "Dreadstar",
+    group: "special",
+    baseCost: { metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "graviton", label: "Graviton", level: 1 },
+    ],
+    asset: "/assets/game/ships/deathstar.webp",
+  },
+  {
+    key: "battlecruiser",
+    id: 13,
+    label: "Battlecruiser",
+    group: "combat",
+    baseCost: { metal: 30_000, crystal: 40_000, deuterium: 15_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 5 },
+    ],
+    asset: "/assets/game/ships/battlecruiser.webp",
+  },
+  {
+    key: "reaper",
+    id: 14,
+    label: "Reaper",
+    group: "combat",
+    baseCost: { metal: 85_000, crystal: 55_000, deuterium: 20_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 7 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 6 },
+    ],
+    asset: "/assets/game/ships/reaper.webp",
+  },
+  {
+    key: "pathfinder",
+    id: 15,
+    label: "Pathfinder",
+    group: "special",
+    baseCost: { metal: 8_000, crystal: 15_000, deuterium: 8_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
+    ],
+    asset: "/assets/game/ships/pathfinder.webp",
   },
 ];
 
@@ -401,24 +601,39 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       energy: 0,
       laser: 0,
       ion: 0,
-      hyperspace: 0,
-      plasma: 0,
       combustionDrive: 0,
-      impulseDrive: 0,
-      hyperspaceDrive: 0,
       espionage: 0,
       computer: 0,
-      astrophysics: 0,
-      intergalacticResearchNetwork: 0,
-      graviton: 0,
       weapons: 0,
       shielding: 0,
       armor: 0,
+      hyperspace: 0,
+      impulseDrive: 0,
+      hyperspaceDrive: 0,
+      plasma: 0,
+      astrophysics: 0,
+      intergalacticResearchNetwork: 0,
+      graviton: 0,
+      orbitalCartography: 0,
+      baseRelaySecurity: 0,
     },
     ships: {
       smallCargo: 0,
       lightFighter: 0,
+      recycler: 0,
       colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      espionageProbe: 0,
+      bomber: 0,
+      solarSatellite: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
     },
     lastSettledAt: now,
   };
