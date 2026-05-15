@@ -22,7 +22,7 @@ import {
   type PlayableState,
   type Resources,
 } from "./playableMvp";
-import { runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
+import { playableApiUrl, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import type { Eip1193Provider, PlanetSummary } from "./walletFlow";
 import { shortAddress } from "./walletFlow";
 
@@ -95,6 +95,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const rates = productionPerHour(settledState.buildings);
   const caps = storageCaps(settledState.buildings);
   const planetInfo = planetSummary();
+  const homeCoords = useMemo(() => parseCoordinates(planet?.coordinates), [planet?.coordinates]);
+  const apiBaseUrl = runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : playableApiUrl;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -164,7 +166,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           </div>
         )}
         <GalaxyView
+          apiBaseUrl={apiBaseUrl}
           galaxy={galaxyNav.galaxy}
+          homeCoords={homeCoords}
           system={galaxyNav.system}
           onSelectPlanet={(coords) => {
             setSelectedCoords(coords);
@@ -231,7 +235,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           </div>
         )}
         <PlanetDetail
+          apiBaseUrl={apiBaseUrl}
           coords={selectedCoords}
+          homeCoords={homeCoords}
           onBack={() => setView("galaxy")}
           onNavigateSystem={(g, s) => {
             setGalaxyNav({ galaxy: g, system: s });
@@ -315,15 +321,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           </div>
         </header>
 
-        {/* Simulated data notice */}
-        {isWalletConnected && (
-          <div className="rounded-md border border-amber-300/20 bg-amber-300/5 px-4 py-2">
-            <p className="text-xs text-amber-200">
-              MVP Note: Planet resources and buildings are simulated locally. Settlement and coordinates are onchain.
-            </p>
-          </div>
-        )}
-
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(340px,0.85fr)]">
           <div className="grid gap-4">
             <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
@@ -331,7 +328,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
                 <img
                   alt=""
                   className="absolute inset-0 h-full w-full object-cover"
-                  src="/assets/game/planets/lush-temperate.webp"
+                  src="/assets/game/style-pass/generated/planets/lush-temperate.webp"
                 />
                 <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,9,19,0.16),rgba(7,9,19,0.9)),linear-gradient(90deg,rgba(7,9,19,0.8),rgba(7,9,19,0.2))]" />
                 <div className="relative flex min-h-[280px] flex-col justify-end p-5">
@@ -702,4 +699,11 @@ function formatCost(cost: Resources): string {
     .filter(([, value]) => value > 0)
     .map(([label, value]) => `${label} ${format(value)}`)
     .join(" / ");
+}
+
+function parseCoordinates(coordinates: string | undefined): Coordinates | undefined {
+  if (!coordinates) return undefined;
+  const [galaxy, system, position] = coordinates.split(":").map((part) => Number.parseInt(part, 10));
+  if (!galaxy || !system || !position) return undefined;
+  return { galaxy, system, position };
 }
