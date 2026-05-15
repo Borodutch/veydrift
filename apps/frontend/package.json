@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "build:playable": "vite build --mode playable",
-    "build:test": "vite build --mode settlement",
+    "build:playable": "bun scripts/generate-image-variants.mjs && vite build --mode playable",
+    "build:test": "bun scripts/generate-image-variants.mjs && vite build --mode settlement",
     "check": "tsc --project tsconfig.json && vite build",
     "dev": "vite --host 0.0.0.0",
     "prebuild": "bun scripts/generate-image-variants.mjs",

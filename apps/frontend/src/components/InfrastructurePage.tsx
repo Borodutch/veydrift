@@ -169,6 +169,8 @@ function BuildingDetailPanel({
   const energy = buildingEnergyDetail(state.buildings, building.key);
   const status = buildingUpgradeStatus(state, building.key);
   const effectRows = detailEffectRows(effect, energy);
+  const actionVerb = currentLevel === 0 ? "Build" : "Upgrade";
+  const actionLabel = `${actionVerb} Level ${status.targetLevel}`;
 
   return (
     <aside className="min-w-0 rounded-lg border border-white/10 bg-[#0f1624] p-3 xl:sticky xl:top-4">
@@ -190,7 +192,7 @@ function BuildingDetailPanel({
             <div className="min-w-0">
               <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
               <p className="mt-1 text-sm text-slate-400">
-                Level {currentLevel} to {status.targetLevel}
+                {currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
               </p>
             </div>
             {currentLevel === 0 ? (
@@ -210,9 +212,16 @@ function BuildingDetailPanel({
         </div>
       </div>
 
-      <dl className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+      <dl className="mt-4 grid gap-2">
         {effectRows.map((row) => (
-          <DetailMetric accent={row.accent ?? false} key={row.label} label={row.label} value={row.value} />
+          <ComparisonMetric
+            delta={row.delta}
+            key={row.label}
+            label={row.label}
+            next={row.next}
+            tone={row.tone}
+            value={row.value}
+          />
         ))}
       </dl>
 
@@ -228,33 +237,46 @@ function BuildingDetailPanel({
       </div>
 
       <button
-        aria-label={`Upgrade ${building.label} to Level ${status.targetLevel}`}
+        aria-label={`${actionVerb} ${building.label} to Level ${status.targetLevel}`}
         className="mt-3 h-10 w-full rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
         disabled={status.disabled}
         onClick={onUpgrade}
         type="button"
       >
-        Upgrade to Level {status.targetLevel}
+        {actionLabel}
       </button>
     </aside>
   );
 }
 
-function DetailMetric({
-  accent = false,
+function ComparisonMetric({
+  delta,
   label,
+  next,
+  tone = "positive",
   value,
 }: {
-  accent?: boolean;
+  delta?: string | undefined;
   label: string;
+  next: string;
+  tone?: "neutral" | "positive" | "warning" | undefined;
   value: string;
 }) {
+  const deltaClass = tone === "warning"
+    ? "text-amber-200"
+    : tone === "neutral"
+      ? "text-slate-300"
+      : "text-signal";
+
   return (
     <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
       <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
-      <dd className={`mt-1 break-words text-sm font-semibold ${accent ? "text-signal" : "text-slate-200"}`}>
-        {value}
+      <dd className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-baseline gap-2 text-sm font-semibold">
+        <span className="min-w-0 break-words text-slate-200">{value}</span>
+        <span aria-hidden="true" className="text-slate-500">→</span>
+        <span className="min-w-0 break-words text-signal">{next}</span>
       </dd>
+      {delta && <dd className={`mt-1 text-xs font-medium ${deltaClass}`}>{delta}</dd>}
     </div>
   );
 }
@@ -269,81 +291,78 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
 }
 
 function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnType<typeof buildingEnergyDetail>) {
-  const rows: Array<{ accent?: boolean; label: string; value: string }> = [];
+  const rows: Array<{
+    delta?: string;
+    label: string;
+    next: string;
+    tone?: "neutral" | "positive" | "warning";
+    value: string;
+  }> = [];
 
   if (effect.kind === "production") {
-    rows.push(
-      {
-        label: "Current production",
-        value: `${formatNumber(effect.currentPerHour)} ${shortResourceLabels[effect.resource]}/h`,
-      },
-      {
-        accent: true,
-        label: "Next production",
-        value: `${formatNumber(effect.nextPerHour)} ${shortResourceLabels[effect.resource]}/h (${formatSigned(effect.deltaPerHour)}/h)`,
-      },
-    );
+    rows.push({
+      delta: `${formatSigned(effect.deltaPerHour)}/h`,
+      label: "Production",
+      next: `${formatNumber(effect.nextPerHour)} ${shortResourceLabels[effect.resource]}/h`,
+      value: `${formatNumber(effect.currentPerHour)} ${shortResourceLabels[effect.resource]}/h`,
+    });
   } else if (effect.kind === "energy") {
-    rows.push(
-      {
-        label: "Current energy",
-        value: `${formatNumber(effect.currentProduced)} produced / ${formatNumber(effect.required)} required`,
-      },
-      {
-        accent: true,
-        label: "Next energy",
-        value: `${formatNumber(effect.nextProduced)} produced (${formatSigned(effect.deltaProduced)})`,
-      },
-    );
+    rows.push({
+      delta: `${formatSigned(effect.deltaProduced)} produced`,
+      label: "Energy output",
+      next: `${formatNumber(effect.nextProduced)} produced`,
+      value: `${formatNumber(effect.currentProduced)} produced`,
+    });
     return rows;
   } else if (effect.kind === "storage") {
-    rows.push(
-      {
-        label: "Current capacity",
-        value: `${formatNumber(effect.currentCapacity)} ${shortResourceLabels[effect.resource]}`,
-      },
-      {
-        accent: true,
-        label: "Next capacity",
-        value: `${formatNumber(effect.nextCapacity)} ${shortResourceLabels[effect.resource]} (${formatSigned(effect.deltaCapacity)})`,
-      },
-    );
+    rows.push({
+      delta: `${formatSigned(effect.deltaCapacity)} capacity`,
+      label: "Storage capacity",
+      next: `${formatNumber(effect.nextCapacity)} ${shortResourceLabels[effect.resource]}`,
+      value: `${formatNumber(effect.currentCapacity)} ${shortResourceLabels[effect.resource]}`,
+    });
   } else if (effect.kind === "constructionSpeed") {
-    rows.push(
-      { label: "Current construction", value: `x${formatNumber(effect.currentFactor)}` },
-      { accent: true, label: "Next construction", value: `x${formatNumber(effect.nextFactor)}` },
-    );
+    rows.push({
+      label: "Construction speed",
+      next: `x${formatNumber(effect.nextFactor)}`,
+      value: `x${formatNumber(effect.currentFactor)}`,
+    });
   } else if (effect.kind === "shipyard") {
-    rows.push(
-      { label: "Current shipyard", value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Not built" },
-      {
-        accent: true,
-        label: "Next shipyard",
-        value: effect.nextUnlocked && !effect.unlocked ? "Unlocks orbital production" : `x${formatNumber(effect.nextFactor)}`,
-      },
-    );
+    rows.push({
+      label: "Shipyard speed",
+      next: effect.nextUnlocked && !effect.unlocked ? "Unlocks orbital production" : `x${formatNumber(effect.nextFactor)}`,
+      value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Not built",
+    });
   } else {
-    rows.push(
-      { label: "Current research speed", value: `x${formatNumber(effect.currentFactor)}` },
-      { accent: true, label: "Next research speed", value: `x${formatNumber(effect.nextFactor)}` },
-    );
+    rows.push({
+      label: "Research speed",
+      next: `x${formatNumber(effect.nextFactor)}`,
+      value: `x${formatNumber(effect.currentFactor)}`,
+    });
   }
 
   if (energy.kind === "produces") {
-    rows.push(
-      { label: "Current energy", value: `${formatNumber(energy.current)} produced` },
-      { accent: true, label: "Next energy", value: `${formatNumber(energy.next)} produced (${formatSigned(energy.delta)})` },
-    );
+    rows.push({
+      delta: `${formatSigned(energy.delta)} produced`,
+      label: "Energy",
+      next: `${formatNumber(energy.next)} produced`,
+      value: `${formatNumber(energy.current)} produced`,
+    });
   } else if (energy.kind === "requires") {
-    rows.push(
-      { label: "Current energy", value: `${formatNumber(energy.current)} required` },
-      { accent: true, label: "Next energy", value: `${formatNumber(energy.next)} required (${formatSigned(-energy.delta)})` },
-    );
+    rows.push({
+      delta: `${formatSigned(energy.delta)} required`,
+      label: "Energy required",
+      next: `${formatNumber(energy.next)} required`,
+      tone: "warning",
+      value: `${formatNumber(energy.current)} required`,
+    });
   } else {
-    rows.push(
-      { label: "Current energy", value: "No direct energy use" },
-      { label: "Next energy", value: "No direct energy change" },
-    );
+    rows.push({
+      label: "Energy",
+      next: "No direct change",
+      tone: "neutral",
+      value: "No direct use",
+    });
   }
 
   return rows;
