@@ -1,3 +1,5 @@
+import { generateSystem } from "@veydrift/universe";
+
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
 } as const;
@@ -10,6 +12,8 @@ type HealthPayload = {
   ok: true;
   service: "veydrift-backend";
 };
+
+const defaultUniverseSeed = "veydrift-mainnet-preview";
 
 const healthPayload: HealthPayload = {
   ok: true,
@@ -24,6 +28,10 @@ export function createRequestHandler(): (request: Request) => Promise<Response> 
       return Response.json(healthPayload, {
         headers: jsonHeaders
       });
+    }
+
+    if (request.method === "GET" && url.pathname === "/universe/system") {
+      return handleUniverseSystemRequest(url);
     }
 
     if (request.method === "POST" && url.pathname === "/graphql") {
@@ -56,6 +64,69 @@ export function createRequestHandler(): (request: Request) => Promise<Response> 
       }
     );
   };
+}
+
+function handleUniverseSystemRequest(url: URL): Response {
+  const galaxyId = parseIntegerQuery(url, "galaxyId", 0);
+  const systemId = parseIntegerQuery(url, "systemId", 1);
+  const seed = url.searchParams.get("seed") ?? defaultUniverseSeed;
+
+  if (galaxyId === null || galaxyId < 0) {
+    return badRequest("galaxyId must be a non-negative integer.");
+  }
+
+  if (systemId === null || systemId < 1) {
+    return badRequest("systemId must be a positive integer.");
+  }
+
+  return Response.json(
+    {
+      data: {
+        system: generateSystem({
+          seed,
+          galaxyId,
+          systemId
+        })
+      }
+    },
+    {
+      headers: jsonHeaders
+    }
+  );
+}
+
+function parseIntegerQuery(
+  url: URL,
+  name: string,
+  fallback: number
+): number | null {
+  const value = url.searchParams.get(name);
+
+  if (value === null) {
+    return fallback;
+  }
+
+  if (!/^-?\d+$/.test(value)) {
+    return null;
+  }
+
+  return Number.parseInt(value, 10);
+}
+
+function badRequest(message: string): Response {
+  return Response.json(
+    {
+      errors: [
+        {
+          message
+        }
+      ]
+    },
+    {
+      headers: jsonHeaders,
+      status: 400
+    }
+  );
 }
 
 async function handleGraphQLRequest(request: Request): Promise<Response> {
