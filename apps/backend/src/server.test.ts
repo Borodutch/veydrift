@@ -348,6 +348,53 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("keeps compact settlement available when the game contract has no home planet", async () => {
+    const reader = new VeydriftGameReader(configuredTestConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const [call] = params as [{ data: string; to: string }];
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x0ff79fa5")) {
+          return abiWords(0n) as T;
+        }
+        if (call.to === configuredTestConfig.settlementContractAddress && call.data.startsWith("0x1d750846")) {
+          return abiWords(1n) as T;
+        }
+        if (call.to === configuredTestConfig.settlementContractAddress && call.data.startsWith("0x29147f24")) {
+          return abiWords(2n, 44n, 9n, 0n, 0n, 1_770_000_000n, 123n) as T;
+        }
+
+        throw new Error(`Unexpected call ${call.to} ${call.data.slice(0, 10)}`);
+      }
+    });
+
+    await expect(reader.getWalletSettlement(player)).resolves.toMatchObject({
+      wallet: player,
+      hasFirstPlanet: true,
+      homePlanetId: null,
+      contractKind: "settlement",
+      planet: {
+        galaxy: 2,
+        system: 44,
+        position: 9
+      }
+    });
+
+    await expect(reader.getShipyardState(player)).resolves.toMatchObject({
+      wallet: player,
+      homePlanetId: null,
+      productionAvailable: true,
+      ships: expect.arrayContaining([
+        expect.objectContaining({
+          id: 0,
+          cost: {
+            metal: "0",
+            crystal: "0",
+            deuterium: "0"
+          }
+        })
+      ])
+    });
+  });
+
   test("rebuilds the cache and marks occupied system coordinates", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
