@@ -113,7 +113,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
           <select
             value={galaxy}
             onChange={handleGalaxyChange}
-            className="rounded border border-white/15 bg-void px-2 py-1.5 text-sm text-white outline-none focus:border-signal/50"
+            className="rounded border border-white/15 bg-[#070913] px-2 py-1.5 text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
           >
             {Array.from({ length: GALAXY_COUNT }, (_, i) => i + 1).map((g) => (
               <option key={g} value={g}>
@@ -126,7 +126,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
           <select
             value={system}
             onChange={handleSystemChange}
-            className="rounded border border-white/15 bg-void px-2 py-1.5 text-sm text-white outline-none focus:border-signal/50"
+            className="rounded border border-white/15 bg-[#070913] px-2 py-1.5 text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
           >
             {Array.from({ length: SYSTEM_COUNT }, (_, i) => i + 1).map((s) => (
               <option key={s} value={s}>
