@@ -44,6 +44,14 @@ export function OptimizedImage({
       className={className}
       height={height}
       loading={loading}
+      onError={(event) => {
+        const image = event.currentTarget;
+        if (image.dataset.fallbackApplied === "true") return;
+        image.dataset.fallbackApplied = "true";
+        image.removeAttribute("srcset");
+        image.removeAttribute("sizes");
+        image.src = src;
+      }}
       sizes={isDev ? undefined : sizesValue}
       src={src}
       srcSet={isDev ? undefined : getSrcSet(src)}
