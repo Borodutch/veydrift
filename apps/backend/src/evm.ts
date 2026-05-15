@@ -130,8 +130,9 @@ export class HttpJsonRpcTransport {
 
 export class VeydriftGameReader implements ChainReader {
   private readonly transport: Pick<HttpJsonRpcTransport, "request">;
-  private readonly contractAddress: Address;
+  private readonly gameContractAddress: Address;
   private readonly chainId: number;
+  private readonly settlementContractAddress: Address | undefined;
 
   constructor(config: BackendConfig, transport?: Pick<HttpJsonRpcTransport, "request">) {
     if (!config.rpcUrl) {
@@ -142,25 +143,22 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     this.transport = transport ?? new HttpJsonRpcTransport(config.rpcUrl);
-    this.contractAddress = config.gameContractAddress;
+    this.gameContractAddress = config.gameContractAddress;
     this.chainId = config.chainId;
+    this.settlementContractAddress = config.settlementContractAddress;
   }
 
   async getWalletSettlement(wallet: Address): Promise<WalletSettlement> {
     assertAddress(wallet);
     try {
-      const homePlanetId = decodeUint(await this.call("0x0ff79fa5", [encodeAddress(wallet)]));
-      const planet = homePlanetId === 0n ? null : await this.getPlanet(homePlanetId);
+      const gameSettlement = await this.getGameSettlement(wallet);
+      if (gameSettlement.homePlanetId || !this.settlementContractAddress) {
+        return gameSettlement;
+      }
 
-      return {
-        wallet,
-        hasFirstPlanet: homePlanetId !== 0n,
-        homePlanetId: homePlanetId === 0n ? null : homePlanetId.toString(),
-        planet,
-        contractKind: "game"
-      };
+      return this.getCompactSettlement(wallet);
     } catch (error) {
-      if (!isRpcRevert(error)) {
+      if (!isRpcRevert(error) || !this.settlementContractAddress) {
         throw error;
       }
 
@@ -192,8 +190,8 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async getPlayerQueues(wallet: Address): Promise<PlayerQueues> {
-    const settlement = await this.getWalletSettlement(wallet);
-    if (!settlement.homePlanetId || settlement.contractKind === "settlement") {
+    const settlement = await this.getGameSettlement(wallet);
+    if (!settlement.homePlanetId) {
       return {
         wallet,
         homePlanetId: null,
@@ -223,13 +221,20 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async getShipyardState(wallet: Address): Promise<ShipyardState> {
-    const settlement = await this.getWalletSettlement(wallet);
-    if (settlement.contractKind === "settlement") {
+    let settlement: WalletSettlement;
+    try {
+      settlement = await this.getGameSettlement(wallet);
+    } catch (error) {
+      if (!isRpcRevert(error) || !this.settlementContractAddress) {
+        throw error;
+      }
+
       return {
         wallet,
         homePlanetId: null,
         productionAvailable: false,
-        unavailableReason: "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
+        unavailableReason:
+          "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
         resources: null,
         shipyardLevel: 0,
         technologyLevels: {},
@@ -279,7 +284,7 @@ export class VeydriftGameReader implements ChainReader {
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
     const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
       {
-        address: this.contractAddress,
+        address: this.gameContractAddress,
         fromBlock: toQuantity(fromBlock),
         toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
         topics: [[planetStartedTopic, colonyCreatedTopic]]
@@ -287,6 +292,19 @@ export class VeydriftGameReader implements ChainReader {
     ]);
 
     return logs.map((log) => decodeSettledPlanetLog(log));
+  }
+
+  private async getGameSettlement(wallet: Address): Promise<WalletSettlement> {
+    const homePlanetId = decodeUint(await this.call("0x0ff79fa5", [encodeAddress(wallet)]));
+    const planet = homePlanetId === 0n ? null : await this.getPlanet(homePlanetId);
+
+    return {
+      wallet,
+      hasFirstPlanet: homePlanetId !== 0n,
+      homePlanetId: homePlanetId === 0n ? null : homePlanetId.toString(),
+      planet,
+      contractKind: "game"
+    };
   }
 
   private async readPlanetQueue(selector: string, planetId: bigint, kind: "building" | "defense" | "ship"): Promise<QueueState> {
@@ -346,7 +364,19 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async getCompactSettlement(wallet: Address): Promise<WalletSettlement> {
-    const hasFirstPlanet = decodeBoolWord(wordAt(splitWords(await this.call("0x1d750846", [encodeAddress(wallet)])), 0));
+    if (!this.settlementContractAddress) {
+      return {
+        wallet,
+        hasFirstPlanet: false,
+        homePlanetId: null,
+        planet: null,
+        contractKind: "settlement"
+      };
+    }
+
+    const hasFirstPlanet = decodeBoolWord(
+      wordAt(splitWords(await this.compactCall("0x1d750846", [encodeAddress(wallet)])), 0)
+    );
 
     if (!hasFirstPlanet) {
       return {
@@ -358,12 +388,12 @@ export class VeydriftGameReader implements ChainReader {
       };
     }
 
-    const words = splitWords(await this.call("0x29147f24", [encodeAddress(wallet)]));
+    const words = splitWords(await this.compactCall("0x29147f24", [encodeAddress(wallet)]));
     const galaxy = Number(decodeUintWord(wordAt(words, 0)));
     const system = Number(decodeUintWord(wordAt(words, 1)));
     const position = Number(decodeUintWord(wordAt(words, 2)));
     const settledAt = decodeUintWord(wordAt(words, 5)).toString();
-    const metadata = planetMetadata(this.chainId, this.contractAddress, { galaxy, system, position });
+    const metadata = planetMetadata(this.chainId, this.settlementContractAddress, { galaxy, system, position });
 
     return {
       wallet,
@@ -396,9 +426,21 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async call(selector: string, args: string[]): Promise<string> {
+    return this.callContract(this.gameContractAddress, selector, args);
+  }
+
+  private async compactCall(selector: string, args: string[]): Promise<string> {
+    if (!this.settlementContractAddress) {
+      throw new Error("Veydrift settlement contract address is required.");
+    }
+
+    return this.callContract(this.settlementContractAddress, selector, args);
+  }
+
+  private async callContract(contractAddress: Address, selector: string, args: string[]): Promise<string> {
     return this.transport.request<string>("eth_call", [
       {
-        to: this.contractAddress,
+        to: contractAddress,
         data: `${selector}${args.join("")}`
       },
       "latest"
