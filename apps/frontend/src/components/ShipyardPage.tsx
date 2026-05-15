@@ -1,130 +1,392 @@
-import type { PlayableState, ShipKey, Resources } from "../playableMvp";
-import { shipCatalog, canAfford } from "../playableMvp";
+import { useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
+import type { Resources, ShipKey } from "../playableMvp";
+import { canAfford, shipCatalog } from "../playableMvp";
+import type { ChainShipyardState } from "../walletFlow";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
+type ShipyardActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
+
 interface ShipyardPageProps {
-  state: PlayableState;
-  settledState: PlayableState;
-  onBuild: (key: ShipKey, quantity: number) => void;
+  actionState: ShipyardActionState;
+  canTransact: boolean;
+  error: string | undefined;
+  loading: boolean;
+  onBuild: (shipId: number, key: ShipKey, quantity: number) => void;
+  onCollect: () => void;
+  onFinish: () => void;
+  onRefresh: () => void;
+  shipyardState: ChainShipyardState | null;
 }
 
+const groupLabels = {
+  civil: "Civil and economy",
+  combat: "Combat ships",
+  special: "Probes, satellites, specials",
+} as const;
+
 export function ShipyardPage({
-  state,
-  settledState,
+  actionState,
+  canTransact,
+  error,
+  loading,
   onBuild,
+  onCollect,
+  onFinish,
+  onRefresh,
+  shipyardState,
 }: ShipyardPageProps) {
-  const shipyardLevel = settledState.buildings.shipyard;
-  const hasShipyard = shipyardLevel > 0;
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
+  const resources = toResources(shipyardState?.resources);
+  const queue = shipyardState?.queue?.active ? shipyardState.queue : undefined;
+  const queueReady =
+    queue?.readyAt ? Number(queue.readyAt) <= Math.floor(Date.now() / 1_000) : false;
 
   return (
     <div className="grid gap-4">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-white">Shipyard</h2>
-          <p className="text-xs text-slate-400">
-            {hasShipyard
-              ? `Shipyard Level ${shipyardLevel} — Production active`
-              : "Requires Shipyard Level 1"}
+          <p className="mt-1 text-xs text-slate-400">
+            {shipyardState?.homePlanetId
+              ? `Planet #${shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
+              : "On-chain VeydriftGame planet required for ship production"}
           </p>
         </div>
-        {settledState.queue && (
-          <span className="rounded bg-amber-300/10 px-2.5 py-1 text-xs text-amber-300">
-            Building: {settledState.queue.label}
-          </span>
-        )}
-      </div>
-
-      {!hasShipyard && (
-        <div className="rounded-lg border border-amber-300/20 bg-amber-300/5 p-4">
-          <p className="text-sm text-amber-200">
-            Build a Shipyard in Infrastructure to unlock ship production.
-          </p>
+        <div className="flex flex-wrap gap-2">
+          {queue && (
+            <button
+              className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+              disabled={!canTransact || actionState.status === "pending"}
+              onClick={queueReady ? onFinish : onCollect}
+              type="button"
+            >
+              {queueReady ? "Complete queue" : "Refresh queue"}
+            </button>
+          )}
+          <button
+            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            onClick={onRefresh}
+            type="button"
+          >
+            Refresh
+          </button>
         </div>
-      )}
-
-      <div className="grid gap-3">
-        {shipCatalog.map((ship) => {
-          const affordable = canAfford(settledState.resources, ship.baseCost);
-          const owned = settledState.ships[ship.key];
-
-          return (
-            <ShipTile
-              actionLabel="Build 1"
-              asset={ship.asset}
-              cost={ship.baseCost}
-              disabled={
-                Boolean(settledState.queue) || !hasShipyard || !affordable
-              }
-              key={ship.key}
-              label={ship.label}
-              owned={owned}
-              onClick={() => onBuild(ship.key, 1)}
-            />
-          );
-        })}
       </div>
+
+      <StatusPanel
+        actionState={actionState}
+        error={error}
+        loading={loading}
+        queue={queue}
+        queueReady={queueReady}
+        shipyardState={shipyardState}
+      />
+
+      {(["civil", "combat", "special"] as const).map((group) => (
+        <section className="grid gap-3" key={group}>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+              {groupLabels[group]}
+            </h3>
+            <span className="h-px flex-1 bg-white/10" />
+          </div>
+          <div className="grid gap-3 xl:grid-cols-2">
+            {shipCatalog
+              .filter((ship) => ship.group === group)
+              .map((ship) => {
+                const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
+                const owned = chainShip?.count;
+                const baseCost = toResources(chainShip?.cost) ?? ship.baseCost;
+                const quantity = quantities[ship.key] ?? 1;
+                const totalCost = multiply(baseCost, quantity);
+                const missing = getMissingRequirements(ship, shipyardState);
+                const affordable = resources ? canAfford(resources, totalCost) : false;
+                const blockedReason = getBlockedReason({
+                  affordable,
+                  canTransact,
+                  hasPlanet: Boolean(shipyardState?.homePlanetId),
+                  missing,
+                  queueActive: Boolean(queue),
+                  resources,
+                  shipyardState,
+                });
+                const disabled = Boolean(blockedReason) || actionState.status === "pending";
+
+                return (
+                  <ShipTile
+                    blockedReason={blockedReason}
+                    cost={totalCost}
+                    disabled={disabled}
+                    key={ship.key}
+                    missing={missing}
+                    onBuild={() => onBuild(ship.id, ship.key, quantity)}
+                    onQuantity={(next) => setQuantities((prev) => ({ ...prev, [ship.key]: next }))}
+                    owned={owned}
+                    quantity={quantity}
+                    ship={ship}
+                  />
+                );
+              })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
 
+function StatusPanel({
+  actionState,
+  error,
+  loading,
+  queue,
+  queueReady,
+  shipyardState,
+}: {
+  actionState: ShipyardActionState;
+  error: string | undefined;
+  loading: boolean;
+  queue: ChainShipyardState["queue"] | undefined;
+  queueReady: boolean;
+  shipyardState?: ChainShipyardState | null | undefined;
+}) {
+  if (loading) {
+    return <Notice tone="neutral">Reading on-chain shipyard state.</Notice>;
+  }
+
+  if (error) {
+    return <Notice tone="danger">{error}</Notice>;
+  }
+
+  if (!shipyardState?.homePlanetId) {
+    return (
+      <Notice tone="danger">
+        No VeydriftGame home planet was found for this wallet. Ship counts and production are not shown from local state.
+      </Notice>
+    );
+  }
+
+  if (actionState.status !== "idle") {
+    const tone = actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "neutral";
+    return <Notice tone={tone}>{actionState.label}</Notice>;
+  }
+
+  if (queue) {
+    const ship = shipCatalog.find((item) => item.id === queue.itemId);
+    return (
+      <Notice tone={queueReady ? "success" : "neutral"}>
+        {ship?.label ?? "Ship"} production: {queue.quantity ?? 0} queued, ready {formatReady(queue.readyAt)}.
+      </Notice>
+    );
+  }
+
+  return null;
+}
+
 function ShipTile({
-  actionLabel,
-  asset,
+  blockedReason,
   cost,
   disabled,
-  label,
+  missing,
+  onBuild,
+  onQuantity,
   owned,
-  onClick,
+  quantity,
+  ship,
 }: {
-  actionLabel: string;
-  asset: string;
+  blockedReason: string | undefined;
   cost: Resources;
   disabled: boolean;
-  label: string;
-  owned: number;
-  onClick: () => void;
+  missing: string[];
+  onBuild: () => void;
+  onQuantity: (quantity: number) => void;
+  owned: number | undefined;
+  quantity: number;
+  ship: (typeof shipCatalog)[number];
 }) {
   return (
-    <article className="flex gap-4 overflow-hidden rounded-lg border border-white/10 bg-[#101624] p-4">
-      <img alt="" className="h-20 w-32 shrink-0 rounded object-cover sm:h-24 sm:w-40" src={asset} />
-      <div className="flex min-w-0 flex-1 flex-col justify-between">
-        <div>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h3 className="font-semibold text-white">{label}</h3>
-              <p className="text-sm text-slate-400">{owned} owned</p>
-            </div>
-            <button
-              className="h-9 shrink-0 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={disabled}
-              onClick={onClick}
-              type="button"
-            >
-              {actionLabel}
-            </button>
+    <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
+      <img
+        alt=""
+        className="aspect-square w-full rounded object-cover"
+        src={ship.asset}
+      />
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-semibold text-white">{ship.label}</h4>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Owned: {owned === undefined ? "sync required" : format(owned)}
+            </p>
           </div>
-          <p className="mt-2 text-xs leading-5 text-slate-400">
-            {formatCost(cost)}
-          </p>
+          <span className={missing.length === 0 ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
+            {missing.length === 0 ? "Ready" : "Locked"}
+          </span>
+        </div>
+
+        <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
+          <Stat label="Metal" value={format(cost.metal)} />
+          <Stat label="Crystal" value={format(cost.crystal)} />
+          <Stat label="Deut" value={format(cost.deuterium)} />
+        </dl>
+
+        <div className="mt-3 min-h-10 text-xs leading-5 text-slate-400">
+          {missing.length > 0 ? missing.join(" · ") : "Requirements met by on-chain state."}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            aria-label={`${ship.label} quantity`}
+            className="h-9 w-20 rounded border border-white/10 bg-black/20 px-2 text-sm text-white outline-none focus:border-signal/60"
+            min={1}
+            onInput={(event) => {
+              const value = Number((event.currentTarget as HTMLInputElement).value);
+              onQuantity(Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1);
+            }}
+            type="number"
+            value={quantity}
+          />
+          <button
+            className="h-9 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+            disabled={disabled}
+            onClick={onBuild}
+            type="button"
+          >
+            Build
+          </button>
+          {blockedReason && <span className="text-xs text-slate-500">{blockedReason}</span>}
         </div>
       </div>
     </article>
   );
 }
 
-function formatCost(cost: Resources): string {
-  const parts: Array<[string, number]> = [
-    ["M", cost.metal],
-    ["C", cost.crystal],
-    ["D", cost.deuterium],
-  ];
-  return parts
-    .filter(([, v]) => v > 0)
-    .map(([label, v]) => `${label} ${format(v)}`)
-    .join(" / ");
+function Notice({
+  children,
+  tone,
+}: {
+  children: ComponentChildren;
+  tone: "danger" | "neutral" | "success";
+}) {
+  const classes = {
+    danger: "border-rose-300/20 bg-rose-300/5 text-rose-200",
+    neutral: "border-sky-300/20 bg-sky-300/5 text-sky-200",
+    success: "border-emerald-300/20 bg-emerald-300/5 text-emerald-200",
+  } as const;
+
+  return (
+    <div className={`rounded border p-3 text-sm ${classes[tone]}`}>
+      {children}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+      <dt className="text-[10px] uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className="truncate text-slate-200">{value}</dd>
+    </div>
+  );
+}
+
+export function getMissingRequirements(
+  ship: (typeof shipCatalog)[number],
+  shipyardState?: ChainShipyardState | null | undefined,
+): string[] {
+  return ship.requirements.flatMap((requirement) => {
+    const technologyId = requirement.kind === "technology"
+      ? technologyIdByKey[requirement.key ?? ""]
+      : undefined;
+    const actual = requirement.kind === "building"
+      ? shipyardState?.shipyardLevel ?? 0
+      : technologyId === undefined
+        ? 0
+        : shipyardState?.technologyLevels[technologyId.toString()] ?? 0;
+
+    return actual >= requirement.level
+      ? []
+      : [`${requirement.label} ${requirement.level} needed`];
+  });
+}
+
+function getBlockedReason({
+  affordable,
+  canTransact,
+  hasPlanet,
+  missing,
+  queueActive,
+  resources,
+  shipyardState,
+}: {
+  affordable: boolean;
+  canTransact: boolean;
+  hasPlanet: boolean;
+  missing: string[];
+  queueActive: boolean;
+  resources: Resources | undefined;
+  shipyardState?: ChainShipyardState | null | undefined;
+}): string | undefined {
+  if (!canTransact) return "Wallet or game contract unavailable";
+  if (!shipyardState) return "Waiting for chain state";
+  if (!hasPlanet) return "No game planet";
+  if (queueActive) return "Queue active";
+  if (missing.length > 0) return missing[0];
+  if (!resources) return "Resources unavailable";
+  if (!affordable) return "Insufficient resources";
+  return undefined;
+}
+
+function toResources(resources: ChainShipyardState["resources"] | ChainShipyardState["ships"][number]["cost"] | null | undefined): Resources | undefined {
+  if (!resources) return undefined;
+  return {
+    metal: Number(resources.metal),
+    crystal: Number(resources.crystal),
+    deuterium: Number(resources.deuterium),
+  };
+}
+
+function multiply(resources: Resources, quantity: number): Resources {
+  return {
+    metal: resources.metal * quantity,
+    crystal: resources.crystal * quantity,
+    deuterium: resources.deuterium * quantity,
+  };
+}
+
+function formatReady(readyAt: string | null): string {
+  if (!readyAt) return "unknown";
+  return new Date(Number(readyAt) * 1_000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function format(value: number): string {
   return formatter.format(Math.floor(value));
 }
+
+const technologyIdByKey: Partial<Record<string, number>> = {
+  energy: 0,
+  laser: 1,
+  ion: 2,
+  combustionDrive: 3,
+  espionage: 4,
+  computer: 5,
+  weapons: 6,
+  shielding: 7,
+  armor: 8,
+  hyperspace: 9,
+  impulseDrive: 10,
+  hyperspaceDrive: 11,
+  plasma: 12,
+  astrophysics: 13,
+  intergalacticResearchNetwork: 14,
+  graviton: 15,
+};

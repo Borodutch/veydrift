@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { BackendConfig } from "./config";
-import type { Address, ChainReader, PlanetState, PlayerQueues, SettledPlanetEvent, WalletSettlement } from "./evm";
+import type {
+  Address,
+  ChainReader,
+  PlanetState,
+  PlayerQueues,
+  SettledPlanetEvent,
+  ShipyardState,
+  WalletSettlement
+} from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { createRequestHandler } from "./server";
 
@@ -67,6 +75,50 @@ class MockChainReader implements ChainReader {
       defense: null,
       ship: null,
       research: null
+    };
+  }
+
+  async getShipyardState(wallet: Address): Promise<ShipyardState> {
+    return {
+      wallet,
+      homePlanetId: planet.planetId,
+      resources: planet.resources,
+      shipyardLevel: 1,
+      technologyLevels: {
+        "3": 1
+      },
+      ships: [
+        {
+          id: 0,
+          count: 2,
+          cost: {
+            metal: "2000",
+            crystal: "2000",
+            deuterium: "0"
+          }
+        },
+        {
+          id: 1,
+          count: 0,
+          cost: {
+            metal: "3000",
+            crystal: "1000",
+            deuterium: "0"
+          }
+        }
+      ],
+      queue: {
+        active: true,
+        itemId: 0,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1770000060",
+        cost: {
+          metal: "2000",
+          crystal: "2000",
+          deuterium: "0"
+        }
+      }
     };
   }
 
@@ -185,6 +237,35 @@ describe("Veydrift backend", () => {
         galaxy: 2,
         system: 44,
         position: 8
+      }
+    });
+    expect(response.status).toBe(200);
+  });
+
+  test("answers shipyard state from a mocked chain reader", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader()
+    })(new Request(`http://localhost/wallet/${player}/shipyard`));
+
+    const body = await response.json();
+    expect(body.wallet).toBe(player);
+    expect(body.homePlanetId).toBe("7");
+    expect(body.resources.metal).toBe("5000");
+    expect(body.shipyardLevel).toBe(1);
+    expect(body.technologyLevels["3"]).toBe(1);
+    expect(body.queue).toMatchObject({
+      active: true,
+      itemId: 0,
+      kind: "ship"
+    });
+    expect(body.ships).toContainEqual({
+      id: 0,
+      count: 2,
+      cost: {
+        metal: "2000",
+        crystal: "2000",
+        deuterium: "0"
       }
     });
     expect(response.status).toBe(200);

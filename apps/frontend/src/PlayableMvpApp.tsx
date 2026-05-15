@@ -15,7 +15,6 @@ import {
   settleState,
   startBuildingUpgrade,
   startResearch,
-  startShipProduction,
   storageCaps,
   type BuildingKey,
   type PlayableState,
@@ -24,8 +23,14 @@ import {
 } from "./playableMvp";
 import { runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
+  fetchShipyardState,
   fetchWalletQueues,
   fetchWalletSettlement,
+  sendCollectShipsTransaction,
+  sendFinishShipProductionTransaction,
+  sendStartShipProductionTransaction,
+  waitForReceipt,
+  type ChainShipyardState,
   type Eip1193Provider,
   type PlanetSummary,
   type PlayerQueuesResponse,
@@ -65,6 +70,12 @@ function savePlayableState(state: PlayableState): void {
   }
 }
 
+type ShipyardActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
+
 export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
@@ -79,6 +90,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
   const [onChainError, setOnChainError] = useState<string | undefined>();
+  const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
+  const [shipyardLoading, setShipyardLoading] = useState(false);
+  const [shipyardError, setShipyardError] = useState<string | undefined>();
+  const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
       const [g, s] = planet.coordinates.split(":").map(Number);
@@ -109,6 +124,31 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       deuterium: Number(onChainSettlement.planet.resources.deuterium),
     };
   }, [onChainSettlement]);
+
+  const gameContractAddress = useMemo(() => {
+    return runtimeConfig.status === "ready" ? runtimeConfig.config.contractAddress ?? undefined : undefined;
+  }, [runtimeConfig]);
+
+  const refreshShipyardState = useCallback(() => {
+    if (!apiBaseUrl || !account) {
+      setShipyardState(null);
+      return;
+    }
+
+    setShipyardLoading(true);
+    setShipyardError(undefined);
+    fetchShipyardState(apiBaseUrl, account)
+      .then((next) => {
+        setShipyardState(next);
+      })
+      .catch((error) => {
+        console.error(error);
+        setShipyardError(error instanceof Error ? error.message : "Shipyard state could not be loaded.");
+      })
+      .finally(() => {
+        setShipyardLoading(false);
+      });
+  }, [account, apiBaseUrl]);
 
   useEffect(() => {
     if (planet?.coordinates) {
@@ -151,6 +191,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }, 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (page === "shipyard") {
+      refreshShipyardState();
+    }
+  }, [page, refreshShipyardState]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -206,14 +252,69 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     });
   }, []);
 
-  const handleBuildShip = useCallback((key: ShipKey, quantity: number) => {
-    setState((prev) => {
-      const currentNow = Date.now();
-      const next = startShipProduction(prev, key, quantity, currentNow);
-      setNow(currentNow);
-      return next;
-    });
-  }, []);
+  const runShipyardTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+    setShipyardAction({ status: "pending", label });
+
+    try {
+      const txHash = await send();
+      setShipyardAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+      if (provider) {
+        await waitForReceipt(provider, txHash);
+      }
+      setShipyardAction({ status: "success", label: `${label} confirmed.` });
+      refreshShipyardState();
+    } catch (error) {
+      console.error(error);
+      setShipyardAction({
+        status: "error",
+        label: error instanceof Error ? error.message : `${label} failed.`,
+      });
+    }
+  }, [provider, refreshShipyardState]);
+
+  const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
+    if (!provider || !account || !gameContractAddress || !shipyardState?.homePlanetId) {
+      setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runShipyardTransaction("Ship production", () => sendStartShipProductionTransaction(
+      provider,
+      account,
+      gameContractAddress,
+      shipyardState.homePlanetId ?? "0",
+      shipId,
+      quantity,
+    ));
+  }, [account, gameContractAddress, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
+
+  const handleFinishShipProduction = useCallback(() => {
+    if (!provider || !account || !gameContractAddress || !shipyardState?.homePlanetId) {
+      setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runShipyardTransaction("Ship completion", () => sendFinishShipProductionTransaction(
+      provider,
+      account,
+      gameContractAddress,
+      shipyardState.homePlanetId ?? "0",
+    ));
+  }, [account, gameContractAddress, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
+
+  const handleCollectShips = useCallback(() => {
+    if (!provider || !account || !gameContractAddress || !shipyardState?.homePlanetId) {
+      setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runShipyardTransaction("Shipyard refresh", () => sendCollectShipsTransaction(
+      provider,
+      account,
+      gameContractAddress,
+      shipyardState.homePlanetId ?? "0",
+    ));
+  }, [account, gameContractAddress, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
 
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
@@ -320,9 +421,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
           {page === "shipyard" && (
             <ShipyardPage
+              actionState={shipyardAction}
+              canTransact={Boolean(provider && account && gameContractAddress)}
+              error={shipyardError}
+              loading={shipyardLoading}
               onBuild={handleBuildShip}
-              settledState={settledState}
-              state={state}
+              onCollect={handleCollectShips}
+              onFinish={handleFinishShipProduction}
+              onRefresh={refreshShipyardState}
+              shipyardState={shipyardState}
             />
           )}
         </main>
