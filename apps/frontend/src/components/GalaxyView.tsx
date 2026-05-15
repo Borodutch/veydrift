@@ -7,7 +7,7 @@ import { shortAddress } from "../walletFlow";
 interface Props {
   galaxy: number;
   system: number;
-  apiBaseUrl?: string;
+  apiBaseUrl?: string | undefined;
   homeCoords?: Coordinates | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
@@ -95,7 +95,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
           onClick={onBack}
           className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
         >
-          ← Universe
+          ← Overview
         </button>
 
         <div className="flex items-center gap-2">
