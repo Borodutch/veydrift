@@ -1,16 +1,52 @@
 import { describe, expect, test } from "bun:test";
-import { generateSystem, planetsFromSystemResponse } from "../src/data/mockUniverse";
+import {
+  ensurePlanetAtCoordinates,
+  generateSystem,
+  planetsFromSystemResponse
+} from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
 
 describe("tester universe display data", () => {
   test("neutral deterministic fallback does not invent owners or alliances", () => {
     const planets = generateSystem(1, 1);
 
-    expect(planets).toHaveLength(15);
+    expect(planets.length).toBeGreaterThanOrEqual(5);
+    expect(planets.length).toBeLessThanOrEqual(11);
     expect(planets.every((planet) => planet.owner === null)).toBe(true);
     expect(planets.every((planet) => planet.ownerId === null)).toBe(true);
     expect(planets.every((planet) => planet.alliance === null)).toBe(true);
     expect(planets.every((planet) => planet.occupiedBy === null)).toBe(true);
+  });
+
+  test("neutral deterministic fallback leaves stable empty positions", () => {
+    const systemOne = generateSystem(1, 1);
+    const systemTwo = generateSystem(1, 2);
+
+    expect(systemOne.map((planet) => planet.position)).toEqual(
+      generateSystem(1, 1).map((planet) => planet.position)
+    );
+    expect(systemOne.map((planet) => planet.position)).not.toEqual(
+      systemTwo.map((planet) => planet.position)
+    );
+    expect(systemOne.length).toBeLessThan(15);
+    expect(systemTwo.length).toBeLessThan(15);
+  });
+
+  test("home coordinates can be shown even when the deterministic slot is empty", () => {
+    const planets = generateSystem(1, 1);
+    const emptyPosition = Array.from({ length: 15 }, (_, index) => index + 1)
+      .find((position) => !planets.some((planet) => planet.position === position));
+
+    expect(emptyPosition).toBeDefined();
+
+    const withHome = ensurePlanetAtCoordinates(planets, {
+      galaxy: 1,
+      system: 1,
+      position: emptyPosition ?? 1,
+    });
+
+    expect(withHome.some((planet) => planet.position === emptyPosition)).toBe(true);
+    expect(withHome.length).toBe(planets.length + 1);
   });
 
   test("real indexed occupancy is preserved as an owner address only", () => {

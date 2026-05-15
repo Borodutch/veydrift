@@ -80,6 +80,8 @@ export type GenerateGalaxyInput = {
   systemCount?: number;
 };
 
+export type ListPopulatedPlanetSlotsInput = GenerateSystemInput;
+
 export type PlanetSlotProfile = {
   slot: PlanetSlot;
   minFields: number;
@@ -111,6 +113,25 @@ const SLOT_PROFILES: readonly PlanetSlotProfile[] = [
 ] as const;
 
 const PLANET_SLOTS = SLOT_PROFILES.map((profile) => profile.slot);
+const SLOT_OCCUPANCY_BPS: readonly number[] = [
+  5_400,
+  5_800,
+  6_500,
+  7_200,
+  7_800,
+  8_200,
+  8_500,
+  8_600,
+  8_500,
+  8_100,
+  7_600,
+  6_900,
+  6_200,
+  5_600,
+  5_000
+] as const;
+const MIN_POPULATED_SLOTS = 5;
+const MAX_POPULATED_SLOTS = 11;
 const DEFAULT_SYSTEM_COUNT = 499;
 const FNV_OFFSET_BASIS_64 = 0xcbf29ce484222325n;
 const FNV_PRIME_64 = 0x100000001b3n;
@@ -151,7 +172,7 @@ export function generateSystem(input: GenerateSystemInput): GeneratedSystem {
   assertNonNegativeInteger("galaxyId", input.galaxyId);
   assertPositiveInteger("systemId", input.systemId);
 
-  const slots = PLANET_SLOTS.map((slot) =>
+  const slots = listPopulatedPlanetSlots(input).map((slot) =>
     generatePlanet({
       seed: input.seed,
       galaxyId: input.galaxyId,
@@ -167,6 +188,66 @@ export function generateSystem(input: GenerateSystemInput): GeneratedSystem {
     seedFingerprint: seedFingerprint(input.seed),
     slots
   };
+}
+
+export function listPopulatedPlanetSlots(
+  input: ListPopulatedPlanetSlotsInput
+): readonly PlanetSlot[] {
+  assertNonNegativeInteger("galaxyId", input.galaxyId);
+  assertPositiveInteger("systemId", input.systemId);
+
+  const candidates = PLANET_SLOTS.map((slot) => {
+    const threshold = occupancyThresholdBps(slot);
+    const roll = Number(
+      hash64(
+        `veydrift:v1:slot-occupancy:${input.seed}:galaxy:${input.galaxyId}:system:${input.systemId}:slot:${slot}`
+      ) % 10_000n
+    );
+
+    return {
+      slot,
+      roll,
+      threshold,
+      margin: threshold - roll
+    };
+  });
+
+  const populated = candidates.filter((candidate) => candidate.margin > 0);
+
+  if (populated.length > MAX_POPULATED_SLOTS) {
+    return populated
+      .sort((left, right) => right.margin - left.margin || left.slot - right.slot)
+      .slice(0, MAX_POPULATED_SLOTS)
+      .map((candidate) => candidate.slot)
+      .sort((left, right) => left - right);
+  }
+
+  if (populated.length < MIN_POPULATED_SLOTS) {
+    const populatedSlots = new Set(populated.map((candidate) => candidate.slot));
+    const needed = MIN_POPULATED_SLOTS - populated.length;
+    const additions = candidates
+      .filter((candidate) => !populatedSlots.has(candidate.slot))
+      .sort((left, right) => right.margin - left.margin || left.slot - right.slot)
+      .slice(0, needed);
+
+    return [...populated, ...additions]
+      .map((candidate) => candidate.slot)
+      .sort((left, right) => left - right);
+  }
+
+  return populated
+    .map((candidate) => candidate.slot)
+    .sort((left, right) => left - right);
+}
+
+export function isPlanetSlotPopulated(
+  input: { seed: string } & UniverseCoordinates
+): boolean {
+  return listPopulatedPlanetSlots({
+    seed: input.seed,
+    galaxyId: input.galaxyId,
+    systemId: input.systemId
+  }).includes(input.slot);
 }
 
 export function generatePlanet(
@@ -284,6 +365,16 @@ function getSlotProfile(slot: PlanetSlot): PlanetSlotProfile {
   }
 
   return profile;
+}
+
+function occupancyThresholdBps(slot: PlanetSlot): number {
+  const threshold = SLOT_OCCUPANCY_BPS[slot - 1];
+
+  if (threshold === undefined) {
+    throw new RangeError("Planet slot must be an integer from 1 to 15.");
+  }
+
+  return threshold;
 }
 
 function rngStream(

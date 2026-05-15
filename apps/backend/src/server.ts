@@ -2,7 +2,7 @@ import { generateSystem } from "@veydrift/universe";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import { assertAddress, type ChainReader, VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
-import { systemSnapshot } from "./universe";
+import { planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
@@ -179,7 +179,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       return Response.json(
         {
           ...baseSnapshot,
-          planets: baseSnapshot.planets.map((planet) => ({
+          planets: includeOccupiedPlanets(
+            baseSnapshot.planets,
+            occupied,
+            loaded.config.chainId,
+            loaded.config.settlementContractAddress ?? "0x0000000000000000000000000000000000000000",
+            galaxy,
+            system
+          ).map((planet) => ({
             ...planet,
             occupiedBy: occupied.get(planet.position) ?? null
           }))
@@ -223,7 +230,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
               return {
                 ...snapshot,
-                planets: snapshot.planets.map((planet) => ({
+                planets: includeOccupiedPlanets(
+                  snapshot.planets,
+                  occupied,
+                  loaded.config.chainId,
+                  loaded.config.settlementContractAddress ?? "0x0000000000000000000000000000000000000000",
+                  galaxy,
+                  system
+                ).map((planet) => ({
                   ...planet,
                   occupiedBy: occupied.get(planet.position) ?? null
                 }))
@@ -288,6 +302,32 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     );
   };
+}
+
+function includeOccupiedPlanets(
+  planets: readonly PlanetMetadata[],
+  occupied: ReadonlyMap<number, { planetId: string; owner: string }>,
+  chainId: number,
+  settlementContractAddress: string,
+  galaxy: number,
+  system: number
+): PlanetMetadata[] {
+  const byPosition = new Map(planets.map((planet) => [planet.position, planet]));
+
+  for (const position of occupied.keys()) {
+    if (!byPosition.has(position)) {
+      byPosition.set(
+        position,
+        planetMetadata(chainId, settlementContractAddress, {
+          galaxy,
+          system,
+          position
+        })
+      );
+    }
+  }
+
+  return Array.from(byPosition.values()).sort((left, right) => left.position - right.position);
 }
 
 function getRuntimeConfig(): RuntimeConfig {

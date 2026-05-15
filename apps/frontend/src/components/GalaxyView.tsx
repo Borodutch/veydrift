@@ -1,6 +1,13 @@
 import { useState, useEffect } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
-import { generateSystem, GALAXY_COUNT, SYSTEM_COUNT, POSITION_COUNT, planetsFromSystemResponse } from "../data/mockUniverse";
+import {
+  ensurePlanetAtCoordinates,
+  generateSystem,
+  GALAXY_COUNT,
+  SYSTEM_COUNT,
+  POSITION_COUNT,
+  planetsFromSystemResponse
+} from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
@@ -12,13 +19,15 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
-  onBack: () => void;
 }
 
-export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCoords, onSelectPlanet, onNavigate, onBack }: Props) {
+export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCoords, onSelectPlanet, onNavigate }: Props) {
   const [planets, setPlanets] = useState<Planet[]>([]);
   const [loading, setLoading] = useState(true);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
+  const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
+    ? homeCoords
+    : undefined;
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -34,13 +43,13 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
         return response.json();
       })
       .then((payload) => {
-        setPlanets(planetsFromSystemResponse(payload));
+        setPlanets(ensurePlanetAtCoordinates(planetsFromSystemResponse(payload), homeCoordsInSystem));
         setSource("api");
       })
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
-          setPlanets(generateSystem(galaxy, system));
+          setPlanets(ensurePlanetAtCoordinates(generateSystem(galaxy, system), homeCoordsInSystem));
           setSource("fallback");
         }
       })
@@ -49,7 +58,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, galaxy, system]);
+  }, [apiBaseUrl, galaxy, homeCoordsInSystem?.position, system]);
 
   const handlePrevSystem = () => {
     let newSystem = system - 1;
@@ -89,19 +98,19 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
   const positions = Array.from({ length: POSITION_COUNT }, (_, i) => i + 1);
   const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
   const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
+  const emptyCount = POSITION_COUNT - planets.length;
 
   return (
-    <div className="flex flex-col gap-4 p-3 sm:p-6">
-      {/* Navigation bar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-3 backdrop-blur">
-        <button
-          onClick={onBack}
-          className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-        >
-          ← Overview
-        </button>
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Galaxy</h2>
+          <p className="text-xs text-slate-400">
+            System [{galaxy}:{system}:1-{POSITION_COUNT}]
+          </p>
+        </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2 backdrop-blur">
           <button
             onClick={handlePrevSystem}
             className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
@@ -142,10 +151,6 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
             Next →
           </button>
         </div>
-
-        <span className="ml-auto text-xs text-slate-500">
-          [{galaxy}:{system}:{1}-{POSITION_COUNT}]
-        </span>
       </div>
 
       {/* Galaxy grid */}
@@ -235,7 +240,11 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
                       <span className="text-xs text-slate-600">
                         Unclaimed
                       </span>
-                    ) : null}
+                    ) : (
+                      <span className="text-xs text-slate-700">
+                        Empty
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1 px-2">
@@ -258,6 +267,8 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
         <span>{planets.length} planets in this system</span>
+        <span className="text-slate-700">|</span>
+        <span>{emptyCount} empty slots</span>
         <span className="text-slate-700">|</span>
         <span>{occupiedCount} occupied</span>
         <span className="text-slate-700">|</span>

@@ -3,6 +3,8 @@ import {
   generateGalaxy,
   generatePlanet,
   generateSystem,
+  isPlanetSlotPopulated,
+  listPopulatedPlanetSlots,
   listSlotProfiles,
   parsePlanetSlot
 } from "../src";
@@ -65,29 +67,31 @@ describe("deterministic universe generation", () => {
   });
 
   test("makes inner planets hotter and middle slots larger than outer slots", () => {
-    const system = generateSystem({
+    const slot1 = generatePlanet({
       seed,
       galaxyId: 0,
-      systemId: 12
+      systemId: 12,
+      slot: 1
     });
-    const slot1 = system.slots[0];
-    const slot8 = system.slots[7];
-    const slot15 = system.slots[14];
+    const slot8 = generatePlanet({
+      seed,
+      galaxyId: 0,
+      systemId: 12,
+      slot: 8
+    });
+    const slot15 = generatePlanet({
+      seed,
+      galaxyId: 0,
+      systemId: 12,
+      slot: 15
+    });
 
-    expect(slot1?.maxTemperatureC).toBeGreaterThan(
-      slot8?.maxTemperatureC ?? Number.POSITIVE_INFINITY
-    );
-    expect(slot8?.maxTemperatureC).toBeGreaterThan(
-      slot15?.maxTemperatureC ?? Number.POSITIVE_INFINITY
-    );
-    expect(slot8?.fields).toBeGreaterThan(
-      slot1?.fields ?? Number.POSITIVE_INFINITY
-    );
-    expect(slot8?.fields).toBeGreaterThan(
-      slot15?.fields ?? Number.POSITIVE_INFINITY
-    );
-    expect(slot15?.resourceBias.deuteriumFormulaBps).toBeGreaterThan(
-      slot1?.resourceBias.deuteriumFormulaBps ?? Number.POSITIVE_INFINITY
+    expect(slot1.maxTemperatureC).toBeGreaterThan(slot8.maxTemperatureC);
+    expect(slot8.maxTemperatureC).toBeGreaterThan(slot15.maxTemperatureC);
+    expect(slot8.fields).toBeGreaterThan(slot1.fields);
+    expect(slot8.fields).toBeGreaterThan(slot15.fields);
+    expect(slot15.resourceBias.deuteriumFormulaBps).toBeGreaterThan(
+      slot1.resourceBias.deuteriumFormulaBps
     );
   });
 
@@ -107,6 +111,40 @@ describe("deterministic universe generation", () => {
     expect(slot1.resourceBias.metalBonusBps).toBe(0);
     expect(slot8.resourceBias.metalBonusBps).toBe(3_500);
     expect(slot8.resourceBias.crystalBonusBps).toBe(0);
+  });
+
+  test("uses deterministic sparse planet slots per system", () => {
+    const system1Slots = listPopulatedPlanetSlots({
+      seed,
+      galaxyId: 0,
+      systemId: 1
+    });
+    const system42Slots = listPopulatedPlanetSlots({
+      seed,
+      galaxyId: 0,
+      systemId: 42
+    });
+
+    expect(system1Slots).toEqual(
+      listPopulatedPlanetSlots({
+        seed,
+        galaxyId: 0,
+        systemId: 1
+      })
+    );
+    expect(system1Slots.length).toBeGreaterThanOrEqual(5);
+    expect(system1Slots.length).toBeLessThanOrEqual(11);
+    expect(system42Slots.length).toBeGreaterThanOrEqual(5);
+    expect(system42Slots.length).toBeLessThanOrEqual(11);
+    expect(system1Slots).not.toEqual(system42Slots);
+    expect(
+      isPlanetSlotPopulated({
+        seed,
+        galaxyId: 0,
+        systemId: 1,
+        slot: system1Slots[0] ?? 1
+      })
+    ).toBe(true);
   });
 
   test("keeps representative snapshot output stable", () => {
