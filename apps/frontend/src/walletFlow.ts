@@ -136,6 +136,8 @@ const READ_SELECTORS = {
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const GAME_SELECTORS = {
   collectResources: "0xdb43284d",
+  finishBuildingUpgrade: "0x6ab2f9d4",
+  startBuildingUpgrade: "0x165715e3",
   collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
@@ -320,6 +322,25 @@ export async function sendStartShipProductionTransaction(
   });
 }
 
+export async function sendStartBuildingUpgradeTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+  buildingId: number
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId])
+      }
+    ]
+  });
+}
+
 export async function sendStartResearchTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -334,6 +355,24 @@ export async function sendStartResearchTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(GAME_SELECTORS.startResearch, [planetId, technologyId])
+      }
+    ]
+  });
+}
+
+export async function sendFinishBuildingUpgradeTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId])
       }
     ]
   });

@@ -31,12 +31,16 @@ const buildingDescriptions: Record<BuildingKey, string> = {
 };
 
 interface InfrastructurePageProps {
+  actionNotice?: { label: string; tone: "error" | "success" | "pending" } | undefined;
+  actionUnavailableReason?: string | undefined;
   state: PlayableState;
   settledState: PlayableState;
   onUpgrade: (key: BuildingKey) => void;
 }
 
 export function InfrastructurePage({
+  actionNotice,
+  actionUnavailableReason,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
@@ -95,6 +99,8 @@ export function InfrastructurePage({
 
         <div className="order-1 xl:order-2" ref={detailPanelRef}>
           <BuildingDetailPanel
+            actionNotice={actionNotice}
+            actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             state={settledState}
@@ -156,10 +162,14 @@ function BuildingSelectorTile({
 }
 
 function BuildingDetailPanel({
+  actionNotice,
+  actionUnavailableReason,
   building,
   onUpgrade,
   state,
 }: {
+  actionNotice?: { label: string; tone: "error" | "success" | "pending" } | undefined;
+  actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
   onUpgrade: () => void;
   state: PlayableState;
@@ -167,10 +177,15 @@ function BuildingDetailPanel({
   const currentLevel = state.buildings[building.key];
   const effect = buildingEffectMetrics(state.buildings, building.key);
   const energy = buildingEnergyDetail(state.buildings, building.key);
-  const status = buildingUpgradeStatus(state, building.key);
+  const status = buildingUpgradeStatus(state, building.key, { actionUnavailableReason });
   const effectRows = detailEffectRows(effect, energy);
   const actionVerb = currentLevel === 0 ? "Build" : "Upgrade";
   const actionLabel = `${actionVerb} Level ${status.targetLevel}`;
+  const noticeClass = actionNotice?.tone === "error"
+    ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
+    : actionNotice?.tone === "success"
+      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
+      : "border-signal/20 bg-signal/10 text-signal";
 
   return (
     <aside className="min-w-0 rounded-lg border border-white/10 bg-[#0f1624] p-3 xl:sticky xl:top-4">
@@ -235,6 +250,12 @@ function BuildingDetailPanel({
           {status.reason}
         </p>
       </div>
+
+      {actionNotice && (
+        <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold ${noticeClass}`}>
+          {actionNotice.label}
+        </div>
+      )}
 
       <button
         aria-label={`${actionVerb} ${building.label} to Level ${status.targetLevel}`}
