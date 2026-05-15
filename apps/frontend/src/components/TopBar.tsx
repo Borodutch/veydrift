@@ -1,12 +1,14 @@
 import type { Resources, QueueItem } from "../playableMvp";
+import type { ChainLoadStatus } from "../overviewData";
 import { shortAddress } from "../walletFlow";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 interface TopBarProps {
-  resources: Resources;
+  resources?: Resources | undefined;
   rates: Resources;
   caps: Resources;
+  resourceStatus: ChainLoadStatus;
   queue?: QueueItem | undefined;
   researchQueue?: QueueItem | undefined;
   account?: string | undefined;
@@ -18,6 +20,7 @@ export function TopBar({
   resources,
   rates,
   caps,
+  resourceStatus,
   queue,
   researchQueue,
   account,
@@ -28,27 +31,35 @@ export function TopBar({
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
       <div className="mx-auto flex min-h-11 max-w-7xl flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-3 py-1.5 sm:justify-between sm:px-4 lg:px-6">
         <div className="grid w-full min-w-0 grid-cols-3 items-center gap-x-1.5 gap-y-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5">
-          <ResourcePip
-            label="Metal"
-            value={resources.metal}
-            rate={rates.metal}
-            cap={caps.metal}
-            color="text-amber-300"
-          />
-          <ResourcePip
-            label="Crystal"
-            value={resources.crystal}
-            rate={rates.crystal}
-            cap={caps.crystal}
-            color="text-cyan-300"
-          />
-          <ResourcePip
-            label="Deuterium"
-            value={resources.deuterium}
-            rate={rates.deuterium}
-            cap={caps.deuterium}
-            color="text-emerald-300"
-          />
+          {resourceStatus === "loading" ? (
+            <span className="text-xs text-slate-400">Resources loading</span>
+          ) : resourceStatus === "error" || !resources ? (
+            <span className="text-xs text-amber-200">Resources unavailable</span>
+          ) : (
+            <>
+              <ResourcePip
+                cap={resourceStatus === "local" ? caps.metal : undefined}
+                color="text-amber-300"
+                label="Metal"
+                rate={resourceStatus === "local" ? rates.metal : undefined}
+                value={resources.metal}
+              />
+              <ResourcePip
+                cap={resourceStatus === "local" ? caps.crystal : undefined}
+                color="text-cyan-300"
+                label="Crystal"
+                rate={resourceStatus === "local" ? rates.crystal : undefined}
+                value={resources.crystal}
+              />
+              <ResourcePip
+                cap={resourceStatus === "local" ? caps.deuterium : undefined}
+                color="text-emerald-300"
+                label="Deuterium"
+                rate={resourceStatus === "local" ? rates.deuterium : undefined}
+                value={resources.deuterium}
+              />
+            </>
+          )}
           {queue && (
             <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-white/10 px-2 text-xs leading-none text-slate-300">
               {queue.label}
@@ -87,17 +98,17 @@ function ResourcePip({
 }: {
   label: string;
   value: number;
-  rate: number;
-  cap: number;
+  rate?: number | undefined;
+  cap?: number | undefined;
   color: string;
 }) {
-  const pct = cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
+  const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
     <div className="inline-flex h-6 items-center justify-center whitespace-nowrap sm:justify-start">
       <span className="inline-flex items-baseline gap-1.5">
         <span className={`text-xs font-semibold leading-none ${color}`}>{label}</span>
         <span className="text-xs leading-none text-white">{format(value)}</span>
-        <span className="text-[10px] leading-none text-slate-500">+{format(rate)}/h</span>
+        {rate !== undefined && <span className="text-[10px] leading-none text-slate-500">+{format(rate)}/h</span>}
         {pct >= 90 && (
           <span className="text-[10px] leading-none text-amber-400">{pct}%</span>
         )}

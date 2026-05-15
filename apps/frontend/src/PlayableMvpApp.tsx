@@ -23,9 +23,14 @@ import {
 } from "./playableMvp";
 import { runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
+  safeResourceNumber,
+  type ChainLoadStatus,
+} from "./overviewData";
+import {
   fetchShipyardState,
   fetchWalletQueues,
   fetchWalletSettlement,
+  sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
   sendFinishShipProductionTransaction,
   sendStartShipProductionTransaction,
@@ -89,6 +94,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
   const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
+  const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
   const [onChainError, setOnChainError] = useState<string | undefined>();
   const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
   const [shipyardLoading, setShipyardLoading] = useState(false);
@@ -118,10 +124,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const onChainResources = useMemo(() => {
     if (!onChainSettlement?.planet) return undefined;
+    const metal = safeResourceNumber(onChainSettlement.planet.resources.metal);
+    const crystal = safeResourceNumber(onChainSettlement.planet.resources.crystal);
+    const deuterium = safeResourceNumber(onChainSettlement.planet.resources.deuterium);
+    if (metal === undefined || crystal === undefined || deuterium === undefined) return undefined;
+
     return {
-      metal: Number(onChainSettlement.planet.resources.metal),
-      crystal: Number(onChainSettlement.planet.resources.crystal),
-      deuterium: Number(onChainSettlement.planet.resources.deuterium),
+      metal,
+      crystal,
+      deuterium,
     };
   }, [onChainSettlement]);
 
@@ -158,9 +169,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [planet?.coordinates]);
 
   useEffect(() => {
-    if (!apiBaseUrl || !account) return;
+    if (!apiBaseUrl || !account) {
+      setOnChainSettlement(undefined);
+      setOnChainQueues(undefined);
+      setOnChainError(undefined);
+      setOnChainStatus(isWalletConnected ? "loading" : "local");
+      return;
+    }
 
     const load = async () => {
+      setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
       try {
         const [settlement, queues] = await Promise.all([
           fetchWalletSettlement(apiBaseUrl, account),
@@ -169,15 +187,19 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         setOnChainSettlement(settlement);
         setOnChainQueues(queues);
         setOnChainError(undefined);
+        setOnChainStatus("ready");
       } catch (error) {
         setOnChainError(error instanceof Error ? error.message : "Failed to load on-chain state");
+        setOnChainSettlement(undefined);
+        setOnChainQueues(undefined);
+        setOnChainStatus("error");
       }
     };
 
     void load();
     const interval = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(interval);
-  }, [apiBaseUrl, account]);
+  }, [apiBaseUrl, account, isWalletConnected]);
 
   const settledState = useMemo(() => settleState(state, now), [state, now]);
   const rates = productionPerHour(settledState.buildings);
@@ -275,6 +297,19 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshShipyardState]);
 
+  const handleCollectResources = useCallback(() => {
+    if (!provider || !account || !gameContractAddress || !onChainSettlement?.homePlanetId) {
+      return;
+    }
+
+    void runShipyardTransaction("Resource collection", () => sendCollectResourcesTransaction(
+      provider,
+      account,
+      gameContractAddress,
+      onChainSettlement.homePlanetId ?? "0",
+    ));
+  }, [account, gameContractAddress, onChainSettlement?.homePlanetId, provider, runShipyardTransaction]);
+
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
     if (!provider || !account || !gameContractAddress || !shipyardState?.homePlanetId) {
       setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
@@ -342,8 +377,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       isWalletConnected={isWalletConnected}
       queue={settledState.queue}
       rates={rates}
+      resourceStatus={isWalletConnected ? onChainStatus : "local"}
       researchQueue={settledState.researchQueue}
-      resources={onChainResources ?? settledState.resources}
+      resources={isWalletConnected ? onChainResources : settledState.resources}
     />
   );
 
@@ -414,9 +450,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         caps={caps}
         isWalletConnected={isWalletConnected}
         now={now}
+        onChainError={onChainError}
         onChainQueues={onChainQueues}
         onChainSettlement={onChainSettlement}
-        onCollect={handleCollectAll}
+        onChainStatus={isWalletConnected ? onChainStatus : "local"}
+        onCollect={isWalletConnected ? handleCollectResources : handleCollectAll}
         onNavigate={(target) => handleNavigate(target)}
         planet={planet}
         queueProgress={queueProgress}

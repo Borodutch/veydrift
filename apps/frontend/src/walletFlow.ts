@@ -119,6 +119,7 @@ const READ_SELECTORS = {
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const GAME_SELECTORS = {
+  collectResources: "0xdb43284d",
   collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
   startShipProduction: "0x13aed9a2"
@@ -301,6 +302,24 @@ export async function sendStartShipProductionTransaction(
   });
 }
 
+export async function sendCollectResourcesTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.collectResources, [planetId])
+      }
+    ]
+  });
+}
+
 export async function sendFinishShipProductionTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -450,8 +469,6 @@ function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
   const galaxy = words[0] ? Number(decodeUintWord(words[0])) : undefined;
   const system = words[1] ? Number(decodeUintWord(words[1])) : undefined;
   const position = words[2] ? Number(decodeUintWord(words[2])) : undefined;
-  const fields = words[3] ? Number(decodeUintWord(words[3])) : undefined;
-  const temperature = words[4] ? Number(decodeSignedWord(words[4])) : undefined;
   const settledAt = words[5] ? decodeUintWord(words[5]) : undefined;
   const settledBlock = words[6] ? decodeUintWord(words[6]) : undefined;
 
@@ -465,14 +482,6 @@ function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
     rarity: "Genesis settlement",
     source: "chain"
   };
-
-  if (fields !== undefined && Number.isFinite(fields)) {
-    planet.fields = String(fields);
-  }
-
-  if (temperature !== undefined && Number.isFinite(temperature)) {
-    planet.temperature = `${temperature}°C`;
-  }
 
   if (settledAt && settledAt > 0n) {
     planet.settledAt = new Date(Number(settledAt) * 1_000).toISOString();

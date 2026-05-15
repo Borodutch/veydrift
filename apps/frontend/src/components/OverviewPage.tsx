@@ -1,4 +1,9 @@
 import type { PlayableState, Resources } from "../playableMvp";
+import {
+  displayPlanetStats,
+  safeResourceNumber,
+  type ChainLoadStatus,
+} from "../overviewData";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 
@@ -34,8 +39,10 @@ interface OverviewPageProps {
   isWalletConnected: boolean;
   onCollect: () => void;
   onNavigate: (page: "infrastructure" | "research" | "shipyard") => void;
+  onChainError?: string | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
   onChainQueues?: PlayerQueuesResponse | undefined;
+  onChainStatus: ChainLoadStatus;
 }
 
 export function OverviewPage({
@@ -50,13 +57,23 @@ export function OverviewPage({
   isWalletConnected,
   onCollect,
   onNavigate,
+  onChainError,
   onChainSettlement,
   onChainQueues,
+  onChainStatus,
 }: OverviewPageProps) {
   const usedFields = Object.values(settledState.buildings).filter((level) => level > 0).length;
-  const totalFields = onChainSettlement?.planet?.fields ?? (planet?.fields ? Number(planet.fields) : undefined);
-
-  const onChainResources = onChainSettlement?.planet?.resources;
+  const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
+  const onChainResourceValues = onChainSettlement?.planet
+    ? {
+        metal: safeResourceNumber(onChainSettlement.planet.resources.metal),
+        crystal: safeResourceNumber(onChainSettlement.planet.resources.crystal),
+        deuterium: safeResourceNumber(onChainSettlement.planet.resources.deuterium),
+      }
+    : undefined;
+  const hasUsableOnChainResources = onChainResourceValues?.metal !== undefined
+    && onChainResourceValues.crystal !== undefined
+    && onChainResourceValues.deuterium !== undefined;
 
   const anyQueueActive =
     onChainQueues?.building?.active ||
@@ -89,29 +106,19 @@ export function OverviewPage({
 
         {/* Stats strip — compact, never overflows */}
         <div className="grid grid-cols-2 gap-2 border-t border-white/10 p-3 sm:grid-cols-4 sm:p-4">
-          <StatPip
-            label="Fields"
-            value={
-              totalFields !== undefined
-                ? `${usedFields > 0 ? `${usedFields} / ` : ""}${formatInt(totalFields)}`
-                : "—"
-            }
-          />
-          <StatPip
-            label="Temperature"
-            value={
-              onChainSettlement?.planet?.temperature !== undefined
-                ? formatTemp(onChainSettlement.planet.temperature)
-                : (planet?.temperature ?? "—")
-            }
-          />
-          <StatPip
-            label="Diameter"
-            value={totalFields !== undefined ? `${formatInt(totalFields * 100)} km` : "—"}
-          />
-          <StatPip label="Status" value={anyQueueActive ? "Active" : "Idle"} />
+          <StatPip label="Fields" value={stats.fields} />
+          <StatPip label="Temperature" value={stats.temperature} />
+          <StatPip label="Diameter" value={stats.diameter} />
+          <StatPip label="Status" value={stats.status} />
         </div>
       </div>
+
+      {isWalletConnected && onChainStatus === "error" && (
+        <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100 sm:p-4">
+          On-chain planet data is unavailable right now. Overview stats and resources are hidden until the game API responds with real values.
+          {onChainError ? <span className="block truncate text-amber-200/70">{onChainError}</span> : null}
+        </div>
+      )}
 
       {/* Three queues — buildings, research, shipyard */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -196,38 +203,40 @@ export function OverviewPage({
       </div>
 
       {/* Resources — only shown when backed by real on-chain state */}
-      {isWalletConnected && onChainResources && (
+      {isWalletConnected && onChainStatus === "loading" && (
+        <div className="rounded-lg border border-white/10 bg-[#101624] p-3 text-sm text-slate-400 sm:p-4">
+          Loading on-chain resources...
+        </div>
+      )}
+
+      {isWalletConnected && onChainStatus === "ready" && hasUsableOnChainResources && (
         <div className="rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-white">Resources</h3>
-            <button
-              className="rounded border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
-              onClick={onCollect}
-              type="button"
-            >
-              Collect resources
-            </button>
+            {onChainSettlement?.homePlanetId ? (
+              <button
+                className="rounded border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+                onClick={onCollect}
+                type="button"
+              >
+                Collect resources
+              </button>
+            ) : null}
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2 sm:gap-3">
             <ResourceStat
               label="Metal"
-              value={Number(onChainResources.metal)}
-              rate={rates.metal}
-              cap={caps.metal}
+              value={onChainResourceValues.metal ?? 0}
               color="text-amber-300"
             />
             <ResourceStat
               label="Crystal"
-              value={Number(onChainResources.crystal)}
-              rate={rates.crystal}
-              cap={caps.crystal}
+              value={onChainResourceValues.crystal ?? 0}
               color="text-cyan-300"
             />
             <ResourceStat
               label="Deuterium"
-              value={Number(onChainResources.deuterium)}
-              rate={rates.deuterium}
-              cap={caps.deuterium}
+              value={onChainResourceValues.deuterium ?? 0}
               color="text-emerald-300"
             />
           </div>
@@ -239,9 +248,9 @@ export function OverviewPage({
 
 function StatPip({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{label}</dt>
-      <dd className="mt-0.5 text-xs font-semibold text-white">{value}</dd>
+      <dd className="mt-0.5 break-words text-xs font-semibold leading-tight text-white">{value}</dd>
     </div>
   );
 }
@@ -320,25 +329,18 @@ function QuickLink({ children, onClick }: { children: string; onClick: () => voi
 function ResourceStat({
   label,
   value,
-  rate,
-  cap,
   color,
 }: {
   label: string;
   value: number;
-  rate: number;
-  cap: number;
   color: string;
 }) {
-  const pct = cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
-    <div className="rounded border border-white/10 bg-black/20 px-2.5 py-2">
+    <div className="min-w-0 rounded border border-white/10 bg-black/20 px-2.5 py-2">
       <div className="flex items-center gap-1">
         <span className={`text-[10px] font-semibold uppercase ${color}`}>{label}</span>
-        {pct >= 90 && <span className="text-[9px] text-amber-400">{pct}%</span>}
       </div>
-      <p className="mt-0.5 text-sm font-semibold text-white">{formatInt(value)}</p>
-      <p className="text-[10px] text-slate-500">+{formatInt(rate)}/h</p>
+      <p className="mt-0.5 break-words text-sm font-semibold leading-tight text-white">{formatInt(value)}</p>
     </div>
   );
 }
