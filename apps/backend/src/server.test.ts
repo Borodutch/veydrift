@@ -106,6 +106,20 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("returns public runtime config", async () => {
+    const response = await handler(new Request("http://localhost/runtime-config"));
+
+    await expect(response.json()).resolves.toEqual({
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532,
+      contractAddress: null,
+      graphqlUrl: "https://api-test.veydrift.com/graphql",
+      network: "Base Sepolia",
+      rpcProvider: "unknown"
+    });
+    expect(response.status).toBe(200);
+  });
+
   test("returns a minimal GraphQL response", async () => {
     const response = await handler(
       new Request("http://localhost/graphql", {
@@ -120,7 +134,15 @@ describe("Veydrift backend", () => {
       data: {
         service: {
           name: "Veydrift",
-          status: "coming-soon"
+          runtime: {
+            apiUrl: "https://api-test.veydrift.com",
+            chainId: 84532,
+            contractAddress: null,
+            graphqlUrl: "https://api-test.veydrift.com/graphql",
+            network: "Base Sepolia",
+            rpcProvider: "unknown"
+          },
+          status: "playable-test"
         }
       }
     });

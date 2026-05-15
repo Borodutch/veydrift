@@ -8,6 +8,13 @@ const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
 } as const;
 
+const corsHeaders = {
+  "access-control-allow-headers": "content-type",
+  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-origin": process.env.VEYDRIFT_ALLOWED_ORIGIN ?? "https://test.veydrift.com",
+  ...jsonHeaders
+} as const;
+
 type GraphQLPayload = {
   query?: string;
 };
@@ -16,6 +23,15 @@ type HealthPayload = {
   ok: true;
   service: "veydrift-backend";
   configured: boolean;
+};
+
+type RuntimeConfig = {
+  apiUrl: string;
+  chainId: number;
+  contractAddress: string | null;
+  graphqlUrl: string;
+  network: string;
+  rpcProvider: "alchemy" | "unknown";
 };
 
 export type ServerDependencies = {
@@ -39,6 +55,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
 
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        headers: corsHeaders,
+        status: 204
+      });
+    }
+
     if (request.method === "GET" && url.pathname === "/health") {
       return Response.json(
         {
@@ -49,9 +72,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           indexer: indexer?.snapshot() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
         {
-          headers: jsonHeaders
+          headers: corsHeaders
         }
       );
+    }
+
+    if (request.method === "GET" && url.pathname === "/runtime-config") {
+      return Response.json(getRuntimeConfig(), {
+        headers: corsHeaders
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/debug/config") {
@@ -62,7 +91,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           problems: loaded.problems
         },
         {
-          headers: jsonHeaders
+          headers: corsHeaders
         }
       );
     }
@@ -75,7 +104,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         return Response.json(await ready.getWalletSettlement(wallet), {
-          headers: jsonHeaders
+          headers: corsHeaders
         });
       } catch (error) {
         return errorResponse(error, 400);
@@ -90,7 +119,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         return Response.json(await ready.getPlayerQueues(wallet), {
-          headers: jsonHeaders
+          headers: corsHeaders
         });
       } catch (error) {
         return errorResponse(error, 400);
@@ -103,7 +132,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
       return Response.json(await ready.getPlanet(planetId), {
-        headers: jsonHeaders
+        headers: corsHeaders
       });
     }
 
@@ -223,12 +252,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           data: {
             service: {
               name: "Veydrift",
-              status: loaded.problems.length === 0 ? "ready" : "configuration-required"
+              status: loaded.problems.length === 0 ? "ready" : "configuration-required",
+              runtime: getRuntimeConfig()
             }
           }
         },
         {
-          headers: jsonHeaders
+          headers: corsHeaders
         }
       );
     }
@@ -238,10 +268,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         error: "not_found"
       },
       {
-        headers: jsonHeaders,
+        headers: corsHeaders,
         status: 404
       }
     );
+  };
+}
+
+function getRuntimeConfig(): RuntimeConfig {
+  const apiUrl = process.env.VEYDRIFT_PUBLIC_API_URL ?? "https://api-test.veydrift.com";
+  const graphqlUrl = process.env.VEYDRIFT_PUBLIC_GRAPHQL_URL ?? `${apiUrl}/graphql`;
+  const rpcUrl = process.env.VEYDRIFT_RPC_URL ?? "";
+
+  return {
+    apiUrl,
+    chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
+    contractAddress: process.env.VEYDRIFT_CONTRACT_ADDRESS || null,
+    graphqlUrl,
+    network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
+    rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
   };
 }
 
@@ -356,7 +401,7 @@ async function handleGraphQLRequest(request: Request): Promise<Response> {
         ]
       },
       {
-        headers: jsonHeaders,
+        headers: corsHeaders,
         status: 400
       }
     );
@@ -372,7 +417,7 @@ async function handleGraphQLRequest(request: Request): Promise<Response> {
         ]
       },
       {
-        headers: jsonHeaders,
+        headers: corsHeaders,
         status: 400
       }
     );
@@ -383,12 +428,13 @@ async function handleGraphQLRequest(request: Request): Promise<Response> {
       data: {
         service: {
           name: "Veydrift",
-          status: "coming-soon"
+          status: "playable-test",
+          runtime: getRuntimeConfig()
         }
       }
     },
     {
-      headers: jsonHeaders
+      headers: corsHeaders
     }
   );
 }
