@@ -3,12 +3,10 @@ FROM oven/bun:1.2.4-alpine
 WORKDIR /app
 
 COPY package.json bun.lockb tsconfig.base.json ./
-COPY apps/backend/package.json apps/backend/package.json
-COPY packages/universe/package.json packages/universe/package.json
-RUN bun install --frozen-lockfile
+COPY apps apps
+COPY packages packages
 
-COPY apps/backend apps/backend
-COPY packages/universe packages/universe
+RUN bun install --frozen-lockfile
 
 WORKDIR /app/apps/backend
 RUN bun run build
