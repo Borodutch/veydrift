@@ -141,6 +141,54 @@ The frontend also publishes Farcaster Mini App metadata at
 generate the signed `accountAssociation` for `veydrift.com` with the owning
 Farcaster/Base account and replace the empty manifest values.
 
+### Test App
+
+The separate EasyPanel app for `test.veydrift.com` uses two services in the
+existing `veydrift` EasyPanel project:
+
+- `veydrift/frontend` remains the production coming-soon service for
+  `https://veydrift.com`.
+- `veydrift/frontend-test` serves the MetaMask settlement test frontend at
+  `https://test.veydrift.com`.
+- `veydrift/backend-test` serves the test API at
+  `https://api-test.veydrift.com`.
+
+The test frontend uses the same build path, `/apps/frontend`, and can be built
+with either `Dockerfile.test` or `nixpacks.test.toml`. Both run:
+
+```sh
+bun run build:test
+```
+
+The test build sets `VITE_VEYDRIFT_SURFACE=settlement`, uses
+`https://test.veydrift.com` for canonical/social URLs, and emits `noindex`
+robots metadata so the MetaMask first-planet flow can be reviewed separately from the quiet
+production `veydrift.com` surface. Configure the frontend test service with:
+
+```text
+VITE_VEYDRIFT_API_URL=https://api-test.veydrift.com
+VITE_VEYDRIFT_SETTLEMENT_ADDRESS=<Base Sepolia settlement address>
+```
+
+The backend test service uses build path `/apps/backend` and can be built with
+either `Dockerfile.test` or `nixpacks.test.toml`. Configure it with:
+
+```text
+VEYDRIFT_ALLOWED_ORIGIN=https://test.veydrift.com
+VEYDRIFT_CHAIN_ID=84532
+VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia proxy address>
+VEYDRIFT_NETWORK_NAME=Base Sepolia
+VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
+VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql
+VEYDRIFT_RPC_URL=<Alchemy Base Sepolia RPC URL>
+```
+
+`VEYDRIFT_RPC_URL` and deployer keys must come from Vaultwarden or EasyPanel
+secret storage and must not be committed. Rollback is service-local: remove the
+`test.veydrift.com` and `api-test.veydrift.com` domains from the test services,
+or scale/delete `frontend-test` and `backend-test`. Do not repoint or delete the
+production `veydrift/frontend` service while rolling back the test app.
+
 ## Operating Rules
 
 - Keep public copy non-specific until the game direction is approved.

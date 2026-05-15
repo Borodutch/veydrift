@@ -6,12 +6,14 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:playable": "VITE_VEYDRIFT_SURFACE=playable vite build --mode playable",
+    "build:test": "VITE_VEYDRIFT_SURFACE=settlement vite build --mode playable",
     "check": "tsc --project tsconfig.json && vite build",
     "dev": "vite --host 0.0.0.0",
     "preview": "vite preview --host 0.0.0.0",
     "serve": "bun scripts/serve.mjs",
     "start": "bun run serve",
-    "test": "bun test tests"
+    "test": "bun test tests src/*.test.ts"
   },
   "dependencies": {
     "@farcaster/miniapp-sdk": "^0.3.0",
