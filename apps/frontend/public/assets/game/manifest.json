@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "generatedAt": "2026-05-14",
+  "format": "webp",
+  "notes": "High-resolution Veydrift game art generated with OpenAI gpt-image-2. Building assets use low/mid/high visual tiers for upgrade progression.",
+  "buildings": {
+    "metal-mine": {
+      "name": "Metal Mine",
+      "tiers": {
+        "low": "/assets/game/buildings/metal-mine-low.webp",
+        "mid": "/assets/game/buildings/metal-mine-mid.webp",
+        "high": "/assets/game/buildings/metal-mine-high.webp"
+      }
+    },
+    "crystal-mine": {
+      "name": "Crystal Mine",
+      "tiers": {
+        "low": "/assets/game/buildings/crystal-mine-low.webp",
+        "mid": "/assets/game/buildings/crystal-mine-mid.webp",
+        "high": "/assets/game/buildings/crystal-mine-high.webp"
+      }
+    },
+    "deuterium-synthesizer": {
+      "name": "Deuterium Synthesizer",
+      "tiers": {
+        "low": "/assets/game/buildings/deuterium-synthesizer-low.webp",
+        "mid": "/assets/game/buildings/deuterium-synthesizer-mid.webp",
+        "high": "/assets/game/buildings/deuterium-synthesizer-high.webp"
+      }
+    },
+    "solar-plant": {
+      "name": "Solar Plant",
+      "tiers": {
+        "low": "/assets/game/buildings/solar-plant-low.webp",
+        "mid": "/assets/game/buildings/solar-plant-mid.webp",
+        "high": "/assets/game/buildings/solar-plant-high.webp"
+      }
+    },
+    "robotics-factory": {
+      "name": "Robotics Factory",
+      "tiers": {
+        "low": "/assets/game/buildings/robotics-factory-low.webp",
+        "mid": "/assets/game/buildings/robotics-factory-mid.webp",
+        "high": "/assets/game/buildings/robotics-factory-high.webp"
+      }
+    },
+    "shipyard": {
+      "name": "Shipyard",
+      "tiers": {
+        "low": "/assets/game/buildings/shipyard-low.webp",
+        "mid": "/assets/game/buildings/shipyard-mid.webp",
+        "high": "/assets/game/buildings/shipyard-high.webp"
+      }
+    },
+    "research-lab": {
+      "name": "Research Lab",
+      "tiers": {
+        "low": "/assets/game/buildings/research-lab-low.webp",
+        "mid": "/assets/game/buildings/research-lab-mid.webp",
+        "high": "/assets/game/buildings/research-lab-high.webp"
+      }
+    },
+    "metal-storage": {
+      "name": "Metal Storage",
+      "tiers": {
+        "low": "/assets/game/buildings/metal-storage-low.webp",
+        "mid": "/assets/game/buildings/metal-storage-mid.webp",
+        "high": "/assets/game/buildings/metal-storage-high.webp"
+      }
+    },
+    "crystal-storage": {
+      "name": "Crystal Storage",
+      "tiers": {
+        "low": "/assets/game/buildings/crystal-storage-low.webp",
+        "mid": "/assets/game/buildings/crystal-storage-mid.webp",
+        "high": "/assets/game/buildings/crystal-storage-high.webp"
+      }
+    },
+    "deuterium-tank": {
+      "name": "Deuterium Tank",
+      "tiers": {
+        "low": "/assets/game/buildings/deuterium-tank-low.webp",
+        "mid": "/assets/game/buildings/deuterium-tank-mid.webp",
+        "high": "/assets/game/buildings/deuterium-tank-high.webp"
+      }
+    },
+    "fusion-reactor": {
+      "name": "Fusion Reactor",
+      "tiers": {
+        "low": "/assets/game/buildings/fusion-reactor-low.webp",
+        "mid": "/assets/game/buildings/fusion-reactor-mid.webp",
+        "high": "/assets/game/buildings/fusion-reactor-high.webp"
+      }
+    },
+    "nanite-factory": {
+      "name": "Nanite Factory",
+      "tiers": {
+        "low": "/assets/game/buildings/nanite-factory-low.webp",
+        "mid": "/assets/game/buildings/nanite-factory-mid.webp",
+        "high": "/assets/game/buildings/nanite-factory-high.webp"
+      }
+    },
+    "terraformer": {
+      "name": "Terraformer",
+      "tiers": {
+        "low": "/assets/game/buildings/terraformer-low.webp",
+        "mid": "/assets/game/buildings/terraformer-mid.webp",
+        "high": "/assets/game/buildings/terraformer-high.webp"
+      }
+    },
+    "alliance-depot": {
+      "name": "Alliance Depot",
+      "tiers": {
+        "low": "/assets/game/buildings/alliance-depot-low.webp",
+        "mid": "/assets/game/buildings/alliance-depot-mid.webp",
+        "high": "/assets/game/buildings/alliance-depot-high.webp"
+      }
+    },
+    "missile-silo": {
+      "name": "Missile Silo",
+      "tiers": {
+        "low": "/assets/game/buildings/missile-silo-low.webp",
+        "mid": "/assets/game/buildings/missile-silo-mid.webp",
+        "high": "/assets/game/buildings/missile-silo-high.webp"
+      }
+    }
+  },
+  "ships": {
+    "small-cargo": {
+      "name": "Small Cargo",
+      "image": "/assets/game/ships/small-cargo.webp"
+    },
+    "light-fighter": {
+      "name": "Light Fighter",
+      "image": "/assets/game/ships/light-fighter.webp"
+    },
+    "recycler": {
+      "name": "Recycler",
+      "image": "/assets/game/ships/recycler.webp"
+    },
+    "colony-ship": {
+      "name": "Colony Ship",
+      "image": "/assets/game/ships/colony-ship.webp"
+    },
+    "large-cargo": {
+      "name": "Large Cargo",
+      "image": "/assets/game/ships/large-cargo.webp"
+    },
+    "heavy-fighter": {
+      "name": "Heavy Fighter",
+      "image": "/assets/game/ships/heavy-fighter.webp"
+    },
+    "cruiser": {
+      "name": "Cruiser",
+      "image": "/assets/game/ships/cruiser.webp"
+    },
+    "battleship": {
+      "name": "Battleship",
+      "image": "/assets/game/ships/battleship.webp"
+    },
+    "espionage-probe": {
+      "name": "Espionage Probe",
+      "image": "/assets/game/ships/espionage-probe.webp"
+    },
+    "bomber": {
+      "name": "Bomber",
+      "image": "/assets/game/ships/bomber.webp"
+    },
+    "solar-satellite": {
+      "name": "Solar Satellite",
+      "image": "/assets/game/ships/solar-satellite.webp"
+    },
+    "destroyer": {
+      "name": "Destroyer",
+      "image": "/assets/game/ships/destroyer.webp"
+    },
+    "deathstar": {
+      "name": "Deathstar",
+      "image": "/assets/game/ships/deathstar.webp"
+    },
+    "battlecruiser": {
+      "name": "Battlecruiser",
+      "image": "/assets/game/ships/battlecruiser.webp"
+    },
+    "reaper": {
+      "name": "Reaper",
+      "image": "/assets/game/ships/reaper.webp"
+    },
+    "pathfinder": {
+      "name": "Pathfinder",
+      "image": "/assets/game/ships/pathfinder.webp"
+    }
+  },
+  "planets": {
+    "scorching-molten": {
+      "name": "Scorching Molten",
+      "image": "/assets/game/planets/scorching-molten.webp"
+    },
+    "hot-desert": {
+      "name": "Hot Desert",
+      "image": "/assets/game/planets/hot-desert.webp"
+    },
+    "warm-terracotta": {
+      "name": "Warm Terracotta",
+      "image": "/assets/game/planets/warm-terracotta.webp"
+    },
+    "temperate-ocean": {
+      "name": "Temperate Ocean",
+      "image": "/assets/game/planets/temperate-ocean.webp"
+    },
+    "lush-temperate": {
+      "name": "Lush Temperate",
+      "image": "/assets/game/planets/lush-temperate.webp"
+    },
+    "cool-misty-blue": {
+      "name": "Cool Misty Blue",
+      "image": "/assets/game/planets/cool-misty-blue.webp"
+    },
+    "cold-tundra": {
+      "name": "Cold Tundra",
+      "image": "/assets/game/planets/cold-tundra.webp"
+    },
+    "frozen-ice": {
+      "name": "Frozen Ice",
+      "image": "/assets/game/planets/frozen-ice.webp"
+    },
+    "outer-cryo": {
+      "name": "Outer Cryo",
+      "image": "/assets/game/planets/outer-cryo.webp"
+    },
+    "metal-planetoid": {
+      "name": "Metal Planetoid",
+      "image": "/assets/game/planets/metal-planetoid.webp"
+    },
+    "crystal-violet": {
+      "name": "Crystal Violet",
+      "image": "/assets/game/planets/crystal-violet.webp"
+    },
+    "deuterium-blue": {
+      "name": "Deuterium Blue",
+      "image": "/assets/game/planets/deuterium-blue.webp"
+    }
+  },
+  "conceptSheets": {
+    "buildingsA": "/assets/game/concepts/veydrift-buildings-sheet-a.jpg",
+    "buildingsB": "/assets/game/concepts/veydrift-buildings-sheet-b.jpg",
+    "spacecraft": "/assets/game/concepts/veydrift-spacecraft-sheet.jpg",
+    "planets": "/assets/game/concepts/veydrift-planets-temperature-sheet.jpg"
+  }
+}
