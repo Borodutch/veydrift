@@ -99,79 +99,66 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
   const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
   const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
   const emptyCount = POSITION_COUNT - planets.length;
+  const occupiedSummary = occupiedCount > 0 ? `${occupiedCount} occupied` : "No indexed occupants";
 
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold text-white">Galaxy</h2>
-          <p className="text-xs text-slate-400">
+          <p className="mt-0.5 text-xs text-slate-400">
             System [{galaxy}:{system}:1-{POSITION_COUNT}]
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-[#101624] p-2 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset]">
           <button
             onClick={handlePrevSystem}
-            className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+            className="h-9 rounded border border-white/15 bg-white/8 px-3 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
           >
             ← Prev
           </button>
 
-          <span className="text-sm text-slate-400">Galaxy</span>
-          <select
+          <ControlSelect
+            label="Galaxy"
             value={galaxy}
             onChange={handleGalaxyChange}
-            className="rounded border border-white/15 bg-[#070913] px-2 py-1.5 text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
-          >
-            {Array.from({ length: GALAXY_COUNT }, (_, i) => i + 1).map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
+            options={GALAXY_COUNT}
+          />
 
-          <span className="text-sm text-slate-400">System</span>
-          <select
+          <ControlSelect
+            label="System"
             value={system}
             onChange={handleSystemChange}
-            className="rounded border border-white/15 bg-[#070913] px-2 py-1.5 text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
-          >
-            {Array.from({ length: SYSTEM_COUNT }, (_, i) => i + 1).map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+            options={SYSTEM_COUNT}
+          />
 
           <button
             onClick={handleNextSystem}
-            className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+            className="h-9 rounded border border-white/15 bg-white/8 px-3 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
           >
             Next →
           </button>
         </div>
       </div>
 
-      {/* Galaxy grid */}
-      <div className="rounded-lg border border-white/10 bg-white/5 backdrop-blur">
-        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-3 gap-y-1 p-2 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] sm:gap-x-4 sm:p-3">
-          {/* Header */}
-          <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Pos
+      <div className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-2 sm:p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-1 pb-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span>{planets.length} planet slots</span>
+            <span className="text-slate-700">/</span>
+            <span>{emptyCount} empty</span>
+            <span className="text-slate-700">/</span>
+            <span>{occupiedSummary}</span>
           </div>
-          <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Planet
-          </div>
-          <div className="hidden px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500 sm:block">
-            Status
-          </div>
-          <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Details
-          </div>
+          <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
+            {source === "api" ? "Real occupancy data" : homePlanetInSystem ? "Wallet home injected" : "Fallback universe"}
+          </span>
+        </div>
 
+        <div className="grid gap-1.5">
           {loading && (
-            <div className="col-span-full py-12 text-center text-sm text-slate-400">
+            <div className="py-12 text-center text-sm text-slate-400">
               Loading system data...
             </div>
           )}
@@ -181,101 +168,162 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
               const planet = planetByPosition.get(pos);
               const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
               return (
-                <div
+                <GalaxySlot
+                  galaxy={galaxy}
+                  isHome={isHome}
                   key={pos}
-                  className={`contents [&>*]:border-b [&>*]:border-white/5 [&>*]:py-2 sm:[&>*]:py-2.5 ${isHome ? "[&>*]:bg-cyan-300/5" : ""}`}
-                >
-                  <div className="px-2 text-sm font-mono text-slate-400">
-                    {pos}
-                  </div>
-
-                  <div className="flex items-center gap-2 px-2">
-                    {planet ? (
-                      <button
-                        onClick={() =>
-                          onSelectPlanet({ galaxy, system, position: pos })
-                        }
-                        className="group flex items-center gap-2.5 text-left transition-opacity hover:opacity-80"
-                      >
-                        <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30">
-                          <OptimizedImage
-                            alt={planet.name}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                            sizes="icon"
-                            src={planet.image}
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium text-white group-hover:text-signal">
-                            {planet.name}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                            <span className="capitalize">{planet.type.replace(/-/g, " ")}</span>
-                            {isHome ? (
-                              <span className="rounded border border-cyan-300/30 bg-cyan-300/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-200">
-                                Home
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                      </button>
-                    ) : (
-                      <span className="text-sm text-slate-600 italic">
-                        Empty space
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="hidden items-center px-2 sm:flex">
-                    {isHome ? (
-                      <span className="text-xs font-semibold uppercase text-cyan-200">
-                        Home planet
-                      </span>
-                    ) : planet?.ownerId ? (
-                      <span className="font-mono text-sm text-slate-300">
-                        {shortAddress(planet.ownerId)}
-                      </span>
-                    ) : planet ? (
-                      <span className="text-xs text-slate-600">
-                        Unclaimed
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-700">
-                        Empty
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1 px-2">
-                    {planet ? (
-                      <button
-                        className="rounded px-2 py-1 text-xs font-medium text-signal transition-colors hover:bg-signal/10"
-                        onClick={() => onSelectPlanet({ galaxy, system, position: pos })}
-                        title="View planet details"
-                      >
-                        Details
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
+                  onSelectPlanet={onSelectPlanet}
+                  planet={planet}
+                  position={pos}
+                  system={system}
+                />
               );
             })}
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-        <span>{planets.length} planets in this system</span>
-        <span className="text-slate-700">|</span>
-        <span>{emptyCount} empty slots</span>
-        <span className="text-slate-700">|</span>
-        <span>{occupiedCount} occupied</span>
-        <span className="text-slate-700">|</span>
-        <span>{source === "api" ? "Real occupancy data" : homePlanetInSystem ? "Home planet from wallet" : "Occupancy unavailable"}</span>
-        <span className="text-slate-700">|</span>
-        <span>{planets.filter((p) => p.hasMoon).length} with moon</span>
+      <p className="text-xs leading-5 text-slate-600">
+        Empty positions are deterministic unoccupied slots. Planet entries can be inspected; no unavailable colonize,
+        attack, alliance, fleet, or message actions are shown.
+      </p>
+    </div>
+  );
+}
+
+function ControlSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: number;
+  onChange: (event: Event) => void;
+  options: number;
+}) {
+  return (
+    <label className="flex h-9 items-center gap-2 rounded border border-white/15 bg-[#070913] px-2">
+      <span className="text-[11px] font-medium uppercase text-slate-500">{label}</span>
+      <span className="min-w-5 text-center font-mono text-sm font-semibold text-white">{value}</span>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={onChange}
+        className="h-7 w-9 rounded border border-white/10 bg-[#101624] text-center text-xs text-slate-200 outline-none [color-scheme:dark] focus:border-signal/50"
+      >
+        {Array.from({ length: options }, (_, i) => i + 1).map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function GalaxySlot({
+  galaxy,
+  system,
+  position,
+  planet,
+  isHome,
+  onSelectPlanet,
+}: {
+  galaxy: number;
+  system: number;
+  position: number;
+  planet: Planet | undefined;
+  isHome: boolean;
+  onSelectPlanet: (coords: Coordinates) => void;
+}) {
+  if (!planet) {
+    return (
+      <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-white/5 bg-black/15 px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_7rem]">
+        <SlotNumber position={position} muted />
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-500">Empty space</div>
+          <div className="text-xs text-slate-700">No generated or indexed planet at this position.</div>
+        </div>
+        <div className="hidden justify-self-end text-xs text-slate-700 sm:block">No action</div>
       </div>
+    );
+  }
+
+  const ownerLabel = isHome
+    ? "Settled home"
+    : planet.ownerId
+      ? shortAddress(planet.ownerId)
+      : "Unclaimed";
+
+  return (
+    <button
+      className={`group grid min-h-16 w-full grid-cols-[3rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2 text-left transition sm:grid-cols-[4rem_minmax(0,1fr)_7rem_auto] ${
+        isHome
+          ? "border-cyan-300/40 bg-cyan-300/10 shadow-[0_0_18px_rgba(103,232,249,0.10)]"
+          : "border-white/10 bg-white/[0.035] hover:border-signal/35 hover:bg-white/[0.06]"
+      }`}
+      onClick={() => onSelectPlanet({ galaxy, system, position })}
+      type="button"
+    >
+      <SlotNumber position={position} />
+
+      <div className="flex min-w-0 items-center gap-3">
+        <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
+          isHome ? "border-cyan-300/35" : "border-white/15"
+        }`}>
+          <OptimizedImage
+            alt={planet.name}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            sizes="icon"
+            src={planet.image}
+          />
+        </div>
+
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate text-sm font-semibold text-white group-hover:text-signal">
+              {planet.name}
+            </span>
+            {isHome ? (
+              <span className="rounded border border-cyan-300/35 bg-cyan-300/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-100">
+                Home
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span className="capitalize">{planet.type.replace(/-/g, " ")}</span>
+            <span className="text-slate-700">/</span>
+            <span>{planet.fields} fields</span>
+            {planet.hasMoon ? (
+              <>
+                <span className="text-slate-700">/</span>
+                <span>Moon</span>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className={`hidden justify-self-end text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
+        {ownerLabel}
+      </div>
+
+      <span className="justify-self-end rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal group-hover:bg-signal/10">
+        Inspect
+      </span>
+    </button>
+  );
+}
+
+function SlotNumber({ position, muted = false }: { position: number; muted?: boolean }) {
+  return (
+    <div className={`flex h-9 w-9 items-center justify-center rounded border font-mono text-sm sm:h-10 sm:w-10 ${
+      muted
+        ? "border-white/5 bg-white/[0.02] text-slate-700"
+        : "border-white/10 bg-black/20 text-slate-400"
+    }`}>
+      {position}
     </div>
   );
 }
