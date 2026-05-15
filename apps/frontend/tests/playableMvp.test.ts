@@ -6,6 +6,7 @@ import {
   productionPerHour,
   settleState,
   startBuildingUpgrade,
+  startResearch,
   startShipProduction,
   storageCaps,
 } from "../src/playableMvp";
@@ -71,6 +72,22 @@ describe("playable MVP simulation", () => {
 
     expect(withoutShipyard.queue).toBeUndefined();
     expect(queued.queue?.kind).toBe("ship");
+  });
+
+  test("runs research in parallel with building production", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildingQueued = startBuildingUpgrade(state, "metalMine", 1_000);
+    const researchQueued = startResearch(buildingQueued, "orbitalCartography", 1_000);
+
+    expect(researchQueued.queue?.kind).toBe("building");
+    expect(researchQueued.researchQueue?.kind).toBe("research");
+
+    const settled = settleState(researchQueued, 62_000);
+
+    expect(settled.buildings.metalMine).toBe(1);
+    expect(settled.research.orbitalCartography).toBe(1);
+    expect(settled.queue).toBeUndefined();
+    expect(settled.researchQueue).toBeUndefined();
   });
 
   test("checks affordability against all resource types", () => {

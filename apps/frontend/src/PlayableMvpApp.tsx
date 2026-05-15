@@ -11,9 +11,12 @@ import {
   planetSummary,
   productionPerHour,
   progress,
+  researchCatalog,
+  researchCost,
   settleState,
   shipCatalog,
   startBuildingUpgrade,
+  startResearch,
   startShipProduction,
   storageCaps,
   type PlayableState,
@@ -43,7 +46,12 @@ function loadPlayableState(): PlayableState | undefined {
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as PlayableState;
     if (!parsed.resources || !parsed.buildings || !parsed.ships) return undefined;
-    return parsed;
+    const fallback = createInitialPlayableState();
+    return {
+      ...fallback,
+      ...parsed,
+      research: { ...fallback.research, ...parsed.research },
+    };
   } catch {
     return undefined;
   }
@@ -406,6 +414,45 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
             </div>
 
             <div className="rounded-lg border border-white/10 bg-[#101624] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold text-white">Research Queue</h2>
+                <span className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
+                  Science
+                </span>
+              </div>
+
+              {settledState.researchQueue ? (
+                <div className="mt-4">
+                  <div className="flex items-baseline justify-between gap-4">
+                    <p className="font-semibold text-white">{settledState.researchQueue.label}</p>
+                    <p className="text-sm text-slate-300">
+                      {Math.max(0, Math.ceil((settledState.researchQueue.readyAt - now) / 1_000))}s
+                    </p>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-cyan-300 transition-[width]"
+                      style={{ width: `${progress(settledState.researchQueue, now) * 100}%` }}
+                    />
+                  </div>
+                  {isWalletConnected && (
+                    <button
+                      className="mt-3 w-full rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+                      onClick={handleCollectAll}
+                      type="button"
+                    >
+                      Collect Completed
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm leading-6 text-slate-300">
+                  Start research in parallel with construction to unlock better scouting and relay tools.
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-white/10 bg-[#101624] p-4">
               <h2 className="text-base font-semibold text-white">Fleet</h2>
               <div className="mt-3 grid gap-2">
                 {shipCatalog.map((ship) => (
@@ -480,6 +527,36 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
                   />
                 );
               })}
+            </div>
+
+            <div className="mt-5">
+              <div className="mb-3 flex items-center justify-between gap-4">
+                <h2 className="text-base font-semibold text-white">Research</h2>
+                <span className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
+                  Parallel queue
+                </span>
+              </div>
+              <div className="grid gap-3">
+                {researchCatalog.map((research) => {
+                  const cost = researchCost(settledState.research, research.key);
+                  const affordable = canAfford(settledState.resources, cost);
+                  return (
+                    <ActionTile
+                      actionLabel="Start research"
+                      asset={research.asset}
+                      cost={cost}
+                      disabled={Boolean(settledState.researchQueue) || !affordable}
+                      key={research.key}
+                      label={research.label}
+                      level={`Level ${settledState.research[research.key]} · ${research.lane}`}
+                      onClick={() => {
+                        setState(startResearch(settledState, research.key, Date.now()));
+                        setNow(Date.now());
+                      }}
+                    />
+                  );
+                })}
+              </div>
             </div>
           </div>
         </section>
