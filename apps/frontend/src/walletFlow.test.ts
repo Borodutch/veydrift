@@ -14,7 +14,9 @@ import {
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
   sendFinishShipProductionTransaction,
+  sendFinishResearchTransaction,
   sendSettlementTransaction,
+  sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   settlementTransactionData,
   type Eip1193Provider
@@ -241,6 +243,44 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: "0xb30a921c0000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("submits VeydriftGame research transactions", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0xresearch${requests.length}`;
+    });
+
+    await expect(
+      sendStartResearchTransaction(provider, account, contract, "7", 12)
+    ).resolves.toBe("0xresearch1");
+    await expect(
+      sendFinishResearchTransaction(provider, account, contract)
+    ).resolves.toBe("0xresearch2");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x7f314b93", [7, 12])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xba2fbdc8"
           }
         ]
       }

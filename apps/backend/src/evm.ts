@@ -65,6 +65,22 @@ export type ShipyardState = {
   queue: QueueState | null;
 };
 
+export type ResearchState = {
+  wallet: Address;
+  homePlanetId: string | null;
+  researchAvailable: boolean;
+  unavailableReason?: string;
+  resources: Resources | null;
+  researchLabLevel: number;
+  technologyLevels: Record<string, number>;
+  technologies: Array<{
+    id: number;
+    level: number;
+    cost: Resources;
+  }>;
+  queue: QueueState | null;
+};
+
 export type SettledPlanetEvent = PlanetState & {
   eventName: "PlanetStarted" | "ColonyCreated";
   transactionHash: string;
@@ -76,6 +92,7 @@ export interface ChainReader {
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address): Promise<PlayerQueues>;
   getShipyardState(wallet: Address): Promise<ShipyardState>;
+  getResearchState(wallet: Address): Promise<ResearchState>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
 }
 
@@ -281,6 +298,67 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  async getResearchState(wallet: Address): Promise<ResearchState> {
+    let settlement: WalletSettlement;
+    try {
+      settlement = await this.getGameSettlement(wallet);
+    } catch (error) {
+      if (!isRpcRevert(error) || !this.settlementContractAddress) {
+        throw error;
+      }
+
+      return {
+        wallet,
+        homePlanetId: null,
+        researchAvailable: false,
+        unavailableReason:
+          "The deployed contract only supports first-planet settlement. Research is not available on this deployment yet.",
+        resources: null,
+        researchLabLevel: 0,
+        technologyLevels: {},
+        technologies: [],
+        queue: null
+      };
+    }
+
+    if (!settlement.homePlanetId) {
+      return {
+        wallet,
+        homePlanetId: null,
+        researchAvailable: true,
+        resources: null,
+        researchLabLevel: 0,
+        technologyLevels: {},
+        technologies: Array.from({ length: technologyCount }, (_, id) => ({
+          id,
+          level: 0,
+          cost: zeroResources()
+        })),
+        queue: null
+      };
+    }
+
+    const planetId = BigInt(settlement.homePlanetId);
+    const [resources, researchLabLevel, queue, technologyLevels, technologies] = await Promise.all([
+      this.readResources("0x0adbf924", planetId),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(6n)]),
+      this.readResearchQueue(wallet),
+      this.readTechnologyLevels(wallet),
+      this.readTechnologyRows(wallet)
+    ]);
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      researchAvailable: true,
+      resources,
+      researchLabLevel: Number(researchLabLevel),
+      technologyLevels,
+      technologies,
+      queue
+    };
+  }
+
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
     const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
       {
@@ -363,6 +441,23 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
+  private async readTechnologyRows(wallet: Address): Promise<ResearchState["technologies"]> {
+    return Promise.all(
+      Array.from({ length: technologyCount }, async (_, id) => {
+        const [level, cost] = await Promise.all([
+          this.readUintCall("0xe512884c", [encodeAddress(wallet), encodeUint(BigInt(id))]),
+          this.readResourcesCall("0x6e984888", [encodeAddress(wallet), encodeUint(BigInt(id))])
+        ]);
+
+        return {
+          id,
+          level: Number(level),
+          cost
+        };
+      })
+    );
+  }
+
   private async getCompactSettlement(wallet: Address): Promise<WalletSettlement> {
     if (!this.settlementContractAddress) {
       return {
@@ -419,6 +514,10 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readResources(selector: string, firstArg: bigint): Promise<Resources> {
     return decodeResources(splitWords(await this.call(selector, [encodeUint(firstArg)])));
+  }
+
+  private async readResourcesCall(selector: string, args: string[]): Promise<Resources> {
+    return decodeResources(splitWords(await this.call(selector, args)));
   }
 
   private async readUintCall(selector: string, args: string[]): Promise<bigint> {

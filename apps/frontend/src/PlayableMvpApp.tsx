@@ -6,7 +6,7 @@ import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
 import { OverviewPage } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
-import { ResearchPage } from "./components/ResearchPage";
+import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import {
   createInitialPlayableState,
@@ -14,7 +14,6 @@ import {
   progress,
   settleState,
   startBuildingUpgrade,
-  startResearch,
   storageCaps,
   type BuildingKey,
   type PlayableState,
@@ -28,13 +27,17 @@ import {
 } from "./overviewData";
 import {
   fetchShipyardState,
+  fetchResearchState,
   fetchWalletQueues,
   fetchWalletSettlement,
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
   sendFinishShipProductionTransaction,
+  sendFinishResearchTransaction,
+  sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   waitForReceipt,
+  type ChainResearchState,
   type ChainShipyardState,
   type Eip1193Provider,
   type PlanetSummary,
@@ -100,6 +103,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
+  const [researchState, setResearchState] = useState<ChainResearchState | null>(null);
+  const [researchLoading, setResearchLoading] = useState(false);
+  const [researchError, setResearchError] = useState<string | undefined>();
+  const [researchAction, setResearchAction] = useState<ResearchActionState>({ status: "idle" });
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
       const [g, s] = planet.coordinates.split(":").map(Number);
@@ -158,6 +165,27 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .finally(() => {
         setShipyardLoading(false);
+      });
+  }, [account, apiBaseUrl]);
+
+  const refreshResearchState = useCallback(() => {
+    if (!apiBaseUrl || !account) {
+      setResearchState(null);
+      return;
+    }
+
+    setResearchLoading(true);
+    setResearchError(undefined);
+    fetchResearchState(apiBaseUrl, account)
+      .then((next) => {
+        setResearchState(next);
+      })
+      .catch((error) => {
+        console.error(error);
+        setResearchError(error instanceof Error ? error.message : "Research state could not be loaded.");
+      })
+      .finally(() => {
+        setResearchLoading(false);
       });
   }, [account, apiBaseUrl]);
 
@@ -224,6 +252,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [page, refreshShipyardState]);
 
   useEffect(() => {
+    if (page === "research") {
+      refreshResearchState();
+    }
+  }, [page, refreshResearchState]);
+
+  useEffect(() => {
     const abortController = new AbortController();
     fetch(runtimeConfigUrl(), {
       headers: { accept: "application/json" },
@@ -268,15 +302,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     });
   }, []);
 
-  const handleResearch = useCallback((key: ResearchKey) => {
-    setState((prev) => {
-      const currentNow = Date.now();
-      const next = startResearch(prev, key, currentNow);
-      setNow(currentNow);
-      return next;
-    });
-  }, []);
-
   const runShipyardTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setShipyardAction({ status: "pending", label });
 
@@ -296,6 +321,26 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       });
     }
   }, [provider, refreshShipyardState]);
+
+  const runResearchTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+    setResearchAction({ status: "pending", label });
+
+    try {
+      const txHash = await send();
+      setResearchAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+      if (provider) {
+        await waitForReceipt(provider, txHash);
+      }
+      setResearchAction({ status: "success", label: `${label} confirmed.` });
+      refreshResearchState();
+    } catch (error) {
+      console.error(error);
+      setResearchAction({
+        status: "error",
+        label: error instanceof Error ? error.message : `${label} failed.`,
+      });
+    }
+  }, [provider, refreshResearchState]);
 
   const handleCollectResources = useCallback(() => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -354,6 +399,34 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
 
+  const handleResearch = useCallback((technologyId: number, _key: ResearchKey) => {
+    if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
+      setResearchAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runResearchTransaction("Research", () => sendStartResearchTransaction(
+      provider,
+      account,
+      gameContract,
+      researchState.homePlanetId ?? "0",
+      technologyId,
+    ));
+  }, [account, gameContract, provider, researchState?.homePlanetId, runResearchTransaction]);
+
+  const handleFinishResearch = useCallback(() => {
+    if (!provider || !account || !gameContract) {
+      setResearchAction({ status: "error", label: "Wallet or game contract is unavailable." });
+      return;
+    }
+
+    void runResearchTransaction("Research completion", () => sendFinishResearchTransaction(
+      provider,
+      account,
+      gameContract,
+    ));
+  }, [account, gameContract, provider, runResearchTransaction]);
+
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
     setSelectedCoords(undefined);
@@ -378,7 +451,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       queue={settledState.queue}
       rates={rates}
       resourceStatus={isWalletConnected ? onChainStatus : "local"}
-      researchQueue={settledState.researchQueue}
+      researchQueue={isWalletConnected ? undefined : settledState.researchQueue}
       resources={isWalletConnected ? onChainResources : settledState.resources}
     />
   );
@@ -422,7 +495,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (page === "research") {
       return (
         <ResearchPage
+          actionState={researchAction}
+          canTransact={Boolean(provider && account && gameContract)}
+          error={researchError}
+          loading={researchLoading}
+          onFinish={handleFinishResearch}
+          onRefresh={refreshResearchState}
           onResearch={handleResearch}
+          researchState={researchState}
           settledState={settledState}
           state={state}
         />

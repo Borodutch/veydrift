@@ -5,6 +5,7 @@ import type {
   ChainReader,
   PlanetState,
   PlayerQueues,
+  ResearchState,
   SettledPlanetEvent,
   ShipyardState,
   WalletSettlement
@@ -120,6 +121,51 @@ class MockChainReader implements ChainReader {
           metal: "2000",
           crystal: "2000",
           deuterium: "0"
+        }
+      }
+    };
+  }
+
+  async getResearchState(wallet: Address): Promise<ResearchState> {
+    return {
+      wallet,
+      homePlanetId: planet.planetId,
+      researchAvailable: true,
+      resources: planet.resources,
+      researchLabLevel: 1,
+      technologyLevels: {
+        "0": 1
+      },
+      technologies: [
+        {
+          id: 0,
+          level: 1,
+          cost: {
+            metal: "0",
+            crystal: "1600",
+            deuterium: "800"
+          }
+        },
+        {
+          id: 1,
+          level: 0,
+          cost: {
+            metal: "200",
+            crystal: "100",
+            deuterium: "0"
+          }
+        }
+      ],
+      queue: {
+        active: true,
+        itemId: 0,
+        kind: "research",
+        targetLevel: 2,
+        readyAt: "1770000060",
+        cost: {
+          metal: "0",
+          crystal: "1600",
+          deuterium: "800"
         }
       }
     };
@@ -310,6 +356,36 @@ describe("Veydrift backend", () => {
         metal: "2000",
         crystal: "2000",
         deuterium: "0"
+      }
+    });
+    expect(response.status).toBe(200);
+  });
+
+  test("answers research state from a mocked chain reader", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader()
+    })(new Request(`http://localhost/wallet/${player}/research`));
+
+    const body = await response.json();
+    expect(body.wallet).toBe(player);
+    expect(body.homePlanetId).toBe("7");
+    expect(body.resources.metal).toBe("5000");
+    expect(body.researchLabLevel).toBe(1);
+    expect(body.technologyLevels["0"]).toBe(1);
+    expect(body.queue).toMatchObject({
+      active: true,
+      itemId: 0,
+      kind: "research",
+      targetLevel: 2
+    });
+    expect(body.technologies).toContainEqual({
+      id: 0,
+      level: 1,
+      cost: {
+        metal: "0",
+        crystal: "1600",
+        deuterium: "800"
       }
     });
     expect(response.status).toBe(200);
