@@ -131,6 +131,86 @@ contract VeydriftGameTest is Test {
         assertEq(game.technologyLevel(player, Technology.Energy), 1);
     }
 
+    function testCollectionNoopsWhenNothingReady() public {
+        uint256 planetId = _startPlanet(player);
+        VeydriftGame.Resources memory beforeResources = game.previewResources(planetId);
+
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        VeydriftGame.Resources memory afterResources = game.previewResources(planetId);
+        assertEq(afterResources.metal, beforeResources.metal);
+        assertEq(afterResources.crystal, beforeResources.crystal);
+        assertEq(afterResources.deuterium, beforeResources.deuterium);
+        assertFalse(game.activeBuildingConstruction(planetId).active);
+        assertFalse(game.shipQueue(planetId).active);
+        assertFalse(game.researchQueue(player).active);
+    }
+
+    function testCollectShipsClaimsReadyShipProductionIdempotently() public {
+        uint256 planetId = _preparePlanetWithShipyardAndResearch(player);
+        _research(player, planetId, Technology.CombustionDrive);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+        VeydriftGame.ShipQueue memory queue = game.shipQueue(planetId);
+
+        vm.warp(queue.readyAt);
+        vm.prank(player);
+        game.collectShips(planetId);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
+        assertFalse(game.shipQueue(planetId).active);
+
+        vm.prank(player);
+        game.collectShips(planetId);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
+        assertFalse(game.shipQueue(planetId).active);
+    }
+
+    function testCollectResourcesAppliesOnlyReadyQueues() public {
+        uint256 planetId = _preparePlanetWithShipyardAndResearch(player);
+        _research(player, planetId, Technology.CombustionDrive);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        VeydriftGame.BuildingConstruction memory buildingQueue =
+            game.activeBuildingConstruction(planetId);
+
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Energy);
+
+        vm.warp(block.timestamp + 30);
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+        VeydriftGame.ShipQueue memory shipQueue = game.shipQueue(planetId);
+
+        vm.warp(buildingQueue.readyAt);
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 1);
+        assertEq(game.technologyLevel(player, Technology.Energy), 1);
+        assertFalse(game.activeBuildingConstruction(planetId).active);
+        assertFalse(game.researchQueue(player).active);
+        assertTrue(game.shipQueue(planetId).active);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
+
+        vm.warp(shipQueue.readyAt);
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
+
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 1);
+        assertEq(game.technologyLevel(player, Technology.Energy), 1);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
+    }
+
     function testDependencyResourceAndAccessFailures() public {
         uint256 planetId = _startPlanet(player);
 

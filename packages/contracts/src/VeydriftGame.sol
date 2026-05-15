@@ -313,19 +313,17 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function settlePlanet(uint256 planetId) public {
         _requirePlanetOwner(planetId);
-        Planet storage planetRef = _planets[planetId];
-        planetRef.resources = previewResources(planetId);
-        planetRef.lastSettledAt = _currentTimestamp();
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
+        _collectReadyOutputs(planetId, msg.sender);
     }
 
     function collectResources(uint256 planetId) external {
         settlePlanet(planetId);
+    }
+
+    function collectShips(uint256 planetId) external {
+        _requirePlanetOwner(planetId);
+        _settleResources(planetId);
+        _collectReadyShips(planetId);
     }
 
     function startBuildingUpgrade(uint256 planetId, Building building) external {
@@ -859,6 +857,72 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _collectReadyOutputs(uint256 planetId, address player) private {
+        _settleResources(planetId);
+        _collectReadyBuilding(planetId);
+        _collectReadyDefense(planetId);
+        _collectReadyShips(planetId);
+        _collectReadyResearch(player);
+    }
+
+    function _settleResources(uint256 planetId) private {
+        Planet storage planetRef = _planets[planetId];
+        planetRef.resources = previewResources(planetId);
+        planetRef.lastSettledAt = _currentTimestamp();
+        emit PlanetSettled(
+            planetId,
+            planetRef.resources.metal,
+            planetRef.resources.crystal,
+            planetRef.resources.deuterium
+        );
+    }
+
+    function _collectReadyBuilding(uint256 planetId) private {
+        BuildingConstruction memory construction = buildingConstructions[planetId];
+        if (!construction.active || _currentTimestamp() < construction.readyAt) {
+            return;
+        }
+
+        delete buildingConstructions[planetId];
+        _buildingLevels[planetId][construction.building] = construction.targetLevel;
+        emit BuildingCompleted(planetId, construction.building, construction.targetLevel);
+    }
+
+    function _collectReadyDefense(uint256 planetId) private {
+        DefenseQueue memory queue = defenseQueues[planetId];
+        if (!queue.active || _currentTimestamp() < queue.readyAt) {
+            return;
+        }
+
+        delete defenseQueues[planetId];
+        _defenseCounts[planetId][queue.defense] += queue.quantity;
+        emit DefenseCompleted(
+            planetId, queue.defense, queue.quantity, _defenseCounts[planetId][queue.defense]
+        );
+    }
+
+    function _collectReadyShips(uint256 planetId) private {
+        ShipQueue memory queue = shipQueues[planetId];
+        if (!queue.active || _currentTimestamp() < queue.readyAt) {
+            return;
+        }
+
+        delete shipQueues[planetId];
+        _shipCounts[planetId][queue.ship] += queue.quantity;
+        emit ShipCompleted(planetId, queue.ship, queue.quantity, _shipCounts[planetId][queue.ship]);
+    }
+
+    function _collectReadyResearch(address player) private {
+        ResearchQueue memory queue = researchQueues[player];
+        if (!queue.active || _currentTimestamp() < queue.readyAt) {
+            return;
+        }
+
+        delete researchQueues[player];
+        _technologyLevels[player][queue.technology] = queue.targetLevel;
+        emit ResearchCompleted(player, queue.technology, queue.targetLevel);
+    }
 
     function _createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
         private
