@@ -76,6 +76,8 @@ export type PlayerQueuesResponse = {
 export type ChainShipyardState = {
   wallet: string;
   homePlanetId: string | null;
+  productionAvailable?: boolean;
+  unavailableReason?: string;
   resources: OnChainResources | null;
   shipyardLevel: number;
   technologyLevels: Record<string, number>;

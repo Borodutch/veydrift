@@ -9,6 +9,7 @@ import type {
   ShipyardState,
   WalletSettlement
 } from "./evm";
+import { VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { createRequestHandler } from "./server";
 
@@ -82,6 +83,7 @@ class MockChainReader implements ChainReader {
     return {
       wallet,
       homePlanetId: planet.planetId,
+      productionAvailable: true,
       resources: planet.resources,
       shipyardLevel: 1,
       technologyLevels: {
@@ -271,6 +273,50 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("falls back to compact settlement reads when configured contract is not VeydriftGame", async () => {
+    const reader = new VeydriftGameReader(configuredTestConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const [call] = params as [{ data: string }];
+        if (call.data.startsWith("0x0ff79fa5")) {
+          throw new Error("RPC 3: execution reverted");
+        }
+        if (call.data.startsWith("0x1d750846")) {
+          return abiWords(1n) as T;
+        }
+        if (call.data.startsWith("0x29147f24")) {
+          return abiWords(2n, 44n, 9n, 0n, 0n, 1_770_000_000n, 123n) as T;
+        }
+
+        throw new Error(`Unexpected call ${call.data.slice(0, 10)}`);
+      }
+    });
+
+    await expect(reader.getWalletSettlement(player)).resolves.toMatchObject({
+      wallet: player,
+      hasFirstPlanet: true,
+      homePlanetId: null,
+      contractKind: "settlement",
+      planet: {
+        galaxy: 2,
+        system: 44,
+        position: 9,
+        resources: {
+          metal: "0",
+          crystal: "0",
+          deuterium: "0"
+        }
+      }
+    });
+
+    await expect(reader.getShipyardState(player)).resolves.toMatchObject({
+      wallet: player,
+      homePlanetId: null,
+      productionAvailable: false,
+      shipyardLevel: 0,
+      ships: []
+    });
+  });
+
   test("rebuilds the cache and marks occupied system coordinates", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
@@ -357,3 +403,7 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(400);
   });
 });
+
+function abiWords(...values: bigint[]): string {
+  return `0x${values.map((value) => value.toString(16).padStart(64, "0")).join("")}`;
+}

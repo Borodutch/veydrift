@@ -3,7 +3,6 @@ import type { ComponentChildren } from "preact";
 import type { Resources, ShipKey } from "../playableMvp";
 import { canAfford, shipCatalog } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
-import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -46,6 +45,7 @@ export function ShipyardPage({
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
   const resources = toResources(shipyardState?.resources);
   const queue = shipyardState?.queue?.active ? shipyardState.queue : undefined;
+  const productionAvailable = shipyardState?.productionAvailable !== false;
   const queueReady =
     queue?.readyAt ? Number(queue.readyAt) <= Math.floor(Date.now() / 1_000) : false;
 
@@ -57,7 +57,9 @@ export function ShipyardPage({
           <p className="mt-1 text-xs text-slate-400">
             {shipyardState?.homePlanetId
               ? `Planet #${shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
-              : "On-chain VeydriftGame planet required for ship production"}
+              : productionAvailable
+                ? "On-chain VeydriftGame planet required for ship production"
+                : "Ship production contract unavailable on this deployment"}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -103,12 +105,12 @@ export function ShipyardPage({
               .filter((ship) => ship.group === group)
               .map((ship) => {
                 const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
-                const owned = chainShip?.count;
-                const baseCost = toResources(chainShip?.cost) ?? ship.baseCost;
+                const owned = productionAvailable ? chainShip?.count : undefined;
+                const baseCost = productionAvailable ? toResources(chainShip?.cost) ?? ship.baseCost : undefined;
                 const quantity = quantities[ship.key] ?? 1;
-                const totalCost = multiply(baseCost, quantity);
+                const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
                 const missing = getMissingRequirements(ship, shipyardState);
-                const affordable = resources ? canAfford(resources, totalCost) : false;
+                const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
                 const blockedReason = getBlockedReason({
                   affordable,
                   canTransact,
@@ -162,7 +164,15 @@ function StatusPanel({
   }
 
   if (error) {
-    return <Notice tone="danger">{error}</Notice>;
+    return <Notice tone="danger">Shipyard state could not be loaded from the backend. Refresh or try again after deployment sync.</Notice>;
+  }
+
+  if (shipyardState?.productionAvailable === false) {
+    return (
+      <Notice tone="neutral">
+        {shipyardState.unavailableReason ?? "Ship production is not available for the currently configured contract."}
+      </Notice>
+    );
   }
 
   if (!shipyardState?.homePlanetId) {
@@ -202,7 +212,7 @@ function ShipTile({
   ship,
 }: {
   blockedReason: string | undefined;
-  cost: Resources;
+  cost: Resources | undefined;
   disabled: boolean;
   missing: string[];
   onBuild: () => void;
@@ -213,10 +223,9 @@ function ShipTile({
 }) {
   return (
     <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
-      <OptimizedImage
+      <img
         alt=""
         className="aspect-square w-full rounded object-cover"
-        sizes="shipThumbnail"
         src={ship.asset}
       />
       <div className="min-w-0">
@@ -224,7 +233,7 @@ function ShipTile({
           <div>
             <h4 className="text-sm font-semibold text-white">{ship.label}</h4>
             <p className="mt-0.5 text-xs text-slate-400">
-              Owned: {owned === undefined ? "sync required" : format(owned)}
+              Owned: {owned === undefined ? "unavailable" : format(owned)}
             </p>
           </div>
           <span className={missing.length === 0 ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
@@ -233,9 +242,9 @@ function ShipTile({
         </div>
 
         <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
-          <Stat label="Metal" value={format(cost.metal)} />
-          <Stat label="Crystal" value={format(cost.crystal)} />
-          <Stat label="Deut" value={format(cost.deuterium)} />
+          <Stat label="Metal" value={cost ? format(cost.metal) : "-"} />
+          <Stat label="Crystal" value={cost ? format(cost.crystal) : "-"} />
+          <Stat label="Deut" value={cost ? format(cost.deuterium) : "-"} />
         </dl>
 
         <div className="mt-3 min-h-10 text-xs leading-5 text-slate-400">
@@ -337,6 +346,7 @@ function getBlockedReason({
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!shipyardState) return "Waiting for chain state";
+  if (shipyardState.productionAvailable === false) return "Ship production unavailable";
   if (!hasPlanet) return "No game planet";
   if (queueActive) return "Queue active";
   if (missing.length > 0) return missing[0];
