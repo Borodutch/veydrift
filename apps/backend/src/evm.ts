@@ -137,12 +137,12 @@ export class VeydriftGameReader implements ChainReader {
     if (!config.rpcUrl) {
       throw new Error("RPC URL is required.");
     }
-    if (!config.settlementContractAddress) {
-      throw new Error("Veydrift settlement contract address is required.");
+    if (!config.gameContractAddress) {
+      throw new Error("VeydriftGame contract address is required.");
     }
 
     this.transport = transport ?? new HttpJsonRpcTransport(config.rpcUrl);
-    this.contractAddress = config.settlementContractAddress;
+    this.contractAddress = config.gameContractAddress;
     this.chainId = config.chainId;
   }
 

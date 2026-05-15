@@ -1,11 +1,11 @@
 [phases.install]
-cmds = ["bun install --frozen-lockfile"]
+cmds = ["bun install --frozen-lockfile && rm -rf /root/.cache/nix"]
 
 [phases.build]
-cmds = ["bun run build"]
+cmds = ["cd apps/frontend && bun run build && rm -rf /root/.bun/install/cache /tmp/*"]
 
 [start]
-cmd = "bun run serve"
+cmd = "cd apps/frontend && bun run serve"
 
 [variables]
 NODE_ENV = "production"

@@ -77,6 +77,7 @@ Sepolia RPC configuration before using chain-backed routes:
 ```sh
 VEYDRIFT_DEPLOYMENT_MODE=local
 VEYDRIFT_CHAIN_ID=84532
+VEYDRIFT_CONTRACT_ADDRESS=0x...
 VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=0x...
 VEYDRIFT_INDEX_FROM_BLOCK=0
 ALCHEMY_BASE_SEPOLIA_API_KEY=...
@@ -84,6 +85,11 @@ ALCHEMY_BASE_SEPOLIA_API_KEY=...
 
 The backend accepts `ALCHEMY_BASE_SEPOLIA_API_KEY`,
 `ALCHEMY_BASE_SEPOLIA_RPC_URL`, `BASE_SEPOLIA_RPC_URL`, or `VEYDRIFT_RPC_URL`.
+`VEYDRIFT_CONTRACT_ADDRESS` must point at the deployed `VeydriftGame` proxy for
+game-state APIs and runtime Shipyard transactions.
+`VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS` is the compact first-planet settlement
+contract used for settlement/universe context and must not be used as the game
+contract.
 Health/debug responses only report safe configuration metadata and never echo
 RPC URLs or API keys. Ownership remains canonical onchain; the in-memory index
 can be rebuilt from settlement events with `POST /index/rebuild`.
@@ -123,13 +129,16 @@ bun run check
 ## Deployment
 
 The initial production target is the existing Hetzner Easypanel instance. The
-`veydrift/frontend` service is sourced from this GitHub repository on `main`,
-uses build path `/apps/frontend`, and runs the frontend `nixpacks.toml`:
+`veydrift/frontend` service is sourced from this GitHub repository on `main`.
+Use the repository root as the EasyPanel source/build path and configure
+Nixpacks with frontend-scoped commands so Bun can install the whole monorepo
+workspace, including `@veydrift/universe`:
 
 ```sh
+bun install --frozen-lockfile && rm -rf /root/.cache/nix
 cd apps/frontend
-bun install --frozen-lockfile
 bun run build
+rm -rf /root/.bun/install/cache /tmp/*
 bun run serve
 ```
 
@@ -153,11 +162,29 @@ existing `veydrift` EasyPanel project:
 - `veydrift/backend-test` serves the test API at
   `https://api-test.veydrift.com`.
 
-The test frontend uses the same build path, `/apps/frontend`, and can be built
-with either `Dockerfile.test` or `nixpacks.test.toml`. Both run:
+The test frontend must also use the repository root as the EasyPanel
+source/build path. Do not set the source/build path to `/apps/frontend`, because
+that excludes the root `workspaces` metadata and makes `workspace:*`
+dependencies such as `@veydrift/universe` unavailable. Configure
+`veydrift/frontend-test` with:
+
+```text
+Source path: /
+Build type: Nixpacks
+Nixpacks version: 1.34.1
+Install command: bun install --frozen-lockfile && rm -rf /root/.cache/nix
+Build command: cd apps/frontend && bun run build:test && rm -rf /root/.bun/install/cache /tmp/*
+Start command: cd apps/frontend && bun run serve
+```
+
+Those commands are equivalent to running:
 
 ```sh
+bun install --frozen-lockfile && rm -rf /root/.cache/nix
+cd apps/frontend
 bun run build:test
+rm -rf /root/.bun/install/cache /tmp/*
+bun run serve
 ```
 
 The test build sets `VITE_VEYDRIFT_SURFACE=settlement`, uses
@@ -167,8 +194,15 @@ production `veydrift.com` surface. Configure the frontend test service with:
 
 ```text
 VITE_VEYDRIFT_API_URL=https://api-test.veydrift.com
-VITE_VEYDRIFT_SETTLEMENT_ADDRESS=<Base Sepolia settlement address>
+VITE_VEYDRIFT_SETTLEMENT_ADDRESS=0x8bA1807073ac642A55596A4934c49115E400cD2f
+PORT=80
 ```
+
+If the Nixpacks deploy needs to be rolled back, keep the same environment
+variables and switch only `veydrift/frontend-test` back to Dockerfile build with
+Dockerfile path `apps/frontend/Dockerfile.test` from the repository root. Do not
+repoint or modify the production `veydrift/frontend` service while rolling back
+the test frontend.
 
 The backend test service uses build path `/apps/backend` and can be built with
 either `Dockerfile.test` or `nixpacks.test.toml`. Configure it with:
@@ -176,7 +210,8 @@ either `Dockerfile.test` or `nixpacks.test.toml`. Configure it with:
 ```text
 VEYDRIFT_ALLOWED_ORIGIN=https://test.veydrift.com
 VEYDRIFT_CHAIN_ID=84532
-VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia settlement address>
+VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
+VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia compact settlement address>
 VEYDRIFT_NETWORK_NAME=Base Sepolia
 VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
 VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql

@@ -3,6 +3,7 @@ export type DeploymentMode = "local" | "test" | "staging" | "production";
 export type BackendConfig = {
   chainId: number;
   deploymentMode: DeploymentMode;
+  gameContractAddress?: `0x${string}`;
   indexFromBlock: bigint;
   rpcUrl?: string;
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
@@ -22,6 +23,7 @@ export type ConfigResult = {
 export type SafeConfigSummary = {
   chainId: number;
   deploymentMode: DeploymentMode;
+  gameContractConfigured: boolean;
   hasRpcUrl: boolean;
   rpcSource: BackendConfig["rpcSource"];
   settlementContractConfigured: boolean;
@@ -39,6 +41,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
+  const gameContractAddress = parseAddress(env.VEYDRIFT_CONTRACT_ADDRESS, "VEYDRIFT_CONTRACT_ADDRESS", problems);
   const settlementContractAddress = parseAddress(
     env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS,
     "VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS",
@@ -53,9 +56,9 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     });
   }
 
-  if (!settlementContractAddress) {
+  if (!gameContractAddress) {
     problems.push({
-      field: "VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS",
+      field: "VEYDRIFT_CONTRACT_ADDRESS",
       message: "Set the deployed VeydriftGame proxy address."
     });
   }
@@ -64,6 +67,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     config: {
       chainId,
       deploymentMode,
+      ...(gameContractAddress ? { gameContractAddress } : {}),
       indexFromBlock,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
@@ -77,6 +81,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
   return {
     chainId: config.chainId,
     deploymentMode: config.deploymentMode,
+    gameContractConfigured: Boolean(config.gameContractAddress),
     hasRpcUrl: Boolean(config.rpcUrl),
     rpcSource: config.rpcSource,
     settlementContractConfigured: Boolean(config.settlementContractAddress),
