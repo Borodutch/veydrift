@@ -86,6 +86,8 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
   for (const p of planets) planetByPosition.set(p.position, p);
 
   const positions = Array.from({ length: POSITION_COUNT }, (_, i) => i + 1);
+  const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
+  const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
 
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-6">
@@ -219,7 +221,11 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
                   </div>
 
                   <div className="hidden items-center px-2 sm:flex">
-                    {planet?.ownerId ? (
+                    {isHome ? (
+                      <span className="text-xs font-semibold uppercase text-cyan-200">
+                        Home planet
+                      </span>
+                    ) : planet?.ownerId ? (
                       <span className="font-mono text-sm text-slate-300">
                         {shortAddress(planet.ownerId)}
                       </span>
@@ -251,9 +257,9 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
         <span>{planets.length} planets in this system</span>
         <span className="text-slate-700">|</span>
-        <span>{planets.filter((p) => p.occupiedBy).length} occupied</span>
+        <span>{occupiedCount} occupied</span>
         <span className="text-slate-700">|</span>
-        <span>{source === "api" ? "Real occupancy data" : "Occupancy unavailable"}</span>
+        <span>{source === "api" ? "Real occupancy data" : homePlanetInSystem ? "Home planet from wallet" : "Occupancy unavailable"}</span>
         <span className="text-slate-700">|</span>
         <span>{planets.filter((p) => p.hasMoon).length} with moon</span>
       </div>

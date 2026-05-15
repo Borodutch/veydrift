@@ -118,7 +118,22 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Owner
               </h3>
-              {planet.ownerId ? (
+              {isHome ? (
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-medium text-cyan-100">
+                    Home Planet
+                  </span>
+                  {planet.ownerId ? (
+                    <span className="font-mono text-xs text-slate-500">
+                      {shortAddress(planet.ownerId)}
+                    </span>
+                  ) : (
+                    <span className="text-xs leading-5 text-slate-600">
+                      This planet is settled by the connected wallet. Indexer owner data is not required for the MVP home marker.
+                    </span>
+                  )}
+                </div>
+              ) : planet.ownerId ? (
                 <div className="flex flex-col gap-1">
                   <span className="text-sm font-medium text-white">
                     Occupied
