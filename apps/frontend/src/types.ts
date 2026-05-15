@@ -9,11 +9,18 @@ export interface Planet {
   owner: string | null;
   ownerId: string | null;
   alliance: string | null;
+  occupiedBy: OccupiedPlanet | null;
   resources: Resources;
   temperature: { min: number; max: number };
   diameter: number;
+  fields: number;
   hasMoon: boolean;
   moonName?: string;
+}
+
+export interface OccupiedPlanet {
+  planetId: string;
+  owner: string;
 }
 
 export interface Resources {

@@ -1,27 +1,54 @@
 import { useState, useEffect } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
-import { generateSystem, GALAXY_COUNT, SYSTEM_COUNT, POSITION_COUNT } from "../data/mockUniverse";
+import { generateSystem, GALAXY_COUNT, SYSTEM_COUNT, POSITION_COUNT, planetsFromSystemResponse } from "../data/mockUniverse";
+import { playableApiUrl } from "../runtimeConfig";
+import { shortAddress } from "../walletFlow";
 
 interface Props {
   galaxy: number;
   system: number;
+  apiBaseUrl?: string;
+  homeCoords?: Coordinates | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
   onBack: () => void;
 }
 
-export function GalaxyView({ galaxy, system, onSelectPlanet, onNavigate, onBack }: Props) {
+export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCoords, onSelectPlanet, onNavigate, onBack }: Props) {
   const [planets, setPlanets] = useState<Planet[]>([]);
   const [loading, setLoading] = useState(true);
+  const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
 
   useEffect(() => {
+    const abortController = new AbortController();
     setLoading(true);
-    const t = setTimeout(() => {
-      setPlanets(generateSystem(galaxy, system));
-      setLoading(false);
-    }, 150);
-    return () => clearTimeout(t);
-  }, [galaxy, system]);
+    setSource("loading");
+
+    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`, {
+      headers: { accept: "application/json" },
+      signal: abortController.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Universe request failed with ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        setPlanets(planetsFromSystemResponse(payload));
+        setSource("api");
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setPlanets(generateSystem(galaxy, system));
+          setSource("fallback");
+        }
+      })
+      .finally(() => {
+        if (!abortController.signal.aborted) setLoading(false);
+      });
+
+    return () => abortController.abort();
+  }, [apiBaseUrl, galaxy, system]);
 
   const handlePrevSystem = () => {
     let newSystem = system - 1;
@@ -120,7 +147,7 @@ export function GalaxyView({ galaxy, system, onSelectPlanet, onNavigate, onBack 
 
       {/* Galaxy grid */}
       <div className="rounded-lg border border-white/10 bg-white/5 backdrop-blur">
-        <div className="grid grid-cols-[auto_1fr_auto_auto] gap-x-3 gap-y-1 p-2 sm:grid-cols-[auto_1fr_auto_auto_auto] sm:gap-x-4 sm:p-3">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-3 gap-y-1 p-2 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] sm:gap-x-4 sm:p-3">
           {/* Header */}
           <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
             Pos
@@ -129,13 +156,10 @@ export function GalaxyView({ galaxy, system, onSelectPlanet, onNavigate, onBack 
             Planet
           </div>
           <div className="hidden px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500 sm:block">
-            Owner
+            Status
           </div>
           <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Alliance
-          </div>
-          <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Actions
+            Details
           </div>
 
           {loading && (
@@ -147,10 +171,11 @@ export function GalaxyView({ galaxy, system, onSelectPlanet, onNavigate, onBack 
           {!loading &&
             positions.map((pos) => {
               const planet = planetByPosition.get(pos);
+              const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
               return (
                 <div
                   key={pos}
-                  className="contents [&>*]:border-b [&>*]:border-white/5 [&>*]:py-2 sm:[&>*]:py-2.5"
+                  className={`contents [&>*]:border-b [&>*]:border-white/5 [&>*]:py-2 sm:[&>*]:py-2.5 ${isHome ? "[&>*]:bg-cyan-300/5" : ""}`}
                 >
                   <div className="px-2 text-sm font-mono text-slate-400">
                     {pos}
@@ -176,8 +201,13 @@ export function GalaxyView({ galaxy, system, onSelectPlanet, onNavigate, onBack 
                           <div className="truncate text-sm font-medium text-white group-hover:text-signal">
                             {planet.name}
                           </div>
-                          <div className="text-xs capitalize text-slate-400">
-                            {planet.type.replace(/-/g, " ")}
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                            <span className="capitalize">{planet.type.replace(/-/g, " ")}</span>
+                            {isHome ? (
+                              <span className="rounded border border-cyan-300/30 bg-cyan-300/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-200">
+                                Home
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                       </button>
@@ -189,56 +219,27 @@ export function GalaxyView({ galaxy, system, onSelectPlanet, onNavigate, onBack 
                   </div>
 
                   <div className="hidden items-center px-2 sm:flex">
-                    {planet?.owner ? (
-                      <span className="text-sm text-slate-300">
-                        {planet.owner}
+                    {planet?.ownerId ? (
+                      <span className="font-mono text-sm text-slate-300">
+                        {shortAddress(planet.ownerId)}
                       </span>
                     ) : planet ? (
                       <span className="text-xs text-slate-600">
-                        Uninhabited
+                        Unclaimed
                       </span>
                     ) : null}
                   </div>
 
-                  <div className="px-2">
-                    {planet?.alliance && (
-                      <span className="inline-block rounded border border-ember/30 bg-ember/10 px-2 py-0.5 text-xs text-ember">
-                        {planet.alliance}
-                      </span>
-                    )}
-                  </div>
-
                   <div className="flex items-center gap-1 px-2">
-                    {planet?.owner && planet.owner !== "VoidWalker" && (
-                      <>
-                        <button
-                          className="rounded p-1 text-xs text-slate-400 transition-colors hover:bg-signal/10 hover:text-signal"
-                          title="Send spy probe"
-                        >
-                          👁
-                        </button>
-                        <button
-                          className="rounded p-1 text-xs text-slate-400 transition-colors hover:bg-red-500/10 hover:text-red-400"
-                          title="Attack"
-                        >
-                          ⚔
-                        </button>
-                        <button
-                          className="rounded p-1 text-xs text-slate-400 transition-colors hover:bg-signal/10 hover:text-signal"
-                          title="Send message"
-                        >
-                          ✉
-                        </button>
-                      </>
-                    )}
-                    {planet && !planet.owner && (
+                    {planet ? (
                       <button
                         className="rounded px-2 py-1 text-xs font-medium text-signal transition-colors hover:bg-signal/10"
-                        title="Colonize"
+                        onClick={() => onSelectPlanet({ galaxy, system, position: pos })}
+                        title="View planet details"
                       >
-                        Colonize
+                        Details
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               );
@@ -250,10 +251,21 @@ export function GalaxyView({ galaxy, system, onSelectPlanet, onNavigate, onBack 
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
         <span>{planets.length} planets in this system</span>
         <span className="text-slate-700">|</span>
-        <span>{planets.filter((p) => p.owner).length} colonized</span>
+        <span>{planets.filter((p) => p.occupiedBy).length} occupied</span>
+        <span className="text-slate-700">|</span>
+        <span>{source === "api" ? "Real occupancy data" : "Occupancy unavailable"}</span>
         <span className="text-slate-700">|</span>
         <span>{planets.filter((p) => p.hasMoon).length} with moon</span>
       </div>
     </div>
+  );
+}
+
+function sameCoordinates(homeCoords: Coordinates | undefined, planet: Planet): boolean {
+  return Boolean(
+    homeCoords
+      && homeCoords.galaxy === planet.galaxy
+      && homeCoords.system === planet.system
+      && homeCoords.position === planet.position
   );
 }

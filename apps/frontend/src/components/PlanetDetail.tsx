@@ -1,14 +1,52 @@
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
-import { getPlanet } from "../data/mockUniverse";
+import { getPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
+import { playableApiUrl } from "../runtimeConfig";
+import { shortAddress } from "../walletFlow";
 
 interface Props {
   coords: Coordinates;
+  apiBaseUrl?: string;
+  homeCoords?: Coordinates | undefined;
   onBack: () => void;
   onNavigateSystem: (galaxy: number, system: number) => void;
 }
 
-export function PlanetDetail({ coords, onBack, onNavigateSystem }: Props) {
-  const planet = getPlanet(coords.galaxy, coords.system, coords.position);
+export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, onBack, onNavigateSystem }: Props) {
+  const fallbackPlanet = useMemo(
+    () => getPlanet(coords.galaxy, coords.system, coords.position),
+    [coords.galaxy, coords.position, coords.system]
+  );
+  const [planet, setPlanet] = useState<Planet | null>(fallbackPlanet);
+  const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
+  const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    setPlanet(fallbackPlanet);
+    setSource("loading");
+
+    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
+      headers: { accept: "application/json" },
+      signal: abortController.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Universe request failed with ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        setPlanet(planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null);
+        setSource("api");
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setSource("fallback");
+        }
+      });
+
+    return () => abortController.abort();
+  }, [apiBaseUrl, coords.galaxy, coords.position, coords.system, fallbackPlanet]);
 
   if (!planet) {
     return (
@@ -45,6 +83,11 @@ export function PlanetDetail({ coords, onBack, onNavigateSystem }: Props) {
               className="h-full w-full object-cover"
             />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_80%,rgba(5,7,13,0.6),transparent_60%)]" />
+            {isHome ? (
+              <span className="absolute left-3 top-3 rounded border border-cyan-300/30 bg-cyan-300/15 px-2 py-1 text-xs font-semibold uppercase text-cyan-100">
+                Home Planet
+              </span>
+            ) : null}
           </div>
           {planet.hasMoon && (
             <div className="flex items-center gap-2 rounded border border-white/10 bg-white/5 px-3 py-2">
@@ -64,6 +107,8 @@ export function PlanetDetail({ coords, onBack, onNavigateSystem }: Props) {
               <span>Position [{planet.galaxy}:{planet.system}:{planet.position}]</span>
               <span className="text-slate-700">|</span>
               <span>{planet.diameter.toLocaleString()} km</span>
+              <span className="text-slate-700">|</span>
+              <span>{source === "api" ? "Indexed universe data" : "Neutral deterministic data"}</span>
             </div>
           </div>
 
@@ -76,25 +121,20 @@ export function PlanetDetail({ coords, onBack, onNavigateSystem }: Props) {
               {planet.owner ? (
                 <div className="flex flex-col gap-1">
                   <span className="text-sm font-medium text-white">
-                    {planet.owner}
+                    Occupied
                   </span>
                   {planet.ownerId && (
                     <span className="font-mono text-xs text-slate-500">
-                      {planet.ownerId.slice(0, 12)}...{planet.ownerId.slice(-4)}
-                    </span>
-                  )}
-                  {planet.alliance && (
-                    <span className="mt-1 inline-block w-fit rounded border border-ember/30 bg-ember/10 px-2 py-0.5 text-xs text-ember">
-                      {planet.alliance}
+                      {shortAddress(planet.ownerId)}
                     </span>
                   )}
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
-                  <span className="text-sm text-slate-500">Uninhabited</span>
-                  <button className="w-fit rounded border border-signal/30 bg-signal/10 px-3 py-1.5 text-xs font-medium text-signal transition-colors hover:bg-signal/20">
-                    Colonize
-                  </button>
+                  <span className="text-sm text-slate-500">Unclaimed</span>
+                  <span className="text-xs leading-5 text-slate-600">
+                    Informational only. Planet claiming beyond the first wallet settlement is not enabled in this MVP.
+                  </span>
                 </div>
               )}
             </div>
@@ -162,23 +202,19 @@ export function PlanetDetail({ coords, onBack, onNavigateSystem }: Props) {
             >
               View System
             </button>
-            {planet.owner && planet.owner !== "VoidWalker" && (
-              <>
-                <button className="rounded border border-signal/30 bg-signal/10 px-4 py-2 text-sm text-signal transition-colors hover:bg-signal/20">
-                  Send Spy Probe
-                </button>
-                <button className="rounded border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400 transition-colors hover:bg-red-500/20">
-                  Attack
-                </button>
-                <button className="rounded border border-white/15 bg-white/8 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white">
-                  Send Message
-                </button>
-              </>
-            )}
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function sameCoordinates(homeCoords: Coordinates | undefined, planet: Planet): boolean {
+  return Boolean(
+    homeCoords
+      && homeCoords.galaxy === planet.galaxy
+      && homeCoords.system === planet.system
+      && homeCoords.position === planet.position
   );
 }
 
