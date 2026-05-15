@@ -1,5 +1,6 @@
 import type { BuildingEffectMetrics, BuildingKey, PlayableState, Resources } from "../playableMvp";
 import { buildingCatalog, buildingCost, buildingEffectMetrics, canAfford } from "../playableMvp";
+import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -83,7 +84,7 @@ function BuildingTile({
 
   return (
     <article className="grid grid-cols-[5rem_minmax(0,1fr)] gap-3 rounded-lg border border-white/10 bg-[#101624] p-3 sm:grid-cols-[5.75rem_minmax(0,1fr)]">
-      <img alt="" className="h-20 w-20 rounded-md object-cover sm:h-[5.75rem] sm:w-[5.75rem]" src={asset} />
+      <OptimizedImage alt="" className="h-20 w-20 rounded-md object-cover sm:h-[5.75rem] sm:w-[5.75rem]" sizes="buildingCard" src={asset} width={92} height={92} />
       <div className="min-w-0">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
