@@ -2,6 +2,20 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import heroUrl from "./assets/veydrift-hero.webp";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import {
+  buildingDefinitions,
+  createInitialGameState,
+  formatCost,
+  formatTime,
+  getActionReason,
+  researchDefinitions,
+  startBuilding,
+  startResearch,
+  STORAGE_KEY,
+  type GameState,
+  type QueueItem
+} from "./gameState";
+import { playableApiUrl } from "./runtimeConfig";
+import {
   ensureBaseSepoliaNetwork,
   getChainId,
   getCurrentAccounts,
@@ -21,6 +35,7 @@ import {
 } from "./walletFlow";
 
 const BASE_SEPOLIA_SETTLEMENT_ADDRESS = "0x8bA1807073ac642A55596A4934c49115E400cD2f";
+const UNIVERSE_SYSTEM_URL = `${playableApiUrl.replace(/\/+$/, "")}/universe/systems?galaxy=1&center=1&radius=1`;
 
 type WalletState =
   | { kind: "loading" }
@@ -41,6 +56,22 @@ type PlanetState =
   | { kind: "rejected"; message: string }
   | { kind: "error"; message: string };
 
+type UniverseState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ready"; galaxy: number; center: number; systems: number; planetCount: number; occupiedCount: number }
+  | { kind: "error"; message: string };
+
+type UniverseSystemsResponse = {
+  galaxy: number;
+  center: number;
+  systems: Array<{
+    planets: Array<{
+      occupiedBy: unknown | null;
+    }>;
+  }>;
+};
+
 const settlementConfig: SettlementConfig = buildSettlementConfig();
 
 export function FirstPlanetSettlementApp() {
@@ -51,6 +82,8 @@ export function FirstPlanetSettlementApp() {
   const [planet, setPlanet] = useState<PlanetState>({
     kind: "idle"
   });
+  const [gameState, setGameState] = useState<GameState>(() => loadManagementState());
+  const [universe, setUniverse] = useState<UniverseState>({ kind: "idle" });
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -112,6 +145,51 @@ export function FirstPlanetSettlementApp() {
       injected.removeListener?.("chainChanged", handleChainChanged);
     };
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
+  }, [gameState]);
+
+  useEffect(() => {
+    if (!hasOverview || universe.kind !== "idle") {
+      return;
+    }
+
+    setUniverse({ kind: "loading" });
+    fetch(UNIVERSE_SYSTEM_URL, {
+      headers: {
+        accept: "application/json"
+      }
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Universe request failed with ${response.status}`);
+        }
+
+        return response.json() as Promise<UniverseSystemsResponse>;
+      })
+      .then((payload) => {
+        const planetCount = payload.systems.reduce((sum, system) => sum + system.planets.length, 0);
+        const occupiedCount = payload.systems.reduce(
+          (sum, system) => sum + system.planets.filter((planet) => planet.occupiedBy).length,
+          0
+        );
+        setUniverse({
+          center: payload.center,
+          galaxy: payload.galaxy,
+          kind: "ready",
+          occupiedCount,
+          planetCount,
+          systems: payload.systems.length
+        });
+      })
+      .catch((error) => {
+        setUniverse({
+          kind: "error",
+          message: errorMessage(error)
+        });
+      });
+  }, [hasOverview, universe.kind]);
 
   async function refreshWallet(injected = provider, preferredAccount?: string) {
     if (!injected) {
@@ -338,6 +416,24 @@ export function FirstPlanetSettlementApp() {
             <LockedOverview />
           </section>
         </div>
+        {hasOverview ? (
+          <PostSettlementControls
+            gameState={gameState}
+            onStartBuilding={(targetId) => {
+              const result = startBuilding(gameState, targetId, Date.now());
+              if (result.ok) {
+                setGameState(result.state);
+              }
+            }}
+            onStartResearch={(targetId) => {
+              const result = startResearch(gameState, targetId, Date.now());
+              if (result.ok) {
+                setGameState(result.state);
+              }
+            }}
+            universe={universe}
+          />
+        ) : null}
       </section>
     </main>
   );
@@ -457,6 +553,161 @@ function LockedOverview() {
       Planet controls unlock immediately after the wallet has an onchain first-planet settlement.
     </div>
   );
+}
+
+function PostSettlementControls({
+  gameState,
+  onStartBuilding,
+  onStartResearch,
+  universe
+}: {
+  gameState: GameState;
+  onStartBuilding: (targetId: string) => void;
+  onStartResearch: (targetId: string) => void;
+  universe: UniverseState;
+}) {
+  const building = buildingDefinitions[0]!;
+  const research = researchDefinitions[0]!;
+  const buildingReason = getActionReason(gameState, building, "building");
+  const researchReason = getActionReason(gameState, research, "research");
+
+  return (
+    <section className="min-w-0 border border-white/10 bg-[#0c111b]/92 p-4 shadow-2xl shadow-black/25 md:p-5 md:col-span-2">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold uppercase text-amber-200">Universe scout</p>
+          <h2 className="mt-1 text-xl font-semibold text-white">Explore nearby systems</h2>
+          <div className="mt-4 border border-white/10 bg-[#080c14] p-4 text-sm leading-6 text-slate-300">
+            {universe.kind === "loading" || universe.kind === "idle" ? "Loading deterministic Base Sepolia universe data." : null}
+            {universe.kind === "error" ? `Universe unavailable: ${universe.message}` : null}
+            {universe.kind === "ready" ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Metric label="Galaxy" value={universe.galaxy.toString()} />
+                <Metric label="Center system" value={universe.center.toString()} />
+                <Metric label="Systems scanned" value={universe.systems.toString()} />
+                <Metric label="Planets found" value={`${universe.planetCount} (${universe.occupiedCount} occupied)`} />
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <p className="text-sm font-semibold uppercase text-cyan-200">MVP orders</p>
+          <h2 className="mt-1 text-xl font-semibold text-white">Start building and research</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <OrderCard
+              actionLabel="Start building"
+              disabled={buildingReason !== "available"}
+              helper={actionHelper(buildingReason)}
+              label={building.name}
+              meta={`Level ${gameState.buildings[building.id] ?? 0} -> ${(gameState.buildings[building.id] ?? 0) + 1}`}
+              onClick={() => onStartBuilding(building.id)}
+              subcopy={formatCost(building.cost)}
+            />
+            <OrderCard
+              actionLabel="Start research"
+              disabled={researchReason !== "available"}
+              helper={actionHelper(researchReason)}
+              label={research.name}
+              meta={`Level ${gameState.research[research.id] ?? 0} -> ${(gameState.research[research.id] ?? 0) + 1}`}
+              onClick={() => onStartResearch(research.id)}
+              subcopy={formatCost(research.cost)}
+            />
+          </div>
+          <QueueSummary queue={gameState.queue} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function OrderCard({
+  actionLabel,
+  disabled,
+  helper,
+  label,
+  meta,
+  onClick,
+  subcopy
+}: {
+  actionLabel: string;
+  disabled: boolean;
+  helper: string;
+  label: string;
+  meta: string;
+  onClick: () => void;
+  subcopy: string;
+}) {
+  return (
+    <article className="min-w-0 border border-white/10 bg-[#080c14] p-4">
+      <p className="text-xs font-semibold uppercase text-slate-500">{meta}</p>
+      <h3 className="mt-2 text-lg font-semibold text-white">{label}</h3>
+      <p className="mt-2 text-sm text-slate-400">{subcopy}</p>
+      <button
+        className="mt-4 inline-flex min-h-10 items-center justify-center bg-cyan-300 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+        disabled={disabled}
+        onClick={onClick}
+        type="button"
+      >
+        {actionLabel}
+      </button>
+      <p className="mt-3 text-xs text-slate-500">{helper}</p>
+    </article>
+  );
+}
+
+function QueueSummary({ queue }: { queue: QueueItem[] }) {
+  if (queue.length === 0) {
+    return <p className="mt-4 text-sm text-slate-400">No active orders yet.</p>;
+  }
+
+  return (
+    <div className="mt-4 grid gap-2">
+      {queue.map((item) => (
+        <div className="flex items-center justify-between gap-3 border border-white/10 bg-[#080c14] px-3 py-2 text-sm" key={item.id}>
+          <span className="text-slate-300">{queueLabel(item)}</span>
+          <span className="text-slate-500">{formatTime(item.completesAt - Date.now())}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function queueLabel(item: QueueItem): string {
+  const catalog = item.type === "building" ? buildingDefinitions : researchDefinitions;
+  const definition = catalog.find((entry) => entry.id === item.targetId);
+
+  return `${item.type === "building" ? "Building" : "Research"}: ${definition?.name ?? item.targetId}`;
+}
+
+function actionHelper(reason: string): string {
+  if (reason === "available") return "Ready to queue.";
+  if (reason === "pending") return "Already queued.";
+  if (reason === "insufficient-resources") return "Needs more resources.";
+  if (reason === "building-slots-full" || reason === "research-slots-full") return "Queue slot occupied.";
+  if (reason === "maxed") return "Maximum level reached.";
+
+  return "Prerequisite locked.";
+}
+
+function loadManagementState(): GameState {
+  try {
+    const serialized = window.localStorage.getItem(STORAGE_KEY);
+
+    if (!serialized) {
+      return createInitialGameState();
+    }
+
+    const parsed = JSON.parse(serialized) as GameState;
+
+    if (parsed.version !== 1 || !parsed.resources || !parsed.buildings || !parsed.research || !Array.isArray(parsed.queue)) {
+      return createInitialGameState();
+    }
+
+    return parsed;
+  } catch {
+    return createInitialGameState();
+  }
 }
 
 function StateMessage({
