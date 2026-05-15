@@ -28,7 +28,7 @@ export function TopBar({
 }: TopBarProps) {
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4 lg:px-6">
+      <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 px-3 py-2 sm:flex-row sm:justify-between sm:gap-3 sm:px-4 lg:px-6">
         {/* Resources row */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <ResourcePip
@@ -67,12 +67,12 @@ export function TopBar({
         {/* Wallet / Coords / Collect */}
         <div className="flex items-center gap-2 sm:gap-3">
           {coordinates && (
-            <span className="hidden text-xs text-slate-400 sm:inline">
+            <span className="hidden leading-none text-xs text-slate-400 sm:inline">
               {coordinates}
             </span>
           )}
           {isWalletConnected && account && (
-            <span className="font-mono text-xs text-slate-400">
+            <span className="font-mono leading-none text-xs text-slate-400">
               {shortAddress(account)}
             </span>
           )}
