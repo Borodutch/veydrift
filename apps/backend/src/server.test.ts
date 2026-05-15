@@ -84,8 +84,9 @@ class MockChainReader implements ChainReader {
 }
 
 describe("Veydrift backend", () => {
+  const handler = createRequestHandler();
+
   test("returns health status", async () => {
-    const handler = createRequestHandler();
     const response = await handler(new Request("http://localhost/health"));
 
     await expect(response.json()).resolves.toEqual({
@@ -106,7 +107,6 @@ describe("Veydrift backend", () => {
   });
 
   test("returns a minimal GraphQL response", async () => {
-    const handler = createRequestHandler();
     const response = await handler(
       new Request("http://localhost/graphql", {
         body: JSON.stringify({
@@ -214,5 +214,42 @@ describe("Veydrift backend", () => {
       position: 8,
       key: "2:44:8"
     });
+  });
+
+  test("returns deterministic universe system data", async () => {
+    const response = await handler(
+      new Request("http://localhost/universe/system?galaxyId=0&systemId=1")
+    );
+
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.system.galaxyId).toBe(0);
+    expect(body.data.system.systemId).toBe(1);
+    expect(body.data.system.slots).toHaveLength(15);
+    expect(body.data.system.slots[0].slot).toBe(1);
+    expect(body.data.system.slots[14].slot).toBe(15);
+    expect(body).toEqual(
+      await (
+        await handler(
+          new Request("http://localhost/universe/system?galaxyId=0&systemId=1")
+        )
+      ).json()
+    );
+  });
+
+  test("rejects invalid universe coordinates", async () => {
+    const response = await handler(
+      new Request("http://localhost/universe/system?galaxyId=0&systemId=zero")
+    );
+
+    await expect(response.json()).resolves.toEqual({
+      errors: [
+        {
+          message: "systemId must be a positive integer."
+        }
+      ]
+    });
+    expect(response.status).toBe(400);
   });
 });

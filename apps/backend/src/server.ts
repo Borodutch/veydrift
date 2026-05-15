@@ -1,3 +1,4 @@
+import { generateSystem } from "@veydrift/universe";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import { assertAddress, type ChainReader, VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
@@ -23,6 +24,8 @@ export type ServerDependencies = {
   chainReader?: ChainReader;
   indexer?: SettlementIndexer;
 };
+
+const defaultUniverseSeed = "veydrift-mainnet-preview";
 
 export function createRequestHandler(dependencies: ServerDependencies = {}): (request: Request) => Promise<Response> {
   const loaded = dependencies.config ? { config: dependencies.config, problems: dependencies.configProblems ?? [] } : loadBackendConfig();
@@ -192,6 +195,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname === "/universe/system") {
+      return handleUniverseSystemRequest(url);
+    }
+
     if (request.method === "POST" && url.pathname === "/index/rebuild") {
       if (!indexer) {
         return unavailableResponse(loaded.problems);
@@ -267,6 +274,69 @@ function errorResponse(error: unknown, status: number): Response {
     {
       headers: jsonHeaders,
       status
+    }
+  );
+}
+
+function handleUniverseSystemRequest(url: URL): Response {
+  const galaxyId = parseIntegerQuery(url, "galaxyId", 0);
+  const systemId = parseIntegerQuery(url, "systemId", 1);
+  const seed = url.searchParams.get("seed") ?? defaultUniverseSeed;
+
+  if (galaxyId === null || galaxyId < 0) {
+    return badRequest("galaxyId must be a non-negative integer.");
+  }
+
+  if (systemId === null || systemId < 1) {
+    return badRequest("systemId must be a positive integer.");
+  }
+
+  return Response.json(
+    {
+      data: {
+        system: generateSystem({
+          seed,
+          galaxyId,
+          systemId
+        })
+      }
+    },
+    {
+      headers: jsonHeaders
+    }
+  );
+}
+
+function parseIntegerQuery(
+  url: URL,
+  name: string,
+  fallback: number
+): number | null {
+  const value = url.searchParams.get(name);
+
+  if (value === null) {
+    return fallback;
+  }
+
+  if (!/^-?\d+$/.test(value)) {
+    return null;
+  }
+
+  return Number.parseInt(value, 10);
+}
+
+function badRequest(message: string): Response {
+  return Response.json(
+    {
+      errors: [
+        {
+          message
+        }
+      ]
+    },
+    {
+      headers: jsonHeaders,
+      status: 400
     }
   );
 }

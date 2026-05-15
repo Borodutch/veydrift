@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@farcaster/miniapp-sdk": "^0.3.0",
+    "@veydrift/universe": "workspace:*",
     "preact": "^10.27.2"
   },
   "devDependencies": {
