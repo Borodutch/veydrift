@@ -182,8 +182,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const settledState = useMemo(() => settleState(state, now), [state, now]);
   const rates = productionPerHour(settledState.buildings);
   const caps = storageCaps(settledState.buildings);
-  const queueProgress = progress(settledState.queue, now);
+  const buildingQueue = settledState.queue?.kind === "building" ? settledState.queue : undefined;
+  const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
+  const queueProgress = progress(buildingQueue, now);
   const researchProgress = progress(settledState.researchQueue, now);
+  const shipProgress = progress(shipQueue, now);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -337,7 +340,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       caps={caps}
       coordinates={planet?.coordinates}
       isWalletConnected={isWalletConnected}
-      onCollect={handleCollectAll}
       queue={settledState.queue}
       rates={rates}
       researchQueue={settledState.researchQueue}
@@ -421,6 +423,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         rates={rates}
         researchProgress={researchProgress}
         settledState={settledState}
+        shipProgress={shipProgress}
         state={state}
       />
     );
@@ -430,7 +433,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     <div className="min-h-dvh bg-[#070913] text-slate-100">
       {topBar}
 
-      <div className="mx-auto flex max-w-7xl flex-col md:min-h-[calc(100dvh-52px)] md:flex-row">
+      <div className="mx-auto flex max-w-7xl flex-col md:h-[calc(100dvh-52px)] md:flex-row md:overflow-hidden">
         <NavBar
           account={account}
           active={page}
@@ -438,7 +441,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onNavigate={handleNavigate}
         />
 
-        <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">
+        <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
           {content}
         </main>
       </div>
