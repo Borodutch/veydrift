@@ -244,10 +244,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     />
   );
 
-  if (page === "galaxy") {
-    return (
-      <div className="min-h-dvh bg-[#070913] text-slate-100">
-        {topBar}
+  const content = (() => {
+    if (page === "galaxy") {
+      return (
         <GalaxyView
           apiBaseUrl={apiBaseUrl}
           galaxy={galaxyNav.galaxy}
@@ -257,14 +256,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
         />
-      </div>
-    );
-  }
+      );
+    }
 
-  if (page === "planet" && selectedCoords) {
-    return (
-      <div className="min-h-dvh bg-[#070913] text-slate-100">
-        {topBar}
+    if (page === "planet" && selectedCoords) {
+      return (
         <PlanetDetail
           apiBaseUrl={apiBaseUrl}
           coords={selectedCoords}
@@ -272,59 +268,72 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onBack={() => setPage("galaxy")}
           onNavigateSystem={handleNavigateSystem}
         />
-      </div>
+      );
+    }
+
+    if (page === "infrastructure") {
+      return (
+        <InfrastructurePage
+          onUpgrade={handleUpgrade}
+          settledState={settledState}
+          state={state}
+        />
+      );
+    }
+
+    if (page === "research") {
+      return (
+        <ResearchPage
+          onResearch={handleResearch}
+          settledState={settledState}
+          state={state}
+        />
+      );
+    }
+
+    if (page === "shipyard") {
+      return (
+        <ShipyardPage
+          onBuild={handleBuildShip}
+          settledState={settledState}
+          state={state}
+        />
+      );
+    }
+
+    return (
+      <OverviewPage
+        caps={caps}
+        isWalletConnected={isWalletConnected}
+        now={now}
+        onChainQueues={onChainQueues}
+        onChainSettlement={onChainSettlement}
+        onCollect={handleCollectAll}
+        onNavigate={(target) => handleNavigate(target)}
+        planet={planet}
+        queueProgress={queueProgress}
+        rates={rates}
+        researchProgress={researchProgress}
+        settledState={settledState}
+        state={state}
+      />
     );
-  }
+  })();
 
   return (
     <div className="min-h-dvh bg-[#070913] text-slate-100">
       {topBar}
 
-      <div className="mx-auto flex max-w-7xl flex-col md:flex-row">
-        <NavBar active={page} onNavigate={handleNavigate} />
+      <div className="mx-auto flex max-w-7xl flex-col md:min-h-[calc(100dvh-52px)] md:flex-row">
+        <NavBar
+          account={account}
+          active={page}
+          coordinates={planet?.coordinates}
+          onNavigate={handleNavigate}
+        />
 
         <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">
-          {page === "overview" && (
-            <OverviewPage
-              caps={caps}
-              isWalletConnected={isWalletConnected}
-              now={now}
-              onChainQueues={onChainQueues}
-              onChainSettlement={onChainSettlement}
-              onCollect={handleCollectAll}
-              onNavigate={(target) => handleNavigate(target)}
-              planet={planet}
-              queueProgress={queueProgress}
-              rates={rates}
-              researchProgress={researchProgress}
-              settledState={settledState}
-              state={state}
-            />
-          )}
-
-          {page === "infrastructure" && (
-            <InfrastructurePage
-              onUpgrade={handleUpgrade}
-              settledState={settledState}
-              state={state}
-            />
-          )}
-
-          {page === "research" && (
-            <ResearchPage
-              onResearch={handleResearch}
-              settledState={settledState}
-              state={state}
-            />
-          )}
-
-          {page === "shipyard" && (
-            <ShipyardPage
-              onBuild={handleBuildShip}
-              settledState={settledState}
-              state={state}
-            />
-          )}
+          {content}
         </main>
       </div>
     </div>
