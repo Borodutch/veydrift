@@ -148,7 +148,6 @@ describe("Veydrift backend", () => {
       chain: {
         chainId: 84532,
         deploymentMode: "local",
-        gameContractConfigured: false,
         hasRpcUrl: false,
         indexFromBlock: "0",
         rpcSource: "missing",
@@ -261,7 +260,6 @@ describe("Veydrift backend", () => {
       configured: true,
       chain: {
         hasRpcUrl: true,
-        gameContractConfigured: true,
         rpcSource: "alchemy-key",
         settlementContractConfigured: true,
         gameContractConfigured: true

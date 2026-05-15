@@ -29,6 +29,7 @@ type RuntimeConfig = {
   apiUrl: string;
   chainId: number;
   contractAddress: string | null;
+  gameContractAddress: string | null;
   graphqlUrl: string;
   network: string;
   rpcProvider: "alchemy" | "unknown";
