@@ -46,6 +46,11 @@ bun run test:contracts
 `VeydriftGame` is an upgradeable MVP contract with one paid home planet per wallet,
 player-owned colonies, lazy resource settlement, and non-combat transport fleets.
 
+`VeydriftSettlement` is the compact Base Sepolia first-planet settlement contract used for the
+initial wallet-connect MVP while `VeydriftGame` continues to grow. It supports one settlement per
+wallet, weak on-chain entropy for first coordinate assignment, canonical coordinate ownership, and
+`FirstPlanetSettled` indexer events.
+
 Starting a planet:
 
 - `startPlanet()` costs exactly `0.05 ether` by default.
@@ -206,6 +211,13 @@ Deploy a proxy to Base Sepolia:
 
 ```bash
 PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin forge script script/Deploy.s.sol:Deploy \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
+```
+
+Deploy the compact first-planet settlement contract to Base Sepolia:
+
+```bash
+PRIVATE_KEY=... forge script script/DeploySettlement.s.sol:DeploySettlement \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
 ```
 
