@@ -27,8 +27,8 @@ export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps
   return (
     <>
       {/* Desktop sidebar */}
-      <nav className="hidden w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:flex">
-        <div className="flex min-h-[calc(100dvh-52px)] flex-col gap-4 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] p-3 shadow-[inset_-1px_0_rgba(255,255,255,0.04)]">
+      <nav className="sticky top-[52px] hidden h-[calc(100dvh-52px)] w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:flex">
+        <div className="flex h-full flex-col gap-4 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] p-3 shadow-[inset_-1px_0_rgba(255,255,255,0.04)]">
           <div className="border-b border-white/10 px-2 pb-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200/70">
               Command

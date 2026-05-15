@@ -17,8 +17,8 @@ import {
   unmetResearchRequirement,
 } from "../src/playableMvp";
 
-describe("playable MVP simulation", () => {
-  test("uses the Solidity MVP starting resources and storage caps", () => {
+describe("playable simulation", () => {
+  test("uses the Solidity starting resources and storage caps", () => {
     const state = createInitialPlayableState(1_000);
 
     expect(state.resources).toEqual({

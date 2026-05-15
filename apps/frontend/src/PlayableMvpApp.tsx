@@ -37,7 +37,7 @@ import {
   type WalletSettlementResponse,
 } from "./walletFlow";
 
-const PLAYABLE_STORAGE_KEY = "veydrift-playable-mvp-state";
+const PLAYABLE_STATE_STORAGE_KEY = "veydrift-playable-state";
 
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
@@ -47,7 +47,7 @@ interface PlayableMvpAppProps {
 
 function loadPlayableState(): PlayableState | undefined {
   try {
-    const raw = localStorage.getItem(PLAYABLE_STORAGE_KEY);
+    const raw = localStorage.getItem(PLAYABLE_STATE_STORAGE_KEY);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as PlayableState;
     if (!parsed.resources || !parsed.buildings || !parsed.ships) return undefined;
@@ -64,7 +64,7 @@ function loadPlayableState(): PlayableState | undefined {
 
 function savePlayableState(state: PlayableState): void {
   try {
-    localStorage.setItem(PLAYABLE_STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(PLAYABLE_STATE_STORAGE_KEY, JSON.stringify(state));
   } catch {
     // ignore
   }
@@ -228,12 +228,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     savePlayableState(state);
   }, [state]);
 
-  const handleCollectAll = useCallback(() => {
-    const currentNow = Date.now();
-    setNow(currentNow);
-    setState((prev) => settleState(prev, currentNow));
-  }, []);
-
   const handleUpgrade = useCallback((key: BuildingKey) => {
     setState((prev) => {
       const currentNow = Date.now();
@@ -337,7 +331,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       caps={caps}
       coordinates={planet?.coordinates}
       isWalletConnected={isWalletConnected}
-      onCollect={handleCollectAll}
       queue={settledState.queue}
       rates={rates}
       researchQueue={settledState.researchQueue}
@@ -414,14 +407,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         now={now}
         onChainQueues={onChainQueues}
         onChainSettlement={onChainSettlement}
-        onCollect={handleCollectAll}
         onNavigate={(target) => handleNavigate(target)}
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}
         researchProgress={researchProgress}
         settledState={settledState}
-        state={state}
       />
     );
   })();

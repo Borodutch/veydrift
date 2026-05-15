@@ -131,7 +131,7 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
                     </span>
                   ) : (
                     <span className="text-xs leading-5 text-slate-600">
-                      This planet is settled by the connected wallet. Indexer owner data is not required for the MVP home marker.
+                      This planet is settled by the connected wallet. Indexer owner data is not required for the home marker.
                     </span>
                   )}
                 </div>
@@ -148,7 +148,7 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
                 <div className="flex flex-col gap-2">
                   <span className="text-sm text-slate-500">Unclaimed</span>
                   <span className="text-xs leading-5 text-slate-600">
-                    Informational only. Planet claiming beyond the first wallet settlement is not enabled in this MVP.
+                    Informational only. Planet claiming beyond the first wallet settlement is not enabled yet.
                   </span>
                 </div>
               )}

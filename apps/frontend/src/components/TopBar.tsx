@@ -11,7 +11,8 @@ interface TopBarProps {
   researchQueue?: QueueItem | undefined;
   account?: string | undefined;
   coordinates?: string | undefined;
-  onCollect: () => void;
+  collectable?: Resources | undefined;
+  onCollectResources?: (() => void) | undefined;
   isWalletConnected: boolean;
 }
 
@@ -23,15 +24,19 @@ export function TopBar({
   researchQueue,
   account,
   coordinates,
-  onCollect,
+  collectable,
+  onCollectResources,
   isWalletConnected,
 }: TopBarProps) {
+  const canCollect = Boolean(onCollectResources && collectable && hasPositiveResource(collectable));
+
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
       <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 px-3 py-2 sm:flex-row sm:justify-between sm:gap-3 sm:px-4 lg:px-6">
         {/* Resources row */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 sm:justify-start sm:gap-3">
           <ResourcePip
+            delta={collectable?.metal}
             label="Metal"
             value={resources.metal}
             rate={rates.metal}
@@ -39,6 +44,7 @@ export function TopBar({
             color="text-amber-300"
           />
           <ResourcePip
+            delta={collectable?.crystal}
             label="Crystal"
             value={resources.crystal}
             rate={rates.crystal}
@@ -46,6 +52,7 @@ export function TopBar({
             color="text-cyan-300"
           />
           <ResourcePip
+            delta={collectable?.deuterium}
             label="Deuterium"
             value={resources.deuterium}
             rate={rates.deuterium}
@@ -53,12 +60,12 @@ export function TopBar({
             color="text-emerald-300"
           />
           {queue && (
-            <span className="rounded bg-white/10 px-2 py-1 text-xs text-slate-300">
+            <span className="max-w-[14rem] truncate rounded bg-white/10 px-2 py-1 text-xs text-slate-300">
               {queue.label}
             </span>
           )}
           {researchQueue && (
-            <span className="rounded bg-cyan-300/10 px-2 py-1 text-xs text-cyan-200">
+            <span className="max-w-[14rem] truncate rounded bg-cyan-300/10 px-2 py-1 text-xs text-cyan-200">
               {researchQueue.label}
             </span>
           )}
@@ -76,13 +83,15 @@ export function TopBar({
               {shortAddress(account)}
             </span>
           )}
-          <button
-            className="rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
-            onClick={onCollect}
-            type="button"
-          >
-            Collect
-          </button>
+          {canCollect && (
+            <button
+              className="rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+              onClick={onCollectResources}
+              type="button"
+            >
+              Collect resources
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -92,21 +101,26 @@ export function TopBar({
 function ResourcePip({
   label,
   value,
+  delta,
   rate,
   cap,
   color,
 }: {
   label: string;
   value: number;
+  delta?: number | undefined;
   rate: number;
   cap: number;
   color: string;
 }) {
   const pct = cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
-    <div className="flex items-center gap-1.5">
-      <span className={`text-xs font-semibold ${color}`}>{label}</span>
-      <span className="text-xs text-white">{format(value)}</span>
+    <div className="flex min-w-0 items-center gap-1.5">
+      <span className={`shrink-0 text-xs font-semibold ${color}`}>{label}</span>
+      <span className="truncate text-xs text-white">{format(value)}</span>
+      {delta !== undefined && delta > 0 && (
+        <span className="shrink-0 text-[10px] text-emerald-300">(+{format(delta)})</span>
+      )}
       <span className="text-[10px] text-slate-500">+{format(rate)}/h</span>
       {pct >= 90 && (
         <span className="text-[10px] text-amber-400">{pct}%</span>
@@ -117,4 +131,8 @@ function ResourcePip({
 
 function format(value: number): string {
   return formatter.format(Math.floor(value));
+}
+
+function hasPositiveResource(resources: Resources): boolean {
+  return resources.metal > 0 || resources.crystal > 0 || resources.deuterium > 0;
 }

@@ -81,7 +81,7 @@ describe("tester universe display data", () => {
     });
   });
 
-  test("visible MVP catalog uses the latest scoped style-pass assets", () => {
+  test("visible tester catalog uses the latest scoped style-pass assets", () => {
     expect(buildingCatalog.every((building) => building.asset.includes("/assets/game/style-pass/generated/buildings/"))).toBe(true);
     expect(shipCatalog).toHaveLength(16);
     expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/"))).toBe(true);
