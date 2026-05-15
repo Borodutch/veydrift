@@ -20,8 +20,47 @@ import {
   type QueueType,
   type ResourceKey
 } from "./gameState";
+import {
+  ensureBaseSepoliaNetwork,
+  getChainId,
+  getCurrentAccounts,
+  getInjectedProvider,
+  isBaseSepoliaChain,
+  isUserRejected,
+  planetFromTransaction,
+  readSettlementState,
+  requestAccounts,
+  sendSettlementTransaction,
+  settlementContractConfigured,
+  shortAddress,
+  waitForReceipt,
+  type Eip1193Provider,
+  type PlanetSummary,
+  type SettlementConfig
+} from "./walletFlow";
+
+const BASE_SEPOLIA_SETTLEMENT_ADDRESS = "0x8bA1807073ac642A55596A4934c49115E400cD2f";
 
 type Screen = "overview" | "building" | "research";
+
+type WalletState =
+  | { kind: "loading" }
+  | { kind: "no-wallet" }
+  | { kind: "disconnected" }
+  | { kind: "connecting" }
+  | { kind: "wrong-network"; account: string; chainId: string }
+  | { kind: "connected"; account: string };
+
+type PlanetState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "contract-unconfigured" }
+  | { kind: "not-settled" }
+  | { kind: "pending"; txHash?: string }
+  | { kind: "success"; planet: PlanetSummary }
+  | { kind: "already-settled"; planet: PlanetSummary }
+  | { kind: "rejected"; message: string }
+  | { kind: "error"; message: string };
 
 const screens: Array<{ id: Screen; label: string }> = [
   { id: "overview", label: "Planet" },
@@ -50,6 +89,8 @@ const requirementLabels: Record<QueueType, string> = {
   building: "building",
   research: "research"
 };
+
+const settlementConfig: SettlementConfig = buildSettlementConfig();
 
 function initGameState(): GameState {
   if (typeof window === "undefined") {
@@ -352,11 +393,247 @@ function ResearchScreen({
   );
 }
 
+function WalletSettlementPanel({
+  onConnect,
+  onSettle,
+  onSwitchNetwork,
+  planet,
+  settlementReady,
+  wallet
+}: {
+  onConnect: () => void;
+  onSettle: () => void;
+  onSwitchNetwork: () => void;
+  planet: PlanetState;
+  settlementReady: boolean;
+  wallet: WalletState;
+}) {
+  const settled = planet.kind === "success" || planet.kind === "already-settled";
+
+  return (
+    <section className={`wallet-panel ${settled ? "settled" : ""}`}>
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">First planet settlement</p>
+          <h3>{settled ? "Onchain planet active" : walletPanelTitle(wallet, planet)}</h3>
+        </div>
+        <span>{walletLabel(wallet)}</span>
+      </div>
+      <div className="wallet-steps" aria-label="Wallet settlement status">
+        <Metric label="Wallet" value={walletLabel(wallet)} />
+        <Metric label="Network" value={wallet.kind === "wrong-network" ? "Switch required" : wallet.kind === "connected" ? "Base Sepolia" : "Waiting"} />
+        <Metric label="Planet" value={planetLabel(planet)} />
+      </div>
+      <WalletFlowBody
+        onConnect={onConnect}
+        onSettle={onSettle}
+        onSwitchNetwork={onSwitchNetwork}
+        planet={planet}
+        settlementReady={settlementReady}
+        wallet={wallet}
+      />
+    </section>
+  );
+}
+
+function WalletFlowBody({
+  onConnect,
+  onSettle,
+  onSwitchNetwork,
+  planet,
+  settlementReady,
+  wallet
+}: {
+  onConnect: () => void;
+  onSettle: () => void;
+  onSwitchNetwork: () => void;
+  planet: PlanetState;
+  settlementReady: boolean;
+  wallet: WalletState;
+}) {
+  if (wallet.kind === "loading") {
+    return <StateMessage title="Scanning wallet state" body="Checking for an injected wallet and active account." />;
+  }
+
+  if (wallet.kind === "no-wallet") {
+    return (
+      <StateMessage
+        title="No injected wallet found"
+        body="Open this page in the Chromium profile with MetaMask installed."
+        action={<button onClick={onConnect} type="button">Check again</button>}
+      />
+    );
+  }
+
+  if (wallet.kind === "disconnected" || wallet.kind === "connecting") {
+    return (
+      <StateMessage
+        title={wallet.kind === "connecting" ? "Waiting for wallet approval" : "Connect wallet"}
+        body="Connect MetaMask to claim the first playable Veydrift planet for this address."
+        action={<button disabled={wallet.kind === "connecting"} onClick={onConnect} type="button">Connect wallet</button>}
+      />
+    );
+  }
+
+  if (wallet.kind === "wrong-network") {
+    return (
+      <StateMessage
+        title="Wrong network"
+        body={`Current chain ${wallet.chainId}. Switch to Base Sepolia before settlement.`}
+        action={<button onClick={onSwitchNetwork} type="button">Switch network</button>}
+      />
+    );
+  }
+
+  if (planet.kind === "checking") {
+    return <StateMessage title="Checking settlement" body="Reading first-planet status from Base Sepolia." />;
+  }
+
+  if (planet.kind === "contract-unconfigured") {
+    return (
+      <StateMessage
+        title="Settlement contract not configured"
+        body="Set VITE_VEYDRIFT_SETTLEMENT_ADDRESS to the Base Sepolia settlement contract."
+      />
+    );
+  }
+
+  if (planet.kind === "pending") {
+    return (
+      <StateMessage
+        title="Settlement pending"
+        body={planet.txHash ? `Transaction submitted: ${planet.txHash}` : "Confirm the transaction in MetaMask."}
+      />
+    );
+  }
+
+  if (planet.kind === "already-settled") {
+    return <PlanetSettlementSummary planet={planet.planet} title="Planet already settled" />;
+  }
+
+  if (planet.kind === "success") {
+    return <PlanetSettlementSummary planet={planet.planet} title="Settlement confirmed" />;
+  }
+
+  if (planet.kind === "rejected" || planet.kind === "error") {
+    return (
+      <StateMessage
+        title={planet.kind === "rejected" ? "Request rejected" : "Wallet error"}
+        body={planet.message}
+        action={<button onClick={planet.kind === "rejected" ? onSettle : onConnect} type="button">Retry</button>}
+      />
+    );
+  }
+
+  return (
+    <StateMessage
+      title="Ready to settle"
+      body="Settle the first planet for this connected wallet. The management screens unlock after the Base Sepolia transaction confirms."
+      action={<button disabled={!settlementReady} onClick={onSettle} type="button">Settle first planet</button>}
+    />
+  );
+}
+
+function PlanetSettlementSummary({ planet, title }: { planet: PlanetSummary; title: string }) {
+  return (
+    <div className="settlement-summary">
+      <div>
+        <strong>{title}</strong>
+        <span>{planet.label}</span>
+      </div>
+      <div className="wallet-steps">
+        <Metric label="Coordinates" value={planet.coordinates ?? "Assigned"} />
+        <Metric label="Class" value={planet.rarity ?? "Genesis"} />
+        <Metric label="Block" value={planet.settledBlock ?? "Confirmed"} />
+      </div>
+    </div>
+  );
+}
+
+function StateMessage({
+  action,
+  body,
+  title
+}: {
+  action?: preact.ComponentChildren;
+  body: string;
+  title: string;
+}) {
+  return (
+    <div className="state-message">
+      <div>
+        <h4>{title}</h4>
+        <p>{body}</p>
+      </div>
+      {action ? <div className="state-action">{action}</div> : null}
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 export function App() {
+  const [provider, setProvider] = useState<Eip1193Provider>();
+  const [wallet, setWallet] = useState<WalletState>({
+    kind: "loading"
+  });
+  const [planet, setPlanet] = useState<PlanetState>({
+    kind: "idle"
+  });
   const [activeScreen, setActiveScreen] = useState<Screen>(initScreen);
   const [gameState, setGameState] = useState<GameState>(initGameState);
   const [now, setNow] = useState(() => Date.now());
   const [statusMessage, setStatusMessage] = useState("Planet state loaded from this browser.");
+  const account = "account" in wallet ? wallet.account : undefined;
+  const hasSettlement = planet.kind === "success" || planet.kind === "already-settled";
+
+  useEffect(() => {
+    const injected = getInjectedProvider(window as typeof window & { ethereum?: Eip1193Provider });
+    setProvider(injected);
+
+    if (!injected) {
+      setWallet({
+        kind: "no-wallet"
+      });
+      return;
+    }
+
+    void refreshWallet(injected);
+
+    const handleAccountsChanged = (...args: unknown[]) => {
+      const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
+
+      if (nextAccounts[0]) {
+        void refreshWallet(injected, nextAccounts[0]);
+      } else {
+        setWallet({
+          kind: "disconnected"
+        });
+        setPlanet({
+          kind: "idle"
+        });
+      }
+    };
+
+    const handleChainChanged = () => {
+      void refreshWallet(injected);
+    };
+
+    injected.on?.("accountsChanged", handleAccountsChanged);
+    injected.on?.("chainChanged", handleChainChanged);
+
+    return () => {
+      injected.removeListener?.("accountsChanged", handleAccountsChanged);
+      injected.removeListener?.("chainChanged", handleChainChanged);
+    };
+  }, []);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -384,6 +661,155 @@ export function App() {
 
     return "Planet command";
   }, [activeScreen]);
+
+  async function refreshWallet(injected = provider, preferredAccount?: string) {
+    if (!injected) {
+      setWallet({
+        kind: "no-wallet"
+      });
+      return;
+    }
+
+    const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected);
+
+    if (!accounts[0]) {
+      setWallet({
+        kind: "disconnected"
+      });
+      setPlanet({
+        kind: "idle"
+      });
+      return;
+    }
+
+    const chainId = await getChainId(injected);
+
+    if (!isBaseSepoliaChain(chainId)) {
+      setWallet({
+        kind: "wrong-network",
+        account: accounts[0],
+        chainId
+      });
+      setPlanet({
+        kind: "idle"
+      });
+      return;
+    }
+
+    setWallet({
+      kind: "connected",
+      account: accounts[0]
+    });
+    await refreshPlanet(injected, accounts[0]);
+  }
+
+  async function refreshPlanet(injected: Eip1193Provider, connectedAccount: string) {
+    setPlanet({
+      kind: "checking"
+    });
+
+    try {
+      const settlement = await readSettlementState(injected, connectedAccount, settlementConfig);
+
+      if (settlement.kind === "unconfigured") {
+        setPlanet({
+          kind: "contract-unconfigured"
+        });
+      } else if (settlement.kind === "settled") {
+        setPlanet({
+          kind: "already-settled",
+          planet: settlement.planet
+        });
+      } else {
+        setPlanet({
+          kind: "not-settled"
+        });
+      }
+    } catch (error) {
+      setPlanet({
+        kind: "error",
+        message: errorMessage(error)
+      });
+    }
+  }
+
+  async function connectWallet() {
+    if (!provider) {
+      setWallet({
+        kind: "no-wallet"
+      });
+      return;
+    }
+
+    setWallet({
+      kind: "connecting"
+    });
+
+    try {
+      const accounts = await requestAccounts(provider);
+      await refreshWallet(provider, accounts[0]);
+    } catch (error) {
+      setWallet({
+        kind: "disconnected"
+      });
+      setPlanet({
+        kind: isUserRejected(error) ? "rejected" : "error",
+        message: isUserRejected(error) ? "Wallet connection was rejected." : errorMessage(error)
+      });
+    }
+  }
+
+  async function switchNetwork() {
+    if (!provider) {
+      return;
+    }
+
+    setPlanet({
+      kind: "checking"
+    });
+
+    try {
+      await ensureBaseSepoliaNetwork(provider);
+      await refreshWallet(provider, account);
+    } catch (error) {
+      setPlanet({
+        kind: isUserRejected(error) ? "rejected" : "error",
+        message: isUserRejected(error) ? "Network switch was rejected." : errorMessage(error)
+      });
+    }
+  }
+
+  async function settlePlanet() {
+    if (!provider || wallet.kind !== "connected") {
+      return;
+    }
+
+    setPlanet({
+      kind: "pending"
+    });
+
+    try {
+      const txHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig);
+      setPlanet({
+        kind: "pending",
+        txHash
+      });
+      await waitForReceipt(provider, txHash);
+
+      const settlement = await readSettlementState(provider, wallet.account, settlementConfig);
+
+      setPlanet({
+        kind: "success",
+        planet: settlement.kind === "settled" ? settlement.planet : planetFromTransaction(wallet.account, txHash)
+      });
+      setStatusMessage("Onchain first planet settled. Management loop unlocked.");
+    } catch (error) {
+      setPlanet({
+        kind: isUserRejected(error) ? "rejected" : "error",
+        message: isUserRejected(error) ? "Settlement transaction was rejected." : errorMessage(error)
+      });
+    }
+  }
 
   function handleStartBuilding(targetId: string) {
     const current = Date.now();
@@ -463,9 +889,15 @@ export function App() {
 
         <div className="cycle-card">
           <span>Settled wallet</span>
-          <strong>Local MVP</strong>
+          <strong>{account ? shortAddress(account) : walletLabel(wallet)}</strong>
+          <p>{planetLabel(planet)}. {statusMessage}</p>
+          {hasSettlement ? <button onClick={handleReset} type="button">Reset state</button> : null}
+        </div>
+
+        <div className="cycle-card wallet-card">
+          <span>Base Sepolia</span>
+          <strong>{walletLabel(wallet)}</strong>
           <p>{statusMessage}</p>
-          <button onClick={handleReset} type="button">Reset state</button>
         </div>
       </aside>
 
@@ -476,21 +908,100 @@ export function App() {
             <h1>{headerTitle}</h1>
           </div>
           <div className="topbar-actions">
-            <span>Base Sepolia ready</span>
+            <span>{account ? shortAddress(account) : walletLabel(wallet)}</span>
             <button onClick={() => setGameState((state) => advanceState(state, Date.now()))} type="button">
               Refresh
             </button>
           </div>
         </header>
 
-        {activeScreen === "overview" && <OverviewScreen gameState={gameState} now={now} />}
-        {activeScreen === "building" && (
+        <WalletSettlementPanel
+          onConnect={connectWallet}
+          onSettle={settlePlanet}
+          onSwitchNetwork={switchNetwork}
+          planet={planet}
+          settlementReady={settlementContractConfigured(settlementConfig)}
+          wallet={wallet}
+        />
+
+        {hasSettlement && activeScreen === "overview" && <OverviewScreen gameState={gameState} now={now} />}
+        {hasSettlement && activeScreen === "building" && (
           <BuildingScreen gameState={gameState} now={now} onStart={handleStartBuilding} />
         )}
-        {activeScreen === "research" && (
+        {hasSettlement && activeScreen === "research" && (
           <ResearchScreen gameState={gameState} now={now} onStart={handleStartResearch} />
         )}
       </section>
     </main>
   );
+}
+
+function walletPanelTitle(wallet: WalletState, planet: PlanetState): string {
+  if (wallet.kind === "wrong-network") {
+    return "Switch to Base Sepolia";
+  }
+
+  if (wallet.kind === "connected" && planet.kind === "not-settled") {
+    return "Settle your first planet";
+  }
+
+  return walletLabel(wallet);
+}
+
+function walletLabel(wallet: WalletState): string {
+  switch (wallet.kind) {
+    case "loading":
+      return "Loading";
+    case "no-wallet":
+      return "No wallet";
+    case "disconnected":
+      return "Disconnected";
+    case "connecting":
+      return "Connecting";
+    case "wrong-network":
+      return "Wrong network";
+    case "connected":
+      return "Connected";
+  }
+}
+
+function planetLabel(planet: PlanetState): string {
+  switch (planet.kind) {
+    case "checking":
+      return "Loading";
+    case "contract-unconfigured":
+      return "Contract needed";
+    case "not-settled":
+      return "Ready";
+    case "pending":
+      return "Pending";
+    case "success":
+      return "Success";
+    case "already-settled":
+      return "Settled";
+    case "rejected":
+      return "Rejected";
+    case "error":
+      return "Error";
+    default:
+      return "Waiting";
+  }
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+
+  return "Unexpected wallet request failure.";
+}
+
+function buildSettlementConfig(): SettlementConfig {
+  return {
+    address: import.meta.env.VITE_VEYDRIFT_SETTLEMENT_ADDRESS || BASE_SEPOLIA_SETTLEMENT_ADDRESS
+  };
 }
