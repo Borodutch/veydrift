@@ -2,265 +2,389 @@
   "storage": [
     {
       "label": "startPrice",
-      "slot": "0",
       "offset": 0,
+      "slot": "0",
       "type": "uint256"
     },
     {
       "label": "nextPlanetId",
-      "slot": "1",
       "offset": 0,
+      "slot": "1",
       "type": "uint256"
     },
     {
       "label": "homePlanetOf",
-      "slot": "2",
       "offset": 0,
+      "slot": "2",
       "type": "mapping(address => uint256)"
     },
     {
       "label": "_planets",
-      "slot": "3",
       "offset": 0,
+      "slot": "3",
       "type": "mapping(uint256 => struct Planet)"
     },
     {
       "label": "occupiedCoordinates",
-      "slot": "4",
       "offset": 0,
+      "slot": "4",
       "type": "mapping(bytes32 => bool)"
     },
     {
       "label": "_buildingLevels",
-      "slot": "5",
       "offset": 0,
-      "type": "mapping(uint256 => mapping(uint8 => uint16))"
+      "slot": "5",
+      "type": "mapping(uint256 => mapping(enum Building => uint16))"
     },
     {
       "label": "_defenseCounts",
-      "slot": "6",
       "offset": 0,
-      "type": "mapping(uint256 => mapping(uint8 => uint32))"
+      "slot": "6",
+      "type": "mapping(uint256 => mapping(enum Defense => uint32))"
     },
     {
       "label": "_shipCounts",
-      "slot": "7",
       "offset": 0,
-      "type": "mapping(uint256 => mapping(uint8 => uint32))"
+      "slot": "7",
+      "type": "mapping(uint256 => mapping(enum Ship => uint32))"
     },
     {
       "label": "_technologyLevels",
-      "slot": "8",
       "offset": 0,
-      "type": "mapping(address => mapping(uint8 => uint16))"
+      "slot": "8",
+      "type": "mapping(address => mapping(enum Technology => uint16))"
     },
     {
-      "label": "buildingQueues",
-      "slot": "9",
+      "label": "buildingConstructions",
       "offset": 0,
-      "type": "mapping(uint256 => struct BuildQueue)"
+      "slot": "9",
+      "type": "mapping(uint256 => struct BuildingConstruction)"
     },
     {
       "label": "defenseQueues",
-      "slot": "10",
       "offset": 0,
-      "type": "mapping(uint256 => struct UnitQueue)"
+      "slot": "10",
+      "type": "mapping(uint256 => struct DefenseQueue)"
     },
     {
       "label": "shipQueues",
-      "slot": "11",
       "offset": 0,
-      "type": "mapping(uint256 => struct UnitQueue)"
+      "slot": "11",
+      "type": "mapping(uint256 => struct ShipQueue)"
     },
     {
       "label": "researchQueues",
-      "slot": "12",
       "offset": 0,
+      "slot": "12",
       "type": "mapping(address => struct ResearchQueue)"
+    },
+    {
+      "label": "nextFleetId",
+      "offset": 0,
+      "slot": "13",
+      "type": "uint256"
+    },
+    {
+      "label": "planetCountOf",
+      "offset": 0,
+      "slot": "14",
+      "type": "mapping(address => uint256)"
+    },
+    {
+      "label": "_fleets",
+      "offset": 0,
+      "slot": "15",
+      "type": "mapping(uint256 => struct Fleet)"
     }
   ],
   "structs": {
-    "Resources": [
+    "BuildingConstruction": [
       {
-        "label": "metal",
-        "slot": "0",
+        "label": "active",
         "offset": 0,
-        "type": "uint128"
-      },
-      {
-        "label": "crystal",
         "slot": "0",
-        "offset": 16,
-        "type": "uint128"
+        "type": "bool"
       },
       {
-        "label": "deuterium",
+        "label": "building",
+        "offset": 1,
+        "slot": "0",
+        "type": "enum Building"
+      },
+      {
+        "label": "targetLevel",
+        "offset": 2,
+        "slot": "0",
+        "type": "uint16"
+      },
+      {
+        "label": "readyAt",
+        "offset": 4,
+        "slot": "0",
+        "type": "uint64"
+      },
+      {
+        "label": "cost",
+        "offset": 0,
         "slot": "1",
+        "type": "Resources"
+      }
+    ],
+    "DefenseQueue": [
+      {
+        "label": "active",
         "offset": 0,
+        "slot": "0",
+        "type": "bool"
+      },
+      {
+        "label": "defense",
+        "offset": 1,
+        "slot": "0",
+        "type": "enum Defense"
+      },
+      {
+        "label": "quantity",
+        "offset": 2,
+        "slot": "0",
+        "type": "uint32"
+      },
+      {
+        "label": "readyAt",
+        "offset": 6,
+        "slot": "0",
+        "type": "uint64"
+      },
+      {
+        "label": "cost",
+        "offset": 0,
+        "slot": "1",
+        "type": "Resources"
+      }
+    ],
+    "Fleet": [
+      {
+        "label": "active",
+        "offset": 0,
+        "slot": "0",
+        "type": "bool"
+      },
+      {
+        "label": "returning",
+        "offset": 1,
+        "slot": "0",
+        "type": "bool"
+      },
+      {
+        "label": "owner",
+        "offset": 2,
+        "slot": "0",
+        "type": "address"
+      },
+      {
+        "label": "originPlanetId",
+        "offset": 0,
+        "slot": "1",
+        "type": "uint256"
+      },
+      {
+        "label": "destinationPlanetId",
+        "offset": 0,
+        "slot": "2",
+        "type": "uint256"
+      },
+      {
+        "label": "dispatchedAt",
+        "offset": 0,
+        "slot": "3",
+        "type": "uint64"
+      },
+      {
+        "label": "arrivesAt",
+        "offset": 8,
+        "slot": "3",
+        "type": "uint64"
+      },
+      {
+        "label": "fuelCost",
+        "offset": 16,
+        "slot": "3",
         "type": "uint128"
+      },
+      {
+        "label": "cargo",
+        "offset": 0,
+        "slot": "4",
+        "type": "Resources"
+      },
+      {
+        "label": "smallCargo",
+        "offset": 0,
+        "slot": "6",
+        "type": "uint32"
+      },
+      {
+        "label": "recycler",
+        "offset": 4,
+        "slot": "6",
+        "type": "uint32"
+      },
+      {
+        "label": "colonyShip",
+        "offset": 8,
+        "slot": "6",
+        "type": "uint32"
       }
     ],
     "Planet": [
       {
         "label": "owner",
-        "slot": "0",
         "offset": 0,
+        "slot": "0",
         "type": "address"
       },
       {
         "label": "galaxy",
-        "slot": "0",
         "offset": 20,
+        "slot": "0",
         "type": "uint16"
       },
       {
         "label": "system",
-        "slot": "0",
         "offset": 22,
+        "slot": "0",
         "type": "uint16"
       },
       {
         "label": "position",
-        "slot": "0",
         "offset": 24,
+        "slot": "0",
         "type": "uint8"
       },
       {
         "label": "fields",
-        "slot": "0",
         "offset": 25,
+        "slot": "0",
         "type": "uint16"
       },
       {
         "label": "temperature",
-        "slot": "0",
         "offset": 27,
+        "slot": "0",
         "type": "int16"
       },
       {
         "label": "metalMultiplierBps",
-        "slot": "0",
         "offset": 29,
+        "slot": "0",
         "type": "uint16"
       },
       {
         "label": "crystalMultiplierBps",
-        "slot": "1",
         "offset": 0,
+        "slot": "1",
         "type": "uint16"
       },
       {
         "label": "deuteriumMultiplierBps",
-        "slot": "1",
         "offset": 2,
+        "slot": "1",
         "type": "uint16"
       },
       {
         "label": "lastSettledAt",
-        "slot": "1",
         "offset": 4,
+        "slot": "1",
         "type": "uint64"
       },
       {
         "label": "resources",
+        "offset": 0,
         "slot": "2",
-        "offset": 0,
-        "type": "Resources"
-      }
-    ],
-    "BuildQueue": [
-      {
-        "label": "active",
-        "slot": "0",
-        "offset": 0,
-        "type": "bool"
-      },
-      {
-        "label": "buildingId",
-        "slot": "0",
-        "offset": 1,
-        "type": "uint8"
-      },
-      {
-        "label": "targetLevel",
-        "slot": "0",
-        "offset": 2,
-        "type": "uint16"
-      },
-      {
-        "label": "readyAt",
-        "slot": "0",
-        "offset": 4,
-        "type": "uint64"
-      },
-      {
-        "label": "cost",
-        "slot": "1",
-        "offset": 0,
-        "type": "Resources"
-      }
-    ],
-    "UnitQueue": [
-      {
-        "label": "active",
-        "slot": "0",
-        "offset": 0,
-        "type": "bool"
-      },
-      {
-        "label": "unitId",
-        "slot": "0",
-        "offset": 1,
-        "type": "uint8"
-      },
-      {
-        "label": "quantity",
-        "slot": "0",
-        "offset": 2,
-        "type": "uint32"
-      },
-      {
-        "label": "readyAt",
-        "slot": "0",
-        "offset": 6,
-        "type": "uint64"
-      },
-      {
-        "label": "cost",
-        "slot": "1",
-        "offset": 0,
         "type": "Resources"
       }
     ],
     "ResearchQueue": [
       {
         "label": "active",
-        "slot": "0",
         "offset": 0,
+        "slot": "0",
         "type": "bool"
       },
       {
-        "label": "technologyId",
-        "slot": "0",
+        "label": "technology",
         "offset": 1,
-        "type": "uint8"
+        "slot": "0",
+        "type": "enum Technology"
       },
       {
         "label": "targetLevel",
-        "slot": "0",
         "offset": 2,
+        "slot": "0",
         "type": "uint16"
       },
       {
         "label": "readyAt",
-        "slot": "0",
         "offset": 4,
+        "slot": "0",
         "type": "uint64"
       },
       {
         "label": "cost",
-        "slot": "1",
         "offset": 0,
+        "slot": "1",
+        "type": "Resources"
+      }
+    ],
+    "Resources": [
+      {
+        "label": "metal",
+        "offset": 0,
+        "slot": "0",
+        "type": "uint128"
+      },
+      {
+        "label": "crystal",
+        "offset": 16,
+        "slot": "0",
+        "type": "uint128"
+      },
+      {
+        "label": "deuterium",
+        "offset": 0,
+        "slot": "1",
+        "type": "uint128"
+      }
+    ],
+    "ShipQueue": [
+      {
+        "label": "active",
+        "offset": 0,
+        "slot": "0",
+        "type": "bool"
+      },
+      {
+        "label": "ship",
+        "offset": 1,
+        "slot": "0",
+        "type": "enum Ship"
+      },
+      {
+        "label": "quantity",
+        "offset": 2,
+        "slot": "0",
+        "type": "uint32"
+      },
+      {
+        "label": "readyAt",
+        "offset": 6,
+        "slot": "0",
+        "type": "uint64"
+      },
+      {
+        "label": "cost",
+        "offset": 0,
+        "slot": "1",
         "type": "Resources"
       }
     ]
