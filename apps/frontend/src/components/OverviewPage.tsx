@@ -1,5 +1,6 @@
 import type { PlayableState, Resources, QueueItem } from "../playableMvp";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
+import { ResponsiveGameImage } from "./ResponsiveGameImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -43,10 +44,13 @@ export function OverviewPage({
       {/* Planet hero */}
       <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
         <div className="relative min-h-[220px] sm:min-h-[260px]">
-          <img
+          <ResponsiveGameImage
             alt=""
             className="absolute inset-0 h-full w-full object-cover"
+            decoding="async"
+            sizes="(min-width: 1024px) 944px, calc(100vw - 2rem)"
             src="/assets/game/planets/lush-temperate.webp"
+            widths={[640]}
           />
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,9,19,0.2),rgba(7,9,19,0.9))]" />
           <div className="relative flex min-h-[220px] flex-col justify-end p-4 sm:min-h-[260px] sm:p-5">

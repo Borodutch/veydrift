@@ -1,5 +1,6 @@
 import type { PlayableState, BuildingKey, Resources } from "../playableMvp";
 import { buildingCatalog, buildingCost, canAfford } from "../playableMvp";
+import { ResponsiveGameImage } from "./ResponsiveGameImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -73,7 +74,15 @@ function BuildingTile({
 }) {
   return (
     <article className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-      <img alt="" className="aspect-[16/9] w-full object-cover" src={asset} />
+      <ResponsiveGameImage
+        alt=""
+        className="aspect-[16/9] w-full object-cover"
+        decoding="async"
+        loading="lazy"
+        sizes="(min-width: 1024px) 31vw, (min-width: 640px) 48vw, calc(100vw - 2rem)"
+        src={asset}
+        widths={[320, 640]}
+      />
       <div className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
