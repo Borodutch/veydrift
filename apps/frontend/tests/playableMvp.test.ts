@@ -9,16 +9,12 @@ import {
   productionPerHour,
   researchCatalog,
   researchRequirementsFor,
-  settleState,
   shipCatalog,
-  startBuildingUpgrade,
-  startResearch,
-  startShipProduction,
   storageCaps,
   unmetResearchRequirement,
 } from "../src/playableMvp";
 
-describe("playable MVP simulation", () => {
+describe("playable MVP contract display helpers", () => {
   test("uses the Solidity MVP starting resources and storage caps", () => {
     const state = createInitialPlayableState(1_000);
 
@@ -34,51 +30,32 @@ describe("playable MVP simulation", () => {
     });
   });
 
-  test("scales upgrade costs by current level", () => {
+  test("scales upgrade costs by contract-backed current level", () => {
     const state = createInitialPlayableState(1_000);
     const firstMine = buildingCost(state.buildings, "metalMine");
-    const queued = startBuildingUpgrade(state, "metalMine", 1_000);
-    const upgraded = settleState(queued, 62_000);
+    const upgradedBuildings = { ...state.buildings, metalMine: 1 };
 
     expect(firstMine).toEqual({ metal: 60, crystal: 15, deuterium: 0 });
-    expect(buildingCost(upgraded.buildings, "metalMine")).toEqual({
+    expect(buildingCost(upgradedBuildings, "metalMine")).toEqual({
       metal: 120,
       crystal: 30,
       deuterium: 0,
     });
   });
 
-  test("collects lazy production and requires solar energy for powered buildings", () => {
+  test("mirrors contract production formulas without mutating browser state", () => {
     const state = createInitialPlayableState(1_000);
-    const queued = startBuildingUpgrade(state, "metalMine", 1_000);
-    const settled = settleState(queued, 3_601_000);
-    const rates = productionPerHour(settled.buildings);
-
-    expect(settled.queue).toBeUndefined();
-    expect(settled.buildings.metalMine).toBe(1);
-    expect(settled.resources.metal).toBeGreaterThan(4_940);
-    expect(rates.metal).toBe(0);
-
-    const solarQueued = startBuildingUpgrade(settled, "solarPlant", 3_601_000);
-    const powered = settleState(solarQueued, 3_662_000);
-
-    expect(productionPerHour(powered.buildings).metal).toBeGreaterThan(30);
-  });
-
-  test("requires a shipyard before ship production", () => {
-    const state = createInitialPlayableState(1_000);
-    const withoutShipyard = startShipProduction(state, "smallCargo", 1, 1_000);
-    const withShipyard = {
-      ...state,
-      buildings: {
-        ...state.buildings,
-        shipyard: 1,
-      },
+    const unpowered = {
+      ...state.buildings,
+      metalMine: 1,
     };
-    const queued = startShipProduction(withShipyard, "smallCargo", 1, 1_000);
+    const powered = {
+      ...unpowered,
+      solarPlant: 1,
+    };
 
-    expect(withoutShipyard.queue).toBeUndefined();
-    expect(queued.queue?.kind).toBe("ship");
+    expect(productionPerHour(unpowered).metal).toBe(0);
+    expect(productionPerHour(powered).metal).toBeGreaterThan(30);
   });
 
   test("maps the full Solidity ship catalog for Shipyard display", () => {
@@ -103,39 +80,14 @@ describe("playable MVP simulation", () => {
     expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/"))).toBe(true);
   });
 
-  test("requires Research Lab before any research can start", () => {
+  test("reports Research Lab requirement without queuing local research", () => {
     const state = createInitialPlayableState(1_000);
-    const queued = startResearch(state, "energy", 1_000);
 
-    expect(queued.researchQueue).toBeUndefined();
     expect(unmetResearchRequirement(state, "energy")).toEqual({
       type: "building",
       key: "researchLab",
       level: 1,
     });
-  });
-
-  test("runs unlocked research in parallel with building production", () => {
-    const initial = createInitialPlayableState(1_000);
-    const state = {
-      ...initial,
-      buildings: {
-        ...initial.buildings,
-        researchLab: 1,
-      },
-    };
-    const buildingQueued = startBuildingUpgrade(state, "metalMine", 1_000);
-    const researchQueued = startResearch(buildingQueued, "energy", 1_000);
-
-    expect(researchQueued.queue?.kind).toBe("building");
-    expect(researchQueued.researchQueue?.kind).toBe("research");
-
-    const settled = settleState(researchQueued, 62_000);
-
-    expect(settled.buildings.metalMine).toBe(1);
-    expect(settled.research.energy).toBe(1);
-    expect(settled.queue).toBeUndefined();
-    expect(settled.researchQueue).toBeUndefined();
   });
 
   test("mirrors the contract research catalog and prerequisites", () => {

@@ -106,7 +106,7 @@ export function ShipyardPage({
               .map((ship) => {
                 const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
                 const owned = productionAvailable ? chainShip?.count : undefined;
-                const baseCost = productionAvailable ? toResources(chainShip?.cost) ?? ship.baseCost : undefined;
+                const baseCost = productionAvailable ? toResources(chainShip?.cost) : undefined;
                 const quantity = quantities[ship.key] ?? 1;
                 const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
                 const missing = getMissingRequirements(ship, shipyardState);

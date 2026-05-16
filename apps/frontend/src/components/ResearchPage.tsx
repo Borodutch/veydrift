@@ -5,7 +5,6 @@ import {
   buildingCatalog,
   canAfford,
   researchCatalog,
-  researchCost,
   researchDurationEstimate,
   researchRequirementsFor,
   unmetResearchRequirement,
@@ -426,7 +425,7 @@ function researchActionStatus({
   researchState: ChainResearchState | null;
   state: PlayableState;
 }) {
-  const cost = chainCost ?? (researchState ? researchCost(state.research, key) : undefined);
+  const cost = chainCost;
   const currentLevel = state.research[key];
   const targetLevel = currentLevel + 1;
   const missingRequirement = unmetResearchRequirement(state, key);
