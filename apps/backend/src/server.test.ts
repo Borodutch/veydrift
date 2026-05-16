@@ -3,6 +3,7 @@ import type { BackendConfig } from "./config";
 import type {
   Address,
   ChainReader,
+  DefenseState,
   InfrastructureState,
   PlanetState,
   PlayerQueues,
@@ -163,6 +164,51 @@ class MockChainReader implements ChainReader {
         cost: {
           metal: "2000",
           crystal: "2000",
+          deuterium: "0"
+        }
+      }
+    };
+  }
+
+  async getDefenseState(wallet: Address): Promise<DefenseState> {
+    return {
+      wallet,
+      homePlanetId: planet.planetId,
+      productionAvailable: true,
+      resources: planet.resources,
+      shipyardLevel: 1,
+      technologyLevels: {
+        "1": 1
+      },
+      defenses: [
+        {
+          id: 0,
+          count: 3,
+          cost: {
+            metal: "200",
+            crystal: "0",
+            deuterium: "0"
+          }
+        },
+        {
+          id: 1,
+          count: 0,
+          cost: {
+            metal: "1500",
+            crystal: "500",
+            deuterium: "0"
+          }
+        }
+      ],
+      queue: {
+        active: true,
+        itemId: 0,
+        kind: "defense",
+        quantity: 2,
+        readyAt: "1770000060",
+        cost: {
+          metal: "400",
+          crystal: "0",
           deuterium: "0"
         }
       }
@@ -404,6 +450,36 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("answers defense state from a mocked chain reader", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader()
+    })(new Request(`http://localhost/wallet/${player}/defenses`));
+
+    const body = await response.json();
+    expect(body.wallet).toBe(player);
+    expect(body.homePlanetId).toBe("7");
+    expect(body.resources.metal).toBe("5000");
+    expect(body.shipyardLevel).toBe(1);
+    expect(body.technologyLevels["1"]).toBe(1);
+    expect(body.queue).toMatchObject({
+      active: true,
+      itemId: 0,
+      kind: "defense",
+      quantity: 2
+    });
+    expect(body.defenses).toContainEqual({
+      id: 0,
+      count: 3,
+      cost: {
+        metal: "200",
+        crystal: "0",
+        deuterium: "0"
+      }
+    });
+    expect(response.status).toBe(200);
+  });
+
   test("answers infrastructure state from a mocked chain reader", async () => {
     const handler = createRequestHandler({ chainReader: new MockChainReader(), config: configuredTestConfig });
     const response = await handler(
@@ -501,6 +577,14 @@ describe("Veydrift backend", () => {
       shipyardLevel: 0,
       ships: []
     });
+
+    await expect(reader.getDefenseState(player)).resolves.toMatchObject({
+      wallet: player,
+      homePlanetId: null,
+      productionAvailable: false,
+      shipyardLevel: 0,
+      defenses: []
+    });
   });
 
   test("keeps compact settlement available when the game contract has no home planet", async () => {
@@ -538,6 +622,22 @@ describe("Veydrift backend", () => {
       homePlanetId: null,
       productionAvailable: true,
       ships: expect.arrayContaining([
+        expect.objectContaining({
+          id: 0,
+          cost: {
+            metal: "0",
+            crystal: "0",
+            deuterium: "0"
+          }
+        })
+      ])
+    });
+
+    await expect(reader.getDefenseState(player)).resolves.toMatchObject({
+      wallet: player,
+      homePlanetId: null,
+      productionAvailable: true,
+      defenses: expect.arrayContaining([
         expect.objectContaining({
           id: 0,
           cost: {
