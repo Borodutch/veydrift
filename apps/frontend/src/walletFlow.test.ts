@@ -13,11 +13,13 @@ import {
   readSettlementState,
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
+  sendFinishDefenseProductionTransaction,
   sendFinishBuildingUpgradeTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
+  sendStartDefenseProductionTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   settlementTransactionData,
@@ -212,6 +214,12 @@ describe("walletFlow", () => {
     await expect(
       sendCollectShipsTransaction(provider, account, contract, "7")
     ).resolves.toBe("0xtx6");
+    await expect(
+      sendStartDefenseProductionTransaction(provider, account, contract, "7", 0, 2)
+    ).resolves.toBe("0xtx7");
+    await expect(
+      sendFinishDefenseProductionTransaction(provider, account, contract, "7")
+    ).resolves.toBe("0xtx8");
 
     expect(requests).toEqual([
       {
@@ -271,6 +279,26 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: "0xb30a921c0000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0xfec06283", [7, 0, 2])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xa5a0d5970000000000000000000000000000000000000000000000000000000000000007"
           }
         ]
       }

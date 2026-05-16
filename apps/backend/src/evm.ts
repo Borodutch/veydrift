@@ -65,6 +65,22 @@ export type ShipyardState = {
   queue: QueueState | null;
 };
 
+export type DefenseState = {
+  wallet: Address;
+  homePlanetId: string | null;
+  productionAvailable: boolean;
+  unavailableReason?: string;
+  resources: Resources | null;
+  shipyardLevel: number;
+  technologyLevels: Record<string, number>;
+  defenses: Array<{
+    id: number;
+    count: number;
+    cost: Resources;
+  }>;
+  queue: QueueState | null;
+};
+
 export type InfrastructureState = {
   wallet: Address;
   homePlanetId: string | null;
@@ -108,6 +124,7 @@ export interface ChainReader {
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address): Promise<PlayerQueues>;
   getInfrastructureState(wallet: Address): Promise<InfrastructureState>;
+  getDefenseState(wallet: Address): Promise<DefenseState>;
   getShipyardState(wallet: Address): Promise<ShipyardState>;
   getResearchState(wallet: Address): Promise<ResearchState>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
@@ -376,6 +393,67 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  async getDefenseState(wallet: Address): Promise<DefenseState> {
+    let settlement: WalletSettlement;
+    try {
+      settlement = await this.getGameSettlement(wallet);
+    } catch (error) {
+      if (!isRpcRevert(error) || !this.settlementContractAddress) {
+        throw error;
+      }
+
+      return {
+        wallet,
+        homePlanetId: null,
+        productionAvailable: false,
+        unavailableReason:
+          "The deployed contract only supports first-planet settlement. Defense production is not available on this deployment yet.",
+        resources: null,
+        shipyardLevel: 0,
+        technologyLevels: {},
+        defenses: [],
+        queue: null
+      };
+    }
+
+    if (!settlement.homePlanetId) {
+      return {
+        wallet,
+        homePlanetId: null,
+        productionAvailable: true,
+        resources: null,
+        shipyardLevel: 0,
+        technologyLevels: {},
+        defenses: Array.from({ length: defenseCount }, (_, id) => ({
+          id,
+          count: 0,
+          cost: zeroResources()
+        })),
+        queue: null
+      };
+    }
+
+    const planetId = BigInt(settlement.homePlanetId);
+    const [resources, shipyardLevel, queue, technologyLevels, defenses] = await Promise.all([
+      this.readResources("0x0adbf924", planetId),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
+      this.readPlanetQueue("0x5758361d", planetId, "defense"),
+      this.readTechnologyLevels(wallet),
+      this.readDefenseRows(planetId)
+    ]);
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      productionAvailable: true,
+      resources,
+      shipyardLevel: Number(shipyardLevel),
+      technologyLevels,
+      defenses,
+      queue
+    };
+  }
+
   async getResearchState(wallet: Address): Promise<ResearchState> {
     let settlement: WalletSettlement;
     try {
@@ -519,6 +597,23 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
+  private async readDefenseRows(planetId: bigint): Promise<DefenseState["defenses"]> {
+    return Promise.all(
+      Array.from({ length: defenseCount }, async (_, id) => {
+        const [count, cost] = await Promise.all([
+          this.readUintCall("0x836e3a32", [encodeUint(planetId), encodeUint(BigInt(id))]),
+          this.readResources("0x9b906295", BigInt(id))
+        ]);
+
+        return {
+          id,
+          count: Number(count),
+          cost
+        };
+      })
+    );
+  }
+
   private async readBuildingRows(planetId: bigint): Promise<InfrastructureState["buildings"]> {
     return Promise.all(
       Array.from({ length: buildingCount }, async (_, id) => {
@@ -644,6 +739,7 @@ export class VeydriftGameReader implements ChainReader {
 
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
 const buildingCount = 10;
+const defenseCount = 10;
 const shipCount = 16;
 const technologyCount = 16;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";

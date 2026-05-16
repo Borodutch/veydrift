@@ -38,7 +38,7 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   isWalletConnected: boolean;
   onCollect: () => void;
-  onNavigate: (page: "infrastructure" | "research" | "shipyard") => void;
+  onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onChainError?: string | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
   onChainQueues?: PlayerQueuesResponse | undefined;
@@ -74,13 +74,6 @@ export function OverviewPage({
   const hasUsableOnChainResources = onChainResourceValues?.metal !== undefined
     && onChainResourceValues.crystal !== undefined
     && onChainResourceValues.deuterium !== undefined;
-
-  const anyQueueActive =
-    onChainQueues?.building?.active ||
-    onChainQueues?.research?.active ||
-    onChainQueues?.ship?.active ||
-    settledState.queue ||
-    settledState.researchQueue;
 
   return (
     <div className="grid gap-3">
@@ -120,8 +113,8 @@ export function OverviewPage({
         </div>
       )}
 
-      {/* Three queues — buildings, research, shipyard */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Contract production queues */}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {/* Building queue */}
         <QueuePanel
           label="Buildings"
@@ -143,6 +136,26 @@ export function OverviewPage({
             <EmptyQueue>
               No active construction.
               <QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>
+            </EmptyQueue>
+          )}
+        </QueuePanel>
+
+        {/* Defense queue */}
+        <QueuePanel
+          label="Defenses"
+          tag={onChainQueues?.defense?.active ? "On-chain" : undefined}
+        >
+          {onChainQueues?.defense?.active ? (
+            <QueueItemDisplay
+              label={`${onChainQueues.defense.kind === "defense" ? "Defense" : onChainQueues.defense.kind}${onChainQueues.defense.quantity ? ` ×${onChainQueues.defense.quantity}` : ""}`}
+              remaining={queueRemaining(onChainQueues.defense.readyAt, now)}
+              indeterminate
+              color="bg-rose-300"
+            />
+          ) : (
+            <EmptyQueue>
+              No active defense production.
+              <QuickLink onClick={() => onNavigate("defenses")}>Defenses</QuickLink>
             </EmptyQueue>
           )}
         </QueuePanel>

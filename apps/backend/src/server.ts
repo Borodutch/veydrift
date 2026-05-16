@@ -157,6 +157,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/defenses$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const ready = requireChainReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        assertAddress(wallet);
+        return Response.json(await ready.getDefenseState(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/research$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       const ready = requireChainReader(chainReader, loaded.problems);

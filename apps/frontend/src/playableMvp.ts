@@ -46,6 +46,17 @@ export type ShipKey =
   | "battlecruiser"
   | "reaper"
   | "pathfinder";
+export type DefenseKey =
+  | "rocketLauncher"
+  | "lightLaser"
+  | "heavyLaser"
+  | "smallShieldDome"
+  | "gaussCannon"
+  | "ionCannon"
+  | "plasmaTurret"
+  | "largeShieldDome"
+  | "antiBallisticMissile"
+  | "interplanetaryMissile";
 export type ResearchKey =
   | "energy"
   | "laser"
@@ -110,6 +121,7 @@ export type PlayableState = {
   buildings: Record<BuildingKey, number>;
   research: Record<ResearchKey, number>;
   ships: Record<ShipKey, number>;
+  defenses: Record<DefenseKey, number>;
   queue?: MainQueueItem | undefined;
   researchQueue?: ResearchQueueItem | undefined;
   lastSettledAt: number;
@@ -437,6 +449,134 @@ export const shipCatalog: Array<{
   },
 ];
 
+export const defenseCatalog: Array<{
+  key: DefenseKey;
+  id: number;
+  label: string;
+  group: "kinetic" | "energy" | "shield" | "missile";
+  baseCost: Resources;
+  requirements: Array<{
+    label: string;
+    kind: "building" | "technology";
+    key?: BuildingKey | ResearchKey;
+    level: number;
+  }>;
+  asset: string;
+}> = [
+  {
+    key: "rocketLauncher",
+    id: 0,
+    label: "Rocket Launcher",
+    group: "kinetic",
+    baseCost: { metal: 200, crystal: 0, deuterium: 0 },
+    requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
+    asset: "/assets/game/buildings/missile-silo-mid.webp",
+  },
+  {
+    key: "lightLaser",
+    id: 1,
+    label: "Light Laser",
+    group: "energy",
+    baseCost: { metal: 1_500, crystal: 500, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "laser", label: "Laser", level: 1 },
+    ],
+    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+  },
+  {
+    key: "heavyLaser",
+    id: 2,
+    label: "Heavy Laser",
+    group: "energy",
+    baseCost: { metal: 6_000, crystal: 2_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "laser", label: "Laser", level: 3 },
+    ],
+    asset: "/assets/game/buildings/fusion-reactor-high.webp",
+  },
+  {
+    key: "smallShieldDome",
+    id: 3,
+    label: "Small Shield Dome",
+    group: "shield",
+    baseCost: { metal: 10_000, crystal: 10_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "shielding", label: "Shielding", level: 2 },
+    ],
+    asset: "/assets/game/style-pass/generated/planets/deuterium-blue.webp",
+  },
+  {
+    key: "gaussCannon",
+    id: 4,
+    label: "Gauss Cannon",
+    group: "kinetic",
+    baseCost: { metal: 20_000, crystal: 15_000, deuterium: 2_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "laser", label: "Laser", level: 6 },
+      { kind: "technology", key: "shielding", label: "Shielding", level: 1 },
+    ],
+    asset: "/assets/game/ships/destroyer.webp",
+  },
+  {
+    key: "ionCannon",
+    id: 5,
+    label: "Ion Cannon",
+    group: "energy",
+    baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "ion", label: "Ion", level: 4 },
+    ],
+    asset: "/assets/game/style-pass/generated/planets/crystal-violet.webp",
+  },
+  {
+    key: "plasmaTurret",
+    id: 6,
+    label: "Plasma Turret",
+    group: "energy",
+    baseCost: { metal: 50_000, crystal: 50_000, deuterium: 30_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "plasma", label: "Plasma", level: 7 },
+    ],
+    asset: "/assets/game/planets/scorching-molten.webp",
+  },
+  {
+    key: "largeShieldDome",
+    id: 7,
+    label: "Large Shield Dome",
+    group: "shield",
+    baseCost: { metal: 50_000, crystal: 50_000, deuterium: 0 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "technology", key: "shielding", label: "Shielding", level: 6 },
+    ],
+    asset: "/assets/game/style-pass/generated/planets/outer-cryo.webp",
+  },
+  {
+    key: "antiBallisticMissile",
+    id: 8,
+    label: "Anti-Ballistic Missile",
+    group: "missile",
+    baseCost: { metal: 8_000, crystal: 0, deuterium: 2_000 },
+    requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
+    asset: "/assets/game/buildings/missile-silo-low.webp",
+  },
+  {
+    key: "interplanetaryMissile",
+    id: 9,
+    label: "Interplanetary Missile",
+    group: "missile",
+    baseCost: { metal: 12_500, crystal: 2_500, deuterium: 10_000 },
+    requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
+    asset: "/assets/game/buildings/missile-silo-high.webp",
+  },
+];
+
 export const researchCatalog: Array<{
   key: ResearchKey;
   id: number;
@@ -660,6 +800,18 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       battlecruiser: 0,
       reaper: 0,
       pathfinder: 0,
+    },
+    defenses: {
+      rocketLauncher: 0,
+      lightLaser: 0,
+      heavyLaser: 0,
+      smallShieldDome: 0,
+      gaussCannon: 0,
+      ionCannon: 0,
+      plasmaTurret: 0,
+      largeShieldDome: 0,
+      antiBallisticMissile: 0,
+      interplanetaryMissile: 0,
     },
     lastSettledAt: now,
   };

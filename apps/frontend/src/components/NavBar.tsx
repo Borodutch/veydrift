@@ -3,6 +3,7 @@ import { shortAddress } from "../walletFlow";
 export type Page =
   | "overview"
   | "infrastructure"
+  | "defenses"
   | "research"
   | "shipyard"
   | "galaxy"
@@ -18,6 +19,7 @@ interface NavBarProps {
 const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: string }> = [
   { key: "overview", label: "Overview", mobileLabel: "Overview", icon: "◈" },
   { key: "infrastructure", label: "Infrastructure", mobileLabel: "Infra", icon: "▣" },
+  { key: "defenses", label: "Defenses", mobileLabel: "Defense", icon: "◆" },
   { key: "research", label: "Research", mobileLabel: "Research", icon: "◇" },
   { key: "shipyard", label: "Shipyard", mobileLabel: "Shipyard", icon: "▸" },
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: "◉" },
@@ -69,7 +71,7 @@ export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps
       </nav>
 
       {/* Mobile top tabs */}
-      <nav className="grid grid-cols-5 border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
+      <nav className="grid grid-cols-6 border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
         {pages.map((page) => (
           <MobileTab
             active={active === page.key || (active === "planet" && page.key === "galaxy")}

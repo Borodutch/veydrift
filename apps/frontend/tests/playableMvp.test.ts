@@ -5,6 +5,7 @@ import {
   buildingDurationEstimate,
   canAfford,
   createInitialPlayableState,
+  defenseCatalog,
   energyBalance,
   productionPerHour,
   researchCatalog,
@@ -78,6 +79,22 @@ describe("playable MVP contract display helpers", () => {
       [15, "pathfinder", "Pathfinder"],
     ]);
     expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/"))).toBe(true);
+  });
+
+  test("maps the Solidity defense catalog for Defenses display", () => {
+    expect(defenseCatalog.map((defense) => [defense.id, defense.key, defense.label])).toEqual([
+      [0, "rocketLauncher", "Rocket Launcher"],
+      [1, "lightLaser", "Light Laser"],
+      [2, "heavyLaser", "Heavy Laser"],
+      [3, "smallShieldDome", "Small Shield Dome"],
+      [4, "gaussCannon", "Gauss Cannon"],
+      [5, "ionCannon", "Ion Cannon"],
+      [6, "plasmaTurret", "Plasma Turret"],
+      [7, "largeShieldDome", "Large Shield Dome"],
+      [8, "antiBallisticMissile", "Anti-Ballistic Missile"],
+      [9, "interplanetaryMissile", "Interplanetary Missile"],
+    ]);
+    expect(defenseCatalog.every((defense) => defense.asset.includes("/assets/game/"))).toBe(true);
   });
 
   test("reports Research Lab requirement without queuing local research", () => {

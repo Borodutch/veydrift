@@ -6,10 +6,12 @@ import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
 import { OverviewPage } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
+import { DefensePage } from "./components/DefensePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import {
   buildingContractIds,
+  type DefenseKey,
   productionPerHour,
   progress,
   storageCaps,
@@ -29,8 +31,10 @@ import {
 } from "./overviewData";
 import {
   fetchInfrastructureState,
+  fetchDefenseState,
   fetchShipyardState,
   fetchResearchState,
+  sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
   sendCollectResourcesTransaction,
@@ -38,9 +42,11 @@ import {
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
   sendStartBuildingUpgradeTransaction,
+  sendStartDefenseProductionTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   waitForReceipt,
+  type ChainDefenseState,
   type ChainInfrastructureState,
   type ChainResearchState,
   type ChainShipyardState,
@@ -63,6 +69,7 @@ type ShipyardActionState =
   | { status: "error"; label: string };
 
 type BuildingActionState = ShipyardActionState;
+type DefenseActionState = ShipyardActionState;
 
 export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
@@ -77,6 +84,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
   const [infrastructureError, setInfrastructureError] = useState<string | undefined>();
+  const [defenseState, setDefenseState] = useState<ChainDefenseState | null>(null);
+  const [defenseLoading, setDefenseLoading] = useState(false);
+  const [defenseError, setDefenseError] = useState<string | undefined>();
+  const [defenseAction, setDefenseAction] = useState<DefenseActionState>({ status: "idle" });
   const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
@@ -145,6 +156,28 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .finally(() => {
         setInfrastructureLoading(false);
+      });
+  }, [account, apiBaseUrl]);
+
+  const refreshDefenseState = useCallback(() => {
+    if (!apiBaseUrl || !account) {
+      setDefenseState(null);
+      return;
+    }
+
+    setDefenseLoading(true);
+    setDefenseError(undefined);
+    fetchDefenseState(apiBaseUrl, account)
+      .then((next) => {
+        setDefenseState(next);
+      })
+      .catch((error) => {
+        console.error(error);
+        setDefenseState(null);
+        setDefenseError(error instanceof Error ? error.message : "Defense state could not be loaded.");
+      })
+      .finally(() => {
+        setDefenseLoading(false);
       });
   }, [account, apiBaseUrl]);
 
@@ -334,6 +367,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [page, refreshShipyardState]);
 
   useEffect(() => {
+    if (page === "defenses") {
+      refreshDefenseState();
+    }
+  }, [page, refreshDefenseState]);
+
+  useEffect(() => {
     if (page === "research") {
       refreshResearchState();
     }
@@ -427,6 +466,28 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
 
+  const runDefenseTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+    setDefenseAction({ status: "pending", label });
+
+    try {
+      const txHash = await send();
+      setDefenseAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+      if (provider) {
+        await waitForReceipt(provider, txHash);
+      }
+      setDefenseAction({ status: "success", label: `${label} confirmed.` });
+      refreshDefenseState();
+      void refreshOnChainState();
+      refreshInfrastructureState();
+    } catch (error) {
+      console.error(error);
+      setDefenseAction({
+        status: "error",
+        label: error instanceof Error ? error.message : `${label} failed.`,
+      });
+    }
+  }, [provider, refreshDefenseState, refreshInfrastructureState, refreshOnChainState]);
+
   const runResearchTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setResearchAction({ status: "pending", label });
 
@@ -505,6 +566,36 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       shipyardState.homePlanetId ?? "0",
     ));
   }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
+
+  const handleBuildDefense = useCallback((defenseId: number, _key: DefenseKey, quantity: number) => {
+    if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
+      setDefenseAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runDefenseTransaction("Defense production", () => sendStartDefenseProductionTransaction(
+      provider,
+      account,
+      gameContract,
+      defenseState.homePlanetId ?? "0",
+      defenseId,
+      quantity,
+    ));
+  }, [account, defenseState?.homePlanetId, gameContract, provider, runDefenseTransaction]);
+
+  const handleFinishDefenseProduction = useCallback(() => {
+    if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
+      setDefenseAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runDefenseTransaction("Defense completion", () => sendFinishDefenseProductionTransaction(
+      provider,
+      account,
+      gameContract,
+      defenseState.homePlanetId ?? "0",
+    ));
+  }, [account, defenseState?.homePlanetId, gameContract, provider, runDefenseTransaction]);
 
   const handleResearch = useCallback((technologyId: number, _key: ResearchKey) => {
     if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
@@ -615,6 +706,21 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           researchState={researchState}
           settledState={settledState}
           state={state}
+        />
+      );
+    }
+
+    if (page === "defenses") {
+      return (
+        <DefensePage
+          actionState={defenseAction}
+          canTransact={Boolean(provider && account && gameContract)}
+          defenseState={defenseState}
+          error={defenseError}
+          loading={defenseLoading}
+          onBuild={handleBuildDefense}
+          onFinish={handleFinishDefenseProduction}
+          onRefresh={refreshDefenseState}
         />
       );
     }
