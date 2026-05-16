@@ -65,6 +65,22 @@ export type ShipyardState = {
   queue: QueueState | null;
 };
 
+export type InfrastructureState = {
+  wallet: Address;
+  homePlanetId: string | null;
+  infrastructureAvailable: boolean;
+  unavailableReason?: string;
+  resources: Resources | null;
+  productionPerHour: Resources | null;
+  storageCaps: Resources | null;
+  buildings: Array<{
+    id: number;
+    level: number;
+    cost: Resources;
+  }>;
+  queue: QueueState | null;
+};
+
 export type ResearchState = {
   wallet: Address;
   homePlanetId: string | null;
@@ -91,6 +107,7 @@ export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address): Promise<PlayerQueues>;
+  getInfrastructureState(wallet: Address): Promise<InfrastructureState>;
   getShipyardState(wallet: Address): Promise<ShipyardState>;
   getResearchState(wallet: Address): Promise<ResearchState>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
@@ -234,6 +251,67 @@ export class VeydriftGameReader implements ChainReader {
       defense,
       ship,
       research
+    };
+  }
+
+  async getInfrastructureState(wallet: Address): Promise<InfrastructureState> {
+    let settlement: WalletSettlement;
+    try {
+      settlement = await this.getGameSettlement(wallet);
+    } catch (error) {
+      if (!isRpcRevert(error) || !this.settlementContractAddress) {
+        throw error;
+      }
+
+      return {
+        wallet,
+        homePlanetId: null,
+        infrastructureAvailable: false,
+        unavailableReason:
+          "The deployed contract only supports first-planet settlement. Infrastructure upgrades are not available on this deployment yet.",
+        resources: null,
+        productionPerHour: null,
+        storageCaps: null,
+        buildings: [],
+        queue: null
+      };
+    }
+
+    if (!settlement.homePlanetId) {
+      return {
+        wallet,
+        homePlanetId: null,
+        infrastructureAvailable: true,
+        resources: null,
+        productionPerHour: null,
+        storageCaps: null,
+        buildings: Array.from({ length: buildingCount }, (_, id) => ({
+          id,
+          level: 0,
+          cost: zeroResources()
+        })),
+        queue: null
+      };
+    }
+
+    const planetId = BigInt(settlement.homePlanetId);
+    const [resources, productionPerHour, storageCaps, queue, buildings] = await Promise.all([
+      this.readResources("0x0adbf924", planetId),
+      this.readResources("0x9ec5e0d5", planetId),
+      this.readResources("0x6db0ecd7", planetId),
+      this.readPlanetQueue("0xb8e835ab", planetId, "building"),
+      this.readBuildingRows(planetId)
+    ]);
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      infrastructureAvailable: true,
+      resources,
+      productionPerHour,
+      storageCaps,
+      buildings,
+      queue
     };
   }
 
@@ -441,6 +519,23 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
+  private async readBuildingRows(planetId: bigint): Promise<InfrastructureState["buildings"]> {
+    return Promise.all(
+      Array.from({ length: buildingCount }, async (_, id) => {
+        const [level, cost] = await Promise.all([
+          this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(BigInt(id))]),
+          this.readResourcesCall("0x291ee1b5", [encodeUint(planetId), encodeUint(BigInt(id))])
+        ]);
+
+        return {
+          id,
+          level: Number(level),
+          cost
+        };
+      })
+    );
+  }
+
   private async readTechnologyRows(wallet: Address): Promise<ResearchState["technologies"]> {
     return Promise.all(
       Array.from({ length: technologyCount }, async (_, id) => {
@@ -548,6 +643,7 @@ export class VeydriftGameReader implements ChainReader {
 }
 
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
+const buildingCount = 10;
 const shipCount = 16;
 const technologyCount = 16;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";

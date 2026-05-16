@@ -33,6 +33,7 @@ const buildingDescriptions: Record<BuildingKey, string> = {
 interface InfrastructurePageProps {
   actionNotice?: { label: string; tone: "error" | "success" | "pending" } | undefined;
   actionUnavailableReason?: string | undefined;
+  chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
   state: PlayableState;
   settledState: PlayableState;
   onUpgrade: (key: BuildingKey) => void;
@@ -41,6 +42,7 @@ interface InfrastructurePageProps {
 export function InfrastructurePage({
   actionNotice,
   actionUnavailableReason,
+  chainCosts,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
@@ -102,6 +104,7 @@ export function InfrastructurePage({
             actionNotice={actionNotice}
             actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
+            chainCost={chainCosts?.[selectedBuilding.key]}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             state={settledState}
           />
@@ -165,19 +168,21 @@ function BuildingDetailPanel({
   actionNotice,
   actionUnavailableReason,
   building,
+  chainCost,
   onUpgrade,
   state,
 }: {
   actionNotice?: { label: string; tone: "error" | "success" | "pending" } | undefined;
   actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
+  chainCost?: Resources | undefined;
   onUpgrade: () => void;
   state: PlayableState;
 }) {
   const currentLevel = state.buildings[building.key];
   const effect = buildingEffectMetrics(state.buildings, building.key);
   const energy = buildingEnergyDetail(state.buildings, building.key);
-  const status = buildingUpgradeStatus(state, building.key, { actionUnavailableReason });
+  const status = buildingUpgradeStatus(state, building.key, { actionUnavailableReason, chainCost });
   const effectRows = detailEffectRows(effect, energy);
   const actionVerb = currentLevel === 0 ? "Build" : "Upgrade";
   const actionLabel = `${actionVerb} Level ${status.targetLevel}`;

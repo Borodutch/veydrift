@@ -6,7 +6,7 @@ import {
   formatDuration,
   formatNumber,
 } from "../src/buildingDetails";
-import { createInitialPlayableState, startBuildingUpgrade } from "../src/playableMvp";
+import { createInitialPlayableState } from "../src/playableMvp";
 
 describe("building detail helpers", () => {
   test("formats costs, durations, and numbers without raw decimals", () => {
@@ -44,7 +44,17 @@ describe("building detail helpers", () => {
   });
 
   test("reports queue and energy details from modeled building state", () => {
-    const queued = startBuildingUpgrade(createInitialPlayableState(1_000), "metalMine", 1_000);
+    const queued = {
+      ...createInitialPlayableState(1_000),
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 1,
+      },
+    };
 
     expect(buildingUpgradeStatus(queued, "solarPlant")).toMatchObject({
       disabled: true,

@@ -3,6 +3,7 @@ import type { BackendConfig } from "./config";
 import type {
   Address,
   ChainReader,
+  InfrastructureState,
   PlanetState,
   PlayerQueues,
   ResearchState,
@@ -78,6 +79,48 @@ class MockChainReader implements ChainReader {
       defense: null,
       ship: null,
       research: null
+    };
+  }
+
+  async getInfrastructureState(wallet: Address): Promise<InfrastructureState> {
+    return {
+      wallet,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: true,
+      resources: planet.resources,
+      productionPerHour: {
+        metal: "30",
+        crystal: "15",
+        deuterium: "8"
+      },
+      storageCaps: {
+        metal: "10000",
+        crystal: "10000",
+        deuterium: "10000"
+      },
+      buildings: [
+        {
+          id: 0,
+          level: 1,
+          cost: {
+            metal: "120",
+            crystal: "30",
+            deuterium: "0"
+          }
+        }
+      ],
+      queue: {
+        active: true,
+        kind: "building",
+        itemId: 0,
+        targetLevel: 2,
+        readyAt: "1770000060",
+        cost: {
+          metal: "60",
+          crystal: "15",
+          deuterium: "0"
+        }
+      }
     };
   }
 
@@ -359,6 +402,31 @@ describe("Veydrift backend", () => {
       }
     });
     expect(response.status).toBe(200);
+  });
+
+  test("answers infrastructure state from a mocked chain reader", async () => {
+    const handler = createRequestHandler({ chainReader: new MockChainReader(), config: configuredTestConfig });
+    const response = await handler(
+      new Request(`http://localhost/wallet/${player}/infrastructure`)
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.wallet).toBe(player);
+    expect(body.resources.metal).toBe("5000");
+    expect(body.buildings).toContainEqual({
+      id: 0,
+      level: 1,
+      cost: {
+        metal: "120",
+        crystal: "30",
+        deuterium: "0"
+      }
+    });
+    expect(body.queue).toMatchObject({
+      active: true,
+      kind: "building"
+    });
   });
 
   test("answers research state from a mocked chain reader", async () => {

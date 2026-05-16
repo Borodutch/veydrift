@@ -89,6 +89,22 @@ export type ChainShipyardState = {
   queue: QueueStateResponse | null;
 };
 
+export type ChainInfrastructureState = {
+  wallet: string;
+  homePlanetId: string | null;
+  infrastructureAvailable?: boolean;
+  unavailableReason?: string;
+  resources: OnChainResources | null;
+  productionPerHour: OnChainResources | null;
+  storageCaps: OnChainResources | null;
+  buildings: Array<{
+    id: number;
+    level: number;
+    cost: OnChainResources;
+  }>;
+  queue: QueueStateResponse | null;
+};
+
 export type ChainResearchState = {
   wallet: string;
   homePlanetId: string | null;
@@ -605,6 +621,12 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/queues`);
   if (!response.ok) throw new Error(`Queues API failed: ${response.status}`);
   return response.json() as Promise<PlayerQueuesResponse>;
+}
+
+export async function fetchInfrastructureState(apiUrl: string, wallet: string): Promise<ChainInfrastructureState> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/infrastructure`);
+  if (!response.ok) throw new Error(`Infrastructure API failed: ${response.status}`);
+  return response.json() as Promise<ChainInfrastructureState>;
 }
 
 export async function fetchShipyardState(apiUrl: string, wallet: string): Promise<ChainShipyardState> {
