@@ -11,6 +11,7 @@ import {
   defenseCatalog,
   energyBalance,
   hasCollectableResources,
+  productionCapacityPerHour,
   productionPerHour,
   researchCatalog,
   researchRequirementsFor,
@@ -248,7 +249,7 @@ describe("playable MVP contract display helpers", () => {
     expect(mineEffect.kind).toBe("production");
     if (mineEffect.kind === "production") {
       expect(mineEffect.resource).toBe("metal");
-      expect(mineEffect.currentPerHour).toBe(productionPerHour(buildings).metal);
+      expect(mineEffect.currentPerHour).toBe(productionCapacityPerHour(buildings).metal);
       expect(mineEffect.deltaPerHour).toBeGreaterThan(0);
     }
 
@@ -274,13 +275,35 @@ describe("playable MVP contract display helpers", () => {
     };
 
     const production = productionPerHour(buildings, profile);
+    const capacity = productionCapacityPerHour(buildings, profile);
     const effect = buildingEffectMetrics(buildings, "metalMine", profile);
 
     expect(production.metal).toBe(66);
+    expect(capacity.metal).toBe(66);
     expect(effect.kind).toBe("production");
     if (effect.kind === "production") {
       expect(effect.currentPerHour).toBe(66);
-      expect(effect.nextPerHour).toBe(productionPerHour({ ...buildings, metalMine: 2 }, profile).metal);
+      expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 2 }, profile).metal);
+      expect(effect.deltaPerHour).toBeGreaterThan(0);
+    }
+  });
+
+  test("shows mine upgrade capacity separately from low-energy throttled production", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      metalMine: 0,
+      solarPlant: 0,
+    };
+
+    const poweredProduction = productionPerHour({ ...buildings, metalMine: 1 }).metal;
+    const effect = buildingEffectMetrics(buildings, "metalMine");
+
+    expect(poweredProduction).toBe(0);
+    expect(effect.kind).toBe("production");
+    if (effect.kind === "production") {
+      expect(effect.currentPerHour).toBe(productionCapacityPerHour(buildings).metal);
+      expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 1 }).metal);
       expect(effect.deltaPerHour).toBeGreaterThan(0);
     }
   });
