@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {Building, Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
@@ -22,25 +21,21 @@ contract VeydriftGameTest is Test {
     );
 
     function setUp() public {
-        VeydriftGame implementation = new VeydriftGame();
-        bytes memory initData = abi.encodeCall(VeydriftGame.initialize, (admin));
-        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
-        game = VeydriftGame(address(proxy));
+        game = new VeydriftGame(admin);
         vm.deal(player, 1 ether);
     }
 
-    function testProxyInitializationAndUpgradeGuard() public {
+    function testInitializationAndOwnerGuard() public {
         assertEq(game.owner(), admin);
         assertEq(game.startPrice(), 0.05 ether);
 
-        VeydriftGame nextImplementation = new VeydriftGame();
         vm.prank(player);
         vm.expectRevert();
-        game.upgradeToAndCall(address(nextImplementation), "");
+        game.setStartPrice(0.01 ether);
 
         vm.prank(admin);
-        game.upgradeToAndCall(address(nextImplementation), "");
-        assertEq(game.owner(), admin);
+        game.setStartPrice(0.01 ether);
+        assertEq(game.startPrice(), 0.01 ether);
     }
 
     function testPlanetGenerationPaymentCoordinatesAndInitialResources() public {
@@ -99,13 +94,8 @@ contract VeydriftGameTest is Test {
         assertLe(preview.system, 499);
         assertGe(preview.position, 1);
         assertLe(preview.position, 15);
-        assertEq(
-            preview.coordinateKey,
-            game.coordinateKey(preview.galaxy, preview.system, preview.position)
-        );
-        assertEq(
-            preview.planetSeed, game.planetSeed(preview.galaxy, preview.system, preview.position)
-        );
+        assertGe(preview.fields, 160);
+        assertLe(preview.fields, 239);
         assertEq(preview.settledAt, 0);
         assertEq(preview.settledBlock, 0);
 
@@ -118,10 +108,8 @@ contract VeydriftGameTest is Test {
         assertEq(settled.galaxy, planet.galaxy);
         assertEq(settled.system, planet.system);
         assertEq(settled.position, planet.position);
-        assertEq(
-            settled.coordinateKey, game.coordinateKey(planet.galaxy, planet.system, planet.position)
-        );
-        assertEq(settled.planetSeed, game.planetSeed(planet.galaxy, planet.system, planet.position));
+        assertEq(settled.fields, planet.fields);
+        assertEq(settled.temperature, planet.temperature);
         assertEq(settled.settledAt, planet.lastSettledAt);
         assertEq(settled.settledBlock, 0);
 

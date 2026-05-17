@@ -831,29 +831,33 @@ export function productionPerHour(
 ): Resources {
   const energy = energyBalance(buildings);
 
+  const capacity = productionCapacityPerHour(buildings, profile);
+
+  return {
+    metal: scaleByBps(capacity.metal, energy.scaleBps),
+    crystal: scaleByBps(capacity.crystal, energy.scaleBps),
+    deuterium: scaleByBps(capacity.deuterium, energy.scaleBps),
+  };
+}
+
+export function productionCapacityPerHour(
+  buildings: Record<BuildingKey, number>,
+  profile: PlanetProductionProfile = PLANET,
+): Resources {
   return {
     metal: scaleByBps(
-      scaleByBps(
-        30 + buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
-        profile.metalMultiplierBps,
-      ),
-      energy.scaleBps,
+      30 + buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
+      profile.metalMultiplierBps,
     ),
     crystal: scaleByBps(
-      scaleByBps(
-        15 + buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
-        profile.crystalMultiplierBps,
-      ),
-      energy.scaleBps,
+      15 + buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
+      profile.crystalMultiplierBps,
     ),
     deuterium: scaleByBps(
-      scaleByBps(
-        8
-          + buildings.deuteriumSynthesizer * 10
-          + buildings.deuteriumSynthesizer * buildings.deuteriumSynthesizer * 3,
-        profile.deuteriumMultiplierBps,
-      ),
-      energy.scaleBps,
+      8
+        + buildings.deuteriumSynthesizer * 10
+        + buildings.deuteriumSynthesizer * buildings.deuteriumSynthesizer * 3,
+      profile.deuteriumMultiplierBps,
     ),
   };
 }
@@ -906,8 +910,8 @@ export function buildingEffectMetrics(
   };
 
   if (key === "metalMine" || key === "crystalMine" || key === "deuteriumSynthesizer") {
-    const current = productionPerHour(buildings, profile);
-    const next = productionPerHour(nextBuildings, profile);
+    const current = productionCapacityPerHour(buildings, profile);
+    const next = productionCapacityPerHour(nextBuildings, profile);
     const resource = productionResourceForBuilding(key);
 
     return {

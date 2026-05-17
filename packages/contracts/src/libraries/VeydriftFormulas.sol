@@ -11,7 +11,7 @@ library VeydriftFormulas {
     error LevelTooHigh();
 
     function planetMultipliers(int16 temperature, uint16 fields)
-        internal
+        public
         pure
         returns (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier)
     {
@@ -30,11 +30,7 @@ library VeydriftFormulas {
         uint16 crystalMultiplierBps,
         uint16 deuteriumMultiplierBps,
         uint16 bps
-    )
-        internal
-        pure
-        returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour)
-    {
+    ) public pure returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) {
         uint256 requiredEnergy = (metalLevel * 10) + (crystalLevel * 12) + (deuteriumLevel * 20);
         uint256 producedEnergy = solarLevel * 30;
         uint256 energyScale = requiredEnergy == 0 || producedEnergy >= requiredEnergy
@@ -61,7 +57,7 @@ library VeydriftFormulas {
     }
 
     function storageCaps(uint256 metalStorage, uint256 crystalStorage, uint256 deuteriumTank)
-        internal
+        public
         pure
         returns (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap)
     {
@@ -75,7 +71,7 @@ library VeydriftFormulas {
         uint128 metalCost,
         uint128 crystalCost,
         uint32 minQueueSeconds
-    ) internal pure returns (uint256) {
+    ) public pure returns (uint256) {
         uint256 raw = (uint256(metalCost) + uint256(crystalCost)) / (100 * (roboticsLevel + 1));
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
@@ -87,7 +83,7 @@ library VeydriftFormulas {
         uint128 deuteriumCost,
         uint32 quantity,
         uint32 minQueueSeconds
-    ) internal pure returns (uint256) {
+    ) public pure returns (uint256) {
         uint256 raw =
             (uint256(metalCost) + uint256(crystalCost) + uint256(deuteriumCost))
                 / (200 * (shipyardLevel + 1));
@@ -101,7 +97,7 @@ library VeydriftFormulas {
         uint128 crystalCost,
         uint128 deuteriumCost,
         uint32 minQueueSeconds
-    ) internal pure returns (uint256) {
+    ) public pure returns (uint256) {
         uint256 raw =
             (uint256(metalCost) + uint256(crystalCost) + uint256(deuteriumCost))
                 / (120 * (labLevel + 1));

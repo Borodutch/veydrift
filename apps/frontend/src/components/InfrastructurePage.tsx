@@ -420,7 +420,7 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
   if (effect.kind === "production") {
     rows.push({
       delta: `${formatSigned(effect.deltaPerHour)}/h`,
-      label: "Production",
+      label: "Production capacity",
       next: `${formatNumber(effect.nextPerHour)} ${shortResourceLabels[effect.resource]}/h`,
       value: `${formatNumber(effect.currentPerHour)} ${shortResourceLabels[effect.resource]}/h`,
     });

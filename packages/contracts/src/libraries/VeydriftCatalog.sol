@@ -7,7 +7,7 @@ import {Building, Defense, Ship, Technology} from "./VeydriftTypes.sol";
 library VeydriftCatalog {
     error InvalidId();
 
-    function buildingBaseCost(Building building) internal pure returns (uint128, uint128, uint128) {
+    function buildingBaseCost(Building building) public pure returns (uint128, uint128, uint128) {
         if (building == Building.MetalMine) return (60, 15, 0);
         if (building == Building.CrystalMine) return (48, 24, 0);
         if (building == Building.DeuteriumSynthesizer) return (225, 75, 0);
@@ -26,7 +26,7 @@ library VeydriftCatalog {
         revert InvalidId();
     }
 
-    function defenseCost(Defense defense) internal pure returns (uint128, uint128, uint128) {
+    function defenseCost(Defense defense) public pure returns (uint128, uint128, uint128) {
         if (defense == Defense.RocketLauncher) return (200, 0, 0);
         if (defense == Defense.LightLaser) return (1_500, 500, 0);
         if (defense == Defense.HeavyLaser) return (6_000, 2_000, 0);
@@ -40,7 +40,7 @@ library VeydriftCatalog {
         revert InvalidId();
     }
 
-    function shipCost(Ship ship) internal pure returns (uint128, uint128, uint128) {
+    function shipCost(Ship ship) public pure returns (uint128, uint128, uint128) {
         if (ship == Ship.SmallCargo) return (2_000, 2_000, 0);
         if (ship == Ship.LightFighter) return (3_000, 1_000, 0);
         if (ship == Ship.Recycler) return (10_000, 6_000, 2_000);
@@ -60,7 +60,7 @@ library VeydriftCatalog {
         revert InvalidId();
     }
 
-    function shipCargoCapacity(Ship ship) internal pure returns (uint256) {
+    function shipCargoCapacity(Ship ship) public pure returns (uint256) {
         if (ship == Ship.SmallCargo) return 5_000;
         if (ship == Ship.LightFighter) return 50;
         if (ship == Ship.Recycler) return 20_000;
@@ -81,11 +81,13 @@ library VeydriftCatalog {
     }
 
     function researchBaseCost(Technology technology)
-        internal
+        public
         pure
         returns (uint128, uint128, uint128)
     {
-        if (technology == Technology.Energy) return (0, 800, 400);
+        if (technology == Technology.Energy) {
+            return (0, 800, 400);
+        }
         if (technology == Technology.Laser) return (200, 100, 0);
         if (technology == Technology.Ion) return (1_000, 300, 100);
         if (technology == Technology.CombustionDrive) return (400, 0, 600);
