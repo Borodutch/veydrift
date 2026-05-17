@@ -732,7 +732,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       caps={caps}
       coordinates={planet?.coordinates}
       isWalletConnected={isWalletConnected}
-      queue={settledState.queue}
+      queue={isWalletConnected ? undefined : settledState.queue}
       rates={rates}
       resourceStatus={isWalletConnected ? onChainStatus : "local"}
       researchQueue={isWalletConnected ? undefined : settledState.researchQueue}

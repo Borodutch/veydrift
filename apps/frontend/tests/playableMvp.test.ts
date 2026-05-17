@@ -18,6 +18,7 @@ import {
   storageCaps,
   unmetResearchRequirement,
 } from "../src/playableMvp";
+import { infrastructurePlayableState } from "../src/chainState";
 
 const PUBLIC_DIR = join(import.meta.dir, "..", "public");
 
@@ -35,6 +36,50 @@ describe("playable MVP contract display helpers", () => {
       crystal: 10_000,
       deuterium: 10_000,
     });
+  });
+
+  test("uses contract infrastructure state without inheriting local debug grants", () => {
+    const localDebugState = createInitialPlayableState(1_000);
+    localDebugState.resources = { metal: 500_000, crystal: 500_000, deuterium: 500_000 };
+    localDebugState.buildings = {
+      ...localDebugState.buildings,
+      metalMine: 3,
+      crystalMine: 3,
+      deuteriumSynthesizer: 3,
+      solarPlant: 8,
+      shipyard: 12,
+      metalStorage: 50,
+      crystalStorage: 50,
+      deuteriumTank: 50,
+    };
+
+    const contractState = infrastructurePlayableState({
+      wallet: "0x2222222222222222222222222222222222222222",
+      homePlanetId: "7",
+      infrastructureAvailable: true,
+      resources: { metal: "5100", crystal: "5000", deuterium: "4900" },
+      productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
+      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
+      buildings: [
+        { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
+        { id: 3, level: 2, cost: { metal: "300", crystal: "120", deuterium: "0" } },
+        { id: 7, level: 1, cost: { metal: "2000", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+    }, 1_000);
+
+    expect(localDebugState.buildings.metalStorage).toBe(50);
+    expect(contractState.resources).toEqual({ metal: 5_100, crystal: 5_000, deuterium: 4_900 });
+    expect(contractState.buildings).toMatchObject({
+      metalMine: 1,
+      crystalMine: 0,
+      solarPlant: 2,
+      shipyard: 0,
+      metalStorage: 1,
+      crystalStorage: 0,
+      deuteriumTank: 0,
+    });
+    expect(contractState.queue).toBeUndefined();
   });
 
   test("scales upgrade costs by contract-backed current level", () => {
