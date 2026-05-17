@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {
-    OwnableUpgradeable
-} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
@@ -14,7 +9,7 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 
 /// @notice Playable Veydrift MVP: one home planet, lazy resources, production, units, and research.
 /// @dev MVP simplifications: no colonies, fleet movement, combat, espionage reports, markets, or NFTs.
-contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+contract VeydriftGame {
     using SafeCast for int256;
     using SafeCast for uint256;
 
@@ -58,8 +53,8 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint16 galaxy;
         uint16 system;
         uint8 position;
-        bytes32 coordinateKey;
-        bytes32 planetSeed;
+        uint16 fields;
+        int16 temperature;
         uint64 settledAt;
         uint64 settledBlock;
     }
@@ -113,6 +108,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     uint256 public startPrice;
     uint256 public nextPlanetId;
+    address private _owner;
 
     mapping(address player => uint256 planetId) public homePlanetOf;
     mapping(uint256 planetId => Planet planet) private _planets;
@@ -160,6 +156,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error FleetAlreadyReturning();
     error FleetAlreadyArrived();
     error TransferFailed();
+    error Unauthorized(address account);
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -272,16 +269,22 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     );
     event FeesWithdrawn(address indexed to, uint256 amount);
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
-    function initialize(address admin) external initializer {
-        __Ownable_init(admin);
+    constructor(address admin) {
+        _owner = admin;
         startPrice = DEFAULT_START_PRICE;
         nextPlanetId = 1;
         nextFleetId = 1;
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != _owner) {
+            revert Unauthorized(msg.sender);
+        }
+        _;
+    }
+
+    function owner() external view returns (address) {
+        return _owner;
     }
 
     function setStartPrice(uint256 nextPrice) external onlyOwner {
@@ -336,13 +339,14 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             return _firstPlanetFrom(planetId);
         }
 
-        (uint16 galaxy, uint16 system, uint8 position) = _previewFirstPlanetCoordinates(player);
+        (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
+            _previewFirstPlanet(player);
         return FirstPlanet({
             galaxy: galaxy,
             system: system,
             position: position,
-            coordinateKey: coordinateKey(galaxy, system, position),
-            planetSeed: planetSeed(galaxy, system, position),
+            fields: fields,
+            temperature: temperature,
             settledAt: 0,
             settledBlock: 0
         });
@@ -945,8 +949,6 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         return _scaleByLevel(Resources(metal, crystal, deuterium), currentLevel);
     }
 
-    function _authorizeUpgrade(address) internal override onlyOwner {}
-
     function _collectReadyOutputs(uint256 planetId, address player) private {
         _settleResources(planetId);
         _collectReadyBuilding(planetId);
@@ -1145,17 +1147,17 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             galaxy: planetRef.galaxy,
             system: planetRef.system,
             position: planetRef.position,
-            coordinateKey: coordinateKey(planetRef.galaxy, planetRef.system, planetRef.position),
-            planetSeed: planetSeed(planetRef.galaxy, planetRef.system, planetRef.position),
+            fields: planetRef.fields,
+            temperature: planetRef.temperature,
             settledAt: planetRef.lastSettledAt,
             settledBlock: 0
         });
     }
 
-    function _previewFirstPlanetCoordinates(address player)
+    function _previewFirstPlanet(address player)
         private
         view
-        returns (uint16 galaxy, uint16 system, uint8 position)
+        returns (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature)
     {
         for (uint256 attempt = 0; attempt < 64; attempt++) {
             bytes32 seed = keccak256(
@@ -1167,7 +1169,11 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             system = uint16(((uint256(seed) >> 16) % MAX_SYSTEM) + 1);
             position = uint8(((uint256(seed) >> 32) % MAX_POSITION) + 1);
             if (!occupiedCoordinates[coordinateKey(galaxy, system, position)]) {
-                return (galaxy, system, position);
+                fields = uint16(160 + ((uint256(seed) >> 48) % 80));
+                temperature = int16(
+                    int256(20) - int256(uint256(position) * 5) + int256((uint256(seed) >> 64) % 21)
+                );
+                return (galaxy, system, position, fields, temperature);
             }
         }
         revert CoordinatesExhausted();
