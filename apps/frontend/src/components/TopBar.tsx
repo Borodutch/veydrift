@@ -14,6 +14,9 @@ interface TopBarProps {
   account?: string | undefined;
   coordinates?: string | undefined;
   isWalletConnected: boolean;
+  canCollectResources?: boolean | undefined;
+  onCollectResources?: (() => void) | undefined;
+  showCollectResources?: boolean | undefined;
 }
 
 export function TopBar({
@@ -26,8 +29,16 @@ export function TopBar({
   account,
   coordinates,
   isWalletConnected,
+  canCollectResources = false,
+  onCollectResources,
+  showCollectResources = false,
 }: TopBarProps) {
   const showResourceDetails = resourceStatus === "local" || resourceStatus === "ready";
+  const showCollectButton = isWalletConnected
+    && showCollectResources
+    && canCollectResources
+    && resourceStatus === "ready"
+    && Boolean(onCollectResources);
 
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
@@ -61,6 +72,17 @@ export function TopBar({
                 value={resources.deuterium}
               />
             </>
+          )}
+          {showCollectButton && (
+            <button
+              className="col-span-3 inline-flex h-7 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 text-[11px] font-semibold leading-none text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-span-1"
+              disabled={!canCollectResources}
+              onClick={onCollectResources}
+              title={canCollectResources ? "Collect accrued resources" : "Nothing to collect yet"}
+              type="button"
+            >
+              Collect
+            </button>
           )}
           {queue && (
             <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-white/10 px-2 text-xs leading-none text-slate-300">
