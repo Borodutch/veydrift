@@ -86,6 +86,70 @@ contract VeydriftGameTest is Test {
         assertFalse(game.isCoordinateAvailable(planet.galaxy, planet.system, planet.position));
     }
 
+    function testCompactFirstPlanetViewsAndSettlementEntrypoint() public {
+        assertFalse(game.hasFirstPlanet(player));
+
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGame.NoFirstPlanet.selector, player));
+        game.firstPlanetOf(player);
+
+        VeydriftGame.FirstPlanet memory preview = game.previewFirstPlanet(player);
+        assertGe(preview.galaxy, 1);
+        assertLe(preview.galaxy, 9);
+        assertGe(preview.system, 1);
+        assertLe(preview.system, 499);
+        assertGe(preview.position, 1);
+        assertLe(preview.position, 15);
+        assertEq(
+            preview.coordinateKey,
+            game.coordinateKey(preview.galaxy, preview.system, preview.position)
+        );
+        assertEq(
+            preview.planetSeed, game.planetSeed(preview.galaxy, preview.system, preview.position)
+        );
+        assertEq(preview.settledAt, 0);
+        assertEq(preview.settledBlock, 0);
+
+        vm.prank(player);
+        VeydriftGame.FirstPlanet memory settled = game.settleFirstPlanet{value: 0.05 ether}();
+
+        assertTrue(game.hasFirstPlanet(player));
+        uint256 planetId = game.homePlanetOf(player);
+        VeydriftGame.Planet memory planet = game.planet(planetId);
+        assertEq(settled.galaxy, planet.galaxy);
+        assertEq(settled.system, planet.system);
+        assertEq(settled.position, planet.position);
+        assertEq(
+            settled.coordinateKey, game.coordinateKey(planet.galaxy, planet.system, planet.position)
+        );
+        assertEq(settled.planetSeed, game.planetSeed(planet.galaxy, planet.system, planet.position));
+        assertEq(settled.settledAt, planet.lastSettledAt);
+        assertEq(settled.settledBlock, 0);
+
+        VeydriftGame.FirstPlanet memory firstPlanet = game.firstPlanetOf(player);
+        assertEq(firstPlanet.galaxy, planet.galaxy);
+        assertEq(firstPlanet.system, planet.system);
+        assertEq(firstPlanet.position, planet.position);
+
+        VeydriftGame.FirstPlanet memory settledPreview = game.previewFirstPlanet(player);
+        assertEq(settledPreview.galaxy, planet.galaxy);
+        assertEq(settledPreview.system, planet.system);
+        assertEq(settledPreview.position, planet.position);
+    }
+
+    function testCompactFirstPlanetSettlementAllowsZeroPriceWhenConfigured() public {
+        vm.prank(admin);
+        game.setStartPrice(0);
+
+        vm.prank(player);
+        VeydriftGame.FirstPlanet memory settled = game.settleFirstPlanet();
+
+        assertTrue(game.hasFirstPlanet(player));
+        VeydriftGame.Planet memory planet = game.planet(game.homePlanetOf(player));
+        assertEq(settled.galaxy, planet.galaxy);
+        assertEq(settled.system, planet.system);
+        assertEq(settled.position, planet.position);
+    }
+
     function testFirstPlanetWeakEntropyChangesSettlementMoment() public {
         vm.roll(20_000);
         vm.warp(1_800_000_000);
