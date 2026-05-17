@@ -1,3 +1,6 @@
+import type { LucideIcon } from "lucide-preact";
+import { Factory, FlaskConical, Orbit, Radar, Rocket, Shield } from "lucide-preact";
+
 import { shortAddress } from "../walletFlow";
 
 export type Page =
@@ -16,13 +19,13 @@ interface NavBarProps {
   onNavigate: (page: Page) => void;
 }
 
-const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: string }> = [
-  { key: "overview", label: "Overview", mobileLabel: "Overview", icon: "◈" },
-  { key: "infrastructure", label: "Infrastructure", mobileLabel: "Infra", icon: "▣" },
-  { key: "defenses", label: "Defenses", mobileLabel: "Defense", icon: "◆" },
-  { key: "research", label: "Research", mobileLabel: "Research", icon: "◇" },
-  { key: "shipyard", label: "Shipyard", mobileLabel: "Shipyard", icon: "▸" },
-  { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: "◉" },
+const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: LucideIcon }> = [
+  { key: "overview", label: "Overview", mobileLabel: "Overview", icon: Radar },
+  { key: "infrastructure", label: "Infrastructure", mobileLabel: "Infra", icon: Factory },
+  { key: "defenses", label: "Defenses", mobileLabel: "Defense", icon: Shield },
+  { key: "research", label: "Research", mobileLabel: "Research", icon: FlaskConical },
+  { key: "shipyard", label: "Shipyard", mobileLabel: "Shipyard", icon: Rocket },
+  { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },
 ];
 
 export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps) {
@@ -88,12 +91,12 @@ export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps
 
 function NavItem({
   active,
-  icon,
+  icon: Icon,
   label,
   onClick,
 }: {
   active: boolean;
-  icon: string;
+  icon: LucideIcon;
   label: string;
   onClick: () => void;
 }) {
@@ -108,8 +111,8 @@ function NavItem({
       type="button"
       aria-current={active ? "page" : undefined}
     >
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-xs opacity-80">
-        {icon}
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-slate-300 opacity-90">
+        <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
       </span>
       <span className="min-w-0 truncate">{label}</span>
     </button>
@@ -118,12 +121,12 @@ function NavItem({
 
 function MobileTab({
   active,
-  icon,
+  icon: Icon,
   label,
   onClick,
 }: {
   active: boolean;
-  icon: string;
+  icon: LucideIcon;
   label: string;
   onClick: () => void;
 }) {
@@ -138,7 +141,7 @@ function MobileTab({
       type="button"
       aria-current={active ? "page" : undefined}
     >
-      <span className="text-[10px] leading-none opacity-80">{icon}</span>
+      <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
       <span className="max-w-full truncate leading-none">{label}</span>
     </button>
   );
