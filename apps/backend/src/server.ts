@@ -1,8 +1,8 @@
 import { generateSystem } from "@veydrift/universe";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
-import { assertAddress, type ChainReader, VeydriftGameReader } from "./evm";
+import { assertAddress, type ChainReader, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
-import { planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
+import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
@@ -215,10 +215,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const occupied = new Map(
         (indexer?.settledPlanetsInSystem(galaxy, system) ?? []).map((planet) => [
           planet.position,
-          {
-            planetId: planet.planetId,
-            owner: planet.owner
-          }
+          planet
         ])
       );
 
@@ -234,11 +231,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             system
           ).map((planet) => ({
             ...planet,
-            occupiedBy: occupied.get(planet.position) ?? null
+            occupiedBy: occupiedPlanetRef(occupied.get(planet.position))
           }))
         },
         {
-          headers: jsonHeaders
+          headers: corsHeaders
         }
       );
     }
@@ -261,10 +258,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               const occupied = new Map(
                 (indexer?.settledPlanetsInSystem(galaxy, system) ?? []).map((planet) => [
                   planet.position,
-                  {
-                    planetId: planet.planetId,
-                    owner: planet.owner
-                  }
+                  planet
                 ])
               );
               const snapshot = systemSnapshot(
@@ -285,13 +279,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   system
                 ).map((planet) => ({
                   ...planet,
-                  occupiedBy: occupied.get(planet.position) ?? null
+                  occupiedBy: occupiedPlanetRef(occupied.get(planet.position))
                 }))
               };
             })
           },
           {
-            headers: jsonHeaders
+            headers: corsHeaders
           }
         );
       } catch (error) {
@@ -352,7 +346,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
 function includeOccupiedPlanets(
   planets: readonly PlanetMetadata[],
-  occupied: ReadonlyMap<number, { planetId: string; owner: string }>,
+  occupied: ReadonlyMap<number, SettledPlanetEvent>,
   chainId: number,
   settlementContractAddress: string,
   galaxy: number,
@@ -360,20 +354,27 @@ function includeOccupiedPlanets(
 ): PlanetMetadata[] {
   const byPosition = new Map(planets.map((planet) => [planet.position, planet]));
 
-  for (const position of occupied.keys()) {
-    if (!byPosition.has(position)) {
-      byPosition.set(
-        position,
-        planetMetadata(chainId, settlementContractAddress, {
-          galaxy,
-          system,
-          position
-        })
-      );
-    }
+  for (const planet of occupied.values()) {
+    byPosition.set(planet.position, {
+      ...planetMetadata(chainId, settlementContractAddress, {
+        galaxy,
+        system,
+        position: planet.position
+      }),
+      fields: planet.fields,
+      temperature: planet.temperature,
+      metalMultiplierBps: planet.metalMultiplierBps,
+      crystalMultiplierBps: planet.crystalMultiplierBps,
+      deuteriumMultiplierBps: planet.deuteriumMultiplierBps,
+      archetype: planetArchetypeForTemperature(planet.temperature)
+    });
   }
 
   return Array.from(byPosition.values()).sort((left, right) => left.position - right.position);
+}
+
+function occupiedPlanetRef(planet: SettledPlanetEvent | undefined): { planetId: string; owner: string } | null {
+  return planet ? { planetId: planet.planetId, owner: planet.owner } : null;
 }
 
 function getRuntimeConfig(): RuntimeConfig {
@@ -463,7 +464,7 @@ function handleUniverseSystemRequest(url: URL): Response {
       }
     },
     {
-      headers: jsonHeaders
+      headers: corsHeaders
     }
   );
 }
@@ -496,7 +497,7 @@ function badRequest(message: string): Response {
       ]
     },
     {
-      headers: jsonHeaders,
+      headers: corsHeaders,
       status: 400
     }
   );

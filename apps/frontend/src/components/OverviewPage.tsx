@@ -4,6 +4,8 @@ import {
   safeResourceNumber,
   type ChainLoadStatus,
 } from "../overviewData";
+import { formatPlanetType } from "../data/mockUniverse";
+import type { Planet } from "../types";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
@@ -33,6 +35,7 @@ interface OverviewPageProps {
   shipProgress: number;
   now: number;
   planet?: PlanetSummary | undefined;
+  homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
   onCollect: () => void;
   onFinishBuilding?: (() => void) | undefined;
@@ -53,6 +56,7 @@ export function OverviewPage({
   shipProgress,
   now,
   planet,
+  homePlanet,
   isWalletConnected,
   onCollect,
   onFinishBuilding,
@@ -76,6 +80,13 @@ export function OverviewPage({
     && onChainResourceValues.crystal !== undefined
     && onChainResourceValues.deuterium !== undefined;
 
+  const planetName = homePlanet?.name
+    ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
+  const planetSubhead = homePlanet
+    ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
+    : "Home planet";
+  const heroImage = homePlanet?.image ?? "/assets/game/style-pass/generated/planets/lush-temperate.webp";
+
   return (
     <div className="grid gap-3">
       {/* Planet hero — compact, no wasted space */}
@@ -85,15 +96,13 @@ export function OverviewPage({
             alt=""
             className="absolute inset-0 h-full w-full object-cover"
             sizes="hero"
-            src="/assets/game/planets/lush-temperate.webp"
+            src={heroImage}
           />
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,9,19,0.35),rgba(7,9,19,0.92))]" />
           <div className="relative flex h-full flex-col justify-end p-3 sm:p-4">
-            <p className="text-[11px] font-medium text-slate-400">Home planet</p>
+            <p className="text-[11px] font-medium text-slate-400">{planetSubhead}</p>
             <h2 className="text-base font-semibold text-white">
-              {isWalletConnected && planet?.coordinates
-                ? `Planet ${planet.coordinates}`
-                : "Eos Relay"}
+              {planetName}
             </h2>
           </div>
         </div>

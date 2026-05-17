@@ -91,6 +91,19 @@ type ApiPlanet = {
   occupiedBy?: OccupiedPlanet | null;
 };
 
+export type SettlementPlanetIdentity = {
+  planetId: string;
+  owner: string;
+  galaxy: number;
+  system: number;
+  position: number;
+  fields: number;
+  temperature: number;
+  metalMultiplierBps: number;
+  crystalMultiplierBps: number;
+  deuteriumMultiplierBps: number;
+};
+
 export type ApiSystemResponse = {
   galaxy: number;
   system: number;
@@ -99,6 +112,24 @@ export type ApiSystemResponse = {
 
 export function planetsFromSystemResponse(payload: ApiSystemResponse): Planet[] {
   return payload.planets.map((planet) => planetFromApi(planet));
+}
+
+export function planetImageForType(type: PlanetType): string {
+  return PLANET_IMAGES[type];
+}
+
+export function formatPlanetType(type: PlanetType): string {
+  return type.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+export function planetTypeFromTemperature(temperature: number): PlanetType {
+  if (temperature <= -35) return "frozen-ice";
+  if (temperature <= -10) return "cold-tundra";
+  if (temperature <= 10) return "temperate-ocean";
+  if (temperature <= 25) return "lush-temperate";
+  if (temperature <= 40) return "warm-terracotta";
+  if (temperature <= 55) return "hot-desert";
+  return "scorching-molten";
 }
 
 export function generateSystem(galaxy: number, system: number): Planet[] {
@@ -124,8 +155,62 @@ export function ensurePlanetAtCoordinates(
     .sort((left, right) => left.position - right.position);
 }
 
+export function mergePlanetAtCoordinates(planets: Planet[], planet: Planet | undefined): Planet[] {
+  if (!planet) return planets;
+
+  const withoutExisting = planets.filter((candidate) => !sameCoordinates(candidate, planet));
+  return [...withoutExisting, planet].sort((left, right) => left.position - right.position);
+}
+
+export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Planet {
+  return planetFromApi({
+    key: `${planet.galaxy}:${planet.system}:${planet.position}`,
+    galaxy: planet.galaxy,
+    system: planet.system,
+    position: planet.position,
+    fields: planet.fields,
+    temperature: planet.temperature,
+    metalMultiplierBps: planet.metalMultiplierBps,
+    crystalMultiplierBps: planet.crystalMultiplierBps,
+    deuteriumMultiplierBps: planet.deuteriumMultiplierBps,
+    archetype: planetTypeFromTemperature(planet.temperature),
+    occupiedBy: {
+      planetId: planet.planetId,
+      owner: planet.owner,
+    },
+  });
+}
+
+export function mergePlanetWithSettlement(planet: Planet, settlement: SettlementPlanetIdentity): Planet {
+  const type = planetTypeFromTemperature(settlement.temperature);
+
+  return {
+    ...planet,
+    type,
+    image: planetImageForType(type),
+    owner: settlement.owner,
+    ownerId: settlement.owner,
+    occupiedBy: {
+      planetId: settlement.planetId,
+      owner: settlement.owner,
+    },
+    fields: settlement.fields,
+    temperature: { min: settlement.temperature - 20, max: settlement.temperature + 20 },
+    diameter: Math.max(5_000, Math.round(Math.sqrt(settlement.fields) * 1_000)),
+    resources: {
+      metal: Math.round(settlement.metalMultiplierBps / 50),
+      crystal: Math.round(settlement.crystalMultiplierBps / 50),
+      deuterium: Math.round(settlement.deuteriumMultiplierBps / 50),
+      energy: 0,
+    },
+  };
+}
+
 function planetFromApi(planet: ApiPlanet): Planet {
-  const type = planet.archetype ?? pickPlanetType(planet.position, planet.galaxy * 10000 + planet.system * 100 + planet.position);
+  const type = planet.archetype
+    ?? (planet.temperature === undefined
+      ? pickPlanetType(planet.position, planet.galaxy * 10000 + planet.system * 100 + planet.position)
+      : planetTypeFromTemperature(planet.temperature));
   const occupiedBy = planet.occupiedBy ?? null;
   const temperature = planet.temperature ?? 0;
   const fields = planet.fields ?? 180;

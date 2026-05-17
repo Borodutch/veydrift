@@ -58,7 +58,7 @@ export function planetMetadata(
     fields,
     temperature,
     ...multipliers,
-    archetype: archetypeForTemperature(temperature)
+    archetype: planetArchetypeForTemperature(temperature)
   };
 }
 
@@ -131,7 +131,7 @@ export function planetMultipliers(
   };
 }
 
-function archetypeForTemperature(temperature: number): PlanetArchetype {
+export function planetArchetypeForTemperature(temperature: number): PlanetArchetype {
   if (temperature <= -35) return "frozen-ice";
   if (temperature <= -10) return "cold-tundra";
   if (temperature <= 10) return "temperate-ocean";

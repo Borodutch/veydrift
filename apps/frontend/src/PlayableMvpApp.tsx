@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
-import type { Coordinates } from "./types";
+import type { Coordinates, Planet } from "./types";
 import { GalaxyView } from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
@@ -10,14 +10,19 @@ import { DefensePage } from "./components/DefensePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import {
+  mergePlanetWithSettlement,
+  planetFromSettlementPlanet,
+  planetsFromSystemResponse,
+} from "./data/mockUniverse";
+import {
   buildingContractIds,
-  type DefenseKey,
   hasCollectableResources,
-  type PlanetProductionProfile,
   productionPerHour,
   progress,
   storageCaps,
   type BuildingKey,
+  type DefenseKey,
+  type PlanetProductionProfile,
   type PlayableState,
   type ResearchKey,
   type ShipKey,
@@ -101,6 +106,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [researchError, setResearchError] = useState<string | undefined>();
   const [researchAction, setResearchAction] = useState<ResearchActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
+  const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
       const [g, s] = planet.coordinates.split(":").map(Number);
@@ -109,7 +115,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     return { galaxy: 1, system: 1 };
   });
 
-  const homeCoords = useMemo<Coordinates | undefined>(() => {
+  const fallbackHomeCoords = useMemo<Coordinates | undefined>(() => {
     if (!planet?.coordinates) return undefined;
     const parts = planet.coordinates.split(":").map(Number);
     return {
@@ -118,6 +124,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       position: parts[2] || 1,
     };
   }, [planet?.coordinates]);
+
+  const homeCoords = useMemo<Coordinates | undefined>(() => {
+    if (onChainSettlement?.planet) {
+      return {
+        galaxy: onChainSettlement.planet.galaxy,
+        system: onChainSettlement.planet.system,
+        position: onChainSettlement.planet.position,
+      };
+    }
+
+    return fallbackHomeCoords;
+  }, [fallbackHomeCoords, onChainSettlement?.planet]);
 
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
@@ -267,11 +285,50 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [account, apiBaseUrl, isWalletConnected]);
 
   useEffect(() => {
-    if (planet?.coordinates) {
-      const [g, s] = planet.coordinates.split(":").map(Number);
-      setGalaxyNav({ galaxy: g || 1, system: s || 1 });
+    if (homeCoords) {
+      setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
     }
-  }, [planet?.coordinates]);
+  }, [homeCoords]);
+
+  useEffect(() => {
+    const settlementPlanet = onChainSettlement?.planet;
+
+    if (!homeCoords) {
+      setHomePlanetIdentity(undefined);
+      return;
+    }
+
+    if (!apiBaseUrl) {
+      setHomePlanetIdentity(settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
+      return;
+    }
+
+    const abortController = new AbortController();
+    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${homeCoords.galaxy}/systems/${homeCoords.system}`, {
+      headers: { accept: "application/json" },
+      signal: abortController.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Universe system failed with ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        const systemPlanet = planetsFromSystemResponse(payload)
+          .find((item) => item.position === homeCoords.position);
+        const basePlanet = systemPlanet ?? (settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
+        setHomePlanetIdentity(basePlanet && settlementPlanet
+          ? mergePlanetWithSettlement(basePlanet, settlementPlanet)
+          : basePlanet);
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setHomePlanetIdentity(settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
+        }
+      });
+
+    return () => abortController.abort();
+  }, [apiBaseUrl, homeCoords, onChainSettlement?.planet]);
 
   useEffect(() => {
     void refreshOnChainState();
@@ -747,6 +804,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           apiBaseUrl={apiBaseUrl}
           galaxy={galaxyNav.galaxy}
           homeCoords={homeCoords}
+          homePlanet={homePlanetIdentity}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
@@ -760,6 +818,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           apiBaseUrl={apiBaseUrl}
           coords={selectedCoords}
           homeCoords={homeCoords}
+          homePlanet={homePlanetIdentity}
           onBack={() => setPage("galaxy")}
           onNavigateSystem={handleNavigateSystem}
         />
@@ -843,6 +902,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onCollect={handleCollectResources}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
+        homePlanet={homePlanetIdentity}
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}
