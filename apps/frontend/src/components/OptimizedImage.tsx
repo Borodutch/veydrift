@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { JSX, Ref } from "preact";
 import { getSrcSet, Sizes, type SizePreset } from "../utils/imageSizes";
 
 interface OptimizedImageProps {
@@ -15,7 +15,9 @@ interface OptimizedImageProps {
   width?: number;
   /** Intrinsic height of the original image (for layout stability). Defaults to 1024. */
   height?: number;
+  imageRef?: Ref<HTMLImageElement>;
   loading?: "eager" | "lazy";
+  onLoad?: JSX.GenericEventHandler<HTMLImageElement>;
 }
 
 /**
@@ -33,7 +35,9 @@ export function OptimizedImage({
   sizes,
   width = 1024,
   height = 1024,
+  imageRef,
   loading,
+  onLoad,
 }: OptimizedImageProps): JSX.Element {
   const isDev = import.meta.env.DEV;
   const sizesValue = sizes in Sizes ? Sizes[sizes as SizePreset] : sizes;
@@ -44,6 +48,8 @@ export function OptimizedImage({
       className={className}
       height={height}
       loading={loading}
+      onLoad={onLoad}
+      {...(imageRef ? { ref: imageRef } : {})}
       onError={(event) => {
         const image = event.currentTarget;
         if (image.dataset.fallbackApplied === "true") return;
