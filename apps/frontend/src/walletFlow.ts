@@ -668,39 +668,27 @@ function decodeSignedWord(word: string): bigint {
 }
 
 export async function fetchWalletSettlement(apiUrl: string, wallet: string): Promise<WalletSettlementResponse> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/settlement`);
-  if (!response.ok) throw new Error(`Settlement API failed: ${response.status}`);
-  return response.json() as Promise<WalletSettlementResponse>;
+  return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, "settlement", "Settlement");
 }
 
 export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise<PlayerQueuesResponse> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/queues`);
-  if (!response.ok) throw new Error(`Queues API failed: ${response.status}`);
-  return response.json() as Promise<PlayerQueuesResponse>;
+  return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, "queues", "Queues");
 }
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string): Promise<ChainInfrastructureState> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/infrastructure`);
-  if (!response.ok) throw new Error(`Infrastructure API failed: ${response.status}`);
-  return response.json() as Promise<ChainInfrastructureState>;
+  return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, "infrastructure", "Infrastructure");
 }
 
 export async function fetchShipyardState(apiUrl: string, wallet: string): Promise<ChainShipyardState> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/shipyard`);
-  if (!response.ok) throw new Error(`Shipyard API failed: ${response.status}`);
-  return response.json() as Promise<ChainShipyardState>;
+  return fetchWalletJson<ChainShipyardState>(apiUrl, wallet, "shipyard", "Shipyard");
 }
 
 export async function fetchDefenseState(apiUrl: string, wallet: string): Promise<ChainDefenseState> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/defenses`);
-  if (!response.ok) throw new Error(`Defenses API failed: ${response.status}`);
-  return response.json() as Promise<ChainDefenseState>;
+  return fetchWalletJson<ChainDefenseState>(apiUrl, wallet, "defenses", "Defenses");
 }
 
 export async function fetchResearchState(apiUrl: string, wallet: string): Promise<ChainResearchState> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/research`);
-  if (!response.ok) throw new Error(`Research API failed: ${response.status}`);
-  return response.json() as Promise<ChainResearchState>;
+  return fetchWalletJson<ChainResearchState>(apiUrl, wallet, "research", "Research");
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
@@ -713,4 +701,18 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function fetchWalletJson<T>(
+  apiUrl: string,
+  wallet: string,
+  path: string,
+  label: string
+): Promise<T> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`, {
+    cache: "no-store",
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`${label} API failed: ${response.status}`);
+  return response.json() as Promise<T>;
 }
