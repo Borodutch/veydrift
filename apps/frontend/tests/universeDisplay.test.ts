@@ -5,6 +5,10 @@ import {
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
+import {
+  formatGalaxyOccupancySource,
+  formatGalaxyOccupancySummary
+} from "../src/components/GalaxyView";
 
 describe("tester universe display data", () => {
   test("neutral deterministic fallback does not invent owners or alliances", () => {
@@ -79,6 +83,25 @@ describe("tester universe display data", () => {
         planetId: "7",
       },
     });
+  });
+
+  test("galaxy occupancy summary avoids implementation wording", () => {
+    const labels = [
+      formatGalaxyOccupancySummary(0),
+      formatGalaxyOccupancySummary(3),
+      formatGalaxyOccupancySource("api", false),
+      formatGalaxyOccupancySource("fallback", false),
+      formatGalaxyOccupancySource("api", true),
+    ];
+
+    expect(labels).toEqual([
+      "No occupants",
+      "3 occupied",
+      "Current system",
+      "Preview system",
+      "Home planet shown",
+    ]);
+    expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data)\b/i);
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {
