@@ -27,6 +27,8 @@ export function TopBar({
   coordinates,
   isWalletConnected,
 }: TopBarProps) {
+  const showResourceDetails = resourceStatus === "local" || resourceStatus === "ready";
+
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
       <div className="mx-auto flex min-h-11 max-w-7xl flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-3 py-1.5 sm:justify-between sm:px-4 lg:px-6">
@@ -38,24 +40,24 @@ export function TopBar({
           ) : (
             <>
               <ResourcePip
-                cap={resourceStatus === "local" ? caps.metal : undefined}
+                cap={showResourceDetails ? caps.metal : undefined}
                 color="text-amber-300"
                 label="Metal"
-                rate={resourceStatus === "local" ? rates.metal : undefined}
+                rate={showResourceDetails ? rates.metal : undefined}
                 value={resources.metal}
               />
               <ResourcePip
-                cap={resourceStatus === "local" ? caps.crystal : undefined}
+                cap={showResourceDetails ? caps.crystal : undefined}
                 color="text-cyan-300"
                 label="Crystal"
-                rate={resourceStatus === "local" ? rates.crystal : undefined}
+                rate={showResourceDetails ? rates.crystal : undefined}
                 value={resources.crystal}
               />
               <ResourcePip
-                cap={resourceStatus === "local" ? caps.deuterium : undefined}
+                cap={showResourceDetails ? caps.deuterium : undefined}
                 color="text-emerald-300"
                 label="Deuterium"
-                rate={resourceStatus === "local" ? rates.deuterium : undefined}
+                rate={showResourceDetails ? rates.deuterium : undefined}
                 value={resources.deuterium}
               />
             </>
