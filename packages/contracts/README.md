@@ -207,7 +207,7 @@ Resources:
 
 Scripts require a funded deployer key in the shell environment. Do not commit or print private keys.
 
-Deploy a proxy to Base Sepolia:
+Deploy the test game contract to Base Sepolia:
 
 ```bash
 PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin forge script script/Deploy.s.sol:Deploy \
@@ -228,7 +228,11 @@ PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_MAINNET_RPC_URL" --broadcast --verify
 ```
 
-`ADMIN_ADDRESS` is optional; if omitted, the deployer address owns the proxy.
+`ADMIN_ADDRESS` is optional; if omitted, the deployer address owns the game contract.
+
+`VeydriftGame` is intentionally deployed directly for the test MVP so it remains under the
+Base Sepolia contract size limit. `Upgrade.s.sol` is retained only as an explicit guard and
+will revert.
 
 Upgrade an existing proxy:
 

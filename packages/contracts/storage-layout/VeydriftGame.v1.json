@@ -13,87 +13,93 @@
       "type": "uint256"
     },
     {
-      "label": "homePlanetOf",
+      "label": "_owner",
       "offset": 0,
       "slot": "2",
+      "type": "address"
+    },
+    {
+      "label": "homePlanetOf",
+      "offset": 0,
+      "slot": "3",
       "type": "mapping(address => uint256)"
     },
     {
       "label": "_planets",
       "offset": 0,
-      "slot": "3",
+      "slot": "4",
       "type": "mapping(uint256 => struct Planet)"
     },
     {
       "label": "occupiedCoordinates",
       "offset": 0,
-      "slot": "4",
+      "slot": "5",
       "type": "mapping(bytes32 => bool)"
     },
     {
       "label": "_buildingLevels",
       "offset": 0,
-      "slot": "5",
+      "slot": "6",
       "type": "mapping(uint256 => mapping(enum Building => uint16))"
     },
     {
       "label": "_defenseCounts",
       "offset": 0,
-      "slot": "6",
+      "slot": "7",
       "type": "mapping(uint256 => mapping(enum Defense => uint32))"
     },
     {
       "label": "_shipCounts",
       "offset": 0,
-      "slot": "7",
+      "slot": "8",
       "type": "mapping(uint256 => mapping(enum Ship => uint32))"
     },
     {
       "label": "_technologyLevels",
       "offset": 0,
-      "slot": "8",
+      "slot": "9",
       "type": "mapping(address => mapping(enum Technology => uint16))"
     },
     {
       "label": "buildingConstructions",
       "offset": 0,
-      "slot": "9",
+      "slot": "10",
       "type": "mapping(uint256 => struct BuildingConstruction)"
     },
     {
       "label": "defenseQueues",
       "offset": 0,
-      "slot": "10",
+      "slot": "11",
       "type": "mapping(uint256 => struct DefenseQueue)"
     },
     {
       "label": "shipQueues",
       "offset": 0,
-      "slot": "11",
+      "slot": "12",
       "type": "mapping(uint256 => struct ShipQueue)"
     },
     {
       "label": "researchQueues",
       "offset": 0,
-      "slot": "12",
+      "slot": "13",
       "type": "mapping(address => struct ResearchQueue)"
     },
     {
       "label": "nextFleetId",
       "offset": 0,
-      "slot": "13",
+      "slot": "14",
       "type": "uint256"
     },
     {
       "label": "planetCountOf",
       "offset": 0,
-      "slot": "14",
+      "slot": "15",
       "type": "mapping(address => uint256)"
     },
     {
       "label": "_fleets",
       "offset": 0,
-      "slot": "15",
+      "slot": "16",
       "type": "mapping(uint256 => struct Fleet)"
     }
   ],
