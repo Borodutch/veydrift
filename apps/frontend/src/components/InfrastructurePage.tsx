@@ -34,6 +34,8 @@ interface InfrastructurePageProps {
   actionNotice?: { label: string; tone: "error" | "success" | "pending" } | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
+  isBuildingReadyToFinish?: boolean | undefined;
+  onFinishBuilding?: (() => void) | undefined;
   state: PlayableState;
   settledState: PlayableState;
   onUpgrade: (key: BuildingKey) => void;
@@ -43,6 +45,8 @@ export function InfrastructurePage({
   actionNotice,
   actionUnavailableReason,
   chainCosts,
+  isBuildingReadyToFinish,
+  onFinishBuilding,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
@@ -70,11 +74,19 @@ export function InfrastructurePage({
             Select a building to inspect real production, power, cost, and upgrade timing.
           </p>
         </div>
-        {settledState.queue && (
+        {isBuildingReadyToFinish && onFinishBuilding ? (
+          <button
+            className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+            onClick={onFinishBuilding}
+            type="button"
+          >
+            Finish upgrade
+          </button>
+        ) : settledState.queue ? (
           <span className="rounded border border-amber-300/20 bg-amber-300/10 px-2.5 py-1 text-xs text-amber-300">
             Building: {settledState.queue.label}
           </span>
-        )}
+        ) : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
@@ -105,6 +117,8 @@ export function InfrastructurePage({
             actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
+            isBuildingReadyToFinish={isBuildingReadyToFinish}
+            onFinishBuilding={onFinishBuilding}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             state={settledState}
           />
@@ -169,6 +183,8 @@ function BuildingDetailPanel({
   actionUnavailableReason,
   building,
   chainCost,
+  isBuildingReadyToFinish,
+  onFinishBuilding,
   onUpgrade,
   state,
 }: {
@@ -176,6 +192,8 @@ function BuildingDetailPanel({
   actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
+  isBuildingReadyToFinish?: boolean | undefined;
+  onFinishBuilding?: (() => void) | undefined;
   onUpgrade: () => void;
   state: PlayableState;
 }) {
@@ -260,6 +278,16 @@ function BuildingDetailPanel({
         <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold ${noticeClass}`}>
           {actionNotice.label}
         </div>
+      )}
+
+      {isBuildingReadyToFinish && onFinishBuilding && (
+        <button
+          className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+          onClick={onFinishBuilding}
+          type="button"
+        >
+          Finish upgrade
+        </button>
       )}
 
       <button
