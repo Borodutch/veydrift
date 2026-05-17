@@ -2,8 +2,10 @@ import type { BuildingKey, PlayableState, Resources } from "./playableMvp";
 import {
   buildingCost,
   buildingDurationEstimate,
+  buildingRequirementsFor,
   canAfford,
   energyBalance,
+  unmetBuildingRequirement,
 } from "./playableMvp";
 export { formatDuration } from "./durationFormat";
 
@@ -77,6 +79,17 @@ export function buildingUpgradeStatus(
     };
   }
 
+  const missingRequirement = unmetBuildingRequirement(state, key);
+  if (missingRequirement) {
+    return {
+      cost,
+      disabled: true,
+      durationSeconds,
+      reason: `Requires ${formatBuildingRequirement(missingRequirement)}`,
+      targetLevel,
+    };
+  }
+
   if (!canAfford(state.resources, cost)) {
     return {
       cost,
@@ -94,6 +107,18 @@ export function buildingUpgradeStatus(
     reason: `Ready for Level ${targetLevel}`,
     targetLevel,
   };
+}
+
+export function formatBuildingRequirements(key: BuildingKey): string {
+  const requirements = buildingRequirementsFor(key);
+  return requirements.length > 0
+    ? requirements.map(formatBuildingRequirement).join(" / ")
+    : "None";
+}
+
+function formatBuildingRequirement(requirement: ReturnType<typeof buildingRequirementsFor>[number]): string {
+  const label = buildingLabel(requirement.key);
+  return `${label} ${requirement.level}`;
 }
 
 export function buildingEnergyDetail(
@@ -163,4 +188,20 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
     ["crystal", resources.crystal],
     ["deuterium", resources.deuterium],
   ];
+}
+
+function buildingLabel(key: BuildingKey): string {
+  const labels: Record<BuildingKey, string> = {
+    metalMine: "Metal Mine",
+    crystalMine: "Crystal Mine",
+    deuteriumSynthesizer: "Deuterium Synth",
+    solarPlant: "Solar Plant",
+    roboticsFactory: "Robotics Factory",
+    shipyard: "Shipyard",
+    researchLab: "Research Lab",
+    metalStorage: "Metal Storage",
+    crystalStorage: "Crystal Storage",
+    deuteriumTank: "Deuterium Tank",
+  };
+  return labels[key];
 }

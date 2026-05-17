@@ -26,9 +26,7 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
-  onCollect: () => void;
   onFinishBuilding?: (() => void) | undefined;
-  canCollect?: boolean;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onChainError?: string | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
@@ -47,9 +45,7 @@ export function OverviewPage({
   planet,
   homePlanet,
   isWalletConnected,
-  onCollect,
   onFinishBuilding,
-  canCollect = true,
   onNavigate,
   onChainError,
   onChainSettlement,
@@ -218,25 +214,6 @@ export function OverviewPage({
         </div>
       )}
 
-      {isWalletConnected && onChainStatus === "ready" && onChainSettlement?.homePlanetId && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-white">Resource collection</h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Current on-chain totals and production rates are shown in the top bar.
-            </p>
-          </div>
-          <button
-            className="h-9 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-            disabled={!canCollect}
-            onClick={onCollect}
-            title={canCollect ? undefined : "Nothing to collect yet"}
-            type="button"
-          >
-            Collect resources
-          </button>
-        </div>
-      )}
     </div>
   );
 }

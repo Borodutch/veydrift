@@ -102,7 +102,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
   const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
   const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
   const emptyCount = POSITION_COUNT - planets.length;
-  const occupiedSummary = occupiedCount > 0 ? `${occupiedCount} occupied` : "No indexed occupants";
+  const occupiedSummary = formatGalaxyOccupancySummary(occupiedCount);
 
   return (
     <div className="grid gap-4">
@@ -155,7 +155,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
             <span>{occupiedSummary}</span>
           </div>
           <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
-            {source === "api" ? "Real occupancy data" : homePlanetInSystem ? "Wallet home injected" : "Fallback universe"}
+            {formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem))}
           </span>
         </div>
 
@@ -247,6 +247,19 @@ function CoordinateInput({
 
 function clampInteger(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+export function formatGalaxyOccupancySummary(occupiedCount: number): string {
+  return occupiedCount > 0 ? `${occupiedCount} occupied` : "No occupants";
+}
+
+export function formatGalaxyOccupancySource(
+  source: "api" | "fallback" | "loading",
+  hasHomePlanet: boolean
+): string {
+  if (source === "loading") return "Loading";
+  if (hasHomePlanet) return "Home planet shown";
+  return source === "api" ? "Current system" : "Preview system";
 }
 
 function GalaxySlot({

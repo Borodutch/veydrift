@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   buildingEnergyDetail,
   buildingUpgradeStatus,
+  formatBuildingRequirements,
   formatCost,
   formatDuration,
   formatNumber,
 } from "../src/buildingDetails";
-import { createInitialPlayableState } from "../src/playableMvp";
+import { buildingRequirementsFor, createInitialPlayableState, unmetBuildingRequirement } from "../src/playableMvp";
 
 describe("building detail helpers", () => {
   test("formats costs, durations, and numbers without raw decimals", () => {
@@ -44,6 +45,65 @@ describe("building detail helpers", () => {
     ).toMatchObject({
       disabled: true,
       reason: "Chain/API resources unavailable; upgrades are disabled until real wallet resources load.",
+      targetLevel: 1,
+    });
+  });
+
+  test("blocks Research Lab until Robotics Factory 1 exists", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(buildingRequirementsFor("researchLab")).toEqual([
+      { type: "building", key: "roboticsFactory", level: 1 },
+    ]);
+    expect(unmetBuildingRequirement(state, "researchLab")).toEqual({
+      type: "building",
+      key: "roboticsFactory",
+      level: 1,
+    });
+    expect(formatBuildingRequirements("researchLab")).toBe("Robotics Factory 1");
+    expect(buildingUpgradeStatus(state, "researchLab")).toMatchObject({
+      disabled: true,
+      reason: "Requires Robotics Factory 1",
+      targetLevel: 1,
+    });
+  });
+
+  test("allows Research Lab after Robotics Factory 1 exists", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        roboticsFactory: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(buildingUpgradeStatus(state, "researchLab")).toMatchObject({
+      disabled: false,
+      reason: "Ready for Level 1",
+      targetLevel: 1,
+    });
+  });
+
+  test("blocks Shipyard until Robotics Factory 2 exists", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        roboticsFactory: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(buildingRequirementsFor("shipyard")).toEqual([
+      { type: "building", key: "roboticsFactory", level: 2 },
+    ]);
+    expect(buildingUpgradeStatus(state, "shipyard")).toMatchObject({
+      disabled: true,
+      reason: "Requires Robotics Factory 2",
       targetLevel: 1,
     });
   });
