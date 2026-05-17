@@ -87,14 +87,12 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
     onNavigate(newGalaxy, newSystem);
   };
 
-  const handleGalaxyChange = (e: Event) => {
-    const val = parseInt((e.target as HTMLSelectElement).value, 10);
-    onNavigate(val, system);
+  const handleGalaxyCommit = (value: number) => {
+    onNavigate(value, system);
   };
 
-  const handleSystemChange = (e: Event) => {
-    const val = parseInt((e.target as HTMLSelectElement).value, 10);
-    onNavigate(galaxy, val);
+  const handleSystemCommit = (value: number) => {
+    onNavigate(galaxy, value);
   };
 
   const planetByPosition = new Map<number, Planet>();
@@ -124,18 +122,18 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
             ← Prev
           </button>
 
-          <ControlSelect
+          <CoordinateInput
             label="Galaxy"
+            max={GALAXY_COUNT}
+            onCommit={handleGalaxyCommit}
             value={galaxy}
-            onChange={handleGalaxyChange}
-            options={GALAXY_COUNT}
           />
 
-          <ControlSelect
+          <CoordinateInput
             label="System"
+            max={SYSTEM_COUNT}
+            onCommit={handleSystemCommit}
             value={system}
-            onChange={handleSystemChange}
-            options={SYSTEM_COUNT}
           />
 
           <button
@@ -191,35 +189,64 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
   );
 }
 
-function ControlSelect({
+function CoordinateInput({
   label,
   value,
-  onChange,
-  options,
+  max,
+  onCommit,
 }: {
   label: string;
   value: number;
-  onChange: (event: Event) => void;
-  options: number;
+  max: number;
+  onCommit: (value: number) => void;
 }) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commitDraft = () => {
+    const parsed = Number.parseInt(draft, 10);
+
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+
+    const nextValue = clampInteger(parsed, 1, max);
+    setDraft(String(nextValue));
+    if (nextValue !== value) onCommit(nextValue);
+  };
+
   return (
     <label className="flex h-9 items-center gap-2 rounded border border-white/15 bg-[#070913] px-2">
       <span className="text-[11px] font-medium uppercase text-slate-500">{label}</span>
-      <span className="min-w-5 text-center font-mono text-sm font-semibold text-white">{value}</span>
-      <select
+      <input
         aria-label={label}
-        value={value}
-        onChange={onChange}
-        className="h-7 w-9 rounded border border-white/10 bg-[#101624] text-center text-xs text-slate-200 outline-none [color-scheme:dark] focus:border-signal/50"
-      >
-        {Array.from({ length: options }, (_, i) => i + 1).map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+        inputMode="numeric"
+        maxLength={String(max).length}
+        onBlur={commitDraft}
+        onChange={(event) => setDraft((event.currentTarget as HTMLInputElement).value.replace(/\D/g, ""))}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            (event.currentTarget as HTMLInputElement).blur();
+          }
+          if (event.key === "Escape") {
+            setDraft(String(value));
+            (event.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+        pattern="[0-9]*"
+        value={draft}
+        className="h-7 w-12 rounded border border-white/10 bg-[#101624] px-2 text-center font-mono text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50"
+      />
     </label>
   );
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
 function GalaxySlot({
