@@ -6,6 +6,7 @@ import {
   planetFromSettlementPlanet,
   planetsFromSystemResponse,
 } from "./data/mockUniverse";
+import { displayHomeCoordinates } from "./PlayableMvpApp";
 
 const settlementPlanet = {
   planetId: "2",
@@ -86,5 +87,21 @@ describe("planet identity", () => {
         owner: settlementPlanet.owner,
       },
     });
+  });
+
+  test("uses canonical home coordinates for shell chrome instead of stale settlement props", () => {
+    const home = planetFromSettlementPlanet({
+      ...settlementPlanet,
+      galaxy: 2,
+      system: 246,
+      position: 3,
+      temperature: 16,
+    });
+
+    expect(displayHomeCoordinates(
+      home,
+      { galaxy: 2, system: 246, position: 3 },
+      "9:280:15"
+    )).toBe("2:246:3");
   });
 });
