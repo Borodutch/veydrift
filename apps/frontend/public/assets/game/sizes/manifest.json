@@ -656,6 +656,96 @@
       "512": "/assets/game/sizes/512/planets/temperate-ocean.webp"
     }
   },
+  "/assets/game/style-pass/generated/defenses/heavy-laser.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/heavy-laser.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/heavy-laser.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/heavy-laser.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/light-laser.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/light-laser.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/light-laser.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/light-laser.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/plasma-turret.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/plasma-turret.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/plasma-turret.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/plasma-turret.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/anti-ballistic-missile.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/anti-ballistic-missile.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/anti-ballistic-missile.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/anti-ballistic-missile.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/large-shield-dome.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/large-shield-dome.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/large-shield-dome.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/large-shield-dome.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/interplanetary-missile.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/interplanetary-missile.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/interplanetary-missile.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/interplanetary-missile.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/rocket-launcher.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/rocket-launcher.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/rocket-launcher.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/rocket-launcher.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/gauss-cannon.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/gauss-cannon.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/gauss-cannon.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/gauss-cannon.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/ion-cannon.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/ion-cannon.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/ion-cannon.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/ion-cannon.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/defenses/small-shield-dome.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/defenses/small-shield-dome.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/defenses/small-shield-dome.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/defenses/small-shield-dome.webp"
+    }
+  },
   "/assets/game/style-pass/generated/ships/light-fighter.webp": {
     "width": 1024,
     "height": 1024,

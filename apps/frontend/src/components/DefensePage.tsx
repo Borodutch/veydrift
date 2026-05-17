@@ -4,6 +4,7 @@ import type { DefenseKey, Resources } from "../playableMvp";
 import { canAfford, defenseCatalog } from "../playableMvp";
 import type { ChainDefenseState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
+import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -223,9 +224,10 @@ function DefenseTile({
 }) {
   return (
     <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
-      <img
+      <OptimizedImage
         alt=""
-        className="aspect-square w-full rounded object-cover"
+        className="aspect-square w-full rounded bg-black/20 object-contain p-1"
+        sizes="shipThumbnail"
         src={defense.asset}
       />
       <div className="min-w-0">
