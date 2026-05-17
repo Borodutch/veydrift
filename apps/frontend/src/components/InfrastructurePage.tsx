@@ -1,4 +1,4 @@
-import { useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, PlayableState, Resources } from "../playableMvp";
 import { buildingCatalog, buildingEffectMetrics } from "../playableMvp";
 import {
@@ -16,6 +16,8 @@ const shortResourceLabels: Record<keyof Resources, string> = {
   crystal: "Crystal",
   deuterium: "Deut.",
 };
+
+const loadedDetailImageKeys = new Set<BuildingKey>();
 
 const buildingDescriptions: Record<BuildingKey, string> = {
   metalMine: "Extracts metal from the planet crust. Metal is the core material for construction and early ship production.",
@@ -213,17 +215,11 @@ function BuildingDetailPanel({
   return (
     <aside className="min-w-0 rounded-lg border border-white/10 bg-[#0f1624] p-3 xl:sticky xl:top-4">
       <div className="grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)] xl:grid-cols-1">
-        <div className={`aspect-square overflow-hidden rounded-md border border-white/10 bg-black/20 ${currentLevel === 0 ? "opacity-70 grayscale" : ""}`}>
-          <OptimizedImage
-            alt=""
-            className="h-full w-full object-cover"
-            height={512}
-            loading="lazy"
-            sizes="(min-width: 1280px) 400px, (min-width: 640px) 144px, 100vw"
-            src={building.asset}
-            width={512}
-          />
-        </div>
+        <BuildingDetailImage
+          asset={building.asset}
+          imageKey={building.key}
+          isUnbuilt={currentLevel === 0}
+        />
 
         <div className="min-w-0">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -300,6 +296,69 @@ function BuildingDetailPanel({
         {actionLabel}
       </button>
     </aside>
+  );
+}
+
+function BuildingDetailImage({
+  asset,
+  imageKey,
+  isUnbuilt,
+}: {
+  asset: string;
+  imageKey: BuildingKey;
+  isUnbuilt: boolean;
+}) {
+  const currentImageKeyRef = useRef(imageKey);
+  const imageElementRef = useRef<HTMLImageElement | null>(null);
+  const [loadedImageKey, setLoadedImageKey] = useState<BuildingKey | null>(() => (
+    loadedDetailImageKeys.has(imageKey) ? imageKey : null
+  ));
+  const isLoaded = loadedImageKey === imageKey;
+
+  currentImageKeyRef.current = imageKey;
+
+  useLayoutEffect(() => {
+    const image = imageElementRef.current;
+    const isCached = Boolean(image?.complete && image.naturalWidth > 0);
+
+    if (loadedDetailImageKeys.has(imageKey) || isCached) {
+      loadedDetailImageKeys.add(imageKey);
+      setLoadedImageKey(imageKey);
+      return;
+    }
+
+    setLoadedImageKey(null);
+  }, [imageKey]);
+
+  return (
+    <div
+      aria-busy={!isLoaded}
+      className={`relative aspect-square overflow-hidden rounded-md border border-white/10 bg-black/20 ${
+        isUnbuilt ? "opacity-70 grayscale" : ""
+      }`}
+    >
+      {!isLoaded && (
+        <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-white/10 via-white/[0.04] to-white/[0.08]" />
+      )}
+      <OptimizedImage
+        alt=""
+        className={`h-full w-full object-cover transition-opacity duration-150 ${
+          isLoaded ? "opacity-100" : "opacity-0"
+        }`}
+        height={512}
+        imageRef={imageElementRef}
+        key={imageKey}
+        loading="lazy"
+        onLoad={() => {
+          if (imageKey !== currentImageKeyRef.current) return;
+          loadedDetailImageKeys.add(imageKey);
+          setLoadedImageKey(imageKey);
+        }}
+        sizes="(min-width: 1280px) 400px, (min-width: 640px) 144px, 100vw"
+        src={asset}
+        width={512}
+      />
+    </div>
   );
 }
 

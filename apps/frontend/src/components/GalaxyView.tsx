@@ -182,10 +182,6 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
         </div>
       </div>
 
-      <p className="text-xs leading-5 text-slate-600">
-        Empty positions are deterministic unoccupied slots. Planet entries can be inspected; no unavailable colonize,
-        attack, alliance, fleet, or message actions are shown.
-      </p>
     </div>
   );
 }
