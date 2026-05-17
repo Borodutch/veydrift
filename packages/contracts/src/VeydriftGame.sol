@@ -54,6 +54,16 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         Resources resources;
     }
 
+    struct FirstPlanet {
+        uint16 galaxy;
+        uint16 system;
+        uint8 position;
+        bytes32 coordinateKey;
+        bytes32 planetSeed;
+        uint64 settledAt;
+        uint64 settledBlock;
+    }
+
     struct BuildingConstruction {
         bool active;
         Building building;
@@ -130,6 +140,7 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error QueueActive();
     error QueueInactive();
     error QueueNotReady(uint64 readyAt);
+    error NoFirstPlanet(address player);
     error ConstructionActive();
     error ConstructionInactive();
     error ConstructionNotReady(uint64 readyAt);
@@ -289,24 +300,73 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
-        if (homePlanetOf[msg.sender] != 0) {
+        planetId = _startPlanet(msg.sender, msg.value);
+    }
+
+    /// @notice Compact-settlement-compatible entrypoint for the test frontend.
+    /// @dev Returns the same tuple shape as VeydriftSettlement.settleFirstPlanet.
+    function settleFirstPlanet() external payable returns (FirstPlanet memory settledPlanet) {
+        uint256 planetId = _startPlanet(msg.sender, msg.value);
+        return _firstPlanetFrom(planetId);
+    }
+
+    function hasFirstPlanet(address player) external view returns (bool) {
+        return homePlanetOf[player] != 0;
+    }
+
+    function firstPlanetOf(address player)
+        external
+        view
+        returns (FirstPlanet memory settledPlanet)
+    {
+        uint256 planetId = homePlanetOf[player];
+        if (planetId == 0) {
+            revert NoFirstPlanet(player);
+        }
+        return _firstPlanetFrom(planetId);
+    }
+
+    function previewFirstPlanet(address player)
+        external
+        view
+        returns (FirstPlanet memory planetPreview)
+    {
+        uint256 planetId = homePlanetOf[player];
+        if (planetId != 0) {
+            return _firstPlanetFrom(planetId);
+        }
+
+        (uint16 galaxy, uint16 system, uint8 position) = _previewFirstPlanetCoordinates(player);
+        return FirstPlanet({
+            galaxy: galaxy,
+            system: system,
+            position: position,
+            coordinateKey: coordinateKey(galaxy, system, position),
+            planetSeed: planetSeed(galaxy, system, position),
+            settledAt: 0,
+            settledBlock: 0
+        });
+    }
+
+    function _startPlanet(address player, uint256 payment) private returns (uint256 planetId) {
+        if (homePlanetOf[player] != 0) {
             revert AlreadyStarted();
         }
-        if (msg.value != startPrice) {
+        if (payment != startPrice) {
             revert BadStartPayment();
         }
 
         planetId = nextPlanetId++;
         (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
-            _generatePlanet(msg.sender, planetId);
+            _generatePlanet(player, planetId);
 
         (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
             VeydriftFormulas.planetMultipliers(temperature, fields);
 
-        homePlanetOf[msg.sender] = planetId;
-        planetCountOf[msg.sender] = 1;
+        homePlanetOf[player] = planetId;
+        planetCountOf[player] = 1;
         _planets[planetId] = Planet({
-            owner: msg.sender,
+            owner: player,
             galaxy: galaxy,
             system: system,
             position: position,
@@ -319,9 +379,9 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             resources: Resources({metal: 5_000, crystal: 5_000, deuterium: 5_000})
         });
 
-        emit PlanetStarted(msg.sender, planetId, galaxy, system, position, fields, temperature);
+        emit PlanetStarted(player, planetId, galaxy, system, position, fields, temperature);
         emit FirstPlanetSettled(
-            msg.sender,
+            player,
             planetId,
             galaxy,
             system,
@@ -1066,6 +1126,48 @@ contract VeydriftGame is Initializable, OwnableUpgradeable, UUPSUpgradeable {
                     int256(20) - int256(uint256(position) * 5) + int256((uint256(seed) >> 64) % 21)
                 );
                 return (galaxy, system, position, fields, temperature);
+            }
+        }
+        revert CoordinatesExhausted();
+    }
+
+    function _firstPlanetFrom(uint256 planetId)
+        private
+        view
+        returns (FirstPlanet memory settledPlanet)
+    {
+        Planet storage planetRef = _planets[planetId];
+        if (planetRef.owner == address(0)) {
+            revert NoPlanet();
+        }
+
+        settledPlanet = FirstPlanet({
+            galaxy: planetRef.galaxy,
+            system: planetRef.system,
+            position: planetRef.position,
+            coordinateKey: coordinateKey(planetRef.galaxy, planetRef.system, planetRef.position),
+            planetSeed: planetSeed(planetRef.galaxy, planetRef.system, planetRef.position),
+            settledAt: planetRef.lastSettledAt,
+            settledBlock: 0
+        });
+    }
+
+    function _previewFirstPlanetCoordinates(address player)
+        private
+        view
+        returns (uint16 galaxy, uint16 system, uint8 position)
+    {
+        for (uint256 attempt = 0; attempt < 64; attempt++) {
+            bytes32 seed = keccak256(
+                abi.encode(
+                    FIRST_PLANET_DOMAIN, block.chainid, address(this), player, nextPlanetId, attempt
+                )
+            );
+            galaxy = uint16((uint256(seed) % MAX_GALAXY) + 1);
+            system = uint16(((uint256(seed) >> 16) % MAX_SYSTEM) + 1);
+            position = uint8(((uint256(seed) >> 32) % MAX_POSITION) + 1);
+            if (!occupiedCoordinates[coordinateKey(galaxy, system, position)]) {
+                return (galaxy, system, position);
             }
         }
         revert CoordinatesExhausted();
