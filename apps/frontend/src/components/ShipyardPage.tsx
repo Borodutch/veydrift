@@ -3,6 +3,7 @@ import type { ComponentChildren } from "preact";
 import type { Resources, ShipKey } from "../playableMvp";
 import { canAfford, shipCatalog } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
+import { formatDurationUntil } from "../durationFormat";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -374,10 +375,8 @@ function multiply(resources: Resources, quantity: number): Resources {
 
 function formatReady(readyAt: string | null): string {
   if (!readyAt) return "unknown";
-  return new Date(Number(readyAt) * 1_000).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const remaining = formatDurationUntil(Number(readyAt) * 1_000);
+  return remaining === "Ready" ? "now" : `in ${remaining}`;
 }
 
 function format(value: number): string {
