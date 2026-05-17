@@ -1,148 +1,4 @@
 {
-  "/assets/game/ships/solar-satellite.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/solar-satellite.webp",
-      "256": "/assets/game/sizes/256/ships/solar-satellite.webp",
-      "512": "/assets/game/sizes/512/ships/solar-satellite.webp"
-    }
-  },
-  "/assets/game/ships/bomber.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/bomber.webp",
-      "256": "/assets/game/sizes/256/ships/bomber.webp",
-      "512": "/assets/game/sizes/512/ships/bomber.webp"
-    }
-  },
-  "/assets/game/ships/cruiser.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/cruiser.webp",
-      "256": "/assets/game/sizes/256/ships/cruiser.webp",
-      "512": "/assets/game/sizes/512/ships/cruiser.webp"
-    }
-  },
-  "/assets/game/ships/light-fighter.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/light-fighter.webp",
-      "256": "/assets/game/sizes/256/ships/light-fighter.webp",
-      "512": "/assets/game/sizes/512/ships/light-fighter.webp"
-    }
-  },
-  "/assets/game/ships/small-cargo.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/small-cargo.webp",
-      "256": "/assets/game/sizes/256/ships/small-cargo.webp",
-      "512": "/assets/game/sizes/512/ships/small-cargo.webp"
-    }
-  },
-  "/assets/game/ships/large-cargo.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/large-cargo.webp",
-      "256": "/assets/game/sizes/256/ships/large-cargo.webp",
-      "512": "/assets/game/sizes/512/ships/large-cargo.webp"
-    }
-  },
-  "/assets/game/ships/deathstar.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/deathstar.webp",
-      "256": "/assets/game/sizes/256/ships/deathstar.webp",
-      "512": "/assets/game/sizes/512/ships/deathstar.webp"
-    }
-  },
-  "/assets/game/ships/reaper.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/reaper.webp",
-      "256": "/assets/game/sizes/256/ships/reaper.webp",
-      "512": "/assets/game/sizes/512/ships/reaper.webp"
-    }
-  },
-  "/assets/game/ships/heavy-fighter.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/heavy-fighter.webp",
-      "256": "/assets/game/sizes/256/ships/heavy-fighter.webp",
-      "512": "/assets/game/sizes/512/ships/heavy-fighter.webp"
-    }
-  },
-  "/assets/game/ships/colony-ship.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/colony-ship.webp",
-      "256": "/assets/game/sizes/256/ships/colony-ship.webp",
-      "512": "/assets/game/sizes/512/ships/colony-ship.webp"
-    }
-  },
-  "/assets/game/ships/pathfinder.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/pathfinder.webp",
-      "256": "/assets/game/sizes/256/ships/pathfinder.webp",
-      "512": "/assets/game/sizes/512/ships/pathfinder.webp"
-    }
-  },
-  "/assets/game/ships/destroyer.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/destroyer.webp",
-      "256": "/assets/game/sizes/256/ships/destroyer.webp",
-      "512": "/assets/game/sizes/512/ships/destroyer.webp"
-    }
-  },
-  "/assets/game/ships/battleship.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/battleship.webp",
-      "256": "/assets/game/sizes/256/ships/battleship.webp",
-      "512": "/assets/game/sizes/512/ships/battleship.webp"
-    }
-  },
-  "/assets/game/ships/espionage-probe.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/espionage-probe.webp",
-      "256": "/assets/game/sizes/256/ships/espionage-probe.webp",
-      "512": "/assets/game/sizes/512/ships/espionage-probe.webp"
-    }
-  },
-  "/assets/game/ships/recycler.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/recycler.webp",
-      "256": "/assets/game/sizes/256/ships/recycler.webp",
-      "512": "/assets/game/sizes/512/ships/recycler.webp"
-    }
-  },
-  "/assets/game/ships/battlecruiser.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/ships/battlecruiser.webp",
-      "256": "/assets/game/sizes/256/ships/battlecruiser.webp",
-      "512": "/assets/game/sizes/512/ships/battlecruiser.webp"
-    }
-  },
   "/assets/game/buildings/research-lab-low.webp": {
     "width": 1024,
     "height": 1024,
@@ -656,6 +512,150 @@
       "512": "/assets/game/sizes/512/planets/temperate-ocean.webp"
     }
   },
+  "/assets/game/style-pass/generated/research/combustion-drive.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/combustion-drive.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/combustion-drive.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/combustion-drive.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/shielding.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/shielding.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/shielding.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/shielding.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/intergalactic-research-network.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/intergalactic-research-network.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/intergalactic-research-network.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/intergalactic-research-network.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/graviton.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/graviton.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/graviton.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/graviton.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/hyperspace-drive.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/hyperspace-drive.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/hyperspace-drive.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/hyperspace-drive.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/energy.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/energy.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/energy.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/energy.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/computer.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/computer.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/computer.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/computer.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/plasma.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/plasma.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/plasma.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/plasma.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/impulse-drive.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/impulse-drive.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/impulse-drive.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/impulse-drive.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/astrophysics.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/astrophysics.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/astrophysics.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/astrophysics.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/laser.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/laser.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/laser.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/laser.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/hyperspace.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/hyperspace.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/hyperspace.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/hyperspace.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/weapons.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/weapons.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/weapons.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/weapons.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/espionage.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/espionage.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/espionage.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/espionage.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/armor.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/armor.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/armor.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/armor.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/research/ion.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/research/ion.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/research/ion.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/research/ion.webp"
+    }
+  },
   "/assets/game/style-pass/generated/defenses/heavy-laser.webp": {
     "width": 1024,
     "height": 1024,
@@ -746,6 +746,33 @@
       "512": "/assets/game/sizes/512/style-pass/generated/defenses/small-shield-dome.webp"
     }
   },
+  "/assets/game/style-pass/generated/ships/solar-satellite.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/solar-satellite.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/solar-satellite.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/solar-satellite.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/bomber.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/bomber.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/bomber.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/bomber.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/cruiser.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/cruiser.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/cruiser.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/cruiser.webp"
+    }
+  },
   "/assets/game/style-pass/generated/ships/light-fighter.webp": {
     "width": 1024,
     "height": 1024,
@@ -755,6 +782,51 @@
       "512": "/assets/game/sizes/512/style-pass/generated/ships/light-fighter.webp"
     }
   },
+  "/assets/game/style-pass/generated/ships/small-cargo.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/small-cargo.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/small-cargo.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/small-cargo.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/large-cargo.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/large-cargo.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/large-cargo.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/large-cargo.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/deathstar.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/deathstar.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/deathstar.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/deathstar.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/reaper.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/reaper.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/reaper.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/reaper.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/heavy-fighter.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/heavy-fighter.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/heavy-fighter.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/heavy-fighter.webp"
+    }
+  },
   "/assets/game/style-pass/generated/ships/colony-ship.webp": {
     "width": 1024,
     "height": 1024,
@@ -762,6 +834,60 @@
       "64": "/assets/game/sizes/64/style-pass/generated/ships/colony-ship.webp",
       "256": "/assets/game/sizes/256/style-pass/generated/ships/colony-ship.webp",
       "512": "/assets/game/sizes/512/style-pass/generated/ships/colony-ship.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/pathfinder.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/pathfinder.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/pathfinder.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/pathfinder.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/destroyer.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/destroyer.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/destroyer.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/destroyer.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/battleship.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/battleship.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/battleship.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/battleship.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/espionage-probe.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/espionage-probe.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/espionage-probe.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/espionage-probe.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/recycler.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/recycler.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/recycler.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/recycler.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/battlecruiser.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/battlecruiser.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/battlecruiser.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/battlecruiser.webp"
     }
   },
   "/assets/game/style-pass/generated/buildings/deuterium-tank-mid.webp": {
