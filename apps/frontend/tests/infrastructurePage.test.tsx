@@ -32,4 +32,29 @@ describe("Infrastructure page display helpers", () => {
     });
     expect(mineRows.some((row) => row.delta?.includes("required"))).toBe(false);
   });
+
+  test("keeps build-level production capacity positive when current power would throttle output", () => {
+    const state = createInitialPlayableState(1_000);
+    const unpoweredMineBuild = {
+      ...state.buildings,
+      metalMine: 0,
+      solarPlant: 0,
+    };
+
+    const mineEffect = buildingEffectMetrics(unpoweredMineBuild, "metalMine");
+    const rows = detailEffectRows(mineEffect, buildingEnergyDetail(unpoweredMineBuild, "metalMine"));
+
+    expect(rows).toContainEqual({
+      delta: "+24/h",
+      label: "Production capacity",
+      next: "53 Metal/h",
+      value: "29 Metal/h",
+    });
+    expect(rows).toContainEqual({
+      label: "Energy required",
+      next: "10 required",
+      tone: "warning",
+      value: "0 required",
+    });
+  });
 });
