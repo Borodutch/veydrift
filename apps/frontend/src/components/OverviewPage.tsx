@@ -1,7 +1,6 @@
 import type { PlayableState, Resources } from "../playableMvp";
 import {
   displayPlanetStats,
-  safeResourceNumber,
   type ChainLoadStatus,
 } from "../overviewData";
 import { formatPlanetType } from "../data/mockUniverse";
@@ -9,16 +8,6 @@ import type { Planet } from "../types";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
-
-const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-
-function formatInt(value: number): string {
-  return formatter.format(Math.floor(value));
-}
-
-function formatTemp(value: number): string {
-  return `${Math.round(value)}°C`;
-}
 
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
@@ -69,16 +58,6 @@ export function OverviewPage({
 }: OverviewPageProps) {
   const usedFields = Object.values(settledState.buildings).filter((level) => level > 0).length;
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
-  const onChainResourceValues = onChainSettlement?.planet
-    ? {
-        metal: safeResourceNumber(onChainSettlement.planet.resources.metal),
-        crystal: safeResourceNumber(onChainSettlement.planet.resources.crystal),
-        deuterium: safeResourceNumber(onChainSettlement.planet.resources.deuterium),
-      }
-    : undefined;
-  const hasUsableOnChainResources = onChainResourceValues?.metal !== undefined
-    && onChainResourceValues.crystal !== undefined
-    && onChainResourceValues.deuterium !== undefined;
 
   const planetName = homePlanet?.name
     ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
@@ -236,46 +215,30 @@ export function OverviewPage({
         </QueuePanel>
       </div>
 
-      {/* Resources — only shown when backed by real on-chain state */}
+      {/* Resource values live in the persistent top bar; keep Overview focused on planet state and actions. */}
       {isWalletConnected && onChainStatus === "loading" && (
         <div className="rounded-lg border border-white/10 bg-[#101624] p-3 text-sm text-slate-400 sm:p-4">
           Loading on-chain resources...
         </div>
       )}
 
-      {isWalletConnected && onChainStatus === "ready" && hasUsableOnChainResources && (
-        <div className="rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-white">Resources</h3>
-            {onChainSettlement?.homePlanetId ? (
-              <button
-                className="rounded border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-                disabled={!canCollect}
-                onClick={onCollect}
-                title={canCollect ? undefined : "Nothing to collect yet"}
-                type="button"
-              >
-                Collect resources
-              </button>
-            ) : null}
+      {isWalletConnected && onChainStatus === "ready" && onChainSettlement?.homePlanetId && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-white">Resource collection</h3>
+            <p className="mt-1 text-xs text-slate-400">
+              Current on-chain totals and production rates are shown in the top bar.
+            </p>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2 sm:gap-3">
-            <ResourceStat
-              label="Metal"
-              value={onChainResourceValues.metal ?? 0}
-              color="text-amber-300"
-            />
-            <ResourceStat
-              label="Crystal"
-              value={onChainResourceValues.crystal ?? 0}
-              color="text-cyan-300"
-            />
-            <ResourceStat
-              label="Deuterium"
-              value={onChainResourceValues.deuterium ?? 0}
-              color="text-emerald-300"
-            />
-          </div>
+          <button
+            className="h-9 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+            disabled={!canCollect}
+            onClick={onCollect}
+            title={canCollect ? undefined : "Nothing to collect yet"}
+            type="button"
+          >
+            Collect resources
+          </button>
         </div>
       )}
     </div>
@@ -359,24 +322,5 @@ function QuickLink({ children, onClick }: { children: string; onClick: () => voi
     >
       {children}
     </button>
-  );
-}
-
-function ResourceStat({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: number;
-  color: string;
-}) {
-  return (
-    <div className="min-w-0 rounded border border-white/10 bg-black/20 px-2.5 py-2">
-      <div className="flex items-center gap-1">
-        <span className={`text-[10px] font-semibold uppercase ${color}`}>{label}</span>
-      </div>
-      <p className="mt-0.5 break-words text-sm font-semibold leading-tight text-white">{formatInt(value)}</p>
-    </div>
   );
 }
