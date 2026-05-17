@@ -80,6 +80,17 @@ type ShipyardActionState =
 type BuildingActionState = ShipyardActionState;
 type DefenseActionState = ShipyardActionState;
 
+export function displayHomeCoordinates(
+  homePlanet: Coordinates | undefined,
+  homeCoords: Coordinates | undefined,
+  fallbackCoordinates: string | undefined
+): string | undefined {
+  const coordinates = homePlanet ?? homeCoords;
+  if (!coordinates) return fallbackCoordinates;
+
+  return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
+}
+
 export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
@@ -136,6 +147,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     return fallbackHomeCoords;
   }, [fallbackHomeCoords, onChainSettlement?.planet]);
+  const homeCoordinateLabel = useMemo(
+    () => displayHomeCoordinates(homePlanetIdentity, homeCoords, planet?.coordinates),
+    [
+      homeCoords?.galaxy,
+      homeCoords?.position,
+      homeCoords?.system,
+      homePlanetIdentity?.galaxy,
+      homePlanetIdentity?.position,
+      homePlanetIdentity?.system,
+      planet?.coordinates,
+    ]
+  );
 
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
@@ -787,7 +810,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     <TopBar
       account={account}
       caps={caps}
-      coordinates={planet?.coordinates}
+      coordinates={homeCoordinateLabel}
       isWalletConnected={isWalletConnected}
       queue={isWalletConnected ? undefined : settledState.queue}
       rates={rates}
@@ -922,7 +945,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         <NavBar
           account={account}
           active={page}
-          coordinates={planet?.coordinates}
+          coordinates={homeCoordinateLabel}
           onNavigate={handleNavigate}
         />
 
