@@ -1,15 +1,16 @@
-import type { DefenseKey, ShipKey } from "./playableMvp";
+import type { DefenseKey, ResearchKey, ShipKey } from "./playableMvp";
 
 export type GameAssetMapping<Key extends string> = {
   key: Key;
   src: string;
-  category: "ship" | "defense";
+  category: "ship" | "defense" | "research";
   status: "production" | "generated-preview";
   note?: string;
 };
 
-const SHIP_BASE = "/assets/game/ships";
+const SHIP_BASE = "/assets/game/style-pass/generated/ships";
 const DEFENSE_BASE = "/assets/game/style-pass/generated/defenses";
+const RESEARCH_BASE = "/assets/game/style-pass/generated/research";
 
 export const shipAssetManifest = [
   { key: "smallCargo", src: `${SHIP_BASE}/small-cargo.webp`, category: "ship", status: "production" },
@@ -29,6 +30,45 @@ export const shipAssetManifest = [
   { key: "reaper", src: `${SHIP_BASE}/reaper.webp`, category: "ship", status: "production" },
   { key: "pathfinder", src: `${SHIP_BASE}/pathfinder.webp`, category: "ship", status: "production" },
 ] as const satisfies readonly GameAssetMapping<ShipKey>[];
+
+export const researchAssetManifest = [
+  { key: "energy", src: `${RESEARCH_BASE}/energy.webp`, category: "research", status: "generated-preview" },
+  { key: "laser", src: `${RESEARCH_BASE}/laser.webp`, category: "research", status: "generated-preview" },
+  { key: "ion", src: `${RESEARCH_BASE}/ion.webp`, category: "research", status: "generated-preview" },
+  { key: "hyperspace", src: `${RESEARCH_BASE}/hyperspace.webp`, category: "research", status: "generated-preview" },
+  { key: "plasma", src: `${RESEARCH_BASE}/plasma.webp`, category: "research", status: "generated-preview" },
+  {
+    key: "combustionDrive",
+    src: `${RESEARCH_BASE}/combustion-drive.webp`,
+    category: "research",
+    status: "generated-preview",
+  },
+  {
+    key: "impulseDrive",
+    src: `${RESEARCH_BASE}/impulse-drive.webp`,
+    category: "research",
+    status: "generated-preview",
+  },
+  {
+    key: "hyperspaceDrive",
+    src: `${RESEARCH_BASE}/hyperspace-drive.webp`,
+    category: "research",
+    status: "generated-preview",
+  },
+  { key: "espionage", src: `${RESEARCH_BASE}/espionage.webp`, category: "research", status: "generated-preview" },
+  { key: "computer", src: `${RESEARCH_BASE}/computer.webp`, category: "research", status: "generated-preview" },
+  { key: "astrophysics", src: `${RESEARCH_BASE}/astrophysics.webp`, category: "research", status: "generated-preview" },
+  {
+    key: "intergalacticResearchNetwork",
+    src: `${RESEARCH_BASE}/intergalactic-research-network.webp`,
+    category: "research",
+    status: "generated-preview",
+  },
+  { key: "graviton", src: `${RESEARCH_BASE}/graviton.webp`, category: "research", status: "generated-preview" },
+  { key: "weapons", src: `${RESEARCH_BASE}/weapons.webp`, category: "research", status: "generated-preview" },
+  { key: "shielding", src: `${RESEARCH_BASE}/shielding.webp`, category: "research", status: "generated-preview" },
+  { key: "armor", src: `${RESEARCH_BASE}/armor.webp`, category: "research", status: "generated-preview" },
+] as const satisfies readonly GameAssetMapping<ResearchKey>[];
 
 export const defenseAssetManifest = [
   { key: "rocketLauncher", src: `${DEFENSE_BASE}/rocket-launcher.webp`, category: "defense", status: "generated-preview" },
@@ -60,3 +100,7 @@ export const shipAssetByKey = Object.fromEntries(
 export const defenseAssetByKey = Object.fromEntries(
   defenseAssetManifest.map((asset) => [asset.key, asset.src]),
 ) as Record<DefenseKey, string>;
+
+export const researchAssetByKey = Object.fromEntries(
+  researchAssetManifest.map((asset) => [asset.key, asset.src]),
+) as Record<ResearchKey, string>;

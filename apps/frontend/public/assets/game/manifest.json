@@ -128,67 +128,83 @@
   "ships": {
     "small-cargo": {
       "name": "Small Cargo",
-      "image": "/assets/game/ships/small-cargo.webp"
+      "image": "/assets/game/style-pass/generated/ships/small-cargo.webp",
+      "status": "generated-preview"
     },
     "light-fighter": {
       "name": "Light Fighter",
-      "image": "/assets/game/ships/light-fighter.webp"
+      "image": "/assets/game/style-pass/generated/ships/light-fighter.webp",
+      "status": "generated-preview"
     },
     "recycler": {
       "name": "Recycler",
-      "image": "/assets/game/ships/recycler.webp"
+      "image": "/assets/game/style-pass/generated/ships/recycler.webp",
+      "status": "generated-preview"
     },
     "colony-ship": {
       "name": "Colony Ship",
-      "image": "/assets/game/ships/colony-ship.webp"
+      "image": "/assets/game/style-pass/generated/ships/colony-ship.webp",
+      "status": "generated-preview"
     },
     "large-cargo": {
       "name": "Large Cargo",
-      "image": "/assets/game/ships/large-cargo.webp"
+      "image": "/assets/game/style-pass/generated/ships/large-cargo.webp",
+      "status": "generated-preview"
     },
     "heavy-fighter": {
       "name": "Heavy Fighter",
-      "image": "/assets/game/ships/heavy-fighter.webp"
+      "image": "/assets/game/style-pass/generated/ships/heavy-fighter.webp",
+      "status": "generated-preview"
     },
     "cruiser": {
       "name": "Cruiser",
-      "image": "/assets/game/ships/cruiser.webp"
+      "image": "/assets/game/style-pass/generated/ships/cruiser.webp",
+      "status": "generated-preview"
     },
     "battleship": {
       "name": "Battleship",
-      "image": "/assets/game/ships/battleship.webp"
+      "image": "/assets/game/style-pass/generated/ships/battleship.webp",
+      "status": "generated-preview"
     },
     "espionage-probe": {
       "name": "Espionage Probe",
-      "image": "/assets/game/ships/espionage-probe.webp"
+      "image": "/assets/game/style-pass/generated/ships/espionage-probe.webp",
+      "status": "generated-preview"
     },
     "bomber": {
       "name": "Bomber",
-      "image": "/assets/game/ships/bomber.webp"
+      "image": "/assets/game/style-pass/generated/ships/bomber.webp",
+      "status": "generated-preview"
     },
     "solar-satellite": {
       "name": "Solar Satellite",
-      "image": "/assets/game/ships/solar-satellite.webp"
+      "image": "/assets/game/style-pass/generated/ships/solar-satellite.webp",
+      "status": "generated-preview"
     },
     "destroyer": {
       "name": "Destroyer",
-      "image": "/assets/game/ships/destroyer.webp"
+      "image": "/assets/game/style-pass/generated/ships/destroyer.webp",
+      "status": "generated-preview"
     },
     "deathstar": {
-      "name": "Deathstar",
-      "image": "/assets/game/ships/deathstar.webp"
+      "name": "Dreadstar",
+      "image": "/assets/game/style-pass/generated/ships/deathstar.webp",
+      "status": "generated-preview"
     },
     "battlecruiser": {
       "name": "Battlecruiser",
-      "image": "/assets/game/ships/battlecruiser.webp"
+      "image": "/assets/game/style-pass/generated/ships/battlecruiser.webp",
+      "status": "generated-preview"
     },
     "reaper": {
       "name": "Reaper",
-      "image": "/assets/game/ships/reaper.webp"
+      "image": "/assets/game/style-pass/generated/ships/reaper.webp",
+      "status": "generated-preview"
     },
     "pathfinder": {
       "name": "Pathfinder",
-      "image": "/assets/game/ships/pathfinder.webp"
+      "image": "/assets/game/style-pass/generated/ships/pathfinder.webp",
+      "status": "generated-preview"
     }
   },
   "defenses": {
@@ -298,5 +314,87 @@
     "buildingsB": "/assets/game/concepts/veydrift-buildings-sheet-b.jpg",
     "spacecraft": "/assets/game/concepts/veydrift-spacecraft-sheet.jpg",
     "planets": "/assets/game/concepts/veydrift-planets-temperature-sheet.jpg"
+  },
+  "research": {
+    "energy": {
+      "name": "Energy Technology",
+      "image": "/assets/game/style-pass/generated/research/energy.webp",
+      "status": "generated-preview"
+    },
+    "laser": {
+      "name": "Laser Technology",
+      "image": "/assets/game/style-pass/generated/research/laser.webp",
+      "status": "generated-preview"
+    },
+    "ion": {
+      "name": "Ion Technology",
+      "image": "/assets/game/style-pass/generated/research/ion.webp",
+      "status": "generated-preview"
+    },
+    "hyperspace": {
+      "name": "Hyperspace Technology",
+      "image": "/assets/game/style-pass/generated/research/hyperspace.webp",
+      "status": "generated-preview"
+    },
+    "plasma": {
+      "name": "Plasma Technology",
+      "image": "/assets/game/style-pass/generated/research/plasma.webp",
+      "status": "generated-preview"
+    },
+    "combustion-drive": {
+      "name": "Combustion Drive",
+      "image": "/assets/game/style-pass/generated/research/combustion-drive.webp",
+      "status": "generated-preview"
+    },
+    "impulse-drive": {
+      "name": "Impulse Drive",
+      "image": "/assets/game/style-pass/generated/research/impulse-drive.webp",
+      "status": "generated-preview"
+    },
+    "hyperspace-drive": {
+      "name": "Hyperspace Drive",
+      "image": "/assets/game/style-pass/generated/research/hyperspace-drive.webp",
+      "status": "generated-preview"
+    },
+    "espionage": {
+      "name": "Espionage Technology",
+      "image": "/assets/game/style-pass/generated/research/espionage.webp",
+      "status": "generated-preview"
+    },
+    "computer": {
+      "name": "Computer Technology",
+      "image": "/assets/game/style-pass/generated/research/computer.webp",
+      "status": "generated-preview"
+    },
+    "astrophysics": {
+      "name": "Astrophysics",
+      "image": "/assets/game/style-pass/generated/research/astrophysics.webp",
+      "status": "generated-preview"
+    },
+    "intergalactic-research-network": {
+      "name": "Intergalactic Research Network",
+      "image": "/assets/game/style-pass/generated/research/intergalactic-research-network.webp",
+      "status": "generated-preview"
+    },
+    "graviton": {
+      "name": "Graviton Technology",
+      "image": "/assets/game/style-pass/generated/research/graviton.webp",
+      "status": "generated-preview"
+    },
+    "weapons": {
+      "name": "Weapons Technology",
+      "image": "/assets/game/style-pass/generated/research/weapons.webp",
+      "status": "generated-preview"
+    },
+    "shielding": {
+      "name": "Shielding Technology",
+      "image": "/assets/game/style-pass/generated/research/shielding.webp",
+      "status": "generated-preview"
+    },
+    "armor": {
+      "name": "Armor Technology",
+      "image": "/assets/game/style-pass/generated/research/armor.webp",
+      "status": "generated-preview"
+    }
   }
 }

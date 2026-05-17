@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { defenseAssetManifest, shipAssetManifest } from "../src/gameAssets";
+import { defenseAssetManifest, researchAssetManifest, shipAssetManifest } from "../src/gameAssets";
 import {
   buildingEffectMetrics,
   buildingCost,
@@ -149,8 +149,8 @@ describe("playable MVP contract display helpers", () => {
     expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));
   });
 
-  test("uses valid deterministic Shipyard and Defenses asset mappings", () => {
-    const allAssets = [...shipAssetManifest, ...defenseAssetManifest];
+  test("uses valid deterministic Shipyard, Research, and Defenses asset mappings", () => {
+    const allAssets = [...shipAssetManifest, ...researchAssetManifest, ...defenseAssetManifest];
     const srcCounts = new Map<string, number>();
 
     for (const asset of allAssets) {
@@ -161,8 +161,12 @@ describe("playable MVP contract display helpers", () => {
 
     expect([...srcCounts.entries()].filter(([, count]) => count > 1)).toEqual([]);
     expect(shipAssetManifest.every((asset) => asset.category === "ship")).toBe(true);
+    expect(researchAssetManifest.every((asset) => asset.category === "research")).toBe(true);
     expect(defenseAssetManifest.every((asset) => asset.category === "defense")).toBe(true);
-    expect(shipAssetManifest.some((asset) => asset.src.includes("/style-pass/generated/ships/"))).toBe(false);
+    expect(shipAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/ships/"))).toBe(true);
+    expect(shipAssetManifest.some((asset) => asset.src.includes("/assets/game/ships/"))).toBe(false);
+    expect(researchAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/research/"))).toBe(true);
+    expect(researchAssetManifest.some((asset) => asset.src.includes("/style-pass/generated/buildings/"))).toBe(false);
     expect(defenseAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/defenses/"))).toBe(true);
   });
 
@@ -195,6 +199,7 @@ describe("playable MVP contract display helpers", () => {
       "shielding",
       "armor",
     ]);
+    expect(researchCatalog.map((item) => item.asset)).toEqual(researchAssetManifest.map((asset) => asset.src));
     expect(researchRequirementsFor("plasma")).toEqual([
       { type: "building", key: "researchLab", level: 1 },
       { type: "research", key: "energy", level: 8 },

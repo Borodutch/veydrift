@@ -1,4 +1,4 @@
-import { defenseAssetByKey, shipAssetByKey } from "./gameAssets";
+import { defenseAssetByKey, researchAssetByKey, shipAssetByKey } from "./gameAssets";
 
 export type Resources = {
   metal: number;
@@ -600,7 +600,7 @@ export const researchCatalog: Array<{
     label: "Energy Technology",
     lane: "Basic",
     baseCost: { metal: 0, crystal: 800, deuterium: 400 },
-    asset: "/assets/game/style-pass/generated/buildings/solar-plant-mid.webp",
+    asset: researchAssetByKey.energy,
   },
   {
     key: "laser",
@@ -609,7 +609,7 @@ export const researchCatalog: Array<{
     lane: "Basic",
     baseCost: { metal: 200, crystal: 100, deuterium: 0 },
     requirements: [{ type: "research", key: "energy", level: 1 }],
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.laser,
   },
   {
     key: "ion",
@@ -618,7 +618,7 @@ export const researchCatalog: Array<{
     lane: "Basic",
     baseCost: { metal: 1_000, crystal: 300, deuterium: 100 },
     requirements: [{ type: "research", key: "laser", level: 2 }],
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.ion,
   },
   {
     key: "hyperspace",
@@ -627,7 +627,7 @@ export const researchCatalog: Array<{
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 4_000, deuterium: 2_000 },
     requirements: [{ type: "research", key: "energy", level: 5 }],
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.hyperspace,
   },
   {
     key: "plasma",
@@ -640,7 +640,7 @@ export const researchCatalog: Array<{
       { type: "research", key: "laser", level: 10 },
       { type: "research", key: "ion", level: 5 },
     ],
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.plasma,
   },
   {
     key: "combustionDrive",
@@ -648,7 +648,7 @@ export const researchCatalog: Array<{
     label: "Combustion Drive",
     lane: "Drive",
     baseCost: { metal: 400, crystal: 0, deuterium: 600 },
-    asset: "/assets/game/style-pass/generated/buildings/shipyard-mid.webp",
+    asset: researchAssetByKey.combustionDrive,
   },
   {
     key: "impulseDrive",
@@ -657,7 +657,7 @@ export const researchCatalog: Array<{
     lane: "Drive",
     baseCost: { metal: 2_000, crystal: 4_000, deuterium: 600 },
     requirements: [{ type: "research", key: "energy", level: 1 }],
-    asset: "/assets/game/style-pass/generated/buildings/shipyard-mid.webp",
+    asset: researchAssetByKey.impulseDrive,
   },
   {
     key: "hyperspaceDrive",
@@ -666,7 +666,7 @@ export const researchCatalog: Array<{
     lane: "Drive",
     baseCost: { metal: 10_000, crystal: 20_000, deuterium: 6_000 },
     requirements: [{ type: "research", key: "hyperspace", level: 3 }],
-    asset: "/assets/game/style-pass/generated/buildings/shipyard-mid.webp",
+    asset: researchAssetByKey.hyperspaceDrive,
   },
   {
     key: "espionage",
@@ -674,7 +674,7 @@ export const researchCatalog: Array<{
     label: "Espionage Technology",
     lane: "Advanced",
     baseCost: { metal: 200, crystal: 1_000, deuterium: 200 },
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.espionage,
   },
   {
     key: "computer",
@@ -682,7 +682,7 @@ export const researchCatalog: Array<{
     label: "Computer Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 400, deuterium: 600 },
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.computer,
   },
   {
     key: "astrophysics",
@@ -694,7 +694,7 @@ export const researchCatalog: Array<{
       { type: "research", key: "espionage", level: 4 },
       { type: "research", key: "impulseDrive", level: 3 },
     ],
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.astrophysics,
   },
   {
     key: "intergalacticResearchNetwork",
@@ -706,7 +706,7 @@ export const researchCatalog: Array<{
       { type: "research", key: "computer", level: 8 },
       { type: "research", key: "hyperspace", level: 8 },
     ],
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.intergalacticResearchNetwork,
   },
   {
     key: "graviton",
@@ -715,7 +715,7 @@ export const researchCatalog: Array<{
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 0, deuterium: 0 },
     requirements: [{ type: "research", key: "energy", level: 12 }],
-    asset: "/assets/game/style-pass/generated/buildings/solar-plant-mid.webp",
+    asset: researchAssetByKey.graviton,
   },
   {
     key: "weapons",
@@ -723,7 +723,7 @@ export const researchCatalog: Array<{
     label: "Weapons Technology",
     lane: "Combat",
     baseCost: { metal: 800, crystal: 200, deuterium: 0 },
-    asset: "/assets/game/style-pass/generated/buildings/shipyard-mid.webp",
+    asset: researchAssetByKey.weapons,
   },
   {
     key: "shielding",
@@ -732,7 +732,7 @@ export const researchCatalog: Array<{
     lane: "Combat",
     baseCost: { metal: 200, crystal: 600, deuterium: 0 },
     requirements: [{ type: "research", key: "energy", level: 1 }],
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: researchAssetByKey.shielding,
   },
   {
     key: "armor",
@@ -740,7 +740,7 @@ export const researchCatalog: Array<{
     label: "Armor Technology",
     lane: "Combat",
     baseCost: { metal: 1_000, crystal: 0, deuterium: 0 },
-    asset: "/assets/game/style-pass/generated/buildings/metal-mine-mid.webp",
+    asset: researchAssetByKey.armor,
   },
 ];
 
