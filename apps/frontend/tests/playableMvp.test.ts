@@ -7,6 +7,7 @@ import {
   createInitialPlayableState,
   defenseCatalog,
   energyBalance,
+  hasCollectableResources,
   productionPerHour,
   researchCatalog,
   researchRequirementsFor,
@@ -156,6 +157,13 @@ describe("playable MVP contract display helpers", () => {
     expect(buildingDurationEstimate(state.buildings, cost)).toBe(60);
     expect(buildingDurationEstimate(upgradedRobotics, { metal: 100_000, crystal: 50_000, deuterium: 0 }))
       .toBe(300);
+
+    const advancedMine = {
+      ...state.buildings,
+      metalMine: 8,
+    };
+    expect(buildingDurationEstimate(state.buildings, buildingCost(state.buildings, "metalMine"))).toBe(60);
+    expect(buildingDurationEstimate(state.buildings, buildingCost(advancedMine, "metalMine"))).toBe(192);
   });
 
   test("exposes building effect metrics from the same production and storage formulas", () => {
@@ -183,6 +191,42 @@ describe("playable MVP contract display helpers", () => {
       expect(storageEffect.currentCapacity).toBe(storageCaps(buildings).metal);
       expect(storageEffect.deltaCapacity).toBe(10_000);
     }
+  });
+
+  test("uses settled planet multipliers for infrastructure production effects", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      metalMine: 1,
+      solarPlant: 1,
+    };
+    const profile = {
+      metalMultiplierBps: 12_000,
+      crystalMultiplierBps: 8_500,
+      deuteriumMultiplierBps: 11_000,
+    };
+
+    const production = productionPerHour(buildings, profile);
+    const effect = buildingEffectMetrics(buildings, "metalMine", profile);
+
+    expect(production.metal).toBe(66);
+    expect(effect.kind).toBe("production");
+    if (effect.kind === "production") {
+      expect(effect.currentPerHour).toBe(66);
+      expect(effect.nextPerHour).toBe(productionPerHour({ ...buildings, metalMine: 2 }, profile).metal);
+      expect(effect.deltaPerHour).toBeGreaterThan(0);
+    }
+  });
+
+  test("only enables resource collection when at least one whole resource accrued", () => {
+    const rates = { metal: 60, crystal: 0, deuterium: 0 };
+    const lastSettledAtSeconds = 1_000;
+
+    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_000_000)).toBe(false);
+    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_059_000)).toBe(false);
+    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_060_000)).toBe(true);
+    expect(hasCollectableResources({ metal: 0, crystal: 0, deuterium: 0 }, lastSettledAtSeconds, 1_600_000))
+      .toBe(false);
   });
 
   test("reports modeled energy and unlock effects for utility buildings", () => {

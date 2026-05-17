@@ -12,6 +12,8 @@ import { ShipyardPage } from "./components/ShipyardPage";
 import {
   buildingContractIds,
   type DefenseKey,
+  hasCollectableResources,
+  type PlanetProductionProfile,
   productionPerHour,
   progress,
   storageCaps,
@@ -149,18 +151,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     return Math.max(0, Math.ceil((Number(onChainQueues.building.readyAt) * 1_000 - now) / 1_000));
   }, [onChainQueues?.building, now]);
 
-  const isCollectReady = useMemo(() => {
-    if (!isWalletConnected || !onChainSettlement?.planet?.lastSettledAt) return true;
-    const lastSettledAt = Number(onChainSettlement.planet.lastSettledAt);
-    const nowSeconds = Math.floor(now / 1_000);
-    const timePassed = nowSeconds - lastSettledAt;
-    const anyQueueReady =
-      Boolean(onChainQueues?.building?.active && onChainQueues.building.readyAt && Number(onChainQueues.building.readyAt) <= nowSeconds) ||
-      Boolean(onChainQueues?.ship?.active && onChainQueues.ship.readyAt && Number(onChainQueues.ship.readyAt) <= nowSeconds) ||
-      Boolean(onChainQueues?.research?.active && onChainQueues.research.readyAt && Number(onChainQueues.research.readyAt) <= nowSeconds);
-    return timePassed >= 5 || anyQueueReady;
-  }, [isWalletConnected, onChainSettlement?.planet?.lastSettledAt, onChainQueues, now]);
-
   const refreshInfrastructureState = useCallback(() => {
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
@@ -297,15 +287,29 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const state = useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState, now), [infrastructureChainState, now]);
   const settledState = state;
+  const planetProductionProfile = useMemo<PlanetProductionProfile | undefined>(() => {
+    const planetState = onChainSettlement?.planet;
+    if (!planetState) return undefined;
+
+    return {
+      metalMultiplierBps: planetState.metalMultiplierBps,
+      crystalMultiplierBps: planetState.crystalMultiplierBps,
+      deuteriumMultiplierBps: planetState.deuteriumMultiplierBps,
+    };
+  }, [
+    onChainSettlement?.planet?.crystalMultiplierBps,
+    onChainSettlement?.planet?.deuteriumMultiplierBps,
+    onChainSettlement?.planet?.metalMultiplierBps,
+  ]);
   const rates = useMemo(() => {
     const production = infrastructureChainState?.productionPerHour;
-    if (!production) return productionPerHour(settledState.buildings);
+    if (!production) return productionPerHour(settledState.buildings, planetProductionProfile);
     return {
       metal: Number(production.metal),
       crystal: Number(production.crystal),
       deuterium: Number(production.deuterium),
     };
-  }, [infrastructureChainState?.productionPerHour, settledState.buildings]);
+  }, [infrastructureChainState?.productionPerHour, planetProductionProfile, settledState.buildings]);
   const caps = useMemo(() => {
     const nextCaps = infrastructureChainState?.storageCaps;
     if (!nextCaps) return storageCaps(settledState.buildings);
@@ -315,6 +319,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       deuterium: Number(nextCaps.deuterium),
     };
   }, [infrastructureChainState?.storageCaps, settledState.buildings]);
+  const isCollectReady = useMemo(() => {
+    if (!isWalletConnected || !onChainSettlement?.planet?.lastSettledAt) return false;
+    return hasCollectableResources(rates, Number(onChainSettlement.planet.lastSettledAt), now);
+  }, [isWalletConnected, onChainSettlement?.planet?.lastSettledAt, rates, now]);
   const buildingQueue = settledState.queue?.kind === "building" ? settledState.queue : undefined;
   const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
   const queueProgress = progress(buildingQueue, now);
@@ -767,6 +775,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}
+          planetProductionProfile={planetProductionProfile}
           settledState={infrastructureState}
           state={state}
         />

@@ -133,6 +133,12 @@ export type EnergyBalance = {
   scaleBps: number;
 };
 
+export type PlanetProductionProfile = {
+  metalMultiplierBps: number;
+  crystalMultiplierBps: number;
+  deuteriumMultiplierBps: number;
+};
+
 export type BuildingEffectMetrics =
   | {
       kind: "production";
@@ -817,21 +823,24 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
   };
 }
 
-export function productionPerHour(buildings: Record<BuildingKey, number>): Resources {
+export function productionPerHour(
+  buildings: Record<BuildingKey, number>,
+  profile: PlanetProductionProfile = PLANET,
+): Resources {
   const energy = energyBalance(buildings);
 
   return {
     metal: scaleByBps(
       scaleByBps(
         30 + buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
-        PLANET.metalMultiplierBps,
+        profile.metalMultiplierBps,
       ),
       energy.scaleBps,
     ),
     crystal: scaleByBps(
       scaleByBps(
         15 + buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
-        PLANET.crystalMultiplierBps,
+        profile.crystalMultiplierBps,
       ),
       energy.scaleBps,
     ),
@@ -840,7 +849,7 @@ export function productionPerHour(buildings: Record<BuildingKey, number>): Resou
         8
           + buildings.deuteriumSynthesizer * 10
           + buildings.deuteriumSynthesizer * buildings.deuteriumSynthesizer * 3,
-        PLANET.deuteriumMultiplierBps,
+        profile.deuteriumMultiplierBps,
       ),
       energy.scaleBps,
     ),
@@ -887,6 +896,7 @@ export function buildingCost(
 export function buildingEffectMetrics(
   buildings: Record<BuildingKey, number>,
   key: BuildingKey,
+  profile: PlanetProductionProfile = PLANET,
 ): BuildingEffectMetrics {
   const nextBuildings = {
     ...buildings,
@@ -894,8 +904,8 @@ export function buildingEffectMetrics(
   };
 
   if (key === "metalMine" || key === "crystalMine" || key === "deuteriumSynthesizer") {
-    const current = productionPerHour(buildings);
-    const next = productionPerHour(nextBuildings);
+    const current = productionPerHour(buildings, profile);
+    const next = productionPerHour(nextBuildings, profile);
     const resource = productionResourceForBuilding(key);
 
     return {
@@ -1013,6 +1023,17 @@ export function canAfford(resources: Resources, cost: Resources): boolean {
     && resources.deuterium >= cost.deuterium;
 }
 
+export function hasCollectableResources(
+  rates: Resources,
+  lastSettledAtSeconds: number,
+  now = Date.now(),
+): boolean {
+  const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
+  return resourceEntries(rates).some(([, ratePerHour]) => (
+    Math.floor((Math.max(0, ratePerHour) * elapsedSeconds) / 3_600) > 0
+  ));
+}
+
 export function progress(queue: QueueItem | undefined, now = Date.now()): number {
   if (!queue) {
     return 0;
@@ -1067,6 +1088,14 @@ function researchDurationSeconds(researchLabLevel: number, cost: Resources): num
 
 function scaleByBps(value: number, multiplierBps: number): number {
   return Math.floor((value * multiplierBps) / BPS);
+}
+
+function resourceEntries(resources: Resources): Array<[keyof Resources, number]> {
+  return [
+    ["metal", resources.metal],
+    ["crystal", resources.crystal],
+    ["deuterium", resources.deuterium],
+  ];
 }
 
 function multiply(resources: Resources, quantity: number): Resources {
