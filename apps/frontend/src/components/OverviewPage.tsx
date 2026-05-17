@@ -103,7 +103,7 @@ export function OverviewPage({
       )}
 
       {/* Contract production queues */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {/* Building queue */}
         <QueuePanel
           label="Buildings"
@@ -118,7 +118,7 @@ export function OverviewPage({
               />
               {queueRemaining(onChainQueues.building.readyAt, now) === "Ready" && onFinishBuilding && (
                 <button
-                  className="h-7 rounded border border-cyan-300/40 bg-cyan-300/10 px-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+                  className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
                   onClick={onFinishBuilding}
                   type="button"
                 >
@@ -133,9 +133,8 @@ export function OverviewPage({
               progress={queueProgress}
             />
           ) : (
-            <EmptyQueue>
+            <EmptyQueue action={<QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>}>
               No active construction.
-              <QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>
             </EmptyQueue>
           )}
         </QueuePanel>
@@ -153,9 +152,8 @@ export function OverviewPage({
               color="bg-rose-300"
             />
           ) : (
-            <EmptyQueue>
+            <EmptyQueue action={<QuickLink onClick={() => onNavigate("defenses")}>Defenses</QuickLink>}>
               No active defense production.
-              <QuickLink onClick={() => onNavigate("defenses")}>Defenses</QuickLink>
             </EmptyQueue>
           )}
         </QueuePanel>
@@ -180,9 +178,8 @@ export function OverviewPage({
               color="bg-cyan-300"
             />
           ) : (
-            <EmptyQueue>
+            <EmptyQueue action={<QuickLink onClick={() => onNavigate("research")}>Research</QuickLink>}>
               No active research.
-              <QuickLink onClick={() => onNavigate("research")}>Research</QuickLink>
             </EmptyQueue>
           )}
         </QueuePanel>
@@ -207,9 +204,8 @@ export function OverviewPage({
               color="bg-emerald-300"
             />
           ) : (
-            <EmptyQueue>
+            <EmptyQueue action={<QuickLink onClick={() => onNavigate("shipyard")}>Shipyard</QuickLink>}>
               No active ship production.
-              <QuickLink onClick={() => onNavigate("shipyard")}>Shipyard</QuickLink>
             </EmptyQueue>
           )}
         </QueuePanel>
@@ -264,14 +260,14 @@ function QueuePanel({
   children: preact.ComponentChildren;
 }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-[#101624] p-3">
+    <div className="flex min-h-32 w-full min-w-0 max-w-[calc(100vw-1.5rem)] flex-col rounded-lg border border-white/10 bg-[#101624] p-3 sm:max-w-none sm:p-4">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-white">{label}</h3>
         {tag && (
           <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{tag}</span>
         )}
       </div>
-      <div className="mt-2">{children}</div>
+      <div className="mt-3 flex flex-1 flex-col">{children}</div>
     </div>
   );
 }
@@ -309,14 +305,25 @@ function QueueItemDisplay({
   );
 }
 
-function EmptyQueue({ children }: { children: preact.ComponentChildren }) {
-  return <div className="text-xs text-slate-400">{children}</div>;
+function EmptyQueue({
+  action,
+  children,
+}: {
+  action: preact.ComponentChildren;
+  children: preact.ComponentChildren;
+}) {
+  return (
+    <div className="flex min-h-20 flex-1 flex-col justify-between gap-3 text-xs leading-5 text-slate-400">
+      <p className="mb-0">{children}</p>
+      {action}
+    </div>
+  );
 }
 
 function QuickLink({ children, onClick }: { children: string; onClick: () => void }) {
   return (
     <button
-      className="ml-2 inline rounded border border-white/15 bg-white/8 px-2 py-1 text-[10px] font-medium text-slate-200 transition hover:bg-white/12"
+      className="flex h-9 w-full items-center justify-center rounded-md border border-white/15 bg-white/10 px-3 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:bg-white/20 hover:text-white"
       onClick={onClick}
       type="button"
     >
