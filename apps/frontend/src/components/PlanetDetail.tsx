@@ -9,14 +9,17 @@ interface Props {
   coords: Coordinates;
   apiBaseUrl?: string | undefined;
   homeCoords?: Coordinates | undefined;
+  homePlanet?: Planet | undefined;
   onBack: () => void;
   onNavigateSystem: (galaxy: number, system: number) => void;
 }
 
-export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, onBack, onNavigateSystem }: Props) {
+export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack, onNavigateSystem }: Props) {
   const fallbackPlanet = useMemo(
-    () => getPlanet(coords.galaxy, coords.system, coords.position),
-    [coords.galaxy, coords.position, coords.system],
+    () => sameCoordinates(homeCoords, coords) && homePlanet
+      ? homePlanet
+      : getPlanet(coords.galaxy, coords.system, coords.position),
+    [coords.galaxy, coords.position, coords.system, homeCoords, homePlanet],
   );
   const [planet, setPlanet] = useState<Planet | null>(fallbackPlanet);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
@@ -36,7 +39,8 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
         return response.json();
       })
       .then((payload) => {
-        setPlanet(planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null);
+        const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
+        setPlanet(sameCoordinates(homeCoords, coords) && homePlanet ? homePlanet : apiPlanet);
         setSource("api");
       })
       .catch((error) => {
@@ -47,7 +51,7 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, coords.galaxy, coords.position, coords.system, fallbackPlanet]);
+  }, [apiBaseUrl, coords, fallbackPlanet, homeCoords, homePlanet]);
 
   if (!planet) {
     return (
@@ -224,7 +228,7 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
   );
 }
 
-function sameCoordinates(homeCoords: Coordinates | undefined, planet: Planet): boolean {
+function sameCoordinates(homeCoords: Coordinates | undefined, planet: Coordinates): boolean {
   return Boolean(
     homeCoords
       && homeCoords.galaxy === planet.galaxy

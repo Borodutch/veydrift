@@ -6,6 +6,7 @@ import {
   GALAXY_COUNT,
   SYSTEM_COUNT,
   POSITION_COUNT,
+  mergePlanetAtCoordinates,
   planetsFromSystemResponse
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
@@ -17,16 +18,20 @@ interface Props {
   system: number;
   apiBaseUrl?: string | undefined;
   homeCoords?: Coordinates | undefined;
+  homePlanet?: Planet | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
 }
 
-export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCoords, onSelectPlanet, onNavigate }: Props) {
+export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onSelectPlanet, onNavigate }: Props) {
   const [planets, setPlanets] = useState<Planet[]>([]);
   const [loading, setLoading] = useState(true);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
+    : undefined;
+  const homePlanetOverride = homePlanet?.galaxy === galaxy && homePlanet.system === system
+    ? homePlanet
     : undefined;
 
   useEffect(() => {
@@ -43,13 +48,13 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
         return response.json();
       })
       .then((payload) => {
-        setPlanets(ensurePlanetAtCoordinates(planetsFromSystemResponse(payload), homeCoordsInSystem));
+        setPlanets(withHomePlanet(planetsFromSystemResponse(payload), homePlanetOverride, homeCoordsInSystem));
         setSource("api");
       })
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
-          setPlanets(ensurePlanetAtCoordinates(generateSystem(galaxy, system), homeCoordsInSystem));
+          setPlanets(withHomePlanet(generateSystem(galaxy, system), homePlanetOverride, homeCoordsInSystem));
           setSource("fallback");
         }
       })
@@ -58,7 +63,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, galaxy, homeCoordsInSystem?.position, system]);
+  }, [apiBaseUrl, galaxy, homeCoordsInSystem?.position, homePlanetOverride?.fields, homePlanetOverride?.image, system]);
 
   const handlePrevSystem = () => {
     let newSystem = system - 1;
@@ -331,4 +336,16 @@ function sameCoordinates(homeCoords: Coordinates | undefined, planet: Planet): b
       && homeCoords.system === planet.system
       && homeCoords.position === planet.position
   );
+}
+
+function withHomePlanet(
+  planets: Planet[],
+  homePlanet: Planet | undefined,
+  homeCoords: Coordinates | undefined
+): Planet[] {
+  if (homePlanet) {
+    return mergePlanetAtCoordinates(planets, homePlanet);
+  }
+
+  return ensurePlanetAtCoordinates(planets, homeCoords);
 }

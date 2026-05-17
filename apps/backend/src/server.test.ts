@@ -673,11 +673,14 @@ describe("Veydrift backend", () => {
     const body = await system.json();
     expect(body.planets.find((item: { position: number }) => item.position === 9)).toMatchObject({
       position: 9,
+      fields: planet.fields,
+      temperature: planet.temperature,
       occupiedBy: {
         planetId: "7",
         owner: player
       }
     });
+    expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
@@ -688,6 +691,7 @@ describe("Veydrift backend", () => {
     })(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1"));
 
     const body = await response.json();
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
     expect(body.systems).toHaveLength(3);
     expect(body.systems.map((system: { system: number }) => system.system)).toEqual([43, 44, 45]);
     expect(body.systems[1].planets.find((item: { position: number }) => item.position === 8)).toMatchObject({
