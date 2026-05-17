@@ -20,6 +20,7 @@ import {
   type ResearchKey,
   type ShipKey,
 } from "./playableMvp";
+import { formatDuration } from "./buildingDetails";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   buildingCosts,
@@ -39,6 +40,7 @@ import {
   fetchWalletSettlement,
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
+  sendFinishBuildingUpgradeTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
   sendStartBuildingUpgradeTransaction,
@@ -136,6 +138,28 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const gameContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? gameContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+
+  const isBuildingReadyToFinish = useMemo(() => {
+    if (!onChainQueues?.building?.active || !onChainQueues.building.readyAt) return false;
+    return Number(onChainQueues.building.readyAt) * 1_000 <= now;
+  }, [onChainQueues?.building, now]);
+
+  const buildingQueueRemainingSeconds = useMemo(() => {
+    if (!onChainQueues?.building?.active || !onChainQueues.building.readyAt) return 0;
+    return Math.max(0, Math.ceil((Number(onChainQueues.building.readyAt) * 1_000 - now) / 1_000));
+  }, [onChainQueues?.building, now]);
+
+  const isCollectReady = useMemo(() => {
+    if (!isWalletConnected || !onChainSettlement?.planet?.lastSettledAt) return true;
+    const lastSettledAt = Number(onChainSettlement.planet.lastSettledAt);
+    const nowSeconds = Math.floor(now / 1_000);
+    const timePassed = nowSeconds - lastSettledAt;
+    const anyQueueReady =
+      Boolean(onChainQueues?.building?.active && onChainQueues.building.readyAt && Number(onChainQueues.building.readyAt) <= nowSeconds) ||
+      Boolean(onChainQueues?.ship?.active && onChainQueues.ship.readyAt && Number(onChainQueues.ship.readyAt) <= nowSeconds) ||
+      Boolean(onChainQueues?.research?.active && onChainQueues.research.readyAt && Number(onChainQueues.research.readyAt) <= nowSeconds);
+    return timePassed >= 5 || anyQueueReady;
+  }, [isWalletConnected, onChainSettlement?.planet?.lastSettledAt, onChainQueues, now]);
 
   const refreshInfrastructureState = useCallback(() => {
     if (!apiBaseUrl || !account) {
@@ -326,15 +350,22 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       const target = onChainQueues.building.targetLevel
         ? ` to Level ${onChainQueues.building.targetLevel}`
         : "";
-      return `Building upgrade${target} already pending on-chain.`;
+      if (isBuildingReadyToFinish) {
+        return `Building upgrade${target} is ready to finish!`;
+      }
+      const remaining = buildingQueueRemainingSeconds;
+      const timeStr = remaining > 0 ? ` Ready in ${formatDuration(remaining)}.` : "";
+      return `Building upgrade${target} already pending on-chain.${timeStr}`;
     }
     return undefined;
   }, [
     buildingAction,
+    buildingQueueRemainingSeconds,
     gameContract,
     infrastructureChainState,
     infrastructureError,
     infrastructureLoading,
+    isBuildingReadyToFinish,
     isWalletConnected,
     onChainQueues?.building,
     onChainResources,
@@ -443,6 +474,53 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const handleUpgrade = useCallback((key: BuildingKey) => {
     void runBuildingTransaction(key);
   }, [runBuildingTransaction]);
+
+  const handleFinishBuildingUpgrade = useCallback(async () => {
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setBuildingAction({
+        status: "error",
+        label: "Wallet, game contract, or home planet is unavailable.",
+      });
+      return;
+    }
+    if (!isBuildingReadyToFinish) {
+      setBuildingAction({
+        status: "error",
+        label: "Building upgrade is not ready to finish yet.",
+      });
+      return;
+    }
+
+    setBuildingAction({ status: "pending", label: "Waiting for wallet confirmation" });
+
+    try {
+      const txHash = await sendFinishBuildingUpgradeTransaction(
+        provider,
+        account,
+        gameContract,
+        onChainSettlement.homePlanetId,
+      );
+      setBuildingAction({ status: "pending", label: `Waiting for chain confirmation ${txHash.slice(0, 10)}...` });
+      await waitForReceipt(provider, txHash);
+      await refreshOnChainState();
+      refreshInfrastructureState();
+      setBuildingAction({ status: "success", label: "Building upgrade finished on-chain." });
+    } catch (error) {
+      console.error(error);
+      setBuildingAction({
+        status: "error",
+        label: error instanceof Error ? error.message : "Finish building upgrade transaction failed.",
+      });
+    }
+  }, [
+    account,
+    gameContract,
+    isBuildingReadyToFinish,
+    onChainSettlement?.homePlanetId,
+    provider,
+    refreshInfrastructureState,
+    refreshOnChainState,
+  ]);
 
   const runShipyardTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setShipyardAction({ status: "pending", label });
@@ -686,6 +764,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionNotice={infrastructureActionNotice}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
+          isBuildingReadyToFinish={isBuildingReadyToFinish}
+          onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}
           settledState={infrastructureState}
           state={state}
@@ -743,6 +823,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     return (
       <OverviewPage
+        canCollect={isCollectReady}
         caps={caps}
         isWalletConnected={isWalletConnected}
         now={now}
@@ -751,6 +832,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onCollect={handleCollectResources}
+        onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
         planet={planet}
         queueProgress={queueProgress}

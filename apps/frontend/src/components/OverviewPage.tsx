@@ -22,8 +22,14 @@ function queueRemaining(readyAt: string | null, now: number): string {
   const seconds = Math.max(0, Math.ceil((Number(readyAt) * 1000 - now) / 1_000));
   if (seconds <= 0) return "Ready";
   if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.ceil(seconds / 60)}m`;
-  return `${Math.floor(seconds / 3600)}h ${Math.ceil((seconds % 3600) / 60)}m`;
+  if (seconds < 3600) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return secs === 0 ? `${mins}m` : `${mins}m ${secs}s`;
+  }
+  const hours = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  return mins === 0 ? `${hours}h` : `${hours}h ${mins}m`;
 }
 
 interface OverviewPageProps {
@@ -38,6 +44,8 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   isWalletConnected: boolean;
   onCollect: () => void;
+  onFinishBuilding?: (() => void) | undefined;
+  canCollect?: boolean;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onChainError?: string | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
@@ -56,6 +64,8 @@ export function OverviewPage({
   planet,
   isWalletConnected,
   onCollect,
+  onFinishBuilding,
+  canCollect = true,
   onNavigate,
   onChainError,
   onChainSettlement,
@@ -121,11 +131,22 @@ export function OverviewPage({
           tag={onChainQueues?.building?.active ? "On-chain" : undefined}
         >
           {onChainQueues?.building?.active ? (
-            <QueueItemDisplay
-              label={`${onChainQueues.building.kind === "building" ? "Building" : onChainQueues.building.kind} level ${onChainQueues.building.targetLevel}`}
-              remaining={queueRemaining(onChainQueues.building.readyAt, now)}
-              indeterminate
-            />
+            <div className="grid gap-2">
+              <QueueItemDisplay
+                label={`${onChainQueues.building.kind === "building" ? "Building" : onChainQueues.building.kind} level ${onChainQueues.building.targetLevel}`}
+                remaining={queueRemaining(onChainQueues.building.readyAt, now)}
+                indeterminate
+              />
+              {queueRemaining(onChainQueues.building.readyAt, now) === "Ready" && onFinishBuilding && (
+                <button
+                  className="h-7 rounded border border-cyan-300/40 bg-cyan-300/10 px-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+                  onClick={onFinishBuilding}
+                  type="button"
+                >
+                  Finish upgrade
+                </button>
+              )}
+            </div>
           ) : settledState.queue?.kind === "building" ? (
             <QueueItemDisplay
               label={settledState.queue.label}
@@ -228,8 +249,10 @@ export function OverviewPage({
             <h3 className="text-sm font-semibold text-white">Resources</h3>
             {onChainSettlement?.homePlanetId ? (
               <button
-                className="rounded border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+                className="rounded border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+                disabled={!canCollect}
                 onClick={onCollect}
+                title={canCollect ? undefined : "Nothing to collect yet"}
                 type="button"
               >
                 Collect resources
