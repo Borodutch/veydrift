@@ -7,6 +7,8 @@ import {
   encodeGameCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
+  fetchInfrastructureState,
+  fetchWalletQueues,
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
@@ -340,6 +342,43 @@ describe("walletFlow", () => {
           }
         ]
       }
+    ]);
+  });
+
+  test("fetches dynamic wallet state without browser cache", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init: unknown }> = [];
+
+    globalThis.fetch = (async (input, init) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    try {
+      await fetchWalletQueues("https://api.example.test///", account);
+      await fetchInfrastructureState("https://api.example.test", account);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(calls).toEqual([
+      {
+        url: `https://api.example.test/wallet/${account}/queues`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/infrastructure`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
     ]);
   });
 });

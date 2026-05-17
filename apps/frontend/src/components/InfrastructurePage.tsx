@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
-import { buildingCatalog, buildingEffectMetrics } from "../playableMvp";
+import { buildingCatalog, buildingEffectMetrics, unmetBuildingRequirement } from "../playableMvp";
 import {
   buildingEnergyDetail,
   buildingUpgradeStatus,
+  formatBuildingRequirements,
   formatCost,
   formatDuration,
   formatNumber,
@@ -99,6 +100,7 @@ export function InfrastructurePage({
             const currentLevel = settledState.buildings[building.key];
             const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
             const isSelected = building.key === selectedBuilding.key;
+            const missingRequirement = unmetBuildingRequirement(settledState, building.key);
 
             return (
               <BuildingSelectorTile
@@ -109,6 +111,7 @@ export function InfrastructurePage({
                 isUnbuilt={currentLevel === 0}
                 key={building.key}
                 label={building.label}
+                statusText={missingRequirement ? "Locked" : undefined}
                 onClick={() => handleSelectBuilding(building.key)}
               />
             );
@@ -141,6 +144,7 @@ function BuildingSelectorTile({
   isUnbuilt,
   label,
   onClick,
+  statusText,
 }: {
   asset: string;
   currentLevel: number;
@@ -149,6 +153,7 @@ function BuildingSelectorTile({
   isUnbuilt: boolean;
   label: string;
   onClick: () => void;
+  statusText?: string | undefined;
 }) {
   const effectView = compactEffect(effect);
 
@@ -176,7 +181,9 @@ function BuildingSelectorTile({
         <span className="block truncate text-sm font-semibold text-white">{label}</span>
         <span className="mt-0.5 flex items-center justify-between gap-2 text-xs">
           <span className={isUnbuilt ? "text-slate-500" : "text-slate-300"}>Level {currentLevel}</span>
-          <span className="truncate text-right text-signal">{effectView}</span>
+          <span className={`truncate text-right ${statusText ? "text-amber-300" : "text-signal"}`}>
+            {statusText ?? effectView}
+          </span>
         </span>
       </span>
     </button>
@@ -265,6 +272,7 @@ function BuildingDetailPanel({
       </dl>
 
       <div className="mt-4 grid gap-2 border-t border-white/10 pt-4 text-sm sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <InfoBlock label="Requirements" value={formatBuildingRequirements(building.key)} />
         <InfoBlock label="Upgrade cost" value={formatCost(status.cost)} />
         <InfoBlock label="Upgrade time" value={formatDuration(status.durationSeconds)} />
       </div>

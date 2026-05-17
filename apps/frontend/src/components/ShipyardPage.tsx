@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Resources, ShipKey } from "../playableMvp";
-import { canAfford, shipCatalog } from "../playableMvp";
+import { canAfford, missingUnlockRequirements, shipCatalog } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
@@ -314,19 +314,9 @@ export function getMissingRequirements(
   ship: (typeof shipCatalog)[number],
   shipyardState?: ChainShipyardState | null | undefined,
 ): string[] {
-  return ship.requirements.flatMap((requirement) => {
-    const technologyId = requirement.kind === "technology"
-      ? technologyIdByKey[requirement.key ?? ""]
-      : undefined;
-    const actual = requirement.kind === "building"
-      ? shipyardState?.shipyardLevel ?? 0
-      : technologyId === undefined
-        ? 0
-        : shipyardState?.technologyLevels[technologyId.toString()] ?? 0;
-
-    return actual >= requirement.level
-      ? []
-      : [`${requirement.label} ${requirement.level} needed`];
+  return missingUnlockRequirements(ship.requirements, {
+    buildings: { shipyard: shipyardState?.shipyardLevel ?? 0 },
+    research: technologyLevelsByKey(shipyardState?.technologyLevels),
   });
 }
 
@@ -403,3 +393,12 @@ const technologyIdByKey: Partial<Record<string, number>> = {
   intergalacticResearchNetwork: 14,
   graviton: 15,
 };
+
+function technologyLevelsByKey(levels: Record<string, number> | undefined) {
+  return Object.fromEntries(
+    Object.entries(technologyIdByKey).map(([key, id]) => [
+      key,
+      id === undefined ? 0 : levels?.[id.toString()] ?? 0,
+    ]),
+  );
+}
