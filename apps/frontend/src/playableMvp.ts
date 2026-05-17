@@ -89,6 +89,19 @@ export type ResearchRequirement =
       level: number;
     };
 
+export type BuildingRequirement = {
+  type: "building";
+  key: BuildingKey;
+  level: number;
+};
+
+export type UnlockRequirement = {
+  label: string;
+  kind: "building" | "technology";
+  key?: BuildingKey | ResearchKey;
+  level: number;
+};
+
 export type MainQueueItem =
   | {
       kind: "building";
@@ -255,12 +268,7 @@ export const shipCatalog: Array<{
   label: string;
   group: "civil" | "combat" | "special";
   baseCost: Resources;
-  requirements: Array<{
-    label: string;
-    kind: "building" | "technology";
-    key?: BuildingKey | ResearchKey;
-    level: number;
-  }>;
+  requirements: UnlockRequirement[];
   asset: string;
 }> = [
   {
@@ -463,12 +471,7 @@ export const defenseCatalog: Array<{
   label: string;
   group: "kinetic" | "energy" | "shield" | "missile";
   baseCost: Resources;
-  requirements: Array<{
-    label: string;
-    kind: "building" | "technology";
-    key?: BuildingKey | ResearchKey;
-    level: number;
-  }>;
+  requirements: UnlockRequirement[];
   asset: string;
 }> = [
   {
@@ -748,6 +751,11 @@ const BASE_RESEARCH_REQUIREMENTS: ResearchRequirement[] = [
   { type: "building", key: "researchLab", level: 1 },
 ];
 
+const BUILDING_REQUIREMENTS: Partial<Record<BuildingKey, BuildingRequirement[]>> = {
+  researchLab: [{ type: "building", key: "roboticsFactory", level: 1 }],
+  shipyard: [{ type: "building", key: "roboticsFactory", level: 2 }],
+};
+
 const BPS = 10_000;
 const MIN_QUEUE_SECONDS = 60;
 const PLANET = {
@@ -996,6 +1004,19 @@ export function researchRequirementsFor(key: ResearchKey): ResearchRequirement[]
   return [...BASE_RESEARCH_REQUIREMENTS, ...(entry.requirements ?? [])];
 }
 
+export function buildingRequirementsFor(key: BuildingKey): BuildingRequirement[] {
+  return [...(BUILDING_REQUIREMENTS[key] ?? [])];
+}
+
+export function unmetBuildingRequirement(
+  state: Pick<PlayableState, "buildings">,
+  key: BuildingKey,
+): BuildingRequirement | undefined {
+  return buildingRequirementsFor(key).find((requirement) => (
+    state.buildings[requirement.key] < requirement.level
+  ));
+}
+
 export function unmetResearchRequirement(
   state: Pick<PlayableState, "buildings" | "research">,
   key: ResearchKey,
@@ -1006,6 +1027,24 @@ export function unmetResearchRequirement(
     }
 
     return state.research[requirement.key] < requirement.level;
+  });
+}
+
+export function missingUnlockRequirements(
+  requirements: UnlockRequirement[],
+  levels: {
+    buildings?: Partial<Record<BuildingKey, number>> | undefined;
+    research?: Partial<Record<ResearchKey, number>> | undefined;
+  },
+): string[] {
+  return requirements.flatMap((requirement) => {
+    const actual = requirement.kind === "building"
+      ? levels.buildings?.[requirement.key as BuildingKey] ?? 0
+      : levels.research?.[requirement.key as ResearchKey] ?? 0;
+
+    return actual >= requirement.level
+      ? []
+      : [`Requires ${requirement.label} ${requirement.level}`];
   });
 }
 

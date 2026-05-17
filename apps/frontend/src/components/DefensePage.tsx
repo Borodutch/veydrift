@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { DefenseKey, Resources } from "../playableMvp";
-import { canAfford, defenseCatalog } from "../playableMvp";
+import { canAfford, defenseCatalog, missingUnlockRequirements } from "../playableMvp";
 import type { ChainDefenseState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
@@ -320,19 +320,9 @@ function getMissingRequirements(
   defense: (typeof defenseCatalog)[number],
   defenseState?: ChainDefenseState | null | undefined,
 ): string[] {
-  return defense.requirements.flatMap((requirement) => {
-    const technologyId = requirement.kind === "technology"
-      ? technologyIdByKey[requirement.key ?? ""]
-      : undefined;
-    const actual = requirement.kind === "building"
-      ? defenseState?.shipyardLevel ?? 0
-      : technologyId === undefined
-        ? 0
-        : defenseState?.technologyLevels[technologyId.toString()] ?? 0;
-
-    return actual >= requirement.level
-      ? []
-      : [`${requirement.label} ${requirement.level} needed`];
+  return missingUnlockRequirements(defense.requirements, {
+    buildings: { shipyard: defenseState?.shipyardLevel ?? 0 },
+    research: technologyLevelsByKey(defenseState?.technologyLevels),
   });
 }
 
@@ -409,3 +399,12 @@ const technologyIdByKey: Partial<Record<string, number>> = {
   intergalacticResearchNetwork: 14,
   graviton: 15,
 };
+
+function technologyLevelsByKey(levels: Record<string, number> | undefined) {
+  return Object.fromEntries(
+    Object.entries(technologyIdByKey).map(([key, id]) => [
+      key,
+      id === undefined ? 0 : levels?.[id.toString()] ?? 0,
+    ]),
+  );
+}
