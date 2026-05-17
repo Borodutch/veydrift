@@ -5,6 +5,7 @@ import {
   type ChainLoadStatus,
 } from "../overviewData";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
+import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -19,17 +20,7 @@ function formatTemp(value: number): string {
 
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
-  const seconds = Math.max(0, Math.ceil((Number(readyAt) * 1000 - now) / 1_000));
-  if (seconds <= 0) return "Ready";
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return secs === 0 ? `${mins}m` : `${mins}m ${secs}s`;
-  }
-  const hours = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  return mins === 0 ? `${hours}h` : `${hours}h ${mins}m`;
+  return formatDurationUntil(Number(readyAt) * 1_000, now);
 }
 
 interface OverviewPageProps {
@@ -150,7 +141,7 @@ export function OverviewPage({
           ) : settledState.queue?.kind === "building" ? (
             <QueueItemDisplay
               label={settledState.queue.label}
-              remaining={`${Math.max(0, Math.ceil((settledState.queue.readyAt - now) / 1_000))}s`}
+              remaining={formatDurationUntil(settledState.queue.readyAt, now)}
               progress={queueProgress}
             />
           ) : (
@@ -196,7 +187,7 @@ export function OverviewPage({
           ) : settledState.researchQueue ? (
             <QueueItemDisplay
               label={settledState.researchQueue.label}
-              remaining={`${Math.max(0, Math.ceil((settledState.researchQueue.readyAt - now) / 1_000))}s`}
+              remaining={formatDurationUntil(settledState.researchQueue.readyAt, now)}
               progress={researchProgress}
               color="bg-cyan-300"
             />
@@ -223,7 +214,7 @@ export function OverviewPage({
           ) : settledState.queue?.kind === "ship" ? (
             <QueueItemDisplay
               label={settledState.queue.label}
-              remaining={`${Math.max(0, Math.ceil((settledState.queue.readyAt - now) / 1_000))}s`}
+              remaining={formatDurationUntil(settledState.queue.readyAt, now)}
               progress={shipProgress}
               color="bg-emerald-300"
             />

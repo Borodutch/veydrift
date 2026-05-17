@@ -5,6 +5,7 @@ import {
   canAfford,
   energyBalance,
 } from "./playableMvp";
+export { formatDuration } from "./durationFormat";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -132,16 +133,6 @@ export function formatNumber(value: number): string {
 export function formatSigned(value: number): string {
   const rounded = Math.floor(value);
   return rounded > 0 ? `+${formatNumber(rounded)}` : formatNumber(rounded);
-}
-
-export function formatDuration(seconds: number): string {
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
 }
 
 export function formatCost(cost: Resources): string {

@@ -10,6 +10,7 @@ import {
   unmetResearchRequirement,
 } from "../playableMvp";
 import type { ChainResearchState } from "../walletFlow";
+import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -571,21 +572,9 @@ function format(value: number): string {
   return formatter.format(Math.floor(value));
 }
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
-}
-
 function formatReady(readyAt: number): string {
-  return new Date(readyAt).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const remaining = formatDurationUntil(readyAt);
+  return remaining === "Ready" ? "now" : `in ${remaining}`;
 }
 
 function formatRequirement(requirement: ResearchRequirement): string {

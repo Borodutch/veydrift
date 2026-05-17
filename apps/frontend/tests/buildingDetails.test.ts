@@ -11,8 +11,13 @@ import { createInitialPlayableState } from "../src/playableMvp";
 describe("building detail helpers", () => {
   test("formats costs, durations, and numbers without raw decimals", () => {
     expect(formatNumber(1234.987)).toBe("1,234");
+    expect(formatDuration(45)).toBe("45s");
     expect(formatDuration(60)).toBe("1m");
     expect(formatDuration(95)).toBe("1m 35s");
+    expect(formatDuration(2 * 60 * 60 + 15 * 60)).toBe("2h 15m");
+    expect(formatDuration(3 * 24 * 60 * 60 + 4 * 60 * 60 + 59 * 60)).toBe("3d 4h");
+    expect(formatDuration(2 * 7 * 24 * 60 * 60 + 24 * 60 * 60 + 23 * 60 * 60)).toBe("2w 1d");
+    expect(formatDuration(62549994824590 * 60 + 13)).toBe("99w+");
     expect(formatCost({ metal: 60, crystal: 15, deuterium: 0 })).toBe("Metal 60 / Crystal 15");
   });
 
