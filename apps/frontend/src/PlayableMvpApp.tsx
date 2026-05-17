@@ -807,14 +807,17 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const topBar = (
     <TopBar
       account={account}
+      canCollectResources={isCollectReady}
       caps={caps}
       coordinates={homeCoordinateLabel}
       isWalletConnected={isWalletConnected}
+      onCollectResources={handleCollectResources}
       queue={isWalletConnected ? undefined : settledState.queue}
       rates={rates}
       resourceStatus={isWalletConnected ? onChainStatus : "local"}
       researchQueue={isWalletConnected ? undefined : settledState.researchQueue}
       resources={isWalletConnected ? onChainResources : settledState.resources}
+      showCollectResources={isCollectReady}
     />
   );
 
@@ -912,7 +915,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     return (
       <OverviewPage
-        canCollect={isCollectReady}
         caps={caps}
         isWalletConnected={isWalletConnected}
         now={now}
@@ -920,7 +922,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onChainQueues={onChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
-        onCollect={handleCollectResources}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
         homePlanet={homePlanetIdentity}
