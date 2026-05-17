@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { defenseAssetManifest, shipAssetManifest } from "../src/gameAssets";
 import {
   buildingEffectMetrics,
   buildingCost,
@@ -16,6 +19,8 @@ import {
   unmetResearchRequirement,
 } from "../src/playableMvp";
 import { infrastructurePlayableState } from "../src/chainState";
+
+const PUBLIC_DIR = join(import.meta.dir, "..", "public");
 
 describe("playable MVP contract display helpers", () => {
   test("uses the Solidity MVP starting resources and storage caps", () => {
@@ -124,7 +129,7 @@ describe("playable MVP contract display helpers", () => {
       [14, "reaper", "Reaper"],
       [15, "pathfinder", "Pathfinder"],
     ]);
-    expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/"))).toBe(true);
+    expect(shipCatalog.map((ship) => ship.asset)).toEqual(shipAssetManifest.map((asset) => asset.src));
   });
 
   test("maps the Solidity defense catalog for Defenses display", () => {
@@ -140,7 +145,24 @@ describe("playable MVP contract display helpers", () => {
       [8, "antiBallisticMissile", "Anti-Ballistic Missile"],
       [9, "interplanetaryMissile", "Interplanetary Missile"],
     ]);
-    expect(defenseCatalog.every((defense) => defense.asset.includes("/assets/game/"))).toBe(true);
+    expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));
+  });
+
+  test("uses valid deterministic Shipyard and Defenses asset mappings", () => {
+    const allAssets = [...shipAssetManifest, ...defenseAssetManifest];
+    const srcCounts = new Map<string, number>();
+
+    for (const asset of allAssets) {
+      srcCounts.set(asset.src, (srcCounts.get(asset.src) ?? 0) + 1);
+      expect(asset.src.startsWith("/assets/game/")).toBe(true);
+      expect(existsSync(join(PUBLIC_DIR, asset.src.replace("/assets/", "assets/")))).toBe(true);
+    }
+
+    expect([...srcCounts.entries()].filter(([, count]) => count > 1)).toEqual([]);
+    expect(shipAssetManifest.every((asset) => asset.category === "ship")).toBe(true);
+    expect(defenseAssetManifest.every((asset) => asset.category === "defense")).toBe(true);
+    expect(shipAssetManifest.some((asset) => asset.src.includes("/style-pass/generated/ships/"))).toBe(false);
+    expect(defenseAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/defenses/"))).toBe(true);
   });
 
   test("reports Research Lab requirement without queuing local research", () => {
