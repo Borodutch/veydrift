@@ -191,6 +191,58 @@
       "image": "/assets/game/ships/pathfinder.webp"
     }
   },
+  "defenses": {
+    "rocket-launcher": {
+      "name": "Rocket Launcher",
+      "image": "/assets/game/style-pass/generated/defenses/rocket-launcher.webp",
+      "status": "generated-preview"
+    },
+    "light-laser": {
+      "name": "Light Laser",
+      "image": "/assets/game/style-pass/generated/defenses/light-laser.webp",
+      "status": "generated-preview"
+    },
+    "heavy-laser": {
+      "name": "Heavy Laser",
+      "image": "/assets/game/style-pass/generated/defenses/heavy-laser.webp",
+      "status": "generated-preview"
+    },
+    "small-shield-dome": {
+      "name": "Small Shield Dome",
+      "image": "/assets/game/style-pass/generated/defenses/small-shield-dome.webp",
+      "status": "generated-preview"
+    },
+    "gauss-cannon": {
+      "name": "Gauss Cannon",
+      "image": "/assets/game/style-pass/generated/defenses/gauss-cannon.webp",
+      "status": "generated-preview"
+    },
+    "ion-cannon": {
+      "name": "Ion Cannon",
+      "image": "/assets/game/style-pass/generated/defenses/ion-cannon.webp",
+      "status": "generated-preview"
+    },
+    "plasma-turret": {
+      "name": "Plasma Turret",
+      "image": "/assets/game/style-pass/generated/defenses/plasma-turret.webp",
+      "status": "generated-preview"
+    },
+    "large-shield-dome": {
+      "name": "Large Shield Dome",
+      "image": "/assets/game/style-pass/generated/defenses/large-shield-dome.webp",
+      "status": "generated-preview"
+    },
+    "anti-ballistic-missile": {
+      "name": "Anti-Ballistic Missile",
+      "image": "/assets/game/style-pass/generated/defenses/anti-ballistic-missile.webp",
+      "status": "generated-preview"
+    },
+    "interplanetary-missile": {
+      "name": "Interplanetary Missile",
+      "image": "/assets/game/style-pass/generated/defenses/interplanetary-missile.webp",
+      "status": "generated-preview"
+    }
+  },
   "planets": {
     "scorching-molten": {
       "name": "Scorching Molten",

@@ -1,3 +1,5 @@
+import { defenseAssetByKey, shipAssetByKey } from "./gameAssets";
+
 export type Resources = {
   metal: number;
   crystal: number;
@@ -271,7 +273,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 1 },
     ],
-    asset: "/assets/game/style-pass/high-res/small-cargo-alive-fullship-2k.webp",
+    asset: shipAssetByKey.smallCargo,
   },
   {
     key: "lightFighter",
@@ -283,7 +285,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 1 },
     ],
-    asset: "/assets/game/style-pass/generated/ships/light-fighter.webp",
+    asset: shipAssetByKey.lightFighter,
   },
   {
     key: "recycler",
@@ -295,7 +297,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
     ],
-    asset: "/assets/game/ships/recycler.webp",
+    asset: shipAssetByKey.recycler,
   },
   {
     key: "colonyShip",
@@ -307,7 +309,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 3 },
     ],
-    asset: "/assets/game/style-pass/generated/ships/colony-ship.webp",
+    asset: shipAssetByKey.colonyShip,
   },
   {
     key: "largeCargo",
@@ -319,7 +321,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 6 },
     ],
-    asset: "/assets/game/ships/large-cargo.webp",
+    asset: shipAssetByKey.largeCargo,
   },
   {
     key: "heavyFighter",
@@ -331,7 +333,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 2 },
     ],
-    asset: "/assets/game/ships/heavy-fighter.webp",
+    asset: shipAssetByKey.heavyFighter,
   },
   {
     key: "cruiser",
@@ -343,7 +345,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 4 },
     ],
-    asset: "/assets/game/ships/cruiser.webp",
+    asset: shipAssetByKey.cruiser,
   },
   {
     key: "battleship",
@@ -355,7 +357,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 4 },
     ],
-    asset: "/assets/game/ships/battleship.webp",
+    asset: shipAssetByKey.battleship,
   },
   {
     key: "espionageProbe",
@@ -367,7 +369,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "espionage", label: "Espionage", level: 2 },
     ],
-    asset: "/assets/game/ships/espionage-probe.webp",
+    asset: shipAssetByKey.espionageProbe,
   },
   {
     key: "bomber",
@@ -379,7 +381,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 6 },
     ],
-    asset: "/assets/game/ships/bomber.webp",
+    asset: shipAssetByKey.bomber,
   },
   {
     key: "solarSatellite",
@@ -390,7 +392,7 @@ export const shipCatalog: Array<{
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
     ],
-    asset: "/assets/game/ships/solar-satellite.webp",
+    asset: shipAssetByKey.solarSatellite,
   },
   {
     key: "destroyer",
@@ -402,7 +404,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 6 },
     ],
-    asset: "/assets/game/ships/destroyer.webp",
+    asset: shipAssetByKey.destroyer,
   },
   {
     key: "deathstar",
@@ -414,7 +416,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "graviton", label: "Graviton", level: 1 },
     ],
-    asset: "/assets/game/ships/deathstar.webp",
+    asset: shipAssetByKey.deathstar,
   },
   {
     key: "battlecruiser",
@@ -426,7 +428,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 5 },
     ],
-    asset: "/assets/game/ships/battlecruiser.webp",
+    asset: shipAssetByKey.battlecruiser,
   },
   {
     key: "reaper",
@@ -439,7 +441,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 7 },
       { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 6 },
     ],
-    asset: "/assets/game/ships/reaper.webp",
+    asset: shipAssetByKey.reaper,
   },
   {
     key: "pathfinder",
@@ -451,7 +453,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
     ],
-    asset: "/assets/game/ships/pathfinder.webp",
+    asset: shipAssetByKey.pathfinder,
   },
 ];
 
@@ -476,7 +478,7 @@ export const defenseCatalog: Array<{
     group: "kinetic",
     baseCost: { metal: 200, crystal: 0, deuterium: 0 },
     requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
-    asset: "/assets/game/buildings/missile-silo-mid.webp",
+    asset: defenseAssetByKey.rocketLauncher,
   },
   {
     key: "lightLaser",
@@ -488,7 +490,7 @@ export const defenseCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "laser", label: "Laser", level: 1 },
     ],
-    asset: "/assets/game/style-pass/generated/buildings/research-lab-mid.webp",
+    asset: defenseAssetByKey.lightLaser,
   },
   {
     key: "heavyLaser",
@@ -500,7 +502,7 @@ export const defenseCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "laser", label: "Laser", level: 3 },
     ],
-    asset: "/assets/game/buildings/fusion-reactor-high.webp",
+    asset: defenseAssetByKey.heavyLaser,
   },
   {
     key: "smallShieldDome",
@@ -512,7 +514,7 @@ export const defenseCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 2 },
     ],
-    asset: "/assets/game/style-pass/generated/planets/deuterium-blue.webp",
+    asset: defenseAssetByKey.smallShieldDome,
   },
   {
     key: "gaussCannon",
@@ -525,7 +527,7 @@ export const defenseCatalog: Array<{
       { kind: "technology", key: "laser", label: "Laser", level: 6 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 1 },
     ],
-    asset: "/assets/game/ships/destroyer.webp",
+    asset: defenseAssetByKey.gaussCannon,
   },
   {
     key: "ionCannon",
@@ -537,7 +539,7 @@ export const defenseCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "ion", label: "Ion", level: 4 },
     ],
-    asset: "/assets/game/style-pass/generated/planets/crystal-violet.webp",
+    asset: defenseAssetByKey.ionCannon,
   },
   {
     key: "plasmaTurret",
@@ -549,7 +551,7 @@ export const defenseCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "plasma", label: "Plasma", level: 7 },
     ],
-    asset: "/assets/game/planets/scorching-molten.webp",
+    asset: defenseAssetByKey.plasmaTurret,
   },
   {
     key: "largeShieldDome",
@@ -561,7 +563,7 @@ export const defenseCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 6 },
     ],
-    asset: "/assets/game/style-pass/generated/planets/outer-cryo.webp",
+    asset: defenseAssetByKey.largeShieldDome,
   },
   {
     key: "antiBallisticMissile",
@@ -570,7 +572,7 @@ export const defenseCatalog: Array<{
     group: "missile",
     baseCost: { metal: 8_000, crystal: 0, deuterium: 2_000 },
     requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
-    asset: "/assets/game/buildings/missile-silo-low.webp",
+    asset: defenseAssetByKey.antiBallisticMissile,
   },
   {
     key: "interplanetaryMissile",
@@ -579,7 +581,7 @@ export const defenseCatalog: Array<{
     group: "missile",
     baseCost: { metal: 12_500, crystal: 2_500, deuterium: 10_000 },
     requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
-    asset: "/assets/game/buildings/missile-silo-high.webp",
+    asset: defenseAssetByKey.interplanetaryMissile,
   },
 ];
 

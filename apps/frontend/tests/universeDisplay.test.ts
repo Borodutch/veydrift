@@ -81,18 +81,19 @@ describe("tester universe display data", () => {
     });
   });
 
-  test("visible MVP catalog uses the latest scoped style-pass assets", () => {
+  test("visible MVP catalog uses scoped gameplay assets", () => {
     expect(buildingCatalog.every((building) => building.asset.includes("/assets/game/style-pass/generated/buildings/"))).toBe(true);
     expect(shipCatalog).toHaveLength(16);
-    expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/"))).toBe(true);
+    expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/ships/"))).toBe(true);
+    expect(shipCatalog.some((ship) => ship.asset.includes("/style-pass/generated/ships/"))).toBe(false);
     expect(shipCatalog.find((ship) => ship.key === "smallCargo")?.asset).toBe(
-      "/assets/game/style-pass/high-res/small-cargo-alive-fullship-2k.webp"
+      "/assets/game/ships/small-cargo.webp"
     );
     expect(shipCatalog.find((ship) => ship.key === "lightFighter")?.asset).toBe(
-      "/assets/game/style-pass/generated/ships/light-fighter.webp"
+      "/assets/game/ships/light-fighter.webp"
     );
     expect(shipCatalog.find((ship) => ship.key === "colonyShip")?.asset).toBe(
-      "/assets/game/style-pass/generated/ships/colony-ship.webp"
+      "/assets/game/ships/colony-ship.webp"
     );
   });
 });
