@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { BuildingEffectMetrics, BuildingKey, PlayableState, Resources } from "../playableMvp";
+import type { BuildingEffectMetrics, BuildingKey, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import { buildingCatalog, buildingEffectMetrics } from "../playableMvp";
 import {
   buildingEnergyDetail,
@@ -38,6 +38,7 @@ interface InfrastructurePageProps {
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
+  planetProductionProfile?: PlanetProductionProfile | undefined;
   state: PlayableState;
   settledState: PlayableState;
   onUpgrade: (key: BuildingKey) => void;
@@ -49,6 +50,7 @@ export function InfrastructurePage({
   chainCosts,
   isBuildingReadyToFinish,
   onFinishBuilding,
+  planetProductionProfile,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
@@ -95,7 +97,7 @@ export function InfrastructurePage({
         <div className="order-2 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:order-1 xl:grid-cols-3 2xl:grid-cols-4">
           {buildingCatalog.map((building) => {
             const currentLevel = settledState.buildings[building.key];
-            const effect = buildingEffectMetrics(settledState.buildings, building.key);
+            const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
             const isSelected = building.key === selectedBuilding.key;
 
             return (
@@ -122,6 +124,7 @@ export function InfrastructurePage({
             isBuildingReadyToFinish={isBuildingReadyToFinish}
             onFinishBuilding={onFinishBuilding}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
+            planetProductionProfile={planetProductionProfile}
             state={settledState}
           />
         </div>
@@ -188,6 +191,7 @@ function BuildingDetailPanel({
   isBuildingReadyToFinish,
   onFinishBuilding,
   onUpgrade,
+  planetProductionProfile,
   state,
 }: {
   actionNotice?: { label: string; tone: "error" | "success" | "pending" } | undefined;
@@ -197,10 +201,11 @@ function BuildingDetailPanel({
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
   onUpgrade: () => void;
+  planetProductionProfile?: PlanetProductionProfile | undefined;
   state: PlayableState;
 }) {
   const currentLevel = state.buildings[building.key];
-  const effect = buildingEffectMetrics(state.buildings, building.key);
+  const effect = buildingEffectMetrics(state.buildings, building.key, planetProductionProfile);
   const energy = buildingEnergyDetail(state.buildings, building.key);
   const status = buildingUpgradeStatus(state, building.key, { actionUnavailableReason, chainCost });
   const effectRows = detailEffectRows(effect, energy);
@@ -403,7 +408,7 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
-function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnType<typeof buildingEnergyDetail>) {
+export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnType<typeof buildingEnergyDetail>) {
   const rows: Array<{
     delta?: string;
     label: string;
@@ -421,7 +426,6 @@ function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnType<type
     });
   } else if (effect.kind === "energy") {
     rows.push({
-      delta: `${formatSigned(effect.deltaProduced)} produced`,
       label: "Energy output",
       next: `${formatNumber(effect.nextProduced)} produced`,
       value: `${formatNumber(effect.currentProduced)} produced`,
@@ -456,14 +460,12 @@ function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnType<type
 
   if (energy.kind === "produces") {
     rows.push({
-      delta: `${formatSigned(energy.delta)} produced`,
       label: "Energy",
       next: `${formatNumber(energy.next)} produced`,
       value: `${formatNumber(energy.current)} produced`,
     });
   } else if (energy.kind === "requires") {
     rows.push({
-      delta: `${formatSigned(energy.delta)} required`,
       label: "Energy required",
       next: `${formatNumber(energy.next)} required`,
       tone: "warning",
