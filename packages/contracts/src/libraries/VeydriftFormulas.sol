@@ -31,11 +31,8 @@ library VeydriftFormulas {
         uint16 deuteriumMultiplierBps,
         uint16 bps
     ) public pure returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) {
-        uint256 requiredEnergy = (metalLevel * 10) + (crystalLevel * 12) + (deuteriumLevel * 20);
-        uint256 producedEnergy = solarLevel * 30;
-        uint256 energyScale = requiredEnergy == 0 || producedEnergy >= requiredEnergy
-            ? bps
-            : (producedEnergy * bps) / requiredEnergy;
+        (, uint256 requiredEnergy, uint256 energyScale) =
+            energyBalance(metalLevel, crystalLevel, deuteriumLevel, solarLevel, bps);
 
         metalPerHour =
             _scaleByBps((metalLevel * 20) + (metalLevel * metalLevel * 5), metalMultiplierBps, bps);
@@ -53,6 +50,20 @@ library VeydriftFormulas {
             crystalPerHour = _scaleByBps(crystalPerHour, energyScale, bps);
             deuteriumPerHour = _scaleByBps(deuteriumPerHour, energyScale, bps);
         }
+    }
+
+    function energyBalance(
+        uint256 metalLevel,
+        uint256 crystalLevel,
+        uint256 deuteriumLevel,
+        uint256 solarLevel,
+        uint16 bps
+    ) public pure returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) {
+        requiredEnergy = (metalLevel * 10) + (crystalLevel * 12) + (deuteriumLevel * 20);
+        producedEnergy = solarLevel * 30;
+        energyScaleBps = requiredEnergy == 0 || producedEnergy >= requiredEnergy
+            ? bps
+            : (producedEnergy * bps) / requiredEnergy;
     }
 
     function storageCaps(uint256 metalStorage, uint256 crystalStorage, uint256 deuteriumTank)

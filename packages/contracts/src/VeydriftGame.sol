@@ -451,9 +451,7 @@ contract VeydriftGame {
             revert ConstructionNotReady(construction.readyAt);
         }
 
-        delete buildingConstructions[planetId];
-        _buildingLevels[planetId][construction.building] = construction.targetLevel;
-        emit BuildingCompleted(planetId, construction.building, construction.targetLevel);
+        _settleResources(planetId);
     }
 
     function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity) external {
@@ -902,6 +900,24 @@ contract VeydriftGame {
         );
     }
 
+    function energyBalance(uint256 planetId)
+        public
+        view
+        returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps)
+    {
+        if (_planets[planetId].owner == address(0)) {
+            revert NoPlanet();
+        }
+
+        return VeydriftFormulas.energyBalance(
+            _buildingLevels[planetId][Building.MetalMine],
+            _buildingLevels[planetId][Building.CrystalMine],
+            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
+            _buildingLevels[planetId][Building.SolarPlant],
+            BPS
+        );
+    }
+
     function storageCaps(uint256 planetId)
         public
         view
@@ -958,9 +974,32 @@ contract VeydriftGame {
     }
 
     function _settleResources(uint256 planetId) private {
+        uint64 currentTime = _currentTimestamp();
+        BuildingConstruction memory construction = buildingConstructions[planetId];
+        if (construction.active && currentTime >= construction.readyAt) {
+            _settleResourcesUntil(planetId, construction.readyAt);
+            _completeBuilding(planetId, construction);
+            _settleResourcesUntil(planetId, currentTime);
+            return;
+        }
+
+        _settleResourcesUntil(planetId, currentTime);
+    }
+
+    function _settleResourcesUntil(uint256 planetId, uint64 settledAt) private {
         Planet storage planetRef = _planets[planetId];
-        planetRef.resources = previewResources(planetId);
-        planetRef.lastSettledAt = _currentTimestamp();
+        if (settledAt > planetRef.lastSettledAt) {
+            uint256 elapsed = uint256(settledAt) - planetRef.lastSettledAt;
+            (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
+                productionPerHour(planetId);
+            Resources memory produced = Resources({
+                metal: _toUint128((metalPerHour * elapsed) / 1 hours),
+                crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
+                deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
+            });
+            planetRef.resources = _capResources(planetId, _add(planetRef.resources, produced));
+            planetRef.lastSettledAt = settledAt;
+        }
         emit PlanetSettled(
             planetId,
             planetRef.resources.metal,
@@ -975,6 +1014,11 @@ contract VeydriftGame {
             return;
         }
 
+        _settleResourcesUntil(planetId, construction.readyAt);
+        _completeBuilding(planetId, construction);
+    }
+
+    function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {
         delete buildingConstructions[planetId];
         _buildingLevels[planetId][construction.building] = construction.targetLevel;
         emit BuildingCompleted(planetId, construction.building, construction.targetLevel);
