@@ -10,6 +10,7 @@ import type { Planet } from "../types";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
+import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
@@ -62,36 +63,50 @@ export function OverviewPage({
   const planetSubhead = homePlanet
     ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : "Home planet";
-  const [lastKnownHeroImage, setLastKnownHeroImage] = useState<string | undefined>(
-    homePlanet?.image
+  const currentPlanetKey = homePlanet
+    ? planetKeyFromCoordinates(homePlanet)
+    : onChainSettlement?.planet
+      ? planetKeyFromCoordinates(onChainSettlement.planet)
+      : planet?.coordinates;
+  const [lastKnownHeroImage, setLastKnownHeroImage] = useState<
+    { image: string; planetKey: string } | undefined
+  >(
+    homePlanet?.image && currentPlanetKey
+      ? { image: homePlanet.image, planetKey: currentPlanetKey }
+      : undefined
   );
+  const [heroImageLoaded, setHeroImageLoaded] = useState(false);
 
   useEffect(() => {
-    if (homePlanet?.image) {
-      setLastKnownHeroImage(homePlanet.image);
+    if (homePlanet?.image && currentPlanetKey) {
+      setLastKnownHeroImage({ image: homePlanet.image, planetKey: currentPlanetKey });
     }
-  }, [homePlanet?.image]);
+  }, [currentPlanetKey, homePlanet?.image]);
 
-  const heroImage = overviewHeroImage(homePlanet, isWalletConnected, lastKnownHeroImage);
+  const heroImage = overviewHeroImage(homePlanet, isWalletConnected, lastKnownHeroImage, currentPlanetKey);
+
+  useEffect(() => {
+    setHeroImageLoaded(false);
+  }, [heroImage]);
 
   return (
     <div className="grid gap-3">
       {/* Planet hero — compact, no wasted space */}
       <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
         <div className="relative h-24 sm:h-28">
+          {(!heroImage || !heroImageLoaded) && (
+            <PlanetImageSkeleton className="absolute inset-0" />
+          )}
           {heroImage ? (
             <OptimizedImage
+              key={heroImage}
               alt=""
-              className="absolute inset-0 h-full w-full object-cover"
+              className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${heroImageLoaded ? "opacity-100" : "opacity-0"}`}
+              onLoad={() => setHeroImageLoaded(true)}
               sizes="hero"
               src={heroImage}
             />
-          ) : (
-            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(15,23,42,0.95),rgba(8,13,24,0.95))]">
-              <div className="absolute inset-x-6 top-1/2 h-px bg-cyan-200/15" />
-              <div className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-200/20 bg-cyan-200/5" />
-            </div>
-          )}
+          ) : null}
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,9,19,0.35),rgba(7,9,19,0.92))]" />
           <div className="relative flex h-full flex-col justify-end p-3 sm:p-4">
             <p className="text-[11px] font-medium text-slate-400">{planetSubhead}</p>
@@ -235,6 +250,10 @@ export function OverviewPage({
 
     </div>
   );
+}
+
+function planetKeyFromCoordinates(coordinates: { galaxy: number; system: number; position: number }): string {
+  return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
 }
 
 function StatPip({ label, value }: { label: string; value: string }) {

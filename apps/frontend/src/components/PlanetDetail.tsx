@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
-import { getPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
+import { planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
+import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 interface Props {
   coords: Coordinates;
@@ -15,19 +16,20 @@ interface Props {
 }
 
 export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack, onNavigateSystem }: Props) {
-  const fallbackPlanet = useMemo(
+  const trustedHomePlanet = useMemo(
     () => sameCoordinates(homeCoords, coords) && homePlanet
       ? homePlanet
-      : getPlanet(coords.galaxy, coords.system, coords.position),
+      : null,
     [coords.galaxy, coords.position, coords.system, homeCoords, homePlanet],
   );
-  const [planet, setPlanet] = useState<Planet | null>(fallbackPlanet);
-  const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
+  const [planet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
+  const [source, setSource] = useState<"api" | "error" | "loading">("loading");
+  const [imageLoaded, setImageLoaded] = useState(false);
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
 
   useEffect(() => {
     const abortController = new AbortController();
-    setPlanet(fallbackPlanet);
+    setPlanet(trustedHomePlanet);
     setSource("loading");
 
     fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
@@ -46,17 +48,52 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
-          setSource("fallback");
+          setSource("error");
         }
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, coords, fallbackPlanet, homeCoords, homePlanet]);
+  }, [apiBaseUrl, coords, homeCoords, homePlanet, trustedHomePlanet]);
+
+  useEffect(() => {
+    setImageLoaded(false);
+  }, [planet?.image]);
 
   if (!planet) {
+    if (source === "loading") {
+      return (
+        <div className="flex flex-col gap-4 p-4 sm:p-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+            >
+              ← System [{coords.galaxy}:{coords.system}:{coords.position}]
+            </button>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+            <PlanetImageSkeleton className="aspect-square rounded-lg border border-white/15" />
+            <div className="grid content-start gap-3">
+              <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+                <div className="h-5 w-40 animate-pulse rounded bg-white/10" />
+                <div className="mt-3 h-4 w-64 max-w-full animate-pulse rounded bg-white/5" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="h-28 rounded-lg border border-white/10 bg-white/5" />
+                <div className="h-28 rounded-lg border border-white/10 bg-white/5" />
+                <div className="h-32 rounded-lg border border-white/10 bg-white/5 sm:col-span-2" />
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center gap-4 p-8">
-        <p className="text-slate-400">No planet at this position.</p>
+        <p className="text-slate-400">
+          {source === "error" ? "Planet data could not be loaded." : "No planet at this position."}
+        </p>
         <button
           onClick={onBack}
           className="rounded border border-white/15 bg-white/8 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
@@ -82,9 +119,12 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
         {/* Planet image */}
         <div className="flex flex-col gap-3">
           <div className="relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/30">
+            {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
             <OptimizedImage
+              key={planet.image}
               alt={planet.name}
-              className="h-full w-full object-cover"
+              className={`h-full w-full object-cover transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
+              onLoad={() => setImageLoaded(true)}
               sizes="planetPreview"
               src={planet.image}
             />
@@ -114,7 +154,7 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               <span className="text-slate-700">|</span>
               <span>{planet.diameter.toLocaleString()} km</span>
               <span className="text-slate-700">|</span>
-              <span>{source === "api" ? "Indexed universe data" : "Neutral deterministic data"}</span>
+              <span>{source === "api" ? "Indexed universe data" : "Loading current planet"}</span>
             </div>
           </div>
 
