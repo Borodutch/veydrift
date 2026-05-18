@@ -18,6 +18,7 @@ interface OptimizedImageProps {
   imageRef?: Ref<HTMLImageElement>;
   loading?: "eager" | "lazy";
   onLoad?: JSX.GenericEventHandler<HTMLImageElement>;
+  style?: JSX.CSSProperties | undefined;
 }
 
 /**
@@ -38,6 +39,7 @@ export function OptimizedImage({
   imageRef,
   loading,
   onLoad,
+  style,
 }: OptimizedImageProps): JSX.Element {
   const isDev = import.meta.env.DEV;
   const sizesValue = sizes in Sizes ? Sizes[sizes as SizePreset] : sizes;
@@ -61,6 +63,7 @@ export function OptimizedImage({
       sizes={isDev ? undefined : sizesValue}
       src={src}
       srcSet={isDev ? undefined : getSrcSet(src)}
+      style={style}
       width={width}
     />
   );
