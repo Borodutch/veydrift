@@ -174,17 +174,18 @@ dependencies such as `@veydrift/universe` unavailable. Configure
 Source path: /
 Build type: Nixpacks
 Nixpacks version: 1.34.1
-Install command: bun install --frozen-lockfile && rm -rf /root/.cache/nix
-Build command: cd apps/frontend && bun run build:test && rm -rf /root/.bun/install/cache /tmp/*
+Install command: bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix
+Build command: cd apps/frontend && node scripts/generate-image-variants.mjs && ../../node_modules/.bin/vite build --mode settlement && rm -rf /root/.bun/install/cache /tmp/*
 Start command: cd apps/frontend && bun run serve
 ```
 
 Those commands are equivalent to running:
 
 ```sh
-bun install --frozen-lockfile && rm -rf /root/.cache/nix
-cd apps/frontend
-bun run build:test
+bun install --frozen-lockfile && cd apps/frontend
+NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix
+node scripts/generate-image-variants.mjs
+../../node_modules/.bin/vite build --mode settlement
 rm -rf /root/.bun/install/cache /tmp/*
 bun run serve
 ```
