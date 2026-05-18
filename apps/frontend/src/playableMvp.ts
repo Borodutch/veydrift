@@ -1105,10 +1105,27 @@ export function hasCollectableResources(
   lastSettledAtSeconds: number,
   now = Date.now(),
 ): boolean {
+  return resourceEntries(collectibleResourceDeltas(rates, lastSettledAtSeconds, now)).some(([, value]) => value > 0);
+}
+
+export function collectibleResourceDeltas(
+  rates: Resources,
+  lastSettledAtSeconds: number,
+  now = Date.now(),
+  currentResources?: Resources | undefined,
+  caps?: Resources | undefined,
+): Resources {
   const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
-  return resourceEntries(rates).some(([, ratePerHour]) => (
-    Math.floor((Math.max(0, ratePerHour) * elapsedSeconds) / 3_600) > 0
-  ));
+
+  return resourceEntries(rates).reduce<Resources>((deltas, [resource, ratePerHour]) => {
+    const produced = Math.floor((Math.max(0, ratePerHour) * elapsedSeconds) / 3_600);
+    const remainingCapacity = currentResources && caps
+      ? Math.max(0, caps[resource] - currentResources[resource])
+      : undefined;
+
+    deltas[resource] = remainingCapacity === undefined ? produced : Math.min(produced, remainingCapacity);
+    return deltas;
+  }, { metal: 0, crystal: 0, deuterium: 0 });
 }
 
 export function progress(queue: QueueItem | undefined, now = Date.now()): number {

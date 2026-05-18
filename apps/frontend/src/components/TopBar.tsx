@@ -8,6 +8,7 @@ interface TopBarProps {
   resources?: Resources | undefined;
   rates: Resources;
   caps: Resources;
+  resourceDeltas?: Resources | undefined;
   resourceStatus: ChainLoadStatus;
   queue?: QueueItem | undefined;
   researchQueue?: QueueItem | undefined;
@@ -24,6 +25,7 @@ export function TopBar({
   resources,
   rates,
   caps,
+  resourceDeltas,
   resourceStatus,
   queue,
   researchQueue,
@@ -55,6 +57,7 @@ export function TopBar({
               <ResourcePip
                 cap={showResourceDetails ? caps.metal : undefined}
                 color="text-amber-300"
+                delta={resourceDeltas?.metal}
                 label="Metal"
                 rate={showResourceDetails ? rates.metal : undefined}
                 value={resources.metal}
@@ -62,6 +65,7 @@ export function TopBar({
               <ResourcePip
                 cap={showResourceDetails ? caps.crystal : undefined}
                 color="text-cyan-300"
+                delta={resourceDeltas?.crystal}
                 label="Crystal"
                 rate={showResourceDetails ? rates.crystal : undefined}
                 value={resources.crystal}
@@ -69,6 +73,7 @@ export function TopBar({
               <ResourcePip
                 cap={showResourceDetails ? caps.deuterium : undefined}
                 color="text-emerald-300"
+                delta={resourceDeltas?.deuterium}
                 label="Deuterium"
                 rate={showResourceDetails ? rates.deuterium : undefined}
                 value={resources.deuterium}
@@ -83,7 +88,7 @@ export function TopBar({
               className="col-span-2 inline-flex h-7 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 text-[11px] font-semibold leading-none text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-span-1"
               disabled={!canCollectResources}
               onClick={onCollectResources}
-              title={canCollectResources ? "Collect accrued resources" : "Nothing to collect yet"}
+              title={collectResourcesTitle(resourceDeltas, canCollectResources)}
               type="button"
             >
               Collect
@@ -124,19 +129,23 @@ function ResourcePip({
   rate,
   cap,
   color,
+  delta,
 }: {
   label: string;
   value: number;
   rate?: number | undefined;
   cap?: number | undefined;
   color: string;
+  delta?: number | undefined;
 }) {
   const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
+  const wholeDelta = Math.floor(Math.max(0, delta ?? 0));
   return (
     <div className="inline-flex h-6 items-center justify-center whitespace-nowrap sm:justify-start">
       <span className="inline-flex items-baseline gap-1.5">
         <span className={`text-xs font-semibold leading-none ${color}`}>{label}</span>
         <span className="text-xs leading-none text-white">{format(value)}</span>
+        {wholeDelta > 0 && <span className="text-[10px] font-semibold leading-none text-lime-300">+{format(wholeDelta)}</span>}
         {rate !== undefined && <span className="text-[10px] leading-none text-slate-500">+{format(rate)}/h</span>}
         {pct >= 90 && (
           <span className="text-[10px] leading-none text-amber-400">{pct}%</span>
@@ -172,4 +181,22 @@ function EnergyPip({
 
 function format(value: number): string {
   return formatter.format(Math.floor(value));
+}
+
+function collectResourcesTitle(deltas: Resources | undefined, canCollect: boolean): string {
+  if (!canCollect) return "Nothing to collect yet";
+  if (!deltas) return "Collect accrued resources";
+
+  const parts = [
+    deltaLabel("Metal", deltas.metal),
+    deltaLabel("Crystal", deltas.crystal),
+    deltaLabel("Deuterium", deltas.deuterium),
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length > 0 ? `Collect accrued resources: ${parts.join(" / ")}` : "Collect accrued resources";
+}
+
+function deltaLabel(label: string, value: number): string | undefined {
+  const whole = Math.floor(Math.max(0, value));
+  return whole > 0 ? `${label} +${format(whole)}` : undefined;
 }

@@ -16,6 +16,7 @@ import {
 } from "./data/mockUniverse";
 import {
   buildingContractIds,
+  collectibleResourceDeltas,
   energyBalance,
   hasCollectableResources,
   productionPerHour,
@@ -428,10 +429,20 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       deuterium: Number(nextCaps.deuterium),
     };
   }, [infrastructureChainState?.storageCaps, settledState.buildings]);
+  const collectibleDeltas = useMemo(() => {
+    if (!isWalletConnected || !onChainResources || !onChainSettlement?.planet?.lastSettledAt) return undefined;
+    return collectibleResourceDeltas(rates, Number(onChainSettlement.planet.lastSettledAt), now, onChainResources, caps);
+  }, [caps, isWalletConnected, now, onChainResources, onChainSettlement?.planet?.lastSettledAt, rates]);
   const isCollectReady = useMemo(() => {
+    if (collectibleDeltas) {
+      return collectibleDeltas.metal > 0
+        || collectibleDeltas.crystal > 0
+        || collectibleDeltas.deuterium > 0;
+    }
+
     if (!isWalletConnected || !onChainSettlement?.planet?.lastSettledAt) return false;
     return hasCollectableResources(rates, Number(onChainSettlement.planet.lastSettledAt), now);
-  }, [isWalletConnected, onChainSettlement?.planet?.lastSettledAt, rates, now]);
+  }, [collectibleDeltas, isWalletConnected, onChainSettlement?.planet?.lastSettledAt, rates, now]);
   const buildingQueue = useMemo(() => {
     if (onChainQueues?.building?.active) {
       return buildingQueueItemForDisplay(onChainQueues.building, settledState.buildings, now);
@@ -857,6 +868,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       resourceStatus={isWalletConnected && !walletPlanetHydrated && onChainStatus !== "error" ? "loading" : isWalletConnected ? onChainStatus : "local"}
       researchQueue={isWalletConnected ? undefined : settledState.researchQueue}
       resources={isWalletConnected ? onChainResources : settledState.resources}
+      resourceDeltas={collectibleDeltas}
       showCollectResources={isCollectReady}
     />
   );
