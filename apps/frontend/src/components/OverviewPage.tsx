@@ -137,7 +137,7 @@ export function OverviewPage({
 
       {isWalletConnected && onChainStatus === "error" && (
         <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100 sm:p-4">
-          On-chain planet data is unavailable right now. Overview stats and resources are hidden until the game API responds with real values.
+          Planet data is unavailable right now. Overview stats and resources are hidden until the game API responds with live values.
           {onChainError ? <span className="block truncate text-amber-200/70">{onChainError}</span> : null}
         </div>
       )}
@@ -147,7 +147,7 @@ export function OverviewPage({
         {/* Building queue */}
         <QueuePanel
           label="Buildings"
-          tag={onChainQueues?.building?.active ? "On-chain" : undefined}
+          tag={onChainQueues?.building?.active ? "Active" : undefined}
         >
           {onChainQueues?.building?.active ? (
             <div className="grid gap-2">
@@ -184,7 +184,7 @@ export function OverviewPage({
         {/* Defense queue */}
         <QueuePanel
           label="Defenses"
-          tag={onChainQueues?.defense?.active ? "On-chain" : undefined}
+          tag={onChainQueues?.defense?.active ? "Active" : undefined}
         >
           {onChainQueues?.defense?.active ? (
             <QueueItemDisplay
@@ -203,7 +203,7 @@ export function OverviewPage({
         {/* Research queue */}
         <QueuePanel
           label="Research"
-          tag={onChainQueues?.research?.active ? "On-chain" : undefined}
+          tag={onChainQueues?.research?.active ? "Active" : undefined}
         >
           {onChainQueues?.research?.active ? (
             <QueueItemDisplay
@@ -229,7 +229,7 @@ export function OverviewPage({
         {/* Shipyard queue */}
         <QueuePanel
           label="Shipyard"
-          tag={onChainQueues?.ship?.active ? "On-chain" : undefined}
+          tag={onChainQueues?.ship?.active ? "Active" : undefined}
         >
           {onChainQueues?.ship?.active ? (
             <QueueItemDisplay
@@ -256,7 +256,7 @@ export function OverviewPage({
       {/* Resource values live in the persistent top bar; keep Overview focused on planet state and actions. */}
       {isWalletConnected && onChainStatus === "loading" && (
         <div className="rounded-lg border border-white/10 bg-[#101624] p-3 text-sm text-slate-400 sm:p-4">
-          Loading on-chain resources...
+          Loading wallet resources...
         </div>
       )}
 
