@@ -255,7 +255,7 @@ export function FirstPlanetSettlementApp() {
         <div className="settlement-command">
           <div className="settlement-kicker">
             <span />
-            Veydrift Command
+            Veydrift
           </div>
           <FlowBody
             mode={mode}
@@ -266,17 +266,6 @@ export function FirstPlanetSettlementApp() {
             settlementReady={settlementContractConfigured(settlementConfig)}
             wallet={wallet}
           />
-          <div className="settlement-metrics" aria-label="Launch telemetry">
-            <Telemetry label="Sector" value="BAS-SPL-01" />
-            <Telemetry label="Orbital window" value={mode === "pending" ? "Active" : "Standby"} />
-            <Telemetry label="Founding payload" value="Colony ship" />
-          </div>
-          <div className="settlement-directives" aria-label="Settlement directives">
-            <span>Infrastructure</span>
-            <span>Research</span>
-            <span>Shipyard</span>
-            <span>Galaxy</span>
-          </div>
         </div>
 
         <SettlementScanner mode={mode} />
@@ -303,7 +292,7 @@ function FlowBody({
   wallet: WalletState;
 }) {
   if (mode === "resolving") {
-    return <StateMessage tone="scanning" title="Scanning command link" body="Reading wallet signal and first-planet settlement telemetry." />;
+    return <StateMessage tone="scanning" title="Reading wallet link" body="Checking wallet signal and first-planet settlement state." />;
   }
 
   if (mode === "no-wallet") {
@@ -321,7 +310,7 @@ function FlowBody({
     return (
       <StateMessage
         title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : "Link pilot wallet"}
-        body="Connect a wallet to claim your first orbital command."
+        body="Connect a wallet to claim your first home world."
         action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Link wallet</PrimaryButton>}
         tone={wallet.kind === "connecting" ? "scanning" : "ready"}
       />
@@ -363,7 +352,7 @@ function FlowBody({
     return (
       <StateMessage
         title="Planetfall confirmed"
-        body="First-planet settlement is confirmed. Opening planetary command."
+        body="First-planet settlement is confirmed. Opening planetary overview."
         tone="ready"
       />
     );
@@ -383,7 +372,7 @@ function FlowBody({
   return (
     <StateMessage
       title="Found your first world"
-      body="Deploy the colony ship and mint this wallet's home planet."
+      body="Launch settlement and mint this wallet's home planet."
       action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Launch settlement</PrimaryButton>}
       tone="ready"
     />
@@ -420,10 +409,10 @@ function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode
   const status = mode === "pending"
     ? "Drop vector locked"
     : mode === "wrong-network"
-      ? "Sector mismatch"
+      ? "Network mismatch"
       : mode === "settle"
         ? "Settlement site ready"
-        : "Awaiting command";
+        : "Awaiting wallet";
 
   return (
     <aside className="settlement-scanner" aria-label="Orbital settlement scanner">
@@ -445,21 +434,6 @@ function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode
         </div>
       </div>
     </aside>
-  );
-}
-
-function Telemetry({
-  label,
-  value
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 

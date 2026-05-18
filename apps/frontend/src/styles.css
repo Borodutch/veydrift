@@ -784,8 +784,7 @@ h4 {
 
 .settlement-kicker,
 .settlement-status,
-.scanner-hud span,
-.settlement-metrics span {
+.scanner-hud span {
   color: #80f1ff;
   font-size: 0.74rem;
   font-weight: 800;
@@ -902,48 +901,6 @@ h4 {
   opacity: 0.45;
   transform: none;
   filter: grayscale(0.45);
-}
-
-.settlement-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.settlement-metrics div {
-  min-width: 0;
-  border: 1px solid rgba(236, 253, 245, 0.12);
-  border-radius: 8px;
-  background: rgba(236, 253, 245, 0.055);
-  padding: 12px;
-}
-
-.settlement-metrics span,
-.settlement-metrics strong {
-  display: block;
-}
-
-.settlement-metrics strong {
-  margin-top: 6px;
-  color: #ecfdf5;
-  font-size: 0.88rem;
-  overflow-wrap: anywhere;
-}
-
-.settlement-directives {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.settlement-directives span {
-  border: 1px solid rgba(246, 179, 92, 0.22);
-  border-radius: 999px;
-  background: rgba(246, 179, 92, 0.075);
-  color: #f5d7aa;
-  font-size: 0.78rem;
-  font-weight: 800;
-  padding: 8px 10px;
 }
 
 .settlement-scanner {
@@ -1231,15 +1188,6 @@ h4 {
   .settlement-state p {
     font-size: 0.98rem;
     text-wrap: wrap;
-  }
-
-  .settlement-metrics {
-    grid-template-columns: 1fr;
-  }
-
-  .settlement-directives span {
-    flex: 1 1 calc(50% - 8px);
-    text-align: center;
   }
 
   .scanner-frame {
