@@ -720,9 +720,8 @@ h4 {
 .settlement-backdrop img {
   width: 100%;
   height: 100%;
-  opacity: 0.34;
+  opacity: 0.28;
   object-fit: cover;
-  filter: saturate(1.18) contrast(1.08);
 }
 
 .settlement-starfield {
@@ -736,13 +735,13 @@ h4 {
 }
 
 .settlement-starfield-one {
-  animation: drift-stars 46s linear infinite;
+  background-position: 0 0, 30px 80px, 120px 40px, 220px 160px;
 }
 
 .settlement-starfield-two {
   transform: scale(1.7);
   opacity: 0.32;
-  animation: drift-stars 72s linear infinite reverse;
+  background-position: 90px 180px, 180px 40px, 30px 240px, 300px 90px;
 }
 
 .settlement-nebula {
@@ -772,8 +771,7 @@ h4 {
   border: 1px solid rgba(128, 241, 255, 0.24);
   border-radius: 8px;
   background: rgba(4, 10, 18, 0.78);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42), inset 0 1px rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(22px);
+  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.38), inset 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .settlement-command {
@@ -841,7 +839,6 @@ h4 {
 .settlement-state-scanning .settlement-status span {
   background: #f6b35c;
   box-shadow: 0 0 18px rgba(246, 179, 92, 0.82);
-  animation: settlement-pulse 1.2s ease-in-out infinite;
 }
 
 .settlement-state-warning .settlement-status {
@@ -976,11 +973,9 @@ h4 {
 .scanner-frame::after {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, transparent 0%, rgba(128, 241, 255, 0.16) 48%, transparent 53%);
+  background: linear-gradient(180deg, transparent 0%, transparent 52%, rgba(128, 241, 255, 0.14) 52.5%, transparent 56%);
   content: "";
-  opacity: 0.56;
-  transform: translateY(-100%);
-  animation: scanner-sweep 4.6s ease-in-out infinite;
+  opacity: 0.34;
   pointer-events: none;
 }
 
@@ -997,28 +992,52 @@ h4 {
     inset 30px -22px 44px rgba(0, 0, 0, 0.52),
     0 0 60px rgba(128, 241, 255, 0.28),
     0 36px 90px rgba(0, 0, 0, 0.45);
-  animation: planet-float 8s ease-in-out infinite;
 }
 
-.scanner-ship {
+.scanner-terminator {
   position: absolute;
-  left: clamp(22px, 7vw, 76px);
-  top: clamp(78px, 12vw, 150px);
-  width: min(260px, 42%);
-  filter: drop-shadow(0 0 26px rgba(128, 241, 255, 0.34));
-  transform: rotate(-8deg);
-  animation: ship-approach 7s ease-in-out infinite;
+  right: clamp(24px, 7vw, 86px);
+  bottom: clamp(68px, 11vw, 124px);
+  width: min(360px, 56%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 36% 38%, transparent 0 38%, rgba(3, 8, 14, 0.2) 50%, rgba(3, 8, 14, 0.72) 78%),
+    linear-gradient(125deg, transparent 0 48%, rgba(3, 8, 14, 0.6) 62%, rgba(3, 8, 14, 0.86) 100%);
+  pointer-events: none;
 }
 
-.scanner-escort {
+.scanner-site {
   position: absolute;
-  left: clamp(72px, 14vw, 158px);
-  top: clamp(210px, 28vw, 310px);
-  width: min(150px, 24%);
-  filter: drop-shadow(0 0 20px rgba(246, 179, 92, 0.28));
-  opacity: 0.84;
-  transform: rotate(-12deg);
-  animation: escort-patrol 9s ease-in-out infinite;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(236, 253, 245, 0.92);
+  border-radius: 50%;
+  background: #f6b35c;
+  box-shadow: 0 0 18px rgba(246, 179, 92, 0.52);
+}
+
+.scanner-site::after {
+  position: absolute;
+  inset: -9px;
+  border: 1px solid rgba(246, 179, 92, 0.34);
+  border-radius: inherit;
+  content: "";
+}
+
+.scanner-site-primary {
+  right: clamp(140px, 25vw, 246px);
+  bottom: clamp(190px, 25vw, 276px);
+}
+
+.scanner-site-secondary {
+  right: clamp(84px, 16vw, 164px);
+  bottom: clamp(142px, 18vw, 212px);
+  width: 9px;
+  height: 9px;
+  background: #80f1ff;
+  box-shadow: 0 0 16px rgba(128, 241, 255, 0.46);
 }
 
 .planet-orbit {
@@ -1033,13 +1052,12 @@ h4 {
 
 .planet-orbit-a {
   width: min(470px, 72%);
-  animation: orbit-roll 28s linear infinite;
 }
 
 .planet-orbit-b {
   width: min(560px, 84%);
   border-color: rgba(246, 179, 92, 0.24);
-  animation: orbit-roll 38s linear infinite reverse;
+  transform: rotate(-8deg);
 }
 
 .scanner-reticle {
@@ -1051,7 +1069,6 @@ h4 {
   border: 1px solid rgba(246, 179, 92, 0.58);
   border-radius: 50%;
   box-shadow: 0 0 24px rgba(246, 179, 92, 0.25);
-  animation: settlement-pulse 1.8s ease-in-out infinite;
 }
 
 .scanner-reticle::before,
@@ -1097,84 +1114,6 @@ h4 {
 .scanner-hud-bottom {
   right: 32px;
   bottom: 32px;
-}
-
-@keyframes drift-stars {
-  from {
-    background-position: 0 0, 0 0, 0 0, 0 0;
-  }
-
-  to {
-    background-position: 240px 240px, -310px 310px, 380px -380px, -460px -460px;
-  }
-}
-
-@keyframes scanner-sweep {
-  0%,
-  38% {
-    transform: translateY(-100%);
-  }
-
-  70%,
-  100% {
-    transform: translateY(100%);
-  }
-}
-
-@keyframes planet-float {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-
-  50% {
-    transform: translate3d(0, -12px, 0);
-  }
-}
-
-@keyframes ship-approach {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(-8deg);
-  }
-
-  50% {
-    transform: translate3d(14px, -10px, 0) rotate(-5deg);
-  }
-}
-
-@keyframes escort-patrol {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(-12deg);
-  }
-
-  50% {
-    transform: translate3d(-8px, 10px, 0) rotate(-15deg);
-  }
-}
-
-@keyframes orbit-roll {
-  from {
-    transform: rotate(-22deg);
-  }
-
-  to {
-    transform: rotate(338deg);
-  }
-}
-
-@keyframes settlement-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  50% {
-    opacity: 0.62;
-    transform: scale(0.94);
-  }
 }
 
 @media (max-width: 1020px) {
@@ -1299,8 +1238,10 @@ h4 {
   }
 
   .settlement-state h1 {
-    font-size: 2.25rem;
+    font-size: 2rem;
+    line-height: 1;
     text-wrap: wrap;
+    word-break: break-word;
   }
 
   .settlement-state p {
@@ -1331,16 +1272,29 @@ h4 {
     bottom: 22px;
   }
 
-  .scanner-ship {
-    width: min(210px, 48%);
-  }
-
-  .scanner-escort {
-    width: min(128px, 30%);
-  }
-
   .scanner-planet {
     width: min(290px, 68%);
+  }
+
+  .scanner-terminator {
+    width: min(290px, 68%);
+  }
+
+  .scanner-site-primary {
+    right: clamp(116px, 31vw, 210px);
+    bottom: clamp(178px, 38vw, 248px);
+  }
+
+  .scanner-site-secondary {
+    right: clamp(76px, 22vw, 142px);
+    bottom: clamp(132px, 28vw, 190px);
+  }
+}
+
+@media (max-width: 600px) {
+  .settlement-shell {
+    justify-self: start;
+    max-width: min(calc(100vw - 36px), 354px);
   }
 }
 

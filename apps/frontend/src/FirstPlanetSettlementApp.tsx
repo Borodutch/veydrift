@@ -21,8 +21,6 @@ import {
 } from "./walletFlow";
 
 const BASE_SEPOLIA_SETTLEMENT_ADDRESS = "0x8bA1807073ac642A55596A4934c49115E400cD2f";
-const BATTLESHIP_URL = "/assets/game/style-pass/generated/ships/battleship.webp";
-const COLONY_SHIP_URL = "/assets/game/style-pass/generated/ships/colony-ship.webp";
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 
 const settlementConfig: SettlementConfig = buildSettlementConfig();
@@ -271,7 +269,7 @@ export function FirstPlanetSettlementApp() {
           <div className="settlement-metrics" aria-label="Launch telemetry">
             <Telemetry label="Sector" value="BAS-SPL-01" />
             <Telemetry label="Orbital window" value={mode === "pending" ? "Active" : "Standby"} />
-            <Telemetry label="Founding payload" value="Colony ship" />
+            <Telemetry label="Founding kit" value="Surface-ready" />
           </div>
           <div className="settlement-directives" aria-label="Settlement directives">
             <span>Infrastructure</span>
@@ -311,8 +309,8 @@ function FlowBody({
   if (mode === "no-wallet") {
     return (
       <StateMessage
-        title="No pilot wallet detected"
-        body="Open the bridge with MetaMask or another injected EVM wallet."
+        title="Wallet not detected"
+        body="Open with MetaMask."
         action={<PrimaryButton onClick={onConnect}>Check again</PrimaryButton>}
         tone="warning"
       />
@@ -385,7 +383,7 @@ function FlowBody({
   return (
     <StateMessage
       title="Found your first world"
-      body="Deploy the colony ship and mint this wallet's home planet."
+      body="Initialize the founding module and mint this wallet's home planet."
       action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Launch settlement</PrimaryButton>}
       tone="ready"
     />
@@ -424,7 +422,7 @@ function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode
     : mode === "wrong-network"
       ? "Sector mismatch"
       : mode === "settle"
-        ? "Colony ship armed"
+        ? "Settlement vector locked"
         : "Awaiting command";
 
   return (
@@ -437,8 +435,9 @@ function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode
         <div className="planet-orbit planet-orbit-a" />
         <div className="planet-orbit planet-orbit-b" />
         <img alt="" className="scanner-planet" src={FIRST_PLANET_URL} />
-        <img alt="" className="scanner-ship" src={COLONY_SHIP_URL} />
-        <img alt="" className="scanner-escort" src={BATTLESHIP_URL} />
+        <div className="scanner-terminator" />
+        <div className="scanner-site scanner-site-primary" />
+        <div className="scanner-site scanner-site-secondary" />
         <div className="scanner-reticle" />
         <div className="scanner-hud scanner-hud-bottom">
           <span>Atmosphere</span>
