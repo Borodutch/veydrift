@@ -1,12 +1,14 @@
 import { useState, useEffect } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
+  formatPlanetType,
   generateSystem,
   GALAXY_COUNT,
   SYSTEM_COUNT,
   POSITION_COUNT,
   mergePlanetAtCoordinates,
-  planetsFromSystemResponse
+  planetsFromSystemResponse,
+  planetTypeFromTemperature
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
@@ -263,6 +265,11 @@ export function formatGalaxyOccupancySource(
   return source === "api" ? "Current system" : "Preview system";
 }
 
+export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): string {
+  const orbitalTemperature = (temperature.min + temperature.max) / 2;
+  return formatPlanetType(planetTypeFromTemperature(orbitalTemperature));
+}
+
 function GalaxySlot({
   galaxy,
   system,
@@ -362,7 +369,7 @@ function GalaxySlot({
             ) : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <span className="capitalize">{planet.type.replace(/-/g, " ")}</span>
+            <span>{formatGalaxyHeatLabel(planet.temperature)}</span>
             <span className="text-slate-700">/</span>
             <span>{planet.fields} fields</span>
             {planet.hasMoon ? (
