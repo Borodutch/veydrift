@@ -1,6 +1,9 @@
 import type { PlayableState, Resources } from "../playableMvp";
 import { useEffect, useState } from "preact/hooks";
 import {
+  buildingQueueAsset,
+  buildingQueueLabel,
+  buildingQueuePreview,
   displayPlanetStats,
   type ChainLoadStatus,
 } from "../overviewData";
@@ -57,6 +60,13 @@ export function OverviewPage({
 }: OverviewPageProps) {
   const usedFields = Object.values(settledState.buildings).filter((level) => level > 0).length;
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
+  const onChainBuildingQueue = buildingQueuePreview(onChainQueues?.building);
+  const localBuildingAsset = settledState.queue?.kind === "building"
+    ? buildingQueueAsset(settledState.queue.key)
+    : undefined;
+  const localBuildingLabel = settledState.queue?.kind === "building"
+    ? buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)
+    : settledState.queue?.label;
 
   const planetName = homePlanet?.name
     ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
@@ -142,8 +152,9 @@ export function OverviewPage({
           {onChainQueues?.building?.active ? (
             <div className="grid gap-2">
               <QueueItemDisplay
-                label={`${onChainQueues.building.kind === "building" ? "Building" : onChainQueues.building.kind} level ${onChainQueues.building.targetLevel}`}
+                label={onChainBuildingQueue.label}
                 remaining={queueRemaining(onChainQueues.building.readyAt, now)}
+                thumbnailSrc={onChainBuildingQueue.asset}
                 indeterminate
               />
               {queueRemaining(onChainQueues.building.readyAt, now) === "Ready" && onFinishBuilding && (
@@ -158,9 +169,10 @@ export function OverviewPage({
             </div>
           ) : settledState.queue?.kind === "building" ? (
             <QueueItemDisplay
-              label={settledState.queue.label}
+              label={localBuildingLabel ?? settledState.queue.label}
               remaining={formatDurationUntil(settledState.queue.readyAt, now)}
               progress={queueProgress}
+              thumbnailSrc={localBuildingAsset}
             />
           ) : (
             <EmptyQueue action={<QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>}>
@@ -293,28 +305,43 @@ function QueueItemDisplay({
   progress,
   indeterminate,
   color = "bg-signal",
+  thumbnailSrc,
 }: {
   label: string;
   remaining: string;
   progress?: number;
   indeterminate?: boolean;
   color?: string;
+  thumbnailSrc?: string | undefined;
 }) {
   return (
-    <div>
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="truncate text-xs font-semibold text-white">{label}</p>
-        <p className="shrink-0 text-[10px] text-slate-400">{remaining}</p>
-      </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-        {indeterminate ? (
-          <div className={`h-full w-2/3 rounded-full ${color} animate-pulse`} />
-        ) : (
-          <div
-            className={`h-full rounded-full ${color} transition-[width]`}
-            style={{ width: `${(progress ?? 0) * 100}%` }}
+    <div className={thumbnailSrc ? "flex min-w-0 items-center gap-3" : undefined}>
+      {thumbnailSrc ? (
+        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-md border border-white/10 bg-white/5">
+          <OptimizedImage
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            sizes="icon"
+            src={thumbnailSrc}
           />
-        )}
+        </div>
+      ) : null}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="truncate text-xs font-semibold text-white">{label}</p>
+          <p className="shrink-0 text-[10px] text-slate-400">{remaining}</p>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+          {indeterminate ? (
+            <div className={`h-full w-2/3 rounded-full ${color} animate-pulse`} />
+          ) : (
+            <div
+              className={`h-full rounded-full ${color} transition-[width]`}
+              style={{ width: `${(progress ?? 0) * 100}%` }}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
