@@ -199,6 +199,86 @@ contract VeydriftGameTest is Test {
         assertEq(afterResources.deuterium, beforeResources.deuterium);
     }
 
+    function testMineProductionRequiresOnChainEnergy() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+
+        (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) =
+            game.energyBalance(planetId);
+        assertEq(producedEnergy, 0);
+        assertEq(requiredEnergy, 10);
+        assertEq(energyScaleBps, 0);
+
+        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) =
+            game.productionPerHour(planetId);
+        assertEq(metalPerHour, 0);
+        assertEq(crystalPerHour, 0);
+        assertEq(deuteriumPerHour, 0);
+
+        VeydriftGame.Resources memory beforeResources = game.previewResources(planetId);
+
+        vm.warp(block.timestamp + 2 hours);
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        VeydriftGame.Resources memory afterResources = game.previewResources(planetId);
+        assertEq(afterResources.metal, beforeResources.metal);
+        assertEq(afterResources.crystal, beforeResources.crystal);
+        assertEq(afterResources.deuterium, beforeResources.deuterium);
+    }
+
+    function testBuildingCompletionSplitsProductionAtReadyAt() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.SolarPlant);
+        VeydriftGame.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        VeydriftGame.Resources memory resourcesAfterSolarSpend = game.planet(planetId).resources;
+
+        vm.warp(construction.readyAt + 1 hours);
+        vm.prank(player);
+        game.finishBuildingUpgrade(planetId);
+
+        (uint256 metalPerHour,,) = game.productionPerHour(planetId);
+        VeydriftGame.Resources memory resourcesAfterSolarCompletion =
+        game.planet(planetId).resources;
+        assertEq(game.buildingLevel(planetId, Building.SolarPlant), 1);
+        assertEq(resourcesAfterSolarCompletion.metal, resourcesAfterSolarSpend.metal + metalPerHour);
+        assertEq(resourcesAfterSolarCompletion.crystal, resourcesAfterSolarSpend.crystal);
+        assertEq(resourcesAfterSolarCompletion.deuterium, resourcesAfterSolarSpend.deuterium);
+    }
+
+    function testMineProductionScalesByOnChainEnergyDeficit() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.CrystalMine);
+        _build(player, planetId, Building.CrystalMine);
+        _build(player, planetId, Building.SolarPlant);
+
+        VeydriftGame.Planet memory planet = game.planet(planetId);
+        uint256 bps = game.BPS();
+        uint256 expectedScaleBps = (30 * bps) / 44;
+        uint256 expectedMetalCapacity = (60 * uint256(planet.metalMultiplierBps)) / bps;
+        uint256 expectedCrystalCapacity = (46 * uint256(planet.crystalMultiplierBps)) / bps;
+
+        (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) =
+            game.energyBalance(planetId);
+        assertEq(producedEnergy, 30);
+        assertEq(requiredEnergy, 44);
+        assertEq(energyScaleBps, expectedScaleBps);
+
+        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) =
+            game.productionPerHour(planetId);
+        assertEq(metalPerHour, (expectedMetalCapacity * expectedScaleBps) / bps);
+        assertEq(crystalPerHour, (expectedCrystalCapacity * expectedScaleBps) / bps);
+        assertEq(deuteriumPerHour, 0);
+        assertLt(metalPerHour, expectedMetalCapacity);
+        assertLt(crystalPerHour, expectedCrystalCapacity);
+    }
+
     function testBuildingConstructionAndCompletion() public {
         uint256 planetId = _startPlanet(player);
 
