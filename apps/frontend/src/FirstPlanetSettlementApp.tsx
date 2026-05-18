@@ -21,6 +21,9 @@ import {
 } from "./walletFlow";
 
 const BASE_SEPOLIA_SETTLEMENT_ADDRESS = "0x8bA1807073ac642A55596A4934c49115E400cD2f";
+const BATTLESHIP_URL = "/assets/game/style-pass/generated/ships/battleship.webp";
+const COLONY_SHIP_URL = "/assets/game/style-pass/generated/ships/colony-ship.webp";
+const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 
 const settlementConfig: SettlementConfig = buildSettlementConfig();
 
@@ -241,23 +244,44 @@ export function FirstPlanetSettlementApp() {
   const mode = preSettlementMode(wallet, planet);
 
   return (
-    <main className="relative flex min-h-dvh items-center bg-[#070a10] px-5 py-10 text-slate-100 sm:px-8">
-      <div className="fixed inset-0 -z-10">
-        <img alt="" className="h-full w-full object-cover opacity-35" src={heroUrl} />
-        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(7,10,16,0.98)_0%,rgba(7,10,16,0.94)_48%,rgba(7,10,16,0.72)_100%)]" />
+    <main className="settlement-stage">
+      <div className="settlement-backdrop" aria-hidden="true">
+        <img alt="" src={heroUrl} />
+        <div className="settlement-starfield settlement-starfield-one" />
+        <div className="settlement-starfield settlement-starfield-two" />
+        <div className="settlement-nebula" />
+        <div className="settlement-scanlines" />
       </div>
 
-      <section className="mx-auto w-full max-w-md">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">Veydrift</p>
-        <FlowBody
-          mode={mode}
-          onConnect={connectWallet}
-          onSettle={settlePlanet}
-          onSwitchNetwork={switchNetwork}
-          planet={planet}
-          settlementReady={settlementContractConfigured(settlementConfig)}
-          wallet={wallet}
-        />
+      <section className="settlement-shell" aria-label="First planet settlement">
+        <div className="settlement-command">
+          <div className="settlement-kicker">
+            <span />
+            Veydrift Command
+          </div>
+          <FlowBody
+            mode={mode}
+            onConnect={connectWallet}
+            onSettle={settlePlanet}
+            onSwitchNetwork={switchNetwork}
+            planet={planet}
+            settlementReady={settlementContractConfigured(settlementConfig)}
+            wallet={wallet}
+          />
+          <div className="settlement-metrics" aria-label="Launch telemetry">
+            <Telemetry label="Sector" value="BAS-SPL-01" />
+            <Telemetry label="Orbital window" value={mode === "pending" ? "Active" : "Standby"} />
+            <Telemetry label="Founding payload" value="Colony ship" />
+          </div>
+          <div className="settlement-directives" aria-label="Settlement directives">
+            <span>Infrastructure</span>
+            <span>Research</span>
+            <span>Shipyard</span>
+            <span>Galaxy</span>
+          </div>
+        </div>
+
+        <SettlementScanner mode={mode} />
       </section>
     </main>
   );
@@ -281,15 +305,16 @@ function FlowBody({
   wallet: WalletState;
 }) {
   if (mode === "resolving") {
-    return <StateMessage title="Loading wallet" body="Checking wallet and first-planet settlement state." />;
+    return <StateMessage tone="scanning" title="Scanning command link" body="Reading wallet signal and first-planet settlement telemetry." />;
   }
 
   if (mode === "no-wallet") {
     return (
       <StateMessage
-        title="Wallet not found"
-        body="Open this page with MetaMask or another injected EVM wallet."
+        title="No pilot wallet detected"
+        body="Open the bridge with MetaMask or another injected EVM wallet."
         action={<PrimaryButton onClick={onConnect}>Check again</PrimaryButton>}
+        tone="warning"
       />
     );
   }
@@ -297,9 +322,10 @@ function FlowBody({
   if (mode === "connect") {
     return (
       <StateMessage
-        title={wallet.kind === "connecting" ? "Waiting for wallet approval" : "Connect wallet"}
-        body="Connect a wallet to continue."
-        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Connect wallet</PrimaryButton>}
+        title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : "Link pilot wallet"}
+        body="Connect a wallet to claim your first orbital command."
+        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Link wallet</PrimaryButton>}
+        tone={wallet.kind === "connecting" ? "scanning" : "ready"}
       />
     );
   }
@@ -308,8 +334,9 @@ function FlowBody({
     return (
       <StateMessage
         title="Wrong network"
-        body={`Current chain ${wallet.chainId}. Switch to Base Sepolia before settlement.`}
+        body={`Current chain ${wallet.chainId}. Switch to Base Sepolia to enter the settlement sector.`}
         action={<PrimaryButton onClick={onSwitchNetwork}>Switch network</PrimaryButton>}
+        tone="warning"
       />
     );
   }
@@ -317,8 +344,9 @@ function FlowBody({
   if (mode === "contract-unconfigured") {
     return (
       <StateMessage
-        title="Settlement contract not configured"
+        title="Settlement beacon offline"
         body="Set VITE_VEYDRIFT_SETTLEMENT_ADDRESS to the Base Sepolia settlement contract."
+        tone="warning"
       />
     );
   }
@@ -326,8 +354,9 @@ function FlowBody({
   if (mode === "pending" && planet.kind === "pending") {
     return (
       <StateMessage
-        title="Settlement pending"
-        body={planet.txHash ? `Transaction submitted: ${planet.txHash}` : "Confirm the transaction in your wallet."}
+        title="Colony drop in progress"
+        body={planet.txHash ? `Transaction beacon: ${planet.txHash}` : "Confirm the settlement launch in your wallet."}
+        tone="scanning"
       />
     );
   }
@@ -335,8 +364,9 @@ function FlowBody({
   if (mode === "settled") {
     return (
       <StateMessage
-        title="Opening planet"
-        body="First-planet settlement is confirmed."
+        title="Planetfall confirmed"
+        body="First-planet settlement is confirmed. Opening planetary command."
+        tone="ready"
       />
     );
   }
@@ -347,15 +377,17 @@ function FlowBody({
         title={planet.kind === "rejected" ? "Request rejected" : "Wallet error"}
         body={planet.message}
         action={<PrimaryButton onClick={planet.kind === "rejected" ? onSettle : onConnect}>Retry</PrimaryButton>}
+        tone="warning"
       />
     );
   }
 
   return (
     <StateMessage
-      title="Settle first planet"
-      body="Create the first planet for this wallet."
-      action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Settle first planet</PrimaryButton>}
+      title="Found your first world"
+      body="Deploy the colony ship and mint this wallet's home planet."
+      action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Launch settlement</PrimaryButton>}
+      tone="ready"
     />
   );
 }
@@ -363,19 +395,71 @@ function FlowBody({
 function StateMessage({
   action,
   body,
-  title
+  title,
+  tone = "ready"
 }: {
   action?: ComponentChildren;
   body: string;
   title: string;
+  tone?: "ready" | "scanning" | "warning";
 }) {
   return (
-    <div className="mt-4 flex min-h-44 min-w-0 flex-col justify-between gap-5">
-      <div className="min-w-0">
-        <h1 className="break-words text-3xl font-semibold text-white sm:text-4xl">{title}</h1>
-        <p className="mt-3 max-w-full break-words text-base leading-7 text-slate-300">{body}</p>
+    <div className={`settlement-state settlement-state-${tone}`}>
+      <div className="settlement-state-copy">
+        <div className="settlement-status">
+          <span />
+          {tone === "warning" ? "Alert" : tone === "scanning" ? "Scanning" : "Ready"}
+        </div>
+        <h1>{title}</h1>
+        <p>{body}</p>
       </div>
-      {action ? <div>{action}</div> : null}
+      {action ? <div className="settlement-action">{action}</div> : null}
+    </div>
+  );
+}
+
+function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode> }) {
+  const status = mode === "pending"
+    ? "Drop vector locked"
+    : mode === "wrong-network"
+      ? "Sector mismatch"
+      : mode === "settle"
+        ? "Colony ship armed"
+        : "Awaiting command";
+
+  return (
+    <aside className="settlement-scanner" aria-label="Orbital settlement scanner">
+      <div className="scanner-frame">
+        <div className="scanner-hud scanner-hud-top">
+          <span>Orbital scan</span>
+          <strong>{status}</strong>
+        </div>
+        <div className="planet-orbit planet-orbit-a" />
+        <div className="planet-orbit planet-orbit-b" />
+        <img alt="" className="scanner-planet" src={FIRST_PLANET_URL} />
+        <img alt="" className="scanner-ship" src={COLONY_SHIP_URL} />
+        <img alt="" className="scanner-escort" src={BATTLESHIP_URL} />
+        <div className="scanner-reticle" />
+        <div className="scanner-hud scanner-hud-bottom">
+          <span>Atmosphere</span>
+          <strong>Habitable</strong>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function Telemetry({
+  label,
+  value
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -391,7 +475,7 @@ function PrimaryButton({
 }) {
   return (
     <button
-      className="inline-flex min-h-11 items-center justify-center gap-2 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+      className="settlement-primary"
       disabled={disabled}
       onClick={onClick}
       type="button"
