@@ -9,6 +9,7 @@ import {
 } from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
 import {
+  formatGalaxyHeatLabel,
   formatGalaxyOccupancySource,
   formatGalaxyOccupancySummary
 } from "../src/components/GalaxyView";
@@ -122,6 +123,12 @@ describe("tester universe display data", () => {
       "Home planet shown",
     ]);
     expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data)\b/i);
+  });
+
+  test("galaxy heat label is derived from the orbital temperature range", () => {
+    expect(formatGalaxyHeatLabel({ min: 46, max: 74 })).toBe("Scorching Molten");
+    expect(formatGalaxyHeatLabel({ min: -28, max: 68 })).toBe("Lush Temperate");
+    expect(formatGalaxyHeatLabel({ min: -80, max: 0 })).toBe("Frozen Ice");
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {
