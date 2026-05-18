@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import { planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
+import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
@@ -25,6 +26,7 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
   const [planet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [imageLoaded, setImageLoaded] = useState(false);
+  const imageRef = useRef<HTMLImageElement>(null);
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
 
   useEffect(() => {
@@ -56,7 +58,7 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
   }, [apiBaseUrl, coords, homeCoords, homePlanet, trustedHomePlanet]);
 
   useEffect(() => {
-    setImageLoaded(false);
+    setImageLoaded(isImageReady(imageRef.current));
   }, [planet?.image]);
 
   if (!planet) {
@@ -124,7 +126,11 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               key={planet.image}
               alt={planet.name}
               className={`h-full w-full object-cover transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
-              onLoad={() => setImageLoaded(true)}
+              imageRef={imageRef}
+              loading="eager"
+              onLoad={(event) => {
+                if (isImageReady(event.currentTarget)) setImageLoaded(true);
+              }}
               sizes="planetPreview"
               src={planet.image}
             />
