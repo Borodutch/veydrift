@@ -15,6 +15,8 @@ import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
+type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
+
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
   return formatDurationUntil(Number(readyAt) * 1_000, now);
@@ -38,6 +40,7 @@ interface OverviewPageProps {
   onChainSettlement?: WalletSettlementResponse | undefined;
   onChainQueues?: PlayerQueuesResponse | undefined;
   onChainStatus: ChainLoadStatus;
+  buildingQueue?: BuildingQueueItem | undefined;
 }
 
 export function OverviewPage({
@@ -57,15 +60,20 @@ export function OverviewPage({
   onChainSettlement,
   onChainQueues,
   onChainStatus,
+  buildingQueue: activeBuildingQueue,
 }: OverviewPageProps) {
   const usedFields = Object.values(settledState.buildings).filter((level) => level > 0).length;
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
-  const onChainBuildingQueue = buildingQueuePreview(onChainQueues?.building);
-  const localBuildingAsset = settledState.queue?.kind === "building"
-    ? buildingQueueAsset(settledState.queue.key)
-    : undefined;
-  const localBuildingLabel = settledState.queue?.kind === "building"
-    ? buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)
+  const buildingQueue = activeBuildingQueue ?? (settledState.queue?.kind === "building" ? settledState.queue : undefined);
+  const onChainBuildingQueue = buildingQueue
+    ? {
+      asset: buildingQueueAsset(buildingQueue.key),
+      label: buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel),
+    }
+    : buildingQueuePreview(onChainQueues?.building);
+  const localBuildingAsset = buildingQueue ? buildingQueueAsset(buildingQueue.key) : undefined;
+  const localBuildingLabel = buildingQueue
+    ? buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel)
     : settledState.queue?.label;
 
   const planetName = homePlanet?.name
@@ -151,12 +159,21 @@ export function OverviewPage({
         >
           {onChainQueues?.building?.active ? (
             <div className="grid gap-2">
-              <QueueItemDisplay
-                label={onChainBuildingQueue.label}
-                remaining={queueRemaining(onChainQueues.building.readyAt, now)}
-                thumbnailSrc={onChainBuildingQueue.asset}
-                indeterminate
-              />
+              {buildingQueue ? (
+                <QueueItemDisplay
+                  label={onChainBuildingQueue.label}
+                  remaining={formatDurationUntil(buildingQueue.readyAt, now)}
+                  progress={queueProgress}
+                  thumbnailSrc={onChainBuildingQueue.asset}
+                />
+              ) : (
+                <QueueItemDisplay
+                  label={onChainBuildingQueue.label}
+                  remaining={queueRemaining(onChainQueues.building.readyAt, now)}
+                  thumbnailSrc={onChainBuildingQueue.asset}
+                  indeterminate
+                />
+              )}
               {queueRemaining(onChainQueues.building.readyAt, now) === "Ready" && onFinishBuilding && (
                 <button
                   className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
@@ -167,10 +184,10 @@ export function OverviewPage({
                 </button>
               )}
             </div>
-          ) : settledState.queue?.kind === "building" ? (
+          ) : buildingQueue ? (
             <QueueItemDisplay
-              label={localBuildingLabel ?? settledState.queue.label}
-              remaining={formatDurationUntil(settledState.queue.readyAt, now)}
+              label={localBuildingLabel ?? buildingQueue.label}
+              remaining={formatDurationUntil(buildingQueue.readyAt, now)}
               progress={queueProgress}
               thumbnailSrc={localBuildingAsset}
             />

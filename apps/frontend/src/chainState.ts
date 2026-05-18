@@ -1,6 +1,7 @@
 import {
   buildingContractIds,
   buildingCatalog,
+  buildingDurationEstimate,
   createInitialPlayableState,
   researchCatalog,
   type BuildingKey,
@@ -31,7 +32,7 @@ export function infrastructurePlayableState(
     ...state,
     buildings: buildingLevels(infrastructureState),
     resources: toResources(infrastructureState.resources) ?? state.resources,
-    queue: buildingQueueForDisplay(infrastructureState.queue) ?? undefined,
+    queue: buildingQueueForDisplay(infrastructureState, now) ?? undefined,
   };
 }
 
@@ -91,18 +92,24 @@ export function resourcesFromChain(value: ChainInfrastructureState["resources"])
   return toResources(value);
 }
 
-export function buildingQueueForDisplay(queue: QueueStateResponse | null): PlayableState["queue"] {
+export function buildingQueueForDisplay(
+  infrastructureState: ChainInfrastructureState,
+  now = Date.now(),
+): PlayableState["queue"] {
+  const queue = infrastructureState.queue;
   if (!queue?.active || queue.itemId === undefined) return undefined;
   const building = buildingCatalog.find((item) => buildingContractIds[item.key] === queue.itemId);
   if (!building) return undefined;
 
-  const readyAt = queue.readyAt ? Number(queue.readyAt) * 1_000 : Date.now();
+  const readyAt = queue.readyAt ? Number(queue.readyAt) * 1_000 : now;
+  const cost = toResources(queue.cost) ?? { metal: 0, crystal: 0, deuterium: 0 };
+  const durationMs = buildingDurationEstimate(buildingLevels(infrastructureState), cost) * 1_000;
   return {
     kind: "building",
     key: building.key,
     label: building.label,
     readyAt,
-    startedAt: Date.now(),
+    startedAt: readyAt - durationMs,
     targetLevel: queue.targetLevel ?? 0,
   };
 }
