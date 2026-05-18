@@ -31,6 +31,7 @@ import {
 import { formatDuration } from "./buildingDetails";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
+  buildingQueueItemForDisplay,
   buildingCosts,
   infrastructurePlayableState,
 } from "./chainState";
@@ -431,7 +432,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (!isWalletConnected || !onChainSettlement?.planet?.lastSettledAt) return false;
     return hasCollectableResources(rates, Number(onChainSettlement.planet.lastSettledAt), now);
   }, [isWalletConnected, onChainSettlement?.planet?.lastSettledAt, rates, now]);
-  const buildingQueue = settledState.queue?.kind === "building" ? settledState.queue : undefined;
+  const buildingQueue = useMemo(() => {
+    if (onChainQueues?.building?.active) {
+      return buildingQueueItemForDisplay(onChainQueues.building, settledState.buildings, now);
+    }
+
+    return settledState.queue?.kind === "building" ? settledState.queue : undefined;
+  }, [now, onChainQueues?.building, settledState.buildings, settledState.queue]);
   const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
   const queueProgress = progress(buildingQueue, now);
   const researchProgress = progress(settledState.researchQueue, now);
@@ -968,6 +975,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
         homePlanet={homePlanetIdentity}
+        buildingQueue={buildingQueue}
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}
