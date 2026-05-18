@@ -1,8 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { Factory, FlaskConical, Orbit, Radar, Rocket } from "lucide-preact";
-import { OptimizedImage } from "./components/OptimizedImage";
-import { shipAssetByKey } from "./gameAssets";
+import heroUrl from "./assets/veydrift-hero.webp";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import {
@@ -23,18 +21,11 @@ import {
 } from "./walletFlow";
 
 const BASE_SEPOLIA_SETTLEMENT_ADDRESS = "0x8bA1807073ac642A55596A4934c49115E400cD2f";
-const HOME_PLANET_ASSET = "/assets/game/planets/temperate-ocean.webp";
-const OUTER_PLANET_ASSET = "/assets/game/planets/outer-cryo.webp";
+const BATTLESHIP_URL = "/assets/game/style-pass/generated/ships/battleship.webp";
+const COLONY_SHIP_URL = "/assets/game/style-pass/generated/ships/colony-ship.webp";
+const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 
 const settlementConfig: SettlementConfig = buildSettlementConfig();
-
-const gamePillars = [
-  { icon: Orbit, label: "Settle", value: "first homeworld" },
-  { icon: Factory, label: "Build", value: "mines and orbital yards" },
-  { icon: FlaskConical, label: "Research", value: "tech paths" },
-  { icon: Rocket, label: "Launch", value: "fleet production" },
-  { icon: Radar, label: "Expand", value: "toward new systems" },
-];
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -253,23 +244,21 @@ export function FirstPlanetSettlementApp() {
   const mode = preSettlementMode(wallet, planet);
 
   return (
-    <main className="settlement-entry">
-      <div aria-hidden="true" className="settlement-space">
-        <div className="settlement-stars settlement-stars-a" />
-        <div className="settlement-stars settlement-stars-b" />
+    <main className="settlement-stage">
+      <div className="settlement-backdrop" aria-hidden="true">
+        <img alt="" src={heroUrl} />
+        <div className="settlement-starfield settlement-starfield-one" />
+        <div className="settlement-starfield settlement-starfield-two" />
         <div className="settlement-nebula" />
+        <div className="settlement-scanlines" />
       </div>
 
-      <section className="settlement-hero" aria-labelledby="settlement-title">
-        <div className="settlement-copy">
-          <p className="settlement-kicker">Veydrift</p>
-          <h1 id="settlement-title">Command your first world</h1>
-          <p className="settlement-lede">
-            Settle a home planet, wake the first mines, research new systems, and turn a quiet shipyard into the fleet that opens the galaxy.
-          </p>
-
-          <GamePillars />
-
+      <section className="settlement-shell" aria-label="First planet settlement">
+        <div className="settlement-command">
+          <div className="settlement-kicker">
+            <span />
+            Veydrift Command
+          </div>
           <FlowBody
             mode={mode}
             onConnect={connectWallet}
@@ -279,62 +268,22 @@ export function FirstPlanetSettlementApp() {
             settlementReady={settlementContractConfigured(settlementConfig)}
             wallet={wallet}
           />
+          <div className="settlement-metrics" aria-label="Launch telemetry">
+            <Telemetry label="Sector" value="BAS-SPL-01" />
+            <Telemetry label="Orbital window" value={mode === "pending" ? "Active" : "Standby"} />
+            <Telemetry label="Founding payload" value="Colony ship" />
+          </div>
+          <div className="settlement-directives" aria-label="Settlement directives">
+            <span>Infrastructure</span>
+            <span>Research</span>
+            <span>Shipyard</span>
+            <span>Galaxy</span>
+          </div>
         </div>
 
-        <div className="settlement-visual" aria-hidden="true">
-          <div className="settlement-orbit settlement-orbit-main" />
-          <div className="settlement-orbit settlement-orbit-inner" />
-          <OptimizedImage
-            alt=""
-            className="settlement-planet settlement-planet-main"
-            loading="eager"
-            sizes="(max-width: 900px) 46vw, 34vw"
-            src={HOME_PLANET_ASSET}
-          />
-          <OptimizedImage
-            alt=""
-            className="settlement-planet settlement-planet-outer"
-            loading="eager"
-            sizes="(max-width: 900px) 22vw, 12vw"
-            src={OUTER_PLANET_ASSET}
-          />
-          <OptimizedImage
-            alt=""
-            className="settlement-ship settlement-ship-battleship"
-            loading="eager"
-            sizes="(max-width: 900px) 34vw, 22vw"
-            src={shipAssetByKey.battleship}
-          />
-          <OptimizedImage
-            alt=""
-            className="settlement-ship settlement-ship-cruiser"
-            loading="eager"
-            sizes="(max-width: 900px) 26vw, 16vw"
-            src={shipAssetByKey.battlecruiser}
-          />
-          <div className="settlement-scanline settlement-scanline-one" />
-          <div className="settlement-scanline settlement-scanline-two" />
-        </div>
+        <SettlementScanner mode={mode} />
       </section>
     </main>
-  );
-}
-
-function GamePillars() {
-  return (
-    <div className="settlement-pillars" aria-label="Veydrift game loop">
-      {gamePillars.map((pillar) => {
-        const Icon = pillar.icon;
-
-        return (
-          <div className="settlement-pillar" key={pillar.label}>
-            <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
-            <span>{pillar.label}</span>
-            <strong>{pillar.value}</strong>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -356,15 +305,16 @@ function FlowBody({
   wallet: WalletState;
 }) {
   if (mode === "resolving") {
-    return <StateMessage title="Loading wallet" body="Checking wallet and first-planet settlement state." />;
+    return <StateMessage tone="scanning" title="Scanning command link" body="Reading wallet signal and first-planet settlement telemetry." />;
   }
 
   if (mode === "no-wallet") {
     return (
       <StateMessage
-        title="Wallet not found"
-        body="Open this page with MetaMask or another injected EVM wallet."
+        title="No pilot wallet detected"
+        body="Open the bridge with MetaMask or another injected EVM wallet."
         action={<PrimaryButton onClick={onConnect}>Check again</PrimaryButton>}
+        tone="warning"
       />
     );
   }
@@ -372,9 +322,10 @@ function FlowBody({
   if (mode === "connect") {
     return (
       <StateMessage
-        title={wallet.kind === "connecting" ? "Waiting for wallet approval" : "Connect wallet"}
-        body="Connect a wallet to continue."
-        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Connect wallet</PrimaryButton>}
+        title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : "Link pilot wallet"}
+        body="Connect a wallet to claim your first orbital command."
+        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Link wallet</PrimaryButton>}
+        tone={wallet.kind === "connecting" ? "scanning" : "ready"}
       />
     );
   }
@@ -383,8 +334,9 @@ function FlowBody({
     return (
       <StateMessage
         title="Wrong network"
-        body={`Current chain ${wallet.chainId}. Switch to Base Sepolia before settlement.`}
+        body={`Current chain ${wallet.chainId}. Switch to Base Sepolia to enter the settlement sector.`}
         action={<PrimaryButton onClick={onSwitchNetwork}>Switch network</PrimaryButton>}
+        tone="warning"
       />
     );
   }
@@ -392,8 +344,9 @@ function FlowBody({
   if (mode === "contract-unconfigured") {
     return (
       <StateMessage
-        title="Settlement contract not configured"
+        title="Settlement beacon offline"
         body="Set VITE_VEYDRIFT_SETTLEMENT_ADDRESS to the Base Sepolia settlement contract."
+        tone="warning"
       />
     );
   }
@@ -401,8 +354,9 @@ function FlowBody({
   if (mode === "pending" && planet.kind === "pending") {
     return (
       <StateMessage
-        title="Settlement pending"
-        body={planet.txHash ? `Transaction submitted: ${planet.txHash}` : "Confirm the transaction in your wallet."}
+        title="Colony drop in progress"
+        body={planet.txHash ? `Transaction beacon: ${planet.txHash}` : "Confirm the settlement launch in your wallet."}
+        tone="scanning"
       />
     );
   }
@@ -410,8 +364,9 @@ function FlowBody({
   if (mode === "settled") {
     return (
       <StateMessage
-        title="Opening planet"
-        body="First-planet settlement is confirmed."
+        title="Planetfall confirmed"
+        body="First-planet settlement is confirmed. Opening planetary command."
+        tone="ready"
       />
     );
   }
@@ -422,15 +377,17 @@ function FlowBody({
         title={planet.kind === "rejected" ? "Request rejected" : "Wallet error"}
         body={planet.message}
         action={<PrimaryButton onClick={planet.kind === "rejected" ? onSettle : onConnect}>Retry</PrimaryButton>}
+        tone="warning"
       />
     );
   }
 
   return (
     <StateMessage
-      title="Settle first planet"
-      body="Create the first onchain planet for this wallet and enter the command deck."
-      action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Settle first planet</PrimaryButton>}
+      title="Found your first world"
+      body="Deploy the colony ship and mint this wallet's home planet."
+      action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Launch settlement</PrimaryButton>}
+      tone="ready"
     />
   );
 }
@@ -438,20 +395,71 @@ function FlowBody({
 function StateMessage({
   action,
   body,
-  title
+  title,
+  tone = "ready"
 }: {
   action?: ComponentChildren;
   body: string;
   title: string;
+  tone?: "ready" | "scanning" | "warning";
 }) {
   return (
-    <div className="settlement-command">
-      <div>
-        <p className="settlement-command-label">Genesis protocol</p>
-        <h2>{title}</h2>
+    <div className={`settlement-state settlement-state-${tone}`}>
+      <div className="settlement-state-copy">
+        <div className="settlement-status">
+          <span />
+          {tone === "warning" ? "Alert" : tone === "scanning" ? "Scanning" : "Ready"}
+        </div>
+        <h1>{title}</h1>
         <p>{body}</p>
       </div>
-      {action ? <div className="settlement-command-action">{action}</div> : null}
+      {action ? <div className="settlement-action">{action}</div> : null}
+    </div>
+  );
+}
+
+function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode> }) {
+  const status = mode === "pending"
+    ? "Drop vector locked"
+    : mode === "wrong-network"
+      ? "Sector mismatch"
+      : mode === "settle"
+        ? "Colony ship armed"
+        : "Awaiting command";
+
+  return (
+    <aside className="settlement-scanner" aria-label="Orbital settlement scanner">
+      <div className="scanner-frame">
+        <div className="scanner-hud scanner-hud-top">
+          <span>Orbital scan</span>
+          <strong>{status}</strong>
+        </div>
+        <div className="planet-orbit planet-orbit-a" />
+        <div className="planet-orbit planet-orbit-b" />
+        <img alt="" className="scanner-planet" src={FIRST_PLANET_URL} />
+        <img alt="" className="scanner-ship" src={COLONY_SHIP_URL} />
+        <img alt="" className="scanner-escort" src={BATTLESHIP_URL} />
+        <div className="scanner-reticle" />
+        <div className="scanner-hud scanner-hud-bottom">
+          <span>Atmosphere</span>
+          <strong>Habitable</strong>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function Telemetry({
+  label,
+  value
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -467,7 +475,7 @@ function PrimaryButton({
 }) {
   return (
     <button
-      className="settlement-primary-button"
+      className="settlement-primary"
       disabled={disabled}
       onClick={onClick}
       type="button"
