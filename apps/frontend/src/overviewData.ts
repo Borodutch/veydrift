@@ -41,7 +41,7 @@ export function isWalletPlanetHydrated({
 }
 
 export function shouldShowTopBarEnergy(energy: EnergyBalance | undefined): energy is EnergyBalance {
-  return Boolean(energy && (energy.produced > 0 || energy.required > 0));
+  return Boolean(energy);
 }
 
 export function safeResourceNumber(value: string | number | undefined): number | undefined {
