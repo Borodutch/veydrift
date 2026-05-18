@@ -1000,11 +1000,11 @@ export function researchRequirementsFor(key: ResearchKey): ResearchRequirement[]
     return [...BASE_RESEARCH_REQUIREMENTS];
   }
 
-  return [...BASE_RESEARCH_REQUIREMENTS, ...(entry.requirements ?? [])];
+  return uniqueRequirements([...BASE_RESEARCH_REQUIREMENTS, ...(entry.requirements ?? [])]);
 }
 
 export function buildingRequirementsFor(key: BuildingKey): BuildingRequirement[] {
-  return [...(BUILDING_REQUIREMENTS[key] ?? [])];
+  return uniqueRequirements(BUILDING_REQUIREMENTS[key] ?? []);
 }
 
 export function unmetBuildingRequirement(
@@ -1036,7 +1036,7 @@ export function missingUnlockRequirements(
     research?: Partial<Record<ResearchKey, number>> | undefined;
   },
 ): string[] {
-  return requirements.flatMap((requirement) => {
+  const missing = uniqueUnlockRequirements(requirements).flatMap((requirement) => {
     const actual = requirement.kind === "building"
       ? levels.buildings?.[requirement.key as BuildingKey] ?? 0
       : levels.research?.[requirement.key as ResearchKey] ?? 0;
@@ -1044,6 +1044,39 @@ export function missingUnlockRequirements(
     return actual >= requirement.level
       ? []
       : [`Requires ${requirement.label} ${requirement.level}`];
+  });
+
+  return uniqueRequirementMessages(missing);
+}
+
+export function uniqueRequirementMessages(messages: readonly string[]): string[] {
+  return uniqueBy(messages, (message) => message);
+}
+
+function uniqueRequirements<T extends BuildingRequirement | ResearchRequirement>(
+  requirements: readonly T[],
+): T[] {
+  return uniqueBy(requirements, (requirement) => (
+    `${requirement.type}:${requirement.key}:${requirement.level}`
+  ));
+}
+
+function uniqueUnlockRequirements(requirements: readonly UnlockRequirement[]): UnlockRequirement[] {
+  return uniqueBy(requirements, (requirement) => (
+    `${requirement.kind}:${requirement.key ?? requirement.label}:${requirement.label}:${requirement.level}`
+  ));
+}
+
+function uniqueBy<T>(items: readonly T[], keyFor: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = keyFor(item);
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
   });
 }
 
