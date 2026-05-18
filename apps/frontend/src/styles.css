@@ -51,6 +51,332 @@ body {
   margin: 0;
 }
 
+.settlement-entry {
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: #05080c;
+  color: #f3fbf7;
+}
+
+.settlement-space {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 76% 42%, rgba(29, 78, 216, 0.22), transparent 34%),
+    radial-gradient(ellipse at 14% 18%, rgba(246, 179, 92, 0.16), transparent 30%),
+    linear-gradient(135deg, #08120f 0%, #05080c 48%, #11100d 100%);
+}
+
+.settlement-space::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background:
+    linear-gradient(112deg, transparent 0 28%, rgba(128, 241, 255, 0.12) 42%, transparent 58% 100%),
+    linear-gradient(18deg, transparent 0 58%, rgba(246, 179, 92, 0.12) 72%, transparent 86% 100%);
+  opacity: 0.7;
+  transform: rotate(-7deg);
+}
+
+.settlement-space::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(5, 8, 12, 0.96) 0%, rgba(5, 8, 12, 0.72) 48%, rgba(5, 8, 12, 0.35) 100%),
+    linear-gradient(180deg, rgba(5, 8, 12, 0.24) 0%, rgba(5, 8, 12, 0.94) 100%);
+}
+
+.settlement-stars {
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat;
+  opacity: 0.8;
+}
+
+.settlement-stars-a {
+  background-image:
+    radial-gradient(circle, rgba(243, 251, 247, 0.94) 0 1px, transparent 1px),
+    radial-gradient(circle, rgba(128, 241, 255, 0.7) 0 1px, transparent 1px);
+  background-position: 0 0, 34px 58px;
+  background-size: 128px 128px, 184px 184px;
+}
+
+.settlement-stars-b {
+  background-image:
+    radial-gradient(circle, rgba(246, 179, 92, 0.76) 0 1px, transparent 1px),
+    radial-gradient(circle, rgba(243, 251, 247, 0.6) 0 1px, transparent 1px);
+  background-position: 72px 28px, 12px 92px;
+  background-size: 246px 246px, 316px 316px;
+  opacity: 0.44;
+}
+
+.settlement-nebula {
+  position: absolute;
+  inset: -24% -10%;
+  background:
+    conic-gradient(from 128deg at 68% 46%, transparent 0deg, rgba(34, 197, 94, 0.12) 54deg, transparent 108deg, rgba(244, 63, 94, 0.1) 176deg, transparent 248deg, rgba(59, 130, 246, 0.14) 318deg, transparent 360deg);
+  filter: blur(34px);
+  opacity: 0.8;
+}
+
+.settlement-hero {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: min(100%, 1240px);
+  min-height: 100dvh;
+  margin: 0 auto;
+  grid-template-columns: minmax(0, 0.86fr) minmax(360px, 1.14fr);
+  gap: 32px;
+  align-items: center;
+  padding: 46px 28px;
+}
+
+.settlement-copy {
+  min-width: 0;
+  max-width: 640px;
+}
+
+.settlement-kicker,
+.settlement-command-label {
+  margin: 0 0 10px;
+  color: #80f1ff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.settlement-copy h1 {
+  max-width: 620px;
+  margin: 0;
+  color: #ffffff;
+  font-size: 4rem;
+  line-height: 0.95;
+  text-wrap: balance;
+}
+
+.settlement-lede {
+  max-width: 570px;
+  margin: 18px 0 0;
+  color: #d7e8e1;
+  font-size: 1.08rem;
+  line-height: 1.68;
+}
+
+.settlement-pillars {
+  display: grid;
+  margin-top: 26px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settlement-pillar {
+  min-width: 0;
+  border: 1px solid rgba(236, 253, 245, 0.14);
+  border-radius: 8px;
+  background: rgba(236, 253, 245, 0.07);
+  padding: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+}
+
+.settlement-pillar svg {
+  margin-bottom: 10px;
+  color: #f6b35c;
+}
+
+.settlement-pillar span,
+.settlement-pillar strong {
+  display: block;
+}
+
+.settlement-pillar span {
+  color: #80f1ff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.settlement-pillar strong {
+  margin-top: 4px;
+  color: #edf8f3;
+  font-size: 0.82rem;
+  line-height: 1.24;
+}
+
+.settlement-command {
+  display: flex;
+  min-width: 0;
+  margin-top: 28px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid rgba(128, 241, 255, 0.24);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(6, 17, 18, 0.86), rgba(18, 17, 12, 0.7)),
+    rgba(236, 253, 245, 0.05);
+  padding: 18px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(20px);
+}
+
+.settlement-command h2 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.settlement-command p:not(.settlement-command-label) {
+  max-width: 440px;
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
+  color: #d7e8e1;
+  line-height: 1.52;
+}
+
+.settlement-command-action {
+  flex: 0 0 auto;
+}
+
+.settlement-primary-button {
+  display: inline-flex;
+  min-height: 46px;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #80f1ff, #f6b35c);
+  padding: 0 18px;
+  color: #07110f;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 850;
+  text-align: center;
+  transition: transform 160ms ease, filter 160ms ease, opacity 160ms ease;
+}
+
+.settlement-primary-button:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.settlement-primary-button:disabled {
+  cursor: not-allowed;
+  background: #475569;
+  color: #cbd5e1;
+  opacity: 0.7;
+  transform: none;
+}
+
+.settlement-visual {
+  position: relative;
+  min-height: 620px;
+  overflow: visible;
+}
+
+.settlement-planet,
+.settlement-ship,
+.settlement-orbit,
+.settlement-scanline {
+  position: absolute;
+}
+
+.settlement-planet-main {
+  right: 8%;
+  bottom: 8%;
+  width: min(52vw, 520px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(128, 241, 255, 0.28);
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow:
+    inset 34px -20px 58px rgba(0, 0, 0, 0.42),
+    0 0 86px rgba(128, 241, 255, 0.2),
+    -34px 24px 120px rgba(246, 179, 92, 0.16);
+}
+
+.settlement-planet-outer {
+  top: 7%;
+  right: 5%;
+  width: min(19vw, 170px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  object-fit: cover;
+  opacity: 0.92;
+  box-shadow: 0 0 54px rgba(128, 241, 255, 0.18);
+}
+
+.settlement-ship {
+  height: auto;
+  mix-blend-mode: screen;
+  object-fit: contain;
+  filter: drop-shadow(0 18px 38px rgba(0, 0, 0, 0.7));
+}
+
+.settlement-ship-battleship {
+  top: 21%;
+  left: 3%;
+  width: min(36vw, 360px);
+  transform: rotate(-13deg);
+}
+
+.settlement-ship-cruiser {
+  right: 0;
+  bottom: 16%;
+  width: min(28vw, 270px);
+  transform: rotate(-8deg);
+}
+
+.settlement-orbit {
+  border: 1px solid rgba(236, 253, 245, 0.18);
+  border-radius: 50%;
+  transform: rotate(-19deg);
+}
+
+.settlement-orbit-main {
+  right: -7%;
+  bottom: -2%;
+  width: 80%;
+  aspect-ratio: 1;
+}
+
+.settlement-orbit-inner {
+  right: 6%;
+  bottom: 13%;
+  width: 52%;
+  aspect-ratio: 1;
+  border-color: rgba(246, 179, 92, 0.22);
+}
+
+.settlement-scanline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(128, 241, 255, 0.72), transparent);
+  opacity: 0.64;
+}
+
+.settlement-scanline-one {
+  top: 39%;
+  left: 7%;
+  width: 52%;
+  transform: rotate(-12deg);
+}
+
+.settlement-scanline-two {
+  right: 5%;
+  bottom: 34%;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, rgba(246, 179, 92, 0.66), transparent);
+  transform: rotate(18deg);
+}
+
 .app-shell {
   display: grid;
   min-height: 100dvh;
@@ -692,6 +1018,69 @@ h4 {
 }
 
 @media (max-width: 1020px) {
+  .settlement-hero {
+    min-height: 100dvh;
+    grid-template-columns: 1fr;
+    gap: 18px;
+    padding: 32px 18px 42px;
+  }
+
+  .settlement-copy {
+    max-width: none;
+  }
+
+  .settlement-copy h1 {
+    max-width: 520px;
+    font-size: 3rem;
+  }
+
+  .settlement-lede {
+    font-size: 1rem;
+  }
+
+  .settlement-pillars {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settlement-pillar:last-child {
+    grid-column: span 2;
+  }
+
+  .settlement-command {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settlement-primary-button {
+    width: 100%;
+  }
+
+  .settlement-visual {
+    min-height: 360px;
+  }
+
+  .settlement-planet-main {
+    right: 5%;
+    bottom: 0;
+    width: min(72vw, 340px);
+  }
+
+  .settlement-planet-outer {
+    width: min(24vw, 120px);
+  }
+
+  .settlement-ship-battleship {
+    top: 18%;
+    left: 0;
+    width: min(52vw, 250px);
+  }
+
+  .settlement-ship-cruiser {
+    right: 0;
+    bottom: 8%;
+    width: min(40vw, 180px);
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
   }
@@ -719,6 +1108,33 @@ h4 {
 }
 
 @media (max-width: 760px) {
+  .settlement-copy,
+  .settlement-pillars,
+  .settlement-command {
+    max-width: 354px;
+  }
+
+  .settlement-copy h1 {
+    max-width: 354px;
+    font-size: 2.32rem;
+  }
+
+  .settlement-pillars {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settlement-pillar:last-child {
+    grid-column: span 2;
+  }
+
+  .settlement-visual {
+    min-height: 300px;
+  }
+
+  .settlement-command h2 {
+    font-size: 1.38rem;
+  }
+
   .workspace,
   .sidebar {
     padding: 18px;

@@ -1,6 +1,8 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import heroUrl from "./assets/veydrift-hero.webp";
+import { Factory, FlaskConical, Orbit, Radar, Rocket } from "lucide-preact";
+import { OptimizedImage } from "./components/OptimizedImage";
+import { shipAssetByKey } from "./gameAssets";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import {
@@ -21,8 +23,18 @@ import {
 } from "./walletFlow";
 
 const BASE_SEPOLIA_SETTLEMENT_ADDRESS = "0x8bA1807073ac642A55596A4934c49115E400cD2f";
+const HOME_PLANET_ASSET = "/assets/game/planets/temperate-ocean.webp";
+const OUTER_PLANET_ASSET = "/assets/game/planets/outer-cryo.webp";
 
 const settlementConfig: SettlementConfig = buildSettlementConfig();
+
+const gamePillars = [
+  { icon: Orbit, label: "Settle", value: "first homeworld" },
+  { icon: Factory, label: "Build", value: "mines and orbital yards" },
+  { icon: FlaskConical, label: "Research", value: "tech paths" },
+  { icon: Rocket, label: "Launch", value: "fleet production" },
+  { icon: Radar, label: "Expand", value: "toward new systems" },
+];
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -241,25 +253,88 @@ export function FirstPlanetSettlementApp() {
   const mode = preSettlementMode(wallet, planet);
 
   return (
-    <main className="relative flex min-h-dvh items-center bg-[#070a10] px-5 py-10 text-slate-100 sm:px-8">
-      <div className="fixed inset-0 -z-10">
-        <img alt="" className="h-full w-full object-cover opacity-35" src={heroUrl} />
-        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(7,10,16,0.98)_0%,rgba(7,10,16,0.94)_48%,rgba(7,10,16,0.72)_100%)]" />
+    <main className="settlement-entry">
+      <div aria-hidden="true" className="settlement-space">
+        <div className="settlement-stars settlement-stars-a" />
+        <div className="settlement-stars settlement-stars-b" />
+        <div className="settlement-nebula" />
       </div>
 
-      <section className="mx-auto w-full max-w-md">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">Veydrift</p>
-        <FlowBody
-          mode={mode}
-          onConnect={connectWallet}
-          onSettle={settlePlanet}
-          onSwitchNetwork={switchNetwork}
-          planet={planet}
-          settlementReady={settlementContractConfigured(settlementConfig)}
-          wallet={wallet}
-        />
+      <section className="settlement-hero" aria-labelledby="settlement-title">
+        <div className="settlement-copy">
+          <p className="settlement-kicker">Veydrift</p>
+          <h1 id="settlement-title">Command your first world</h1>
+          <p className="settlement-lede">
+            Settle a home planet, wake the first mines, research new systems, and turn a quiet shipyard into the fleet that opens the galaxy.
+          </p>
+
+          <GamePillars />
+
+          <FlowBody
+            mode={mode}
+            onConnect={connectWallet}
+            onSettle={settlePlanet}
+            onSwitchNetwork={switchNetwork}
+            planet={planet}
+            settlementReady={settlementContractConfigured(settlementConfig)}
+            wallet={wallet}
+          />
+        </div>
+
+        <div className="settlement-visual" aria-hidden="true">
+          <div className="settlement-orbit settlement-orbit-main" />
+          <div className="settlement-orbit settlement-orbit-inner" />
+          <OptimizedImage
+            alt=""
+            className="settlement-planet settlement-planet-main"
+            loading="eager"
+            sizes="(max-width: 900px) 46vw, 34vw"
+            src={HOME_PLANET_ASSET}
+          />
+          <OptimizedImage
+            alt=""
+            className="settlement-planet settlement-planet-outer"
+            loading="eager"
+            sizes="(max-width: 900px) 22vw, 12vw"
+            src={OUTER_PLANET_ASSET}
+          />
+          <OptimizedImage
+            alt=""
+            className="settlement-ship settlement-ship-battleship"
+            loading="eager"
+            sizes="(max-width: 900px) 34vw, 22vw"
+            src={shipAssetByKey.battleship}
+          />
+          <OptimizedImage
+            alt=""
+            className="settlement-ship settlement-ship-cruiser"
+            loading="eager"
+            sizes="(max-width: 900px) 26vw, 16vw"
+            src={shipAssetByKey.battlecruiser}
+          />
+          <div className="settlement-scanline settlement-scanline-one" />
+          <div className="settlement-scanline settlement-scanline-two" />
+        </div>
       </section>
     </main>
+  );
+}
+
+function GamePillars() {
+  return (
+    <div className="settlement-pillars" aria-label="Veydrift game loop">
+      {gamePillars.map((pillar) => {
+        const Icon = pillar.icon;
+
+        return (
+          <div className="settlement-pillar" key={pillar.label}>
+            <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
+            <span>{pillar.label}</span>
+            <strong>{pillar.value}</strong>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -354,7 +429,7 @@ function FlowBody({
   return (
     <StateMessage
       title="Settle first planet"
-      body="Create the first planet for this wallet."
+      body="Create the first onchain planet for this wallet and enter the command deck."
       action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Settle first planet</PrimaryButton>}
     />
   );
@@ -370,12 +445,13 @@ function StateMessage({
   title: string;
 }) {
   return (
-    <div className="mt-4 flex min-h-44 min-w-0 flex-col justify-between gap-5">
-      <div className="min-w-0">
-        <h1 className="break-words text-3xl font-semibold text-white sm:text-4xl">{title}</h1>
-        <p className="mt-3 max-w-full break-words text-base leading-7 text-slate-300">{body}</p>
+    <div className="settlement-command">
+      <div>
+        <p className="settlement-command-label">Genesis protocol</p>
+        <h2>{title}</h2>
+        <p>{body}</p>
       </div>
-      {action ? <div>{action}</div> : null}
+      {action ? <div className="settlement-command-action">{action}</div> : null}
     </div>
   );
 }
@@ -391,7 +467,7 @@ function PrimaryButton({
 }) {
   return (
     <button
-      className="inline-flex min-h-11 items-center justify-center gap-2 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+      className="settlement-primary-button"
       disabled={disabled}
       onClick={onClick}
       type="button"
