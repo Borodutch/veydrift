@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   ensurePlanetAtCoordinates,
   generateSystem,
+  planetImageForType,
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
@@ -10,6 +13,23 @@ import {
   formatGalaxyOccupancySource,
   formatGalaxyOccupancySummary
 } from "../src/components/GalaxyView";
+import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
+
+const PUBLIC_DIR = join(import.meta.dir, "..", "public");
+const PLANET_TYPES = [
+  "scorching-molten",
+  "hot-desert",
+  "warm-terracotta",
+  "temperate-ocean",
+  "lush-temperate",
+  "cool-misty-blue",
+  "cold-tundra",
+  "frozen-ice",
+  "outer-cryo",
+  "metal-planetoid",
+  "crystal-violet",
+  "deuterium-blue",
+] as const;
 
 describe("tester universe display data", () => {
   test("neutral deterministic fallback does not invent owners or alliances", () => {
@@ -125,5 +145,20 @@ describe("tester universe display data", () => {
     expect(shipCatalog.find((ship) => ship.key === "colonyShip")?.asset).toBe(
       "/assets/game/style-pass/generated/ships/colony-ship.webp"
     );
+  });
+
+  test("galaxy planet thumbnails use bundled style-pass assets and responsive variants", () => {
+    for (const type of PLANET_TYPES) {
+      const image = planetImageForType(type);
+
+      expect(image).toBe(`/assets/game/style-pass/generated/planets/${type}.webp`);
+      expect(existsSync(join(PUBLIC_DIR, image.replace("/assets/", "assets/")))).toBe(true);
+
+      for (const width of VARIANT_WIDTHS) {
+        const variant = image.replace("/assets/game/", `/assets/game/sizes/${width}/`);
+        expect(getSrcSet(image)).toContain(`${variant} ${width}w`);
+        expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/")))).toBe(true);
+      }
+    }
   });
 });
