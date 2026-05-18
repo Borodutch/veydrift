@@ -720,9 +720,8 @@ h4 {
 .settlement-backdrop img {
   width: 100%;
   height: 100%;
-  opacity: 0.34;
+  opacity: 0.28;
   object-fit: cover;
-  filter: saturate(1.18) contrast(1.08);
 }
 
 .settlement-starfield {
@@ -736,13 +735,12 @@ h4 {
 }
 
 .settlement-starfield-one {
-  animation: drift-stars 46s linear infinite;
+  opacity: 0.48;
 }
 
 .settlement-starfield-two {
   transform: scale(1.7);
-  opacity: 0.32;
-  animation: drift-stars 72s linear infinite reverse;
+  opacity: 0.24;
 }
 
 .settlement-nebula {
@@ -772,8 +770,7 @@ h4 {
   border: 1px solid rgba(128, 241, 255, 0.24);
   border-radius: 8px;
   background: rgba(4, 10, 18, 0.78);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42), inset 0 1px rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(22px);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.36), inset 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .settlement-command {
@@ -841,7 +838,6 @@ h4 {
 .settlement-state-scanning .settlement-status span {
   background: #f6b35c;
   box-shadow: 0 0 18px rgba(246, 179, 92, 0.82);
-  animation: settlement-pulse 1.2s ease-in-out infinite;
 }
 
 .settlement-state-warning .settlement-status {
@@ -976,11 +972,11 @@ h4 {
 .scanner-frame::after {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, transparent 0%, rgba(128, 241, 255, 0.16) 48%, transparent 53%);
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(128, 241, 255, 0.1) 50%, transparent 100%),
+    repeating-linear-gradient(90deg, transparent 0 38px, rgba(128, 241, 255, 0.05) 39px 40px);
   content: "";
-  opacity: 0.56;
-  transform: translateY(-100%);
-  animation: scanner-sweep 4.6s ease-in-out infinite;
+  opacity: 0.28;
   pointer-events: none;
 }
 
@@ -997,28 +993,36 @@ h4 {
     inset 30px -22px 44px rgba(0, 0, 0, 0.52),
     0 0 60px rgba(128, 241, 255, 0.28),
     0 36px 90px rgba(0, 0, 0, 0.45);
-  animation: planet-float 8s ease-in-out infinite;
 }
 
-.scanner-ship {
+.scanner-site {
   position: absolute;
-  left: clamp(22px, 7vw, 76px);
-  top: clamp(78px, 12vw, 150px);
-  width: min(260px, 42%);
-  filter: drop-shadow(0 0 26px rgba(128, 241, 255, 0.34));
-  transform: rotate(-8deg);
-  animation: ship-approach 7s ease-in-out infinite;
+  z-index: 1;
+  width: 12px;
+  aspect-ratio: 1;
+  border: 1px solid rgba(246, 179, 92, 0.7);
+  border-radius: 50%;
+  background: #f6b35c;
+  box-shadow: 0 0 18px rgba(246, 179, 92, 0.5);
 }
 
-.scanner-escort {
-  position: absolute;
-  left: clamp(72px, 14vw, 158px);
-  top: clamp(210px, 28vw, 310px);
-  width: min(150px, 24%);
-  filter: drop-shadow(0 0 20px rgba(246, 179, 92, 0.28));
-  opacity: 0.84;
-  transform: rotate(-12deg);
-  animation: escort-patrol 9s ease-in-out infinite;
+.scanner-site-a {
+  right: 34%;
+  bottom: 30%;
+}
+
+.scanner-site-b {
+  right: 24%;
+  bottom: 44%;
+  width: 9px;
+  opacity: 0.78;
+}
+
+.scanner-site-c {
+  right: 45%;
+  bottom: 42%;
+  width: 7px;
+  opacity: 0.62;
 }
 
 .planet-orbit {
@@ -1033,13 +1037,11 @@ h4 {
 
 .planet-orbit-a {
   width: min(470px, 72%);
-  animation: orbit-roll 28s linear infinite;
 }
 
 .planet-orbit-b {
   width: min(560px, 84%);
   border-color: rgba(246, 179, 92, 0.24);
-  animation: orbit-roll 38s linear infinite reverse;
 }
 
 .scanner-reticle {
@@ -1051,7 +1053,6 @@ h4 {
   border: 1px solid rgba(246, 179, 92, 0.58);
   border-radius: 50%;
   box-shadow: 0 0 24px rgba(246, 179, 92, 0.25);
-  animation: settlement-pulse 1.8s ease-in-out infinite;
 }
 
 .scanner-reticle::before,
@@ -1097,84 +1098,6 @@ h4 {
 .scanner-hud-bottom {
   right: 32px;
   bottom: 32px;
-}
-
-@keyframes drift-stars {
-  from {
-    background-position: 0 0, 0 0, 0 0, 0 0;
-  }
-
-  to {
-    background-position: 240px 240px, -310px 310px, 380px -380px, -460px -460px;
-  }
-}
-
-@keyframes scanner-sweep {
-  0%,
-  38% {
-    transform: translateY(-100%);
-  }
-
-  70%,
-  100% {
-    transform: translateY(100%);
-  }
-}
-
-@keyframes planet-float {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-
-  50% {
-    transform: translate3d(0, -12px, 0);
-  }
-}
-
-@keyframes ship-approach {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(-8deg);
-  }
-
-  50% {
-    transform: translate3d(14px, -10px, 0) rotate(-5deg);
-  }
-}
-
-@keyframes escort-patrol {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(-12deg);
-  }
-
-  50% {
-    transform: translate3d(-8px, 10px, 0) rotate(-15deg);
-  }
-}
-
-@keyframes orbit-roll {
-  from {
-    transform: rotate(-22deg);
-  }
-
-  to {
-    transform: rotate(338deg);
-  }
-}
-
-@keyframes settlement-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  50% {
-    opacity: 0.62;
-    transform: scale(0.94);
-  }
 }
 
 @media (max-width: 1020px) {
@@ -1329,14 +1252,6 @@ h4 {
   .scanner-hud-bottom {
     right: 22px;
     bottom: 22px;
-  }
-
-  .scanner-ship {
-    width: min(210px, 48%);
-  }
-
-  .scanner-escort {
-    width: min(128px, 30%);
   }
 
   .scanner-planet {

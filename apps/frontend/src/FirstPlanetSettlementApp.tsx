@@ -21,8 +21,6 @@ import {
 } from "./walletFlow";
 
 const BASE_SEPOLIA_SETTLEMENT_ADDRESS = "0x8bA1807073ac642A55596A4934c49115E400cD2f";
-const BATTLESHIP_URL = "/assets/game/style-pass/generated/ships/battleship.webp";
-const COLONY_SHIP_URL = "/assets/game/style-pass/generated/ships/colony-ship.webp";
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 
 const settlementConfig: SettlementConfig = buildSettlementConfig();
@@ -424,7 +422,7 @@ function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode
     : mode === "wrong-network"
       ? "Sector mismatch"
       : mode === "settle"
-        ? "Colony ship armed"
+        ? "Settlement site ready"
         : "Awaiting command";
 
   return (
@@ -437,8 +435,9 @@ function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode
         <div className="planet-orbit planet-orbit-a" />
         <div className="planet-orbit planet-orbit-b" />
         <img alt="" className="scanner-planet" src={FIRST_PLANET_URL} />
-        <img alt="" className="scanner-ship" src={COLONY_SHIP_URL} />
-        <img alt="" className="scanner-escort" src={BATTLESHIP_URL} />
+        <div className="scanner-site scanner-site-a" />
+        <div className="scanner-site scanner-site-b" />
+        <div className="scanner-site scanner-site-c" />
         <div className="scanner-reticle" />
         <div className="scanner-hud scanner-hud-bottom">
           <span>Atmosphere</span>
