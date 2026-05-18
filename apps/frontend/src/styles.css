@@ -778,13 +778,10 @@ h4 {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 28px;
+  justify-content: center;
   padding: clamp(22px, 4vw, 38px);
 }
 
-.settlement-kicker,
-.settlement-status,
 .scanner-hud span {
   color: #80f1ff;
   font-size: 0.74rem;
@@ -792,72 +789,28 @@ h4 {
   text-transform: uppercase;
 }
 
-.settlement-kicker {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.settlement-kicker span,
-.settlement-status span {
-  display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: #46d47d;
-  box-shadow: 0 0 18px rgba(70, 212, 125, 0.86);
-}
-
 .settlement-state {
   display: flex;
   min-width: 0;
-  min-height: 280px;
+  min-height: 320px;
   flex-direction: column;
   justify-content: center;
-  gap: 28px;
+  gap: 30px;
 }
 
 .settlement-state-copy {
   display: grid;
-  gap: 16px;
+  gap: 18px;
   min-width: 0;
 }
 
-.settlement-status {
-  display: inline-flex;
-  width: fit-content;
-  max-width: 100%;
-  align-items: center;
-  gap: 9px;
-  border: 1px solid rgba(128, 241, 255, 0.22);
-  border-radius: 999px;
-  background: rgba(128, 241, 255, 0.08);
-  padding: 8px 11px;
-}
-
-.settlement-state-scanning .settlement-status span {
-  background: #f6b35c;
-  box-shadow: 0 0 18px rgba(246, 179, 92, 0.82);
-}
-
-.settlement-state-warning .settlement-status {
-  border-color: rgba(246, 179, 92, 0.34);
-  color: #f6b35c;
-  background: rgba(246, 179, 92, 0.08);
-}
-
-.settlement-state-warning .settlement-status span {
-  background: #f6b35c;
-  box-shadow: 0 0 18px rgba(246, 179, 92, 0.82);
-}
-
 .settlement-state h1 {
-  max-width: 720px;
+  max-width: 620px;
   margin: 0;
   color: #ffffff;
-  font-size: clamp(2.25rem, 12cqw, 3.65rem);
-  font-weight: 850;
-  line-height: 1.02;
+  font-size: clamp(2rem, 9cqw, 3rem);
+  font-weight: 820;
+  line-height: 1.08;
   overflow-wrap: normal;
   text-wrap: balance;
   text-shadow: 0 0 28px rgba(128, 241, 255, 0.26);
@@ -1177,12 +1130,12 @@ h4 {
   }
 
   .settlement-state {
-    min-height: 250px;
+    min-height: 230px;
   }
 
   .settlement-state h1 {
-    font-size: clamp(1.8rem, 10cqw, 2.4rem);
-    line-height: 1.04;
+    font-size: clamp(1.65rem, 9cqw, 2.15rem);
+    line-height: 1.12;
     text-wrap: wrap;
   }
 
