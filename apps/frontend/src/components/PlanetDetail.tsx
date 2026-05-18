@@ -15,19 +15,21 @@ interface Props {
 }
 
 export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack, onNavigateSystem }: Props) {
-  const fallbackPlanet = useMemo(
-    () => sameCoordinates(homeCoords, coords) && homePlanet
-      ? homePlanet
-      : getPlanet(coords.galaxy, coords.system, coords.position),
+  const knownHomePlanet = useMemo(
+    () => sameCoordinates(homeCoords, coords) && homePlanet ? homePlanet : null,
     [coords.galaxy, coords.position, coords.system, homeCoords, homePlanet],
   );
-  const [planet, setPlanet] = useState<Planet | null>(fallbackPlanet);
+  const fallbackPlanet = useMemo(
+    () => getPlanet(coords.galaxy, coords.system, coords.position),
+    [coords.galaxy, coords.position, coords.system],
+  );
+  const [planet, setPlanet] = useState<Planet | null>(knownHomePlanet);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
 
   useEffect(() => {
     const abortController = new AbortController();
-    setPlanet(fallbackPlanet);
+    setPlanet(knownHomePlanet);
     setSource("loading");
 
     fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
@@ -40,18 +42,23 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       })
       .then((payload) => {
         const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
-        setPlanet(sameCoordinates(homeCoords, coords) && homePlanet ? homePlanet : apiPlanet);
+        setPlanet(knownHomePlanet ?? apiPlanet);
         setSource("api");
       })
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
+          setPlanet(knownHomePlanet ?? fallbackPlanet);
           setSource("fallback");
         }
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, coords, fallbackPlanet, homeCoords, homePlanet]);
+  }, [apiBaseUrl, coords, fallbackPlanet, knownHomePlanet]);
+
+  if (!planet && source === "loading") {
+    return <PlanetDetailSkeleton coords={coords} onBack={onBack} />;
+  }
 
   if (!planet) {
     return (
@@ -221,6 +228,42 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
             >
               View System
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlanetDetailSkeleton({ coords, onBack }: { coords: Coordinates; onBack: () => void }) {
+  return (
+    <div className="flex flex-col gap-4 p-4 sm:p-6">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onBack}
+          className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+        >
+          ← System [{coords.galaxy}:{coords.system}:{coords.position}]
+        </button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+        <div className="relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/30">
+          <div className="absolute inset-0 animate-pulse bg-[linear-gradient(135deg,rgba(15,23,42,0.95),rgba(8,13,24,0.95))]">
+            <div className="absolute inset-x-10 top-1/2 h-px bg-cyan-200/15" />
+            <div className="absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-200/20 bg-cyan-200/5" />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="h-6 w-44 animate-pulse rounded bg-white/10" />
+            <div className="mt-3 h-4 w-72 max-w-full animate-pulse rounded bg-white/8" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="h-28 animate-pulse rounded-lg border border-white/10 bg-white/5" />
+            <div className="h-28 animate-pulse rounded-lg border border-white/10 bg-white/5" />
+            <div className="h-32 animate-pulse rounded-lg border border-white/10 bg-white/5 sm:col-span-2" />
           </div>
         </div>
       </div>

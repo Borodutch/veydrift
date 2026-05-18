@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
+  planetCoordinateKey,
 } from "../src/overviewHeroImage";
 import type { Planet } from "../src/types";
 
@@ -34,12 +35,24 @@ const homePlanet: Planet = {
 
 describe("overview planet hero image", () => {
   test("uses the disconnected default only for local preview state", () => {
-    expect(overviewHeroImage(undefined, false, undefined)).toBe(DISCONNECTED_HERO_IMAGE);
-    expect(overviewHeroImage(undefined, true, undefined)).toBeUndefined();
+    expect(overviewHeroImage(undefined, false, undefined, undefined)).toBe(DISCONNECTED_HERO_IMAGE);
+    expect(overviewHeroImage(undefined, true, undefined, undefined)).toBeUndefined();
   });
 
-  test("keeps a real connected home image during rehydration", () => {
-    expect(overviewHeroImage(homePlanet, true, undefined)).toBe(homePlanet.image);
-    expect(overviewHeroImage(undefined, true, homePlanet.image)).toBe(homePlanet.image);
+  test("keeps a real connected home image during same-planet rehydration", () => {
+    const coordinateKey = planetCoordinateKey(homePlanet);
+    const lastKnownHeroImage = { coordinateKey: coordinateKey!, image: homePlanet.image };
+
+    expect(overviewHeroImage(homePlanet, true, undefined, coordinateKey)).toBe(homePlanet.image);
+    expect(overviewHeroImage(undefined, true, lastKnownHeroImage, coordinateKey)).toBe(homePlanet.image);
+  });
+
+  test("does not reuse a last-known image for a different connected planet", () => {
+    const lastKnownHeroImage = {
+      coordinateKey: planetCoordinateKey(homePlanet)!,
+      image: homePlanet.image,
+    };
+
+    expect(overviewHeroImage(undefined, true, lastKnownHeroImage, "1:42:8")).toBeUndefined();
   });
 });

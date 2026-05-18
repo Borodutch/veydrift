@@ -342,6 +342,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     const abortController = new AbortController();
+    setHomePlanetIdentity(undefined);
     fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${homeCoords.galaxy}/systems/${homeCoords.system}`, {
       headers: { accept: "application/json" },
       signal: abortController.signal,
@@ -964,6 +965,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
+        homeCoords={homeCoords}
         homePlanet={homePlanetIdentity}
         planet={planet}
         queueProgress={queueProgress}

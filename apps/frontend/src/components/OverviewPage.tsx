@@ -4,9 +4,13 @@ import {
   displayPlanetStats,
   type ChainLoadStatus,
 } from "../overviewData";
-import { overviewHeroImage } from "../overviewHeroImage";
+import {
+  overviewHeroImage,
+  planetCoordinateKey,
+  type KnownHeroImage,
+} from "../overviewHeroImage";
 import { formatPlanetType } from "../data/mockUniverse";
-import type { Planet } from "../types";
+import type { Coordinates, Planet } from "../types";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
@@ -26,6 +30,7 @@ interface OverviewPageProps {
   shipProgress: number;
   now: number;
   planet?: PlanetSummary | undefined;
+  homeCoords?: Coordinates | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
   onFinishBuilding?: (() => void) | undefined;
@@ -45,6 +50,7 @@ export function OverviewPage({
   shipProgress,
   now,
   planet,
+  homeCoords,
   homePlanet,
   isWalletConnected,
   onFinishBuilding,
@@ -62,17 +68,21 @@ export function OverviewPage({
   const planetSubhead = homePlanet
     ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : "Home planet";
-  const [lastKnownHeroImage, setLastKnownHeroImage] = useState<string | undefined>(
-    homePlanet?.image
+  const currentHeroCoordinateKey = planetCoordinateKey(homePlanet) ?? planetCoordinateKey(homeCoords) ?? planet?.coordinates;
+  const [lastKnownHeroImage, setLastKnownHeroImage] = useState<KnownHeroImage | undefined>(
+    () => homePlanet?.image && currentHeroCoordinateKey
+      ? { coordinateKey: currentHeroCoordinateKey, image: homePlanet.image }
+      : undefined
   );
 
   useEffect(() => {
-    if (homePlanet?.image) {
-      setLastKnownHeroImage(homePlanet.image);
+    const coordinateKey = planetCoordinateKey(homePlanet);
+    if (homePlanet?.image && coordinateKey) {
+      setLastKnownHeroImage({ coordinateKey, image: homePlanet.image });
     }
-  }, [homePlanet?.image]);
+  }, [homePlanet?.galaxy, homePlanet?.image, homePlanet?.position, homePlanet?.system]);
 
-  const heroImage = overviewHeroImage(homePlanet, isWalletConnected, lastKnownHeroImage);
+  const heroImage = overviewHeroImage(homePlanet, isWalletConnected, lastKnownHeroImage, currentHeroCoordinateKey);
 
   return (
     <div className="grid gap-3">
@@ -87,7 +97,7 @@ export function OverviewPage({
               src={heroImage}
             />
           ) : (
-            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(15,23,42,0.95),rgba(8,13,24,0.95))]">
+            <div className="absolute inset-0 animate-pulse bg-[linear-gradient(135deg,rgba(15,23,42,0.95),rgba(8,13,24,0.95))]">
               <div className="absolute inset-x-6 top-1/2 h-px bg-cyan-200/15" />
               <div className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-200/20 bg-cyan-200/5" />
             </div>
