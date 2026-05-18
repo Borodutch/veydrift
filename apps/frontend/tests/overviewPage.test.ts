@@ -34,12 +34,26 @@ const homePlanet: Planet = {
 
 describe("overview planet hero image", () => {
   test("uses the disconnected default only for local preview state", () => {
-    expect(overviewHeroImage(undefined, false, undefined)).toBe(DISCONNECTED_HERO_IMAGE);
-    expect(overviewHeroImage(undefined, true, undefined)).toBeUndefined();
+    expect(overviewHeroImage(undefined, false, undefined, undefined)).toBe(DISCONNECTED_HERO_IMAGE);
+    expect(overviewHeroImage(undefined, true, undefined, "1:42:7")).toBeUndefined();
   });
 
   test("keeps a real connected home image during rehydration", () => {
-    expect(overviewHeroImage(homePlanet, true, undefined)).toBe(homePlanet.image);
-    expect(overviewHeroImage(undefined, true, homePlanet.image)).toBe(homePlanet.image);
+    expect(overviewHeroImage(homePlanet, true, undefined, "1:42:7")).toBe(homePlanet.image);
+    expect(overviewHeroImage(
+      undefined,
+      true,
+      { image: homePlanet.image, planetKey: "1:42:7" },
+      "1:42:7"
+    )).toBe(homePlanet.image);
+  });
+
+  test("does not reuse a last-known image for a different current planet", () => {
+    expect(overviewHeroImage(
+      undefined,
+      true,
+      { image: homePlanet.image, planetKey: "1:42:7" },
+      "1:42:8"
+    )).toBeUndefined();
   });
 });

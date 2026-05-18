@@ -54,6 +54,7 @@ contract VeydriftGameTest is Test {
         assertLe(planet.position, 15);
         assertGe(planet.fields, 160);
         assertLe(planet.fields, 239);
+        _assertOGameSlotTemperature(planet.position, planet.temperature);
         assertEq(planet.resources.metal, 500);
         assertEq(planet.resources.crystal, 500);
         assertEq(planet.resources.deuterium, 0);
@@ -96,6 +97,7 @@ contract VeydriftGameTest is Test {
         assertLe(preview.position, 15);
         assertGe(preview.fields, 160);
         assertLe(preview.fields, 239);
+        _assertOGameSlotTemperature(preview.position, preview.temperature);
         assertEq(preview.settledAt, 0);
         assertEq(preview.settledBlock, 0);
 
@@ -110,6 +112,7 @@ contract VeydriftGameTest is Test {
         assertEq(settled.position, planet.position);
         assertEq(settled.fields, planet.fields);
         assertEq(settled.temperature, planet.temperature);
+        _assertOGameSlotTemperature(planet.position, planet.temperature);
         assertEq(settled.settledAt, planet.lastSettledAt);
         assertEq(settled.settledBlock, 0);
 
@@ -376,6 +379,7 @@ contract VeydriftGameTest is Test {
         assertEq(colony.galaxy, galaxy);
         assertEq(colony.system, system);
         assertEq(colony.position, position);
+        _assertOGameSlotTemperature(colony.position, colony.temperature);
         assertEq(colony.resources.metal, 500);
         assertEq(colony.resources.crystal, 500);
         assertEq(colony.resources.deuterium, 0);
@@ -593,5 +597,38 @@ contract VeydriftGameTest is Test {
                 keccak256("veydrift.planet.v1"), planet.galaxy, planet.system, planet.position
             )
         );
+    }
+
+    function _assertOGameSlotTemperature(uint8 position, int16 temperature) internal pure {
+        (int16 minMaxTemperature, int16 maxMaxTemperature) = _slotMaxTemperatureBounds(position);
+        int16 displayedMaxTemperature = temperature + 20;
+        int16 displayedMinTemperature = temperature - 20;
+
+        assertGe(displayedMaxTemperature, minMaxTemperature);
+        assertLe(displayedMaxTemperature, maxMaxTemperature);
+        assertEq(displayedMinTemperature, displayedMaxTemperature - 40);
+    }
+
+    function _slotMaxTemperatureBounds(uint8 position)
+        internal
+        pure
+        returns (int16 minMaxTemperature, int16 maxMaxTemperature)
+    {
+        if (position == 1) return (220, 260);
+        if (position == 2) return (170, 210);
+        if (position == 3) return (120, 160);
+        if (position == 4) return (70, 110);
+        if (position == 5) return (60, 100);
+        if (position == 6) return (50, 90);
+        if (position == 7) return (40, 80);
+        if (position == 8) return (30, 70);
+        if (position == 9) return (20, 60);
+        if (position == 10) return (10, 50);
+        if (position == 11) return (0, 40);
+        if (position == 12) return (-10, 30);
+        if (position == 13) return (-50, -10);
+        if (position == 14) return (-90, -50);
+        if (position == 15) return (-130, -90);
+        revert("invalid position");
     }
 }
