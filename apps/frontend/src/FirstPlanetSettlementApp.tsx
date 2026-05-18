@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import heroUrl from "./assets/veydrift-hero.webp";
 import { PlayableMvpApp } from "./PlayableMvpApp";
+import { gameContractAddress, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import {
   ensureBaseSepoliaNetwork,
@@ -10,7 +11,6 @@ import {
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
-  planetFromTransaction,
   readSettlementState,
   requestAccounts,
   sendSettlementTransaction,
@@ -20,13 +20,20 @@ import {
   type SettlementConfig
 } from "./walletFlow";
 
-const BASE_SEPOLIA_SETTLEMENT_ADDRESS = "0x8bA1807073ac642A55596A4934c49115E400cD2f";
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
+const POST_SETTLEMENT_READ_ATTEMPTS = 8;
+const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 
-const settlementConfig: SettlementConfig = buildSettlementConfig();
+type SettlementConfigState =
+  | { status: "loading"; config: SettlementConfig }
+  | { status: "ready"; config: SettlementConfig };
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
+  const [settlementConfigState, setSettlementConfigState] = useState<SettlementConfigState>(() => ({
+    status: "loading",
+    config: buildSettlementConfig()
+  }));
   const [wallet, setWallet] = useState<WalletState>({
     kind: "loading"
   });
@@ -36,6 +43,36 @@ export function FirstPlanetSettlementApp() {
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
+  const settlementConfig = settlementConfigState.config;
+
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    fetch(runtimeConfigUrl(), {
+      headers: { accept: "application/json" },
+      signal: abortController.signal
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
+        return response.json() as Promise<RuntimeConfig>;
+      })
+      .then((runtimeConfig) => {
+        if (abortController.signal.aborted) return;
+        const address = gameContractAddress(runtimeConfig) ?? settlementConfig.address;
+        setSettlementConfigState({
+          status: "ready",
+          config: address ? { address } : settlementConfig
+        });
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setSettlementConfigState({ status: "ready", config: settlementConfig });
+        }
+      });
+
+    return () => abortController.abort();
+  }, []);
 
   useEffect(() => {
     const injected = getInjectedProvider(window as typeof window & { ethereum?: Eip1193Provider });
@@ -47,8 +84,6 @@ export function FirstPlanetSettlementApp() {
       });
       return;
     }
-
-    void refreshWallet(injected);
 
     const handleAccountsChanged = (...args: unknown[]) => {
       const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
@@ -78,6 +113,14 @@ export function FirstPlanetSettlementApp() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!provider || settlementConfigState.status !== "ready") {
+      return;
+    }
+
+    void refreshWallet(provider, account);
+  }, [provider, settlementConfig.address, settlementConfigState.status]);
+
   async function refreshWallet(injected = provider, preferredAccount?: string) {
     if (!injected) {
       setWallet({
@@ -87,6 +130,26 @@ export function FirstPlanetSettlementApp() {
     }
 
     const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected);
+
+    if (settlementConfigState.status === "loading") {
+      if (!accounts[0]) {
+        setWallet({
+          kind: "disconnected"
+        });
+        setPlanet({
+          kind: "idle"
+        });
+        return;
+      }
+      setWallet({
+        kind: "connected",
+        account: accounts[0]
+      });
+      setPlanet({
+        kind: "checking"
+      });
+      return;
+    }
 
     if (!accounts[0]) {
       setWallet({
@@ -215,11 +278,11 @@ export function FirstPlanetSettlementApp() {
       });
       await waitForReceipt(provider, txHash);
 
-      const settlement = await readSettlementState(provider, wallet.account, settlementConfig);
+      const settlement = await waitForSettledPlanet(provider, wallet.account, settlementConfig);
 
       setPlanet({
         kind: "success",
-        planet: settlement.kind === "settled" ? settlement.planet : planetFromTransaction(wallet.account, txHash)
+        planet: settlement.planet
       });
     } catch (error) {
       setPlanet({
@@ -471,9 +534,32 @@ function errorMessage(error: unknown): string {
 }
 
 function buildSettlementConfig(): SettlementConfig {
-  const config: SettlementConfig = {};
+  const address = import.meta.env.VITE_VEYDRIFT_SETTLEMENT_ADDRESS;
 
-  config.address = import.meta.env.VITE_VEYDRIFT_SETTLEMENT_ADDRESS || BASE_SEPOLIA_SETTLEMENT_ADDRESS;
+  return address ? { address } : {};
+}
 
-  return config;
+async function waitForSettledPlanet(
+  provider: Eip1193Provider,
+  account: string,
+  settlementConfig: SettlementConfig,
+) {
+  let lastSettlement = await readSettlementState(provider, account, settlementConfig);
+
+  for (let attempt = 0; attempt < POST_SETTLEMENT_READ_ATTEMPTS; attempt += 1) {
+    if (lastSettlement.kind === "settled" && lastSettlement.planet.coordinates) {
+      return lastSettlement;
+    }
+
+    await delay(POST_SETTLEMENT_READ_INTERVAL_MS);
+    lastSettlement = await readSettlementState(provider, account, settlementConfig);
+  }
+
+  throw new Error("Settlement is confirmed, but the planet is still syncing. Retry once the chain read catches up.");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

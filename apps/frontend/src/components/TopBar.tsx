@@ -1,5 +1,5 @@
-import type { Resources, QueueItem } from "../playableMvp";
-import type { ChainLoadStatus } from "../overviewData";
+import type { EnergyBalance, Resources, QueueItem } from "../playableMvp";
+import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { shortAddress } from "../walletFlow";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -15,6 +15,7 @@ interface TopBarProps {
   coordinates?: string | undefined;
   isWalletConnected: boolean;
   canCollectResources?: boolean | undefined;
+  energy?: EnergyBalance | undefined;
   onCollectResources?: (() => void) | undefined;
   showCollectResources?: boolean | undefined;
 }
@@ -28,6 +29,7 @@ export function TopBar({
   researchQueue,
   account,
   coordinates,
+  energy,
   isWalletConnected,
   canCollectResources = false,
   onCollectResources,
@@ -71,6 +73,9 @@ export function TopBar({
                 rate={showResourceDetails ? rates.deuterium : undefined}
                 value={resources.deuterium}
               />
+              {shouldShowTopBarEnergy(energy) && (
+                <EnergyPip produced={energy.produced} required={energy.required} />
+              )}
             </>
           )}
           {showCollectButton && (
@@ -136,6 +141,24 @@ function ResourcePip({
         {pct >= 90 && (
           <span className="text-[10px] leading-none text-amber-400">{pct}%</span>
         )}
+      </span>
+    </div>
+  );
+}
+
+function EnergyPip({
+  produced,
+  required,
+}: {
+  produced: number;
+  required: number;
+}) {
+  return (
+    <div className="inline-flex h-6 items-center justify-center whitespace-nowrap sm:justify-start">
+      <span className="inline-flex items-baseline gap-1.5">
+        <span className="text-xs font-semibold leading-none text-lime-300">Energy</span>
+        <span className="text-xs leading-none text-white">+{format(produced)}</span>
+        {required > 0 && <span className="text-[10px] leading-none text-slate-500">-{format(required)}</span>}
       </span>
     </div>
   );

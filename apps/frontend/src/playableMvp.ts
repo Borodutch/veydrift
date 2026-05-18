@@ -768,7 +768,7 @@ const PLANET = {
 
 export function createInitialPlayableState(now = Date.now()): PlayableState {
   return {
-    resources: { metal: 5_000, crystal: 5_000, deuterium: 5_000 },
+    resources: { metal: 500, crystal: 500, deuterium: 0 },
     buildings: {
       metalMine: 0,
       crystalMine: 0,
@@ -854,16 +854,15 @@ export function productionCapacityPerHour(
 ): Resources {
   return {
     metal: scaleByBps(
-      30 + buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
+      buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
       profile.metalMultiplierBps,
     ),
     crystal: scaleByBps(
-      15 + buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
+      buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
       profile.crystalMultiplierBps,
     ),
     deuterium: scaleByBps(
-      8
-        + buildings.deuteriumSynthesizer * 10
+      buildings.deuteriumSynthesizer * 10
         + buildings.deuteriumSynthesizer * buildings.deuteriumSynthesizer * 3,
       profile.deuteriumMultiplierBps,
     ),

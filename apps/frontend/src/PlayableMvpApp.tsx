@@ -16,6 +16,7 @@ import {
 } from "./data/mockUniverse";
 import {
   buildingContractIds,
+  energyBalance,
   hasCollectableResources,
   productionPerHour,
   progress,
@@ -34,6 +35,7 @@ import {
   infrastructurePlayableState,
 } from "./chainState";
 import {
+  isWalletPlanetHydrated,
   safeResourceNumber,
   type ChainLoadStatus,
 } from "./overviewData";
@@ -159,7 +161,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       planet?.coordinates,
     ]
   );
-
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
@@ -177,6 +178,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       deuterium,
     };
   }, [onChainSettlement]);
+  const walletPlanetHydrated = isWalletPlanetHydrated({
+    homeCoords,
+    isWalletConnected,
+    resources: onChainResources,
+    settlement: onChainSettlement,
+    status: onChainStatus,
+  });
 
   const gameContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? gameContractAddress(runtimeConfig.config) : undefined;
@@ -304,6 +312,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setOnChainStatus("error");
     }
   }, [account, apiBaseUrl, isWalletConnected]);
+
+  useEffect(() => {
+    if (!isWalletConnected || walletPlanetHydrated) {
+      return;
+    }
+
+    const interval = window.setInterval(() => void refreshOnChainState(), 2_500);
+    return () => window.clearInterval(interval);
+  }, [isWalletConnected, refreshOnChainState, walletPlanetHydrated]);
 
   useEffect(() => {
     if (homeCoords) {
@@ -469,6 +486,20 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
             ? "success"
             : "pending",
       } as const;
+  const topBarEnergy = useMemo(() => {
+    if (!isWalletConnected || !infrastructureChainState || infrastructureLoading || infrastructureError) {
+      return undefined;
+    }
+
+    const balance = energyBalance(settledState.buildings);
+    return balance.produced > 0 || balance.required > 0 ? balance : undefined;
+  }, [
+    infrastructureChainState,
+    infrastructureError,
+    infrastructureLoading,
+    isWalletConnected,
+    settledState.buildings,
+  ]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -806,15 +837,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const topBar = (
     <TopBar
-      account={account}
       canCollectResources={isCollectReady}
       caps={caps}
-      coordinates={homeCoordinateLabel}
+      energy={topBarEnergy}
       isWalletConnected={isWalletConnected}
       onCollectResources={handleCollectResources}
       queue={isWalletConnected ? undefined : settledState.queue}
       rates={rates}
-      resourceStatus={isWalletConnected ? onChainStatus : "local"}
+      resourceStatus={isWalletConnected && !walletPlanetHydrated && onChainStatus !== "error" ? "loading" : isWalletConnected ? onChainStatus : "local"}
       researchQueue={isWalletConnected ? undefined : settledState.researchQueue}
       resources={isWalletConnected ? onChainResources : settledState.resources}
       showCollectResources={isCollectReady}
@@ -822,6 +852,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   );
 
   const content = (() => {
+    if (!walletPlanetHydrated) {
+      return (
+        <HydratingPlanetState
+          error={onChainError}
+          onRetry={() => void refreshOnChainState()}
+          status={onChainStatus}
+        />
+      );
+    }
+
     if (page === "galaxy") {
       return (
         <GalaxyView
@@ -951,6 +991,44 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
           {content}
         </main>
+      </div>
+    </div>
+  );
+}
+
+function HydratingPlanetState({
+  error,
+  onRetry,
+  status,
+}: {
+  error: string | undefined;
+  onRetry: () => void;
+  status: ChainLoadStatus;
+}) {
+  const failed = status === "error";
+
+  return (
+    <div className="grid min-h-[52vh] place-items-center">
+      <div className="max-w-md rounded-lg border border-white/10 bg-[#101624] p-5 text-center shadow-2xl shadow-black/20">
+        <div className="mx-auto mb-4 h-10 w-10 rounded-full border border-cyan-200/20 bg-cyan-200/10" />
+        <h1 className="text-base font-semibold text-white">
+          {failed ? "Planet sync delayed" : "Syncing planetfall"}
+        </h1>
+        <p className="mt-2 text-sm leading-6 text-slate-400">
+          {failed
+            ? "The settlement transaction is confirmed, but the game API has not returned complete planet resources yet."
+            : "Reading the new home planet coordinates and starter resources before opening the overview."}
+        </p>
+        {error ? <p className="mt-2 truncate text-xs text-amber-200/80">{error}</p> : null}
+        {failed ? (
+          <button
+            className="mt-4 inline-flex h-9 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-4 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+            onClick={onRetry}
+            type="button"
+          >
+            Retry sync
+          </button>
+        ) : null}
       </div>
     </div>
   );

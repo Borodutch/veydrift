@@ -154,6 +154,45 @@ describe("walletFlow", () => {
     expect(settlement.kind === "settled" ? settlement.planet.temperature : undefined).toBeUndefined();
   });
 
+  test("decodes VeydriftGame first planet fields and signed temperature", async () => {
+    const provider = mockProvider(async ({ method, params }) => {
+      if (method !== "eth_call") {
+        throw new Error(`Unexpected ${method}`);
+      }
+
+      const call = params?.[0] as { data: string };
+
+      if (call.data.startsWith("0x1d750846")) {
+        return word(1n);
+      }
+
+      if (call.data.startsWith("0x29147f24")) {
+        return [
+          word(2n),
+          word(88n),
+          word(14n),
+          word(206n),
+          word(BigInt.asUintN(256, -18n)),
+          word(1_800_000_000n),
+          word(123_456n)
+        ].join("");
+      }
+
+      throw new Error(`Unexpected call ${call.data}`);
+    });
+
+    const settlement = await readSettlementState(provider, account, { address: contract });
+
+    expect(settlement).toMatchObject({
+      kind: "settled",
+      planet: {
+        coordinates: "2:88:14",
+        fields: "206",
+        temperature: "-18",
+      }
+    });
+  });
+
   test("reports unconfigured settlement when no address is present", async () => {
     const provider = mockProvider(async () => {
       throw new Error("No chain calls expected");

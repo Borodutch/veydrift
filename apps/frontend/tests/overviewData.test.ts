@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   displayPlanetStats,
+  isWalletPlanetHydrated,
   safePlanetFields,
   safePlanetTemperature,
   safeResourceNumber,
@@ -54,5 +55,46 @@ describe("overview data guards", () => {
       diameter: "Unavailable",
       status: "API error",
     });
+  });
+
+  test("keeps connected wallet dashboard gated until planet coordinates and resources hydrate", () => {
+    const settlement = {
+      wallet: "0x1111111111111111111111111111111111111111",
+      hasFirstPlanet: true,
+      homePlanetId: "1",
+      planet: {
+        planetId: "1",
+        owner: "0x1111111111111111111111111111111111111111",
+        galaxy: 1,
+        system: 42,
+        position: 7,
+        fields: 206,
+        temperature: -12,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        lastSettledAt: "0",
+        resources: {
+          metal: "500",
+          crystal: "500",
+          deuterium: "0",
+        },
+      },
+    };
+
+    expect(isWalletPlanetHydrated({
+      homeCoords: { galaxy: 1, system: 42, position: 7 },
+      isWalletConnected: true,
+      resources: undefined,
+      settlement,
+      status: "ready",
+    })).toBe(false);
+    expect(isWalletPlanetHydrated({
+      homeCoords: { galaxy: 1, system: 42, position: 7 },
+      isWalletConnected: true,
+      resources: { metal: 500, crystal: 500, deuterium: 0 },
+      settlement,
+      status: "ready",
+    })).toBe(true);
   });
 });

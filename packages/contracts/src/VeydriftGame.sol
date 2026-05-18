@@ -380,7 +380,7 @@ contract VeydriftGame {
             crystalMultiplierBps: crystalMultiplier,
             deuteriumMultiplierBps: deuteriumMultiplier,
             lastSettledAt: _currentTimestamp(),
-            resources: Resources({metal: 5_000, crystal: 5_000, deuterium: 5_000})
+            resources: Resources({metal: 500, crystal: 500, deuterium: 0})
         });
 
         emit PlanetStarted(player, planetId, galaxy, system, position, fields, temperature);
