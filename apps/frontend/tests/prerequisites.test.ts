@@ -56,4 +56,20 @@ describe("OGame-style prerequisite gating", () => {
       research: { laser: 1 },
     })).toEqual([]);
   });
+
+  test("deduplicates repeated prerequisite labels but keeps distinct requirements", () => {
+    expect(missingUnlockRequirements([
+      { kind: "building", key: "researchLab", label: "Research Lab", level: 1 },
+      { kind: "building", key: "researchLab", label: "Research Lab", level: 1 },
+      { kind: "technology", key: "laser", label: "Laser", level: 1 },
+      { kind: "technology", key: "laser", label: "Laser", level: 2 },
+    ], {
+      buildings: { researchLab: 0 },
+      research: { laser: 0 },
+    })).toEqual([
+      "Requires Research Lab 1",
+      "Requires Laser 1",
+      "Requires Laser 2",
+    ]);
+  });
 });

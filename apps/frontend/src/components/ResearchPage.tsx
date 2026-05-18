@@ -376,7 +376,16 @@ function ResearchDetailPanel({
         <ResearchInfoRow label="Category" value={research.lane} />
         <ResearchInfoRow label="Requirements" value={requirements.length > 0 ? requirements.map(formatRequirement).join(" / ") : "None"} />
         <ResearchInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
-        <ResearchInfoRow label="Research time" value={status.durationSeconds ? formatDuration(status.durationSeconds) : "Requires Research Lab"} />
+        <ResearchInfoRow
+          label="Research time"
+          value={
+            status.durationSeconds
+              ? formatDuration(status.durationSeconds)
+              : status.hasMissingRequirement
+                ? "Unavailable until prerequisites are met"
+                : "Unavailable until chain state loads"
+          }
+        />
       </dl>
 
       <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
@@ -455,15 +464,13 @@ function researchActionStatus({
                 ? `Research to Level ${state.researchQueue?.targetLevel ?? targetLevel} in progress`
                 : queueOccupied
                   ? `Research queue occupied by ${state.researchQueue?.label ?? "another technology"}`
-                  : labMissing
-                    ? "Requires Research Lab 1"
-                    : missingRequirement
-                      ? `Requires ${formatRequirement(missingRequirement)}`
-                      : !resourcesAvailable
-                        ? "Resources unavailable"
-                        : !affordable
-                          ? "Insufficient resources"
-                          : `Ready for Level ${targetLevel}`;
+                  : missingRequirement
+                    ? "Locked by unmet prerequisites"
+                    : !resourcesAvailable
+                      ? "Resources unavailable"
+                      : !affordable
+                        ? "Insufficient resources"
+                        : `Ready for Level ${targetLevel}`;
 
   const disabled = reason !== `Ready for Level ${targetLevel}`;
   const badge = active ? "In progress" : disabled ? "Locked" : "Available";
@@ -475,6 +482,7 @@ function researchActionStatus({
     currentLevel,
     disabled,
     durationSeconds,
+    hasMissingRequirement: Boolean(missingRequirement),
     reason,
     targetLevel,
     tileStatus: active ? "Active" : disabled ? "Locked" : "Ready",
