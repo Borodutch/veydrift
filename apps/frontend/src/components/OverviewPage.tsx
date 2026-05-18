@@ -4,6 +4,7 @@ import {
   displayPlanetStats,
   type ChainLoadStatus,
 } from "../overviewData";
+import { overviewHeroImage } from "../overviewHeroImage";
 import { formatPlanetType } from "../data/mockUniverse";
 import type { Planet } from "../types";
 import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
@@ -61,18 +62,15 @@ export function OverviewPage({
   const planetSubhead = homePlanet
     ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : "Home planet";
-  const disconnectedHeroImage = "/assets/game/style-pass/generated/planets/lush-temperate.webp";
   const [lastKnownHeroImage, setLastKnownHeroImage] = useState<string | undefined>(
-    homePlanet?.image ?? (isWalletConnected ? undefined : disconnectedHeroImage)
+    homePlanet?.image
   );
 
   useEffect(() => {
     if (homePlanet?.image) {
       setLastKnownHeroImage(homePlanet.image);
-    } else if (!isWalletConnected) {
-      setLastKnownHeroImage(disconnectedHeroImage);
     }
-  }, [homePlanet?.image, isWalletConnected]);
+  }, [homePlanet?.image]);
 
   const heroImage = overviewHeroImage(homePlanet, isWalletConnected, lastKnownHeroImage);
 
@@ -237,16 +235,6 @@ export function OverviewPage({
 
     </div>
   );
-}
-
-export function overviewHeroImage(
-  homePlanet: Planet | undefined,
-  isWalletConnected: boolean,
-  lastKnownHeroImage: string | undefined,
-): string | undefined {
-  if (homePlanet?.image) return homePlanet.image;
-  if (lastKnownHeroImage) return lastKnownHeroImage;
-  return isWalletConnected ? undefined : "/assets/game/style-pass/generated/planets/lush-temperate.webp";
 }
 
 function StatPip({ label, value }: { label: string; value: string }) {
