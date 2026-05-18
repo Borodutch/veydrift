@@ -347,10 +347,11 @@ describe("playable MVP contract display helpers", () => {
     }
   });
 
-  test("only surfaces top-bar energy when production or usage exists", () => {
+  test("surfaces loaded top-bar energy even when production and usage are zero", () => {
     const state = createInitialPlayableState(1_000);
 
-    expect(shouldShowTopBarEnergy(energyBalance(state.buildings))).toBe(false);
+    expect(shouldShowTopBarEnergy(undefined)).toBe(false);
+    expect(shouldShowTopBarEnergy(energyBalance(state.buildings))).toBe(true);
     expect(shouldShowTopBarEnergy(energyBalance({ ...state.buildings, metalMine: 1 }))).toBe(true);
     expect(shouldShowTopBarEnergy(energyBalance({ ...state.buildings, solarPlant: 1 }))).toBe(true);
   });

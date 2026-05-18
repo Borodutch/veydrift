@@ -491,8 +491,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return undefined;
     }
 
-    const balance = energyBalance(settledState.buildings);
-    return balance.produced > 0 || balance.required > 0 ? balance : undefined;
+    return energyBalance(settledState.buildings);
   }, [
     infrastructureChainState,
     infrastructureError,
