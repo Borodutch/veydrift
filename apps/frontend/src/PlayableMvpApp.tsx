@@ -82,6 +82,19 @@ type ShipyardActionState =
 type BuildingActionState = ShipyardActionState;
 type DefenseActionState = ShipyardActionState;
 
+export function infrastructureActionNoticeFor(
+  action: BuildingActionState,
+): { label: string; tone: "error" | "success" } | undefined {
+  if (action.status === "idle" || action.status === "pending") {
+    return undefined;
+  }
+
+  return {
+    label: action.label,
+    tone: action.status === "error" ? "error" : "success",
+  };
+}
+
 export function displayHomeCoordinates(
   homePlanet: Coordinates | undefined,
   homeCoords: Coordinates | undefined,
@@ -476,16 +489,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     onChainStatus,
     runtimeConfig.status,
   ]);
-  const infrastructureActionNotice = buildingAction.status === "idle"
-    ? undefined
-    : {
-        label: buildingAction.label,
-        tone: buildingAction.status === "error"
-          ? "error"
-          : buildingAction.status === "success"
-            ? "success"
-            : "pending",
-      } as const;
+  const infrastructureActionNotice = infrastructureActionNoticeFor(buildingAction);
   const topBarEnergy = useMemo(() => {
     if (!isWalletConnected || !infrastructureChainState || infrastructureLoading || infrastructureError) {
       return undefined;
