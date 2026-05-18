@@ -1,5 +1,11 @@
-import type { PlayerQueuesResponse, WalletSettlementResponse } from "./walletFlow";
-import type { EnergyBalance, Resources } from "./playableMvp";
+import type { PlayerQueuesResponse, QueueStateResponse, WalletSettlementResponse } from "./walletFlow";
+import {
+  buildingCatalog,
+  buildingContractIds,
+  type BuildingKey,
+  type EnergyBalance,
+  type Resources,
+} from "./playableMvp";
 import type { Coordinates } from "./types";
 
 const integerFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -126,4 +132,31 @@ export function displayPlanetStats(
     diameter: displayDiameterKm(fields),
     status: active ? "Active" : "Idle",
   };
+}
+
+export function buildingQueueAsset(key: BuildingKey): string | undefined {
+  return buildingCatalog.find((building) => building.key === key)?.asset;
+}
+
+export function buildingQueueLabel(label: string, targetLevel: number | undefined): string {
+  return targetLevel ? `${label} Level ${targetLevel}` : label;
+}
+
+export function buildingQueuePreview(queue: QueueStateResponse | null | undefined): {
+  asset?: string | undefined;
+  label: string;
+} {
+  const building = queue?.itemId === undefined
+    ? undefined
+    : buildingCatalog.find((item) => buildingContractIds[item.key] === queue.itemId);
+
+  if (building) {
+    return {
+      asset: building.asset,
+      label: buildingQueueLabel(building.label, queue?.targetLevel),
+    };
+  }
+
+  const kind = queue?.kind === "building" || !queue?.kind ? "Building" : queue.kind;
+  return { label: buildingQueueLabel(kind, queue?.targetLevel) };
 }

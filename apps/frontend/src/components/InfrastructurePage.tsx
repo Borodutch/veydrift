@@ -10,6 +10,7 @@ import {
   formatNumber,
   formatSigned,
 } from "../buildingDetails";
+import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
 import { OptimizedImage } from "./OptimizedImage";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -79,19 +80,23 @@ export function InfrastructurePage({
             Select a building to inspect real production, power, cost, and upgrade timing.
           </p>
         </div>
-        {isBuildingReadyToFinish && onFinishBuilding ? (
-          <button
-            className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
-            onClick={onFinishBuilding}
-            type="button"
-          >
-            Finish upgrade
-          </button>
-        ) : settledState.queue ? (
-          <span className="rounded border border-amber-300/20 bg-amber-300/10 px-2.5 py-1 text-xs text-amber-300">
-            Building: {settledState.queue.label}
-          </span>
-        ) : null}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {settledState.queue?.kind === "building" ? (
+            <ActiveBuildingBadge
+              asset={buildingQueueAsset(settledState.queue.key)}
+              label={buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)}
+            />
+          ) : null}
+          {isBuildingReadyToFinish && onFinishBuilding ? (
+            <button
+              className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+              onClick={onFinishBuilding}
+              type="button"
+            >
+              Finish upgrade
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
@@ -133,6 +138,25 @@ export function InfrastructurePage({
         </div>
       </div>
     </div>
+  );
+}
+
+function ActiveBuildingBadge({ asset, label }: { asset?: string | undefined; label: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-2 rounded border border-amber-300/20 bg-amber-300/10 py-1 pl-1 pr-2.5 text-xs text-amber-300">
+      {asset ? (
+        <span className="h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-white/5">
+          <OptimizedImage
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            sizes="icon"
+            src={asset}
+          />
+        </span>
+      ) : null}
+      <span className="min-w-0 truncate">Building: {label}</span>
+    </span>
   );
 }
 
