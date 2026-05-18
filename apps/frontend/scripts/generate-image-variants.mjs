@@ -14,6 +14,7 @@
 import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname, relative, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 
 let sharp;
 try {
@@ -26,7 +27,8 @@ try {
   process.exit(1);
 }
 
-const PUBLIC_GAME_DIR = join(import.meta.dirname, "..", "public", "assets", "game");
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const PUBLIC_GAME_DIR = join(SCRIPT_DIR, "..", "public", "assets", "game");
 const SIZES_DIR = join(PUBLIC_GAME_DIR, "sizes");
 
 /** Canonical widths for UI use cases. */
@@ -147,7 +149,7 @@ async function main() {
   // Write manifest for potential future use (component currently uses convention-based paths)
   const manifestPath = join(SIZES_DIR, "manifest.json");
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-  console.log(`\n📝 Wrote manifest: ${relative(join(import.meta.dirname, ".."), manifestPath)}`);
+  console.log(`\n📝 Wrote manifest: ${relative(join(SCRIPT_DIR, ".."), manifestPath)}`);
 
   console.log(
     `\n✅ Done: ${generated} variants generated, ${skipped} already up-to-date, ${images.length} source images.`
