@@ -14,6 +14,8 @@ import type {
   QueueStateResponse,
 } from "./walletFlow";
 
+type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
+
 export function emptyContractState(now = Date.now()): PlayableState {
   return {
     ...createInitialPlayableState(now),
@@ -96,14 +98,21 @@ export function buildingQueueForDisplay(
   infrastructureState: ChainInfrastructureState,
   now = Date.now(),
 ): PlayableState["queue"] {
-  const queue = infrastructureState.queue;
+  return buildingQueueItemForDisplay(infrastructureState.queue, buildingLevels(infrastructureState), now);
+}
+
+export function buildingQueueItemForDisplay(
+  queue: QueueStateResponse | null,
+  buildings: PlayableState["buildings"],
+  now = Date.now(),
+): BuildingQueueItem | undefined {
   if (!queue?.active || queue.itemId === undefined) return undefined;
   const building = buildingCatalog.find((item) => buildingContractIds[item.key] === queue.itemId);
   if (!building) return undefined;
 
   const readyAt = queue.readyAt ? Number(queue.readyAt) * 1_000 : now;
   const cost = toResources(queue.cost) ?? { metal: 0, crystal: 0, deuterium: 0 };
-  const durationMs = buildingDurationEstimate(buildingLevels(infrastructureState), cost) * 1_000;
+  const durationMs = buildingDurationEstimate(buildings, cost) * 1_000;
   return {
     kind: "building",
     key: building.key,

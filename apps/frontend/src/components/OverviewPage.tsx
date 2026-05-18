@@ -1,4 +1,4 @@
-import type { PlayableState, Resources } from "../playableMvp";
+import type { MainQueueItem, PlayableState, Resources } from "../playableMvp";
 import { useEffect, useState } from "preact/hooks";
 import {
   buildingQueueAsset,
@@ -15,12 +15,12 @@ import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
-type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
-
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
   return formatDurationUntil(Number(readyAt) * 1_000, now);
 }
+
+type BuildingQueueItem = Extract<MainQueueItem, { kind: "building" }>;
 
 interface OverviewPageProps {
   state: PlayableState;
@@ -31,6 +31,7 @@ interface OverviewPageProps {
   researchProgress: number;
   shipProgress: number;
   now: number;
+  buildingQueue?: BuildingQueueItem | undefined;
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
@@ -40,7 +41,6 @@ interface OverviewPageProps {
   onChainSettlement?: WalletSettlementResponse | undefined;
   onChainQueues?: PlayerQueuesResponse | undefined;
   onChainStatus: ChainLoadStatus;
-  buildingQueue?: BuildingQueueItem | undefined;
 }
 
 export function OverviewPage({
@@ -51,6 +51,7 @@ export function OverviewPage({
   researchProgress,
   shipProgress,
   now,
+  buildingQueue: activeBuildingQueue,
   planet,
   homePlanet,
   isWalletConnected,
@@ -60,7 +61,6 @@ export function OverviewPage({
   onChainSettlement,
   onChainQueues,
   onChainStatus,
-  buildingQueue: activeBuildingQueue,
 }: OverviewPageProps) {
   const usedFields = Object.values(settledState.buildings).filter((level) => level > 0).length;
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");

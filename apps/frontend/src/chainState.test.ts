@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { infrastructurePlayableState } from "./chainState";
-import { progress } from "./playableMvp";
+import { buildingQueueItemForDisplay, infrastructurePlayableState } from "./chainState";
+import { createInitialPlayableState, progress } from "./playableMvp";
 
 describe("chainState", () => {
   test("derives stable building queue progress from readyAt and upgrade duration", () => {
@@ -31,5 +31,27 @@ describe("chainState", () => {
       startedAt: (readyAtSeconds - 60) * 1_000,
     });
     expect(progress(state.queue, halfway)).toBe(0.5);
+  });
+
+  test("derives building queue progress from the queues endpoint payload", () => {
+    const readyAtSeconds = 1_700_000_060;
+    const state = createInitialPlayableState();
+    const queue = buildingQueueItemForDisplay({
+      active: true,
+      kind: "building",
+      itemId: 3,
+      targetLevel: 1,
+      readyAt: readyAtSeconds.toString(),
+      cost: { metal: "75", crystal: "30", deuterium: "0" },
+    }, state.buildings, (readyAtSeconds - 45) * 1_000);
+
+    expect(queue).toMatchObject({
+      kind: "building",
+      key: "solarPlant",
+      label: "Solar Plant",
+      readyAt: readyAtSeconds * 1_000,
+      startedAt: (readyAtSeconds - 60) * 1_000,
+    });
+    expect(progress(queue, (readyAtSeconds - 45) * 1_000)).toBe(0.25);
   });
 });
