@@ -306,7 +306,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setOnChainError(undefined);
       setOnChainStatus("ready");
     } catch (error) {
-      setOnChainError(error instanceof Error ? error.message : "Failed to load on-chain state");
+      setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainSettlement(undefined);
       setOnChainQueues(undefined);
       setOnChainStatus("error");
@@ -435,16 +435,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [isWalletConnected, onChainResources, settledState]);
   const chainBuildingCosts = useMemo(() => buildingCosts(infrastructureChainState), [infrastructureChainState]);
   const infrastructureUnavailableReason = useMemo(() => {
-    if (!isWalletConnected) return "Connect a wallet to load contract-backed infrastructure.";
+    if (!isWalletConnected) return "Connect a wallet to load your infrastructure.";
     if (buildingAction.status === "pending") return buildingAction.label;
     if (runtimeConfig.status === "loading" || onChainStatus === "loading" || infrastructureLoading) {
-      return "Loading real wallet resources and building levels";
+      return "Loading your wallet resources and building levels";
     }
     if (runtimeConfig.status === "error" || onChainStatus === "error" || infrastructureError || !onChainResources) {
-      return "Chain/API state unavailable; upgrades are disabled until real wallet resources and building levels load.";
+      return "Game state unavailable; upgrades are disabled until your wallet resources and building levels load.";
     }
     if (!gameContract) return "Game contract unavailable; upgrades are disabled.";
-    if (!onChainSettlement?.homePlanetId) return "No on-chain home planet found for this wallet.";
+    if (!onChainSettlement?.homePlanetId) return "No home planet found for this wallet.";
     if (infrastructureChainState?.infrastructureAvailable === false) {
       return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
     }
@@ -458,7 +458,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       }
       const remaining = buildingQueueRemainingSeconds;
       const timeStr = remaining > 0 ? ` Ready in ${formatDuration(remaining)}.` : "";
-      return `Building upgrade${target} already pending on-chain.${timeStr}`;
+      return `Building upgrade${target} already in progress.${timeStr}`;
     }
     return undefined;
   }, [
@@ -565,11 +565,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onChainSettlement.homePlanetId,
         building,
       );
-      setBuildingAction({ status: "pending", label: `Waiting for chain confirmation ${txHash.slice(0, 10)}...` });
+      setBuildingAction({ status: "pending", label: `Waiting for transaction confirmation ${txHash.slice(0, 10)}...` });
       await waitForReceipt(provider, txHash);
       await refreshOnChainState();
       await refreshInfrastructureState();
-      setBuildingAction({ status: "success", label: "Building upgrade confirmed on-chain." });
+      setBuildingAction({ status: "success", label: "Building upgrade started." });
     } catch (error) {
       console.error(error);
       setBuildingAction({
@@ -616,11 +616,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         gameContract,
         onChainSettlement.homePlanetId,
       );
-      setBuildingAction({ status: "pending", label: `Waiting for chain confirmation ${txHash.slice(0, 10)}...` });
+      setBuildingAction({ status: "pending", label: `Waiting for transaction confirmation ${txHash.slice(0, 10)}...` });
       await waitForReceipt(provider, txHash);
       await refreshOnChainState();
       await refreshInfrastructureState();
-      setBuildingAction({ status: "success", label: "Building upgrade finished on-chain." });
+      setBuildingAction({ status: "success", label: "Building upgrade finished." });
     } catch (error) {
       console.error(error);
       setBuildingAction({

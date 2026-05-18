@@ -35,16 +35,16 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("uses chain/API unavailable reason before local affordability", () => {
+  test("uses action unavailable reason before local affordability", () => {
     expect(
       buildingUpgradeStatus(
         createInitialPlayableState(1_000),
         "metalMine",
-        { actionUnavailableReason: "Chain/API resources unavailable; upgrades are disabled until real wallet resources load." },
+        { actionUnavailableReason: "Game state unavailable; upgrades are disabled until your wallet resources load." },
       ),
     ).toMatchObject({
       disabled: true,
-      reason: "Chain/API resources unavailable; upgrades are disabled until real wallet resources load.",
+      reason: "Game state unavailable; upgrades are disabled until your wallet resources load.",
       targetLevel: 1,
     });
   });
