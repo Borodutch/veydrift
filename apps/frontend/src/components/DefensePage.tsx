@@ -32,6 +32,15 @@ const groupLabels = {
   missile: "Missiles",
 } as const;
 
+const missileThumbnailFrames: Partial<Record<DefenseKey, { transform: string }>> = {
+  antiBallisticMissile: {
+    transform: "translate(-6%, -5%) scale(1.25)",
+  },
+  interplanetaryMissile: {
+    transform: "translate(4%, 5%) scale(0.98)",
+  },
+};
+
 export function DefensePage({
   actionState,
   canTransact,
@@ -222,14 +231,19 @@ function DefenseTile({
   owned: number | undefined;
   quantity: number;
 }) {
+  const thumbnailFrame = missileThumbnailFrames[defense.key];
+
   return (
     <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
-      <OptimizedImage
-        alt=""
-        className="aspect-square w-full rounded bg-black/20 object-contain p-1"
-        sizes="shipThumbnail"
-        src={defense.asset}
-      />
+      <div className="aspect-square w-full overflow-hidden rounded bg-black/20 p-1">
+        <OptimizedImage
+          alt=""
+          className="h-full w-full object-contain"
+          sizes="shipThumbnail"
+          src={defense.asset}
+          style={thumbnailFrame}
+        />
+      </div>
       <div className="min-w-0">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
