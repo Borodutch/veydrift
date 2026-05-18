@@ -316,10 +316,6 @@ export function FirstPlanetSettlementApp() {
 
       <section className="settlement-shell" aria-label="First planet settlement">
         <div className="settlement-command">
-          <div className="settlement-kicker">
-            <span />
-            Veydrift
-          </div>
           <FlowBody
             mode={mode}
             onConnect={connectWallet}
@@ -456,10 +452,6 @@ function StateMessage({
   return (
     <div className={`settlement-state settlement-state-${tone}`}>
       <div className="settlement-state-copy">
-        <div className="settlement-status">
-          <span />
-          {tone === "warning" ? "Alert" : tone === "scanning" ? "Scanning" : "Ready"}
-        </div>
         <h1>{title}</h1>
         <p>{body}</p>
       </div>
