@@ -735,13 +735,12 @@ h4 {
 }
 
 .settlement-starfield-one {
-  background-position: 0 0, 30px 80px, 120px 40px, 220px 160px;
+  opacity: 0.48;
 }
 
 .settlement-starfield-two {
   transform: scale(1.7);
-  opacity: 0.32;
-  background-position: 90px 180px, 180px 40px, 30px 240px, 300px 90px;
+  opacity: 0.24;
 }
 
 .settlement-nebula {
@@ -771,7 +770,7 @@ h4 {
   border: 1px solid rgba(128, 241, 255, 0.24);
   border-radius: 8px;
   background: rgba(4, 10, 18, 0.78);
-  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.38), inset 0 1px rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.36), inset 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .settlement-command {
@@ -973,9 +972,11 @@ h4 {
 .scanner-frame::after {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, transparent 0%, transparent 52%, rgba(128, 241, 255, 0.14) 52.5%, transparent 56%);
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(128, 241, 255, 0.1) 50%, transparent 100%),
+    repeating-linear-gradient(90deg, transparent 0 38px, rgba(128, 241, 255, 0.05) 39px 40px);
   content: "";
-  opacity: 0.34;
+  opacity: 0.28;
   pointer-events: none;
 }
 
@@ -994,50 +995,34 @@ h4 {
     0 36px 90px rgba(0, 0, 0, 0.45);
 }
 
-.scanner-terminator {
-  position: absolute;
-  right: clamp(24px, 7vw, 86px);
-  bottom: clamp(68px, 11vw, 124px);
-  width: min(360px, 56%);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 36% 38%, transparent 0 38%, rgba(3, 8, 14, 0.2) 50%, rgba(3, 8, 14, 0.72) 78%),
-    linear-gradient(125deg, transparent 0 48%, rgba(3, 8, 14, 0.6) 62%, rgba(3, 8, 14, 0.86) 100%);
-  pointer-events: none;
-}
-
 .scanner-site {
   position: absolute;
   z-index: 1;
   width: 12px;
-  height: 12px;
-  border: 2px solid rgba(236, 253, 245, 0.92);
+  aspect-ratio: 1;
+  border: 1px solid rgba(246, 179, 92, 0.7);
   border-radius: 50%;
   background: #f6b35c;
-  box-shadow: 0 0 18px rgba(246, 179, 92, 0.52);
+  box-shadow: 0 0 18px rgba(246, 179, 92, 0.5);
 }
 
-.scanner-site::after {
-  position: absolute;
-  inset: -9px;
-  border: 1px solid rgba(246, 179, 92, 0.34);
-  border-radius: inherit;
-  content: "";
+.scanner-site-a {
+  right: 34%;
+  bottom: 30%;
 }
 
-.scanner-site-primary {
-  right: clamp(140px, 25vw, 246px);
-  bottom: clamp(190px, 25vw, 276px);
-}
-
-.scanner-site-secondary {
-  right: clamp(84px, 16vw, 164px);
-  bottom: clamp(142px, 18vw, 212px);
+.scanner-site-b {
+  right: 24%;
+  bottom: 44%;
   width: 9px;
-  height: 9px;
-  background: #80f1ff;
-  box-shadow: 0 0 16px rgba(128, 241, 255, 0.46);
+  opacity: 0.78;
+}
+
+.scanner-site-c {
+  right: 45%;
+  bottom: 42%;
+  width: 7px;
+  opacity: 0.62;
 }
 
 .planet-orbit {
@@ -1057,7 +1042,6 @@ h4 {
 .planet-orbit-b {
   width: min(560px, 84%);
   border-color: rgba(246, 179, 92, 0.24);
-  transform: rotate(-8deg);
 }
 
 .scanner-reticle {
@@ -1274,20 +1258,6 @@ h4 {
 
   .scanner-planet {
     width: min(290px, 68%);
-  }
-
-  .scanner-terminator {
-    width: min(290px, 68%);
-  }
-
-  .scanner-site-primary {
-    right: clamp(116px, 31vw, 210px);
-    bottom: clamp(178px, 38vw, 248px);
-  }
-
-  .scanner-site-secondary {
-    right: clamp(76px, 22vw, 142px);
-    bottom: clamp(132px, 28vw, 190px);
   }
 }
 
