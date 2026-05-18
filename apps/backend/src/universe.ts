@@ -1,5 +1,5 @@
-import { listPopulatedPlanetSlots } from "@veydrift/universe";
-import type { PlanetSlot } from "@veydrift/universe";
+import { listPopulatedPlanetSlots, listSlotProfiles, parsePlanetSlot } from "@veydrift/universe";
+import type { PlanetSlot, PlanetSlotProfile } from "@veydrift/universe";
 
 export type Coordinates = {
   galaxy: number;
@@ -49,7 +49,11 @@ export function planetMetadata(
     `${chainId}:${settlementContractAddress.toLowerCase()}:${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`
   );
   const fields = 160 + Number(seed % 80n);
-  const temperature = 20 - coordinates.position * 5 + Number((seed >> 8n) % 21n);
+  const temperature = midpointTemperatureForSlot(
+    parsePlanetSlot(coordinates.position),
+    seed >> 8n,
+    seed >> 24n
+  );
   const multipliers = planetMultipliers(temperature, fields);
 
   return {
@@ -123,7 +127,7 @@ export function planetMultipliers(
   temperature: number,
   fields: number
 ): Pick<PlanetMetadata, "metalMultiplierBps" | "crystalMultiplierBps" | "deuteriumMultiplierBps"> {
-  const temperatureIndex = temperature + 80;
+  const temperatureIndex = temperature + 180;
   return {
     metalMultiplierBps: 9500 + ((temperatureIndex * 4) % 1000),
     crystalMultiplierBps: 9600 + ((fields * 3) % 800),
@@ -152,4 +156,44 @@ function hashSeed(input: string): bigint {
 
 function universeSeed(chainId: number, settlementContractAddress: string): string {
   return `${chainId}:${settlementContractAddress.toLowerCase()}`;
+}
+
+function midpointTemperatureForSlot(
+  position: PlanetSlot,
+  lowRoll: bigint,
+  highRoll: bigint
+): number {
+  const maxTemperatureC = centeredMaxTemperatureForSlot(
+    slotProfileForPosition(position),
+    lowRoll,
+    highRoll
+  );
+  return maxTemperatureC - 20;
+}
+
+function centeredMaxTemperatureForSlot(
+  profile: PlanetSlotProfile,
+  lowRoll: bigint,
+  highRoll: bigint
+): number {
+  if (lowRoll <= highRoll) {
+    return intInRange(profile.minMaxTemperatureC, profile.averageMaxTemperatureC, lowRoll);
+  }
+
+  return intInRange(profile.averageMaxTemperatureC, profile.maxMaxTemperatureC, highRoll);
+}
+
+function slotProfileForPosition(position: PlanetSlot): PlanetSlotProfile {
+  const profile = listSlotProfiles()[position - 1];
+
+  if (!profile) {
+    throw new RangeError("Planet slot must be an integer from 1 to 15.");
+  }
+
+  return profile;
+}
+
+function intInRange(min: number, max: number, roll: bigint): number {
+  const span = BigInt(max - min + 1);
+  return min + Number(roll % span);
 }

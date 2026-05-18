@@ -1,7 +1,6 @@
 import { useState, useEffect } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
-  ensurePlanetAtCoordinates,
   generateSystem,
   GALAXY_COUNT,
   SYSTEM_COUNT,
@@ -12,6 +11,7 @@ import {
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
+import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 interface Props {
   galaxy: number;
@@ -48,13 +48,13 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
         return response.json();
       })
       .then((payload) => {
-        setPlanets(withHomePlanet(planetsFromSystemResponse(payload), homePlanetOverride, homeCoordsInSystem));
+        setPlanets(withHomePlanet(planetsFromSystemResponse(payload), homePlanetOverride));
         setSource("api");
       })
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
-          setPlanets(withHomePlanet(generateSystem(galaxy, system), homePlanetOverride, homeCoordsInSystem));
+          setPlanets(withHomePlanet(generateSystem(galaxy, system), homePlanetOverride));
           setSource("fallback");
         }
       })
@@ -176,6 +176,7 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
                   isHome={isHome}
                   key={pos}
                   onSelectPlanet={onSelectPlanet}
+                  homeCoords={homeCoordsInSystem}
                   planet={planet}
                   position={pos}
                   system={system}
@@ -267,6 +268,7 @@ function GalaxySlot({
   system,
   position,
   planet,
+  homeCoords,
   isHome,
   onSelectPlanet,
 }: {
@@ -274,10 +276,34 @@ function GalaxySlot({
   system: number;
   position: number;
   planet: Planet | undefined;
+  homeCoords: Coordinates | undefined;
   isHome: boolean;
   onSelectPlanet: (coords: Coordinates) => void;
 }) {
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const isPendingHomePlanet = !planet && homeCoords?.position === position;
+
+  useEffect(() => {
+    setImageLoaded(false);
+  }, [planet?.image]);
+
   if (!planet) {
+    if (isPendingHomePlanet) {
+      return (
+        <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-cyan-300/25 bg-cyan-300/[0.06] px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_7rem]">
+          <SlotNumber position={position} />
+          <div className="flex min-w-0 items-center gap-3">
+            <PlanetImageSkeleton className="h-11 w-11 flex-shrink-0 rounded-md border border-cyan-300/25" />
+            <div className="min-w-0">
+              <div className="h-4 w-32 animate-pulse rounded bg-white/10" />
+              <div className="mt-2 h-3 w-44 max-w-full animate-pulse rounded bg-white/5" />
+            </div>
+          </div>
+          <div className="hidden justify-self-end text-xs text-cyan-100/70 sm:block">Home loading</div>
+        </div>
+      );
+    }
+
     return (
       <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-white/5 bg-black/15 px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_7rem]">
         <SlotNumber position={position} muted />
@@ -312,10 +338,13 @@ function GalaxySlot({
         <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
           isHome ? "border-cyan-300/35" : "border-white/15"
         }`}>
+          {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
           <OptimizedImage
+            key={planet.image}
             alt={planet.name}
-            className="h-full w-full object-cover"
+            className={`h-full w-full object-cover transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
             loading="lazy"
+            onLoad={() => setImageLoaded(true)}
             sizes="icon"
             src={planet.image}
           />
@@ -380,12 +409,11 @@ function sameCoordinates(homeCoords: Coordinates | undefined, planet: Planet): b
 
 function withHomePlanet(
   planets: Planet[],
-  homePlanet: Planet | undefined,
-  homeCoords: Coordinates | undefined
+  homePlanet: Planet | undefined
 ): Planet[] {
   if (homePlanet) {
     return mergePlanetAtCoordinates(planets, homePlanet);
   }
 
-  return ensurePlanetAtCoordinates(planets, homeCoords);
+  return planets;
 }

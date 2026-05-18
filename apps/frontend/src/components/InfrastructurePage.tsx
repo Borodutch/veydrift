@@ -479,13 +479,6 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       tone: "warning",
       value: `${formatNumber(energy.current)} required`,
     });
-  } else {
-    rows.push({
-      label: "Energy",
-      next: "No direct change",
-      tone: "neutral",
-      value: "No direct use",
-    });
   }
 
   return rows;

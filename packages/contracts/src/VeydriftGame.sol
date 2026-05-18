@@ -1093,8 +1093,7 @@ contract VeydriftGame {
             abi.encode(block.chainid, address(this), player, planetId, galaxy, system, position)
         );
         fields = uint16(160 + (uint256(seed) % 80));
-        temperature =
-            int16(int256(20) - int256(uint256(position) * 5) + int256((uint256(seed) >> 16) % 21));
+        temperature = _slotTemperature(position, uint256(seed) >> 16, uint256(seed) >> 32);
         (metalMultiplier, crystalMultiplier, deuteriumMultiplier) =
             VeydriftFormulas.planetMultipliers(temperature, fields);
     }
@@ -1124,9 +1123,7 @@ contract VeydriftGame {
             if (!occupiedCoordinates[key]) {
                 occupiedCoordinates[key] = true;
                 fields = uint16(160 + ((uint256(seed) >> 48) % 80));
-                temperature = int16(
-                    int256(20) - int256(uint256(position) * 5) + int256((uint256(seed) >> 64) % 21)
-                );
+                temperature = _slotTemperature(position, uint256(seed) >> 64, uint256(seed) >> 96);
                 return (galaxy, system, position, fields, temperature);
             }
         }
@@ -1170,13 +1167,63 @@ contract VeydriftGame {
             position = uint8(((uint256(seed) >> 32) % MAX_POSITION) + 1);
             if (!occupiedCoordinates[coordinateKey(galaxy, system, position)]) {
                 fields = uint16(160 + ((uint256(seed) >> 48) % 80));
-                temperature = int16(
-                    int256(20) - int256(uint256(position) * 5) + int256((uint256(seed) >> 64) % 21)
-                );
+                temperature = _slotTemperature(position, uint256(seed) >> 64, uint256(seed) >> 96);
                 return (galaxy, system, position, fields, temperature);
             }
         }
         revert CoordinatesExhausted();
+    }
+
+    function _slotTemperature(uint8 position, uint256 lowRoll, uint256 highRoll)
+        private
+        pure
+        returns (int16)
+    {
+        (int16 minMaxTemperature, int16 averageMaxTemperature, int16 maxMaxTemperature) =
+            _slotMaxTemperatureProfile(position);
+        int16 maxTemperature = lowRoll <= highRoll
+            ? _intInRange(minMaxTemperature, averageMaxTemperature, lowRoll)
+            : _intInRange(averageMaxTemperature, maxMaxTemperature, highRoll);
+
+        return maxTemperature - 20;
+    }
+
+    function _slotMaxTemperatureProfile(uint8 position)
+        private
+        pure
+        returns (int16 minMaxTemperature, int16 averageMaxTemperature, int16 maxMaxTemperature)
+    {
+        if (position == 1) {
+            return (220, 240, 260);
+        }
+        if (position == 2) return (170, 190, 210);
+        if (position == 3) return (120, 140, 160);
+        if (position == 4) return (70, 90, 110);
+        if (position == 5) return (60, 80, 100);
+        if (position == 6) return (50, 70, 90);
+        if (position == 7) return (40, 60, 80);
+        if (position == 8) return (30, 50, 70);
+        if (position == 9) return (20, 40, 60);
+        if (position == 10) return (10, 30, 50);
+        if (position == 11) return (0, 20, 40);
+        if (position == 12) return (-10, 10, 30);
+        if (position == 13) return (-50, -30, -10);
+        if (position == 14) return (-90, -70, -50);
+        if (position == 15) return (-130, -110, -90);
+        revert InvalidCoordinates();
+    }
+
+    function _intInRange(int16 minValue, int16 maxValue, uint256 roll)
+        private
+        pure
+        returns (int16)
+    {
+        // Safe because slot temperature profile spans are small positive constants.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint256 span = uint256(int256(maxValue) - int256(minValue) + 1);
+        // Safe because the selected value stays inside the int16 temperature profile bounds.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return int16(int256(minValue) + int256(roll % span));
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {

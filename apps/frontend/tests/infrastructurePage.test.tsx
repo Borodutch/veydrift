@@ -57,4 +57,18 @@ describe("Infrastructure page display helpers", () => {
       value: "0 required",
     });
   });
+
+  test("omits energy rows for buildings with no direct energy effect", () => {
+    const state = createInitialPlayableState(1_000);
+    const effect = buildingEffectMetrics(state.buildings, "roboticsFactory");
+    const rows = detailEffectRows(effect, buildingEnergyDetail(state.buildings, "roboticsFactory"));
+
+    expect(rows).toContainEqual({
+      label: "Construction speed",
+      next: "x2",
+      value: "x1",
+    });
+    expect(rows.some((row) => row.label === "Energy")).toBe(false);
+    expect(rows.some((row) => row.label === "Energy required")).toBe(false);
+  });
 });
