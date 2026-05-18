@@ -7,6 +7,7 @@ import {
   buildingCost,
   buildingDurationEstimate,
   canAfford,
+  collectibleResourceDeltas,
   createInitialPlayableState,
   defenseCatalog,
   energyBalance,
@@ -323,6 +324,30 @@ describe("playable MVP contract display helpers", () => {
     expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_060_000)).toBe(true);
     expect(hasCollectableResources({ metal: 0, crystal: 0, deuterium: 0 }, lastSettledAtSeconds, 1_600_000))
       .toBe(false);
+  });
+
+  test("reports collectible resource deltas with storage caps applied", () => {
+    const rates = { metal: 120, crystal: 60, deuterium: 30 };
+    const lastSettledAtSeconds = 1_000;
+    const now = 1_120_000;
+
+    expect(collectibleResourceDeltas(rates, lastSettledAtSeconds, now)).toEqual({
+      metal: 4,
+      crystal: 2,
+      deuterium: 1,
+    });
+
+    expect(collectibleResourceDeltas(
+      rates,
+      lastSettledAtSeconds,
+      now,
+      { metal: 999, crystal: 998, deuterium: 1_000 },
+      { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
+    )).toEqual({
+      metal: 1,
+      crystal: 2,
+      deuterium: 0,
+    });
   });
 
   test("reports modeled energy and unlock effects for utility buildings", () => {
