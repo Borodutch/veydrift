@@ -38,7 +38,8 @@ const VARIANT_WIDTHS = [64, 256, 512];
 const EXCLUDED_DIRS = new Set(["concepts", "style-pass"]); // style-pass subdirs are included, but style-pass/README.md etc are not
 
 async function* walkGameImages(dir) {
-  const entries = await readdir(dir, { withFileTypes: true });
+  const entries = (await readdir(dir, { withFileTypes: true }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     const relPath = relative(PUBLIC_GAME_DIR, fullPath);
