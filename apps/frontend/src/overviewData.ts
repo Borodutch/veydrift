@@ -1,4 +1,6 @@
 import type { PlayerQueuesResponse, WalletSettlementResponse } from "./walletFlow";
+import type { EnergyBalance, Resources } from "./playableMvp";
+import type { Coordinates } from "./types";
 
 const integerFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -16,6 +18,31 @@ export type PlanetStatDisplay = {
   diameter: string;
   status: string;
 };
+
+export function isWalletPlanetHydrated({
+  homeCoords,
+  isWalletConnected,
+  resources,
+  settlement,
+  status,
+}: {
+  homeCoords: Coordinates | undefined;
+  isWalletConnected: boolean;
+  resources: Resources | undefined;
+  settlement: WalletSettlementResponse | undefined;
+  status: ChainLoadStatus;
+}): boolean {
+  if (!isWalletConnected) return true;
+  return status === "ready"
+    && Boolean(settlement?.homePlanetId)
+    && Boolean(settlement?.planet)
+    && Boolean(resources)
+    && Boolean(homeCoords);
+}
+
+export function shouldShowTopBarEnergy(energy: EnergyBalance | undefined): energy is EnergyBalance {
+  return Boolean(energy && (energy.produced > 0 || energy.required > 0));
+}
 
 export function safeResourceNumber(value: string | number | undefined): number | undefined {
   if (value === undefined) return undefined;

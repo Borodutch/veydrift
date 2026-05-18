@@ -54,9 +54,9 @@ contract VeydriftGameTest is Test {
         assertLe(planet.position, 15);
         assertGe(planet.fields, 160);
         assertLe(planet.fields, 239);
-        assertEq(planet.resources.metal, 5_000);
-        assertEq(planet.resources.crystal, 5_000);
-        assertEq(planet.resources.deuterium, 5_000);
+        assertEq(planet.resources.metal, 500);
+        assertEq(planet.resources.crystal, 500);
+        assertEq(planet.resources.deuterium, 0);
 
         vm.prank(player);
         vm.expectRevert(VeydriftGame.AlreadyStarted.selector);
@@ -164,7 +164,7 @@ contract VeydriftGameTest is Test {
         game.planetSeed(0, 1, 1);
     }
 
-    function testResourceAccrualOverElapsedTime() public {
+    function testLevelZeroMinesDoNotProduceHiddenResources() public {
         uint256 planetId = _startPlanet(player);
         VeydriftGame.Resources memory beforeResources = game.previewResources(planetId);
 
@@ -173,9 +173,27 @@ contract VeydriftGameTest is Test {
         game.collectResources(planetId);
 
         VeydriftGame.Resources memory afterResources = game.previewResources(planetId);
+        assertEq(afterResources.metal, beforeResources.metal);
+        assertEq(afterResources.crystal, beforeResources.crystal);
+        assertEq(afterResources.deuterium, beforeResources.deuterium);
+    }
+
+    function testResourceAccrualOverElapsedTime() public {
+        uint256 planetId = _startPlanet(player);
+
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.SolarPlant);
+
+        VeydriftGame.Resources memory beforeResources = game.previewResources(planetId);
+
+        vm.warp(block.timestamp + 2 hours);
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        VeydriftGame.Resources memory afterResources = game.previewResources(planetId);
         assertGt(afterResources.metal, beforeResources.metal);
-        assertGt(afterResources.crystal, beforeResources.crystal);
-        assertGt(afterResources.deuterium, beforeResources.deuterium);
+        assertEq(afterResources.crystal, beforeResources.crystal);
+        assertEq(afterResources.deuterium, beforeResources.deuterium);
     }
 
     function testBuildingConstructionAndCompletion() public {
@@ -296,7 +314,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.collectResources(planetId);
 
-        assertEq(game.buildingLevel(planetId, Building.MetalMine), 1);
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 2);
         assertEq(game.technologyLevel(player, Technology.Energy), 1);
         assertFalse(game.activeBuildingConstruction(planetId).active);
         assertFalse(game.researchQueue(player).active);
@@ -312,7 +330,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.collectResources(planetId);
 
-        assertEq(game.buildingLevel(planetId, Building.MetalMine), 1);
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 2);
         assertEq(game.technologyLevel(player, Technology.Energy), 1);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
     }
@@ -328,9 +346,10 @@ contract VeydriftGameTest is Test {
         vm.expectRevert(VeydriftGame.NotPlanetOwner.selector);
         game.collectResources(planetId);
 
-        _build(player, planetId, Building.RoboticsFactory);
-        _build(player, planetId, Building.RoboticsFactory);
-        _build(player, planetId, Building.Shipyard);
+        _prepareStarterEconomy(player, planetId);
+        _buildWithAccrual(player, planetId, Building.RoboticsFactory);
+        _buildWithAccrual(player, planetId, Building.RoboticsFactory);
+        _buildWithAccrual(player, planetId, Building.Shipyard);
 
         vm.prank(player);
         vm.expectRevert();
@@ -472,9 +491,10 @@ contract VeydriftGameTest is Test {
 
     function _preparePlanetWithShipyard(address account) internal returns (uint256 planetId) {
         planetId = _startPlanet(account);
-        _build(account, planetId, Building.RoboticsFactory);
-        _build(account, planetId, Building.RoboticsFactory);
-        _build(account, planetId, Building.Shipyard);
+        _prepareStarterEconomy(account, planetId);
+        _buildWithAccrual(account, planetId, Building.RoboticsFactory);
+        _buildWithAccrual(account, planetId, Building.RoboticsFactory);
+        _buildWithAccrual(account, planetId, Building.Shipyard);
     }
 
     function _preparePlanetWithShipyardAndResearch(address account)
@@ -493,6 +513,16 @@ contract VeydriftGameTest is Test {
         vm.warp(construction.readyAt);
         vm.prank(account);
         game.finishBuildingUpgrade(planetId);
+    }
+
+    function _prepareStarterEconomy(address account, uint256 planetId) internal {
+        _build(account, planetId, Building.MetalMine);
+        _build(account, planetId, Building.CrystalMine);
+        _build(account, planetId, Building.SolarPlant);
+        _accrueToCaps(account, planetId);
+        _buildWithAccrual(account, planetId, Building.DeuteriumSynthesizer);
+        _buildWithAccrual(account, planetId, Building.SolarPlant);
+        _accrueToCaps(account, planetId);
     }
 
     function _research(address account, uint256 planetId, Technology technology) internal {

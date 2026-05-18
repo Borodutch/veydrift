@@ -47,8 +47,8 @@ describe("Infrastructure page display helpers", () => {
     expect(rows).toContainEqual({
       delta: "+24/h",
       label: "Production capacity",
-      next: "53 Metal/h",
-      value: "29 Metal/h",
+      next: "24 Metal/h",
+      value: "0 Metal/h",
     });
     expect(rows).toContainEqual({
       label: "Energy required",

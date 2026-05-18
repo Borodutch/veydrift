@@ -1,4 +1,5 @@
 import type { PlayableState, Resources } from "../playableMvp";
+import { useEffect, useState } from "preact/hooks";
 import {
   displayPlanetStats,
   type ChainLoadStatus,
@@ -60,19 +61,39 @@ export function OverviewPage({
   const planetSubhead = homePlanet
     ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : "Home planet";
-  const heroImage = homePlanet?.image ?? "/assets/game/style-pass/generated/planets/lush-temperate.webp";
+  const disconnectedHeroImage = "/assets/game/style-pass/generated/planets/lush-temperate.webp";
+  const [lastKnownHeroImage, setLastKnownHeroImage] = useState<string | undefined>(
+    homePlanet?.image ?? (isWalletConnected ? undefined : disconnectedHeroImage)
+  );
+
+  useEffect(() => {
+    if (homePlanet?.image) {
+      setLastKnownHeroImage(homePlanet.image);
+    } else if (!isWalletConnected) {
+      setLastKnownHeroImage(disconnectedHeroImage);
+    }
+  }, [homePlanet?.image, isWalletConnected]);
+
+  const heroImage = overviewHeroImage(homePlanet, isWalletConnected, lastKnownHeroImage);
 
   return (
     <div className="grid gap-3">
       {/* Planet hero — compact, no wasted space */}
       <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
         <div className="relative h-24 sm:h-28">
-          <OptimizedImage
-            alt=""
-            className="absolute inset-0 h-full w-full object-cover"
-            sizes="hero"
-            src={heroImage}
-          />
+          {heroImage ? (
+            <OptimizedImage
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover"
+              sizes="hero"
+              src={heroImage}
+            />
+          ) : (
+            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(15,23,42,0.95),rgba(8,13,24,0.95))]">
+              <div className="absolute inset-x-6 top-1/2 h-px bg-cyan-200/15" />
+              <div className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-200/20 bg-cyan-200/5" />
+            </div>
+          )}
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,9,19,0.35),rgba(7,9,19,0.92))]" />
           <div className="relative flex h-full flex-col justify-end p-3 sm:p-4">
             <p className="text-[11px] font-medium text-slate-400">{planetSubhead}</p>
@@ -216,6 +237,16 @@ export function OverviewPage({
 
     </div>
   );
+}
+
+export function overviewHeroImage(
+  homePlanet: Planet | undefined,
+  isWalletConnected: boolean,
+  lastKnownHeroImage: string | undefined,
+): string | undefined {
+  if (homePlanet?.image) return homePlanet.image;
+  if (lastKnownHeroImage) return lastKnownHeroImage;
+  return isWalletConnected ? undefined : "/assets/game/style-pass/generated/planets/lush-temperate.webp";
 }
 
 function StatPip({ label, value }: { label: string; value: string }) {

@@ -20,6 +20,7 @@ import {
   unmetResearchRequirement,
 } from "../src/playableMvp";
 import { infrastructurePlayableState } from "../src/chainState";
+import { shouldShowTopBarEnergy } from "../src/overviewData";
 
 const PUBLIC_DIR = join(import.meta.dir, "..", "public");
 
@@ -28,9 +29,9 @@ describe("playable MVP contract display helpers", () => {
     const state = createInitialPlayableState(1_000);
 
     expect(state.resources).toEqual({
-      metal: 5_000,
-      crystal: 5_000,
-      deuterium: 5_000,
+      metal: 500,
+      crystal: 500,
+      deuterium: 0,
     });
     expect(storageCaps(state.buildings)).toEqual({
       metal: 10_000,
@@ -108,7 +109,7 @@ describe("playable MVP contract display helpers", () => {
     };
 
     expect(productionPerHour(unpowered).metal).toBe(0);
-    expect(productionPerHour(powered).metal).toBeGreaterThan(30);
+    expect(productionPerHour(powered).metal).toBeGreaterThan(0);
   });
 
   test("maps the full Solidity ship catalog for Shipyard display", () => {
@@ -283,11 +284,11 @@ describe("playable MVP contract display helpers", () => {
     const capacity = productionCapacityPerHour(buildings, profile);
     const effect = buildingEffectMetrics(buildings, "metalMine", profile);
 
-    expect(production.metal).toBe(66);
-    expect(capacity.metal).toBe(66);
+    expect(production.metal).toBe(30);
+    expect(capacity.metal).toBe(30);
     expect(effect.kind).toBe("production");
     if (effect.kind === "production") {
-      expect(effect.currentPerHour).toBe(66);
+      expect(effect.currentPerHour).toBe(30);
       expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 2 }, profile).metal);
       expect(effect.deltaPerHour).toBeGreaterThan(0);
     }
@@ -344,5 +345,13 @@ describe("playable MVP contract display helpers", () => {
       expect(shipyardEffect.unlocked).toBe(false);
       expect(shipyardEffect.nextUnlocked).toBe(true);
     }
+  });
+
+  test("only surfaces top-bar energy when production or usage exists", () => {
+    const state = createInitialPlayableState(1_000);
+
+    expect(shouldShowTopBarEnergy(energyBalance(state.buildings))).toBe(false);
+    expect(shouldShowTopBarEnergy(energyBalance({ ...state.buildings, metalMine: 1 }))).toBe(true);
+    expect(shouldShowTopBarEnergy(energyBalance({ ...state.buildings, solarPlant: 1 }))).toBe(true);
   });
 });

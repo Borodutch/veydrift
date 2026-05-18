@@ -587,7 +587,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("keeps compact settlement available when the game contract has no home planet", async () => {
+  test("treats game-contract no-home state as authoritative over legacy compact settlement", async () => {
     const reader = new VeydriftGameReader(configuredTestConfig, {
       async request<T>(_method: string, params: unknown[]): Promise<T> {
         const [call] = params as [{ data: string; to: string }];
@@ -607,14 +607,10 @@ describe("Veydrift backend", () => {
 
     await expect(reader.getWalletSettlement(player)).resolves.toMatchObject({
       wallet: player,
-      hasFirstPlanet: true,
+      hasFirstPlanet: false,
       homePlanetId: null,
-      contractKind: "settlement",
-      planet: {
-        galaxy: 2,
-        system: 44,
-        position: 9
-      }
+      contractKind: "game",
+      planet: null
     });
 
     await expect(reader.getShipyardState(player)).resolves.toMatchObject({

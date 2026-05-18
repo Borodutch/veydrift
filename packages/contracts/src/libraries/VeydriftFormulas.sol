@@ -37,14 +37,13 @@ library VeydriftFormulas {
             ? bps
             : (producedEnergy * bps) / requiredEnergy;
 
-        metalPerHour = _scaleByBps(
-            30 + (metalLevel * 20) + (metalLevel * metalLevel * 5), metalMultiplierBps, bps
-        );
+        metalPerHour =
+            _scaleByBps((metalLevel * 20) + (metalLevel * metalLevel * 5), metalMultiplierBps, bps);
         crystalPerHour = _scaleByBps(
-            15 + (crystalLevel * 15) + (crystalLevel * crystalLevel * 4), crystalMultiplierBps, bps
+            (crystalLevel * 15) + (crystalLevel * crystalLevel * 4), crystalMultiplierBps, bps
         );
         deuteriumPerHour = _scaleByBps(
-            8 + (deuteriumLevel * 10) + (deuteriumLevel * deuteriumLevel * 3),
+            (deuteriumLevel * 10) + (deuteriumLevel * deuteriumLevel * 3),
             deuteriumMultiplierBps,
             bps
         );

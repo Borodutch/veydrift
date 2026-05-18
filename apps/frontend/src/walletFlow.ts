@@ -634,6 +634,8 @@ function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
   const galaxy = words[0] ? Number(decodeUintWord(words[0])) : undefined;
   const system = words[1] ? Number(decodeUintWord(words[1])) : undefined;
   const position = words[2] ? Number(decodeUintWord(words[2])) : undefined;
+  const fields = words[3] ? Number(decodeUintWord(words[3])) : undefined;
+  const temperature = words[4] ? Number(decodeSignedWord(words[4])) : undefined;
   const settledAt = words[5] ? decodeUintWord(words[5]) : undefined;
   const settledBlock = words[6] ? decodeUintWord(words[6]) : undefined;
 
@@ -654,6 +656,14 @@ function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
 
   if (settledBlock && settledBlock > 0n) {
     planet.settledBlock = settledBlock.toString();
+  }
+
+  if (fields !== undefined && Number.isInteger(fields) && fields > 0 && fields <= 1_000) {
+    planet.fields = fields.toString();
+  }
+
+  if (temperature !== undefined && Number.isInteger(temperature) && temperature >= -200 && temperature <= 200) {
+    planet.temperature = temperature.toString();
   }
 
   return planet;

@@ -202,12 +202,7 @@ export class VeydriftGameReader implements ChainReader {
   async getWalletSettlement(wallet: Address): Promise<WalletSettlement> {
     assertAddress(wallet);
     try {
-      const gameSettlement = await this.getGameSettlement(wallet);
-      if (gameSettlement.homePlanetId || !this.settlementContractAddress) {
-        return gameSettlement;
-      }
-
-      return this.getCompactSettlement(wallet);
+      return await this.getGameSettlement(wallet);
     } catch (error) {
       if (!isRpcRevert(error) || !this.settlementContractAddress) {
         throw error;
