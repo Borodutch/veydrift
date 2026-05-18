@@ -45,7 +45,7 @@ export function TopBar({
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
       <div className="mx-auto flex min-h-11 max-w-7xl flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-3 py-1.5 sm:justify-between sm:px-4 lg:px-6">
-        <div className="grid w-full min-w-0 grid-cols-3 items-center gap-x-1.5 gap-y-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5">
+        <div className="grid w-full min-w-0 grid-cols-2 items-center gap-x-1.5 gap-y-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5">
           {resourceStatus === "loading" ? (
             <span className="text-xs text-slate-400">Resources loading</span>
           ) : resourceStatus === "error" || !resources ? (
@@ -80,7 +80,7 @@ export function TopBar({
           )}
           {showCollectButton && (
             <button
-              className="col-span-3 inline-flex h-7 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 text-[11px] font-semibold leading-none text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-span-1"
+              className="col-span-2 inline-flex h-7 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 text-[11px] font-semibold leading-none text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-span-1"
               disabled={!canCollectResources}
               onClick={onCollectResources}
               title={canCollectResources ? "Collect accrued resources" : "Nothing to collect yet"}
@@ -153,12 +153,18 @@ function EnergyPip({
   produced: number;
   required: number;
 }) {
+  const current = produced - required;
+  const tone = current < 0 ? "text-red-300" : "text-lime-300";
+
   return (
-    <div className="inline-flex h-6 items-center justify-center whitespace-nowrap sm:justify-start">
+    <div
+      className="inline-flex h-6 items-center justify-center whitespace-nowrap sm:justify-start"
+      title={`${format(produced)} produced / ${format(required)} required`}
+    >
       <span className="inline-flex items-baseline gap-1.5">
-        <span className="text-xs font-semibold leading-none text-lime-300">Energy</span>
-        <span className="text-xs leading-none text-white">+{format(produced)}</span>
-        {required > 0 && <span className="text-[10px] leading-none text-slate-500">-{format(required)}</span>}
+        <span className={`text-xs font-semibold leading-none ${tone}`}>Energy</span>
+        <span className={`text-xs leading-none ${current < 0 ? "text-red-200" : "text-white"}`}>{format(current)}</span>
+        {required > 0 && <span className="text-[10px] leading-none text-slate-500">{format(produced)}/{format(required)}</span>}
       </span>
     </div>
   );

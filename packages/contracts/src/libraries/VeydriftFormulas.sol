@@ -15,7 +15,7 @@ library VeydriftFormulas {
         pure
         returns (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier)
     {
-        uint256 temperatureIndex = (int256(temperature) + 80).toUint256();
+        uint256 temperatureIndex = (int256(temperature) + 180).toUint256();
         metalMultiplier = (9_500 + ((temperatureIndex * 4) % 1_000)).toUint16();
         crystalMultiplier = uint16(9_600 + (uint256(fields) * 3) % 800);
         deuteriumMultiplier = (10_800 - temperatureIndex * 3).toUint16();
