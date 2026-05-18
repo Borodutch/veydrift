@@ -1,4 +1,4 @@
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
   generateSystem,
@@ -281,10 +281,12 @@ function GalaxySlot({
   onSelectPlanet: (coords: Coordinates) => void;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
+  const imageRef = useRef<HTMLImageElement>(null);
   const isPendingHomePlanet = !planet && homeCoords?.position === position;
 
   useEffect(() => {
-    setImageLoaded(false);
+    const image = imageRef.current;
+    setImageLoaded(Boolean(image?.complete && image.naturalWidth > 0));
   }, [planet?.image]);
 
   if (!planet) {
@@ -343,8 +345,11 @@ function GalaxySlot({
             key={planet.image}
             alt={planet.name}
             className={`h-full w-full object-cover transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
-            loading="lazy"
-            onLoad={() => setImageLoaded(true)}
+            imageRef={imageRef}
+            loading="eager"
+            onLoad={(event) => {
+              if (event.currentTarget.naturalWidth > 0) setImageLoaded(true);
+            }}
             sizes="icon"
             src={planet.image}
           />
