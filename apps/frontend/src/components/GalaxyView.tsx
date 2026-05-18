@@ -12,6 +12,7 @@ import {
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
+import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
@@ -292,8 +293,7 @@ function GalaxySlot({
   const isPendingHomePlanet = !planet && homeCoords?.position === position;
 
   useEffect(() => {
-    const image = imageRef.current;
-    setImageLoaded(Boolean(image?.complete && image.naturalWidth > 0));
+    setImageLoaded(isImageReady(imageRef.current));
   }, [planet?.image]);
 
   if (!planet) {
@@ -355,7 +355,7 @@ function GalaxySlot({
             imageRef={imageRef}
             loading="eager"
             onLoad={(event) => {
-              if (event.currentTarget.naturalWidth > 0) setImageLoaded(true);
+              if (isImageReady(event.currentTarget)) setImageLoaded(true);
             }}
             sizes="icon"
             src={planet.image}

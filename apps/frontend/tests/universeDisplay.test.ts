@@ -13,6 +13,7 @@ import {
   formatGalaxyOccupancySource,
   formatGalaxyOccupancySummary
 } from "../src/components/GalaxyView";
+import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
 
 const PUBLIC_DIR = join(import.meta.dir, "..", "public");
@@ -160,5 +161,12 @@ describe("tester universe display data", () => {
         expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/")))).toBe(true);
       }
     }
+  });
+
+  test("planet views treat cached loaded images as ready", () => {
+    expect(isImageReady({ complete: true, naturalWidth: 64 } satisfies ImageLoadState)).toBe(true);
+    expect(isImageReady({ complete: true, naturalWidth: 0 } satisfies ImageLoadState)).toBe(false);
+    expect(isImageReady({ complete: false, naturalWidth: 64 } satisfies ImageLoadState)).toBe(false);
+    expect(isImageReady(null)).toBe(false);
   });
 });
