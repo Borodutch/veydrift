@@ -192,7 +192,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     return Math.max(0, Math.ceil((Number(onChainQueues.building.readyAt) * 1_000 - now) / 1_000));
   }, [onChainQueues?.building, now]);
 
-  const refreshInfrastructureState = useCallback(() => {
+  const refreshInfrastructureState = useCallback(async () => {
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
       return;
@@ -200,18 +200,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
-    fetchInfrastructureState(apiBaseUrl, account)
-      .then((next) => {
-        setInfrastructureChainState(next);
-      })
-      .catch((error) => {
-        console.error(error);
-        setInfrastructureChainState(null);
-        setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
-      })
-      .finally(() => {
-        setInfrastructureLoading(false);
-      });
+    try {
+      const next = await fetchInfrastructureState(apiBaseUrl, account);
+      setInfrastructureChainState(next);
+    } catch (error) {
+      console.error(error);
+      setInfrastructureChainState(null);
+      setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
+    } finally {
+      setInfrastructureLoading(false);
+    }
   }, [account, apiBaseUrl]);
 
   const refreshDefenseState = useCallback(() => {
@@ -361,7 +359,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   useEffect(() => {
     refreshInfrastructureState();
-    const interval = window.setInterval(refreshInfrastructureState, 30_000);
+    const interval = window.setInterval(() => void refreshInfrastructureState(), 30_000);
     return () => window.clearInterval(interval);
   }, [refreshInfrastructureState]);
 
@@ -540,7 +538,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setBuildingAction({ status: "pending", label: `Waiting for chain confirmation ${txHash.slice(0, 10)}...` });
       await waitForReceipt(provider, txHash);
       await refreshOnChainState();
-      refreshInfrastructureState();
+      await refreshInfrastructureState();
       setBuildingAction({ status: "success", label: "Building upgrade confirmed on-chain." });
     } catch (error) {
       console.error(error);
@@ -591,7 +589,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setBuildingAction({ status: "pending", label: `Waiting for chain confirmation ${txHash.slice(0, 10)}...` });
       await waitForReceipt(provider, txHash);
       await refreshOnChainState();
-      refreshInfrastructureState();
+      await refreshInfrastructureState();
       setBuildingAction({ status: "success", label: "Building upgrade finished on-chain." });
     } catch (error) {
       console.error(error);
