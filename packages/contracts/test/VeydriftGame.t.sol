@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {Building, Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
 contract VeydriftGameTest is Test {
@@ -36,6 +37,18 @@ contract VeydriftGameTest is Test {
         vm.prank(admin);
         game.setStartPrice(0.01 ether);
         assertEq(game.startPrice(), 0.01 ether);
+    }
+
+    function testBuildingDurationUsesOGameRoboticsDivisor() public pure {
+        uint128 metalCost = 120_000;
+        uint128 crystalCost = 0;
+        uint32 minQueueSeconds = 60;
+
+        assertEq(
+            VeydriftFormulas.buildingDuration(0, metalCost, crystalCost, minQueueSeconds), 1_200
+        );
+        assertEq(VeydriftFormulas.buildingDuration(1, metalCost, crystalCost, minQueueSeconds), 600);
+        assertEq(VeydriftFormulas.buildingDuration(2, metalCost, crystalCost, minQueueSeconds), 400);
     }
 
     function testPlanetGenerationPaymentCoordinatesAndInitialResources() public {
