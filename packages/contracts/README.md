@@ -31,6 +31,7 @@ The deployer wallet is stored in Vaultwarden under **"Veydrift deployer wallet"*
 ```bash
 forge fmt --check
 forge build
+forge build --sizes
 forge test
 ```
 
