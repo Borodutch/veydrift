@@ -89,4 +89,33 @@ describe("Infrastructure page display helpers", () => {
       value: "x2",
     });
   });
+
+  test("shows Research Lab 1 as unlocking research with a 2x denominator", () => {
+    const state = createInitialPlayableState(1_000);
+    const effect = buildingEffectMetrics(state.buildings, "researchLab");
+    const rows = detailEffectRows(effect, buildingEnergyDetail(state.buildings, "researchLab"));
+
+    expect(rows).toContainEqual({
+      label: "Research capacity",
+      next: "Unlocks research (x2)",
+      value: "Unavailable",
+    });
+  });
+
+  test("shows Research Lab level 1 to 2 as x2 to x3 instead of doubling", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      researchLab: 1,
+    };
+    const effect = buildingEffectMetrics(buildings, "researchLab");
+    const rows = detailEffectRows(effect, buildingEnergyDetail(buildings, "researchLab"));
+
+    expect(rows).toContainEqual({
+      delta: "+50% faster",
+      label: "Research speed",
+      next: "x3",
+      value: "x2",
+    });
+  });
 });

@@ -63,6 +63,10 @@ library VeydriftFormulas {
     ) public pure returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) {
         requiredEnergy = (metalLevel * 10) + (crystalLevel * 12) + (deuteriumLevel * 20);
         producedEnergy = solarLevel * 30;
+        // OGame-style shortage factor: full production when energy is sufficient,
+        // otherwise floor(produced / required) in basis points. Settlement uses
+        // the building state for each elapsed segment, so later power upgrades do
+        // not retroactively improve already-settled shortage periods.
         energyScaleBps = requiredEnergy == 0 || producedEnergy >= requiredEnergy
             ? bps
             : (producedEnergy * bps) / requiredEnergy;
