@@ -75,6 +75,7 @@ function staleSolarPlantSnapshot(): FinishedBuildingSnapshot {
       infrastructureAvailable: true,
       resources: { metal: "5000", crystal: "4900", deuterium: "4800" },
       productionPerHour: { metal: "30", crystal: "15", deuterium: "0" },
+      energyBalance: null,
       storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
       buildings: [
         { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
@@ -109,6 +110,7 @@ function finishedSolarPlantSnapshot(): FinishedBuildingSnapshot {
       infrastructureAvailable: true,
       resources: { metal: "5000", crystal: "4900", deuterium: "4800" },
       productionPerHour: { metal: "60", crystal: "30", deuterium: "0" },
+      energyBalance: null,
       storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
       buildings: [
         { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
