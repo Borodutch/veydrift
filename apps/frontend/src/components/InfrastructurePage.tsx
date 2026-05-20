@@ -644,7 +644,8 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (effect.kind === "constructionSpeed") {
     rows.push({
-      label: "Construction speed",
+      delta: `+${formatNumber(effect.relativeImprovementPercent)}% faster than current`,
+      label: "Construction time divisor",
       next: `x${formatNumber(effect.nextFactor)}`,
       value: `x${formatNumber(effect.currentFactor)}`,
     });

@@ -10,6 +10,8 @@ library VeydriftFormulas {
 
     error LevelTooHigh();
 
+    uint256 private constant BUILDING_DURATION_COST_DIVISOR = 100;
+
     function planetMultipliers(int16 temperature, uint16 fields)
         public
         pure
@@ -86,7 +88,9 @@ library VeydriftFormulas {
         uint128 crystalCost,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
-        uint256 raw = (uint256(metalCost) + uint256(crystalCost)) / (100 * (roboticsLevel + 1));
+        // Veydrift uses a faster MVP base duration than OGame, while preserving the Robotics Factory level + 1 divisor.
+        uint256 raw = (uint256(metalCost) + uint256(crystalCost))
+            / (BUILDING_DURATION_COST_DIVISOR * (roboticsLevel + 1));
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
 

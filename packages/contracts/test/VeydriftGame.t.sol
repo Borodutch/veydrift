@@ -115,6 +115,18 @@ contract VeydriftGameTest is Test {
         assertEq(game.startPrice(), 0.01 ether);
     }
 
+    function testBuildingDurationUsesOGameRoboticsDivisor() public pure {
+        uint128 metalCost = 120_000;
+        uint128 crystalCost = 0;
+        uint32 minQueueSeconds = 60;
+
+        assertEq(
+            VeydriftFormulas.buildingDuration(0, metalCost, crystalCost, minQueueSeconds), 1_200
+        );
+        assertEq(VeydriftFormulas.buildingDuration(1, metalCost, crystalCost, minQueueSeconds), 600);
+        assertEq(VeydriftFormulas.buildingDuration(2, metalCost, crystalCost, minQueueSeconds), 400);
+    }
+
     function testPlanetGenerationPaymentCoordinatesAndInitialResources() public {
         vm.prank(player);
         vm.expectRevert(VeydriftGame.BadStartPayment.selector);
