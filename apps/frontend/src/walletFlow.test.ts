@@ -25,6 +25,7 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   settlementTransactionData,
+  walletRequestErrorMessage,
   type Eip1193Provider
 } from "./walletFlow";
 
@@ -191,6 +192,95 @@ describe("walletFlow", () => {
         temperature: "-18",
       }
     });
+  });
+
+  test("falls back to VeydriftGame homePlanetOf when first-planet compatibility reads revert", async () => {
+    const provider = mockProvider(async ({ method, params }) => {
+      if (method !== "eth_call") {
+        throw new Error(`Unexpected ${method}`);
+      }
+
+      const call = params?.[0] as { data: string };
+
+      if (call.data.startsWith("0x1d750846")) {
+        throw { code: -32603, message: "Internal JSON-RPC error." };
+      }
+
+      if (call.data.startsWith("0x0ff79fa5")) {
+        return word(9n);
+      }
+
+      if (call.data.startsWith("0x181c1bc4")) {
+        return [
+          word(BigInt(account)),
+          word(3n),
+          word(44n),
+          word(12n),
+          word(219n),
+          word(BigInt.asUintN(256, -42n)),
+          word(10_500n),
+          word(9_900n),
+          word(11_100n),
+          word(1_800_000_000n),
+          word(5_000n),
+          word(2_500n),
+          word(750n)
+        ].join("");
+      }
+
+      throw new Error(`Unexpected call ${call.data}`);
+    });
+
+    const settlement = await readSettlementState(provider, account, { address: contract });
+
+    expect(settlement).toEqual({
+      kind: "settled",
+      planet: {
+        coordinates: "3:44:12",
+        fields: "219",
+        label: "Planet 3:44:12",
+        rarity: "Genesis settlement",
+        resources: {
+          crystal: "2500",
+          deuterium: "750",
+          metal: "5000",
+        },
+        settledAt: "2027-01-15T08:00:00.000Z",
+        source: "chain",
+        temperature: "-42",
+      }
+    });
+  });
+
+  test("falls back to not-settled when game homePlanetOf returns zero", async () => {
+    const provider = mockProvider(async ({ method, params }) => {
+      if (method !== "eth_call") {
+        throw new Error(`Unexpected ${method}`);
+      }
+
+      const call = params?.[0] as { data: string };
+
+      if (call.data.startsWith("0x1d750846")) {
+        throw { code: -32603, message: "Internal JSON-RPC error." };
+      }
+
+      if (call.data.startsWith("0x0ff79fa5")) {
+        return word(0n);
+      }
+
+      throw new Error(`Unexpected call ${call.data}`);
+    });
+
+    await expect(readSettlementState(provider, account, { address: contract })).resolves.toEqual({
+      kind: "not-settled"
+    });
+  });
+
+  test("formats raw JSON-RPC provider errors into an actionable wallet message", () => {
+    expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
+      "wallet could not read the current game contract state"
+    );
+    expect(walletRequestErrorMessage(new Error("execution reverted"))).toContain("game contract rejected");
   });
 
   test("reports unconfigured settlement when no address is present", async () => {

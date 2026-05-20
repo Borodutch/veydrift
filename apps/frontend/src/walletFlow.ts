@@ -170,6 +170,8 @@ export const BASE_SEPOLIA = {
 const READ_SELECTORS = {
   firstPlanetOf: "0x29147f24",
   hasFirstPlanet: "0x1d750846",
+  homePlanetOf: "0x0ff79fa5",
+  planet: "0x181c1bc4",
   previewFirstPlanet: "0x729b082f"
 } as const;
 
@@ -204,6 +206,21 @@ export function isUserRejected(error: unknown): boolean {
   }
 
   return typeof candidate.message === "string" && /reject|denied|cancel/i.test(candidate.message);
+}
+
+export function walletRequestErrorMessage(error: unknown): string {
+  const message = errorMessage(error);
+  const code = errorCode(error);
+
+  if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
+    return "The wallet could not read the current game contract state. Retry in a moment, or switch to Base Sepolia and reconnect your wallet.";
+  }
+
+  if (/execution reverted/i.test(message)) {
+    return "The game contract rejected a wallet read. Retry sync after the latest deployment finishes, or reconnect your wallet on Base Sepolia.";
+  }
+
+  return message;
 }
 
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
@@ -307,7 +324,18 @@ export async function readSettlementState(
     };
   }
 
-  const hasSettlement = await readHasFirstPlanet(provider, config.address, account);
+  let hasSettlement: boolean;
+
+  try {
+    hasSettlement = await readHasFirstPlanet(provider, config.address, account);
+  } catch (error) {
+    const gameSettlement = await readGameSettlement(provider, config.address, account);
+    if (gameSettlement) {
+      return gameSettlement;
+    }
+
+    throw error;
+  }
 
   if (!hasSettlement) {
     return {
@@ -315,7 +343,18 @@ export async function readSettlementState(
     };
   }
 
-  const planet = await readFirstPlanet(provider, config.address, account);
+  let planet: PlanetSummary;
+
+  try {
+    planet = await readFirstPlanet(provider, config.address, account);
+  } catch (error) {
+    const gameSettlement = await readGameSettlement(provider, config.address, account);
+    if (gameSettlement?.kind === "settled") {
+      return gameSettlement;
+    }
+
+    throw error;
+  }
 
   return {
     kind: "settled",
@@ -608,6 +647,62 @@ async function readFirstPlanet(
   };
 }
 
+async function readGameSettlement(
+  provider: Eip1193Provider,
+  contractAddress: string,
+  account: string
+): Promise<SettlementState | undefined> {
+  try {
+    const homePlanetId = decodeUintResult(await provider.request<string>({
+      method: "eth_call",
+      params: [
+        {
+          to: contractAddress,
+          data: encodeAddressCall(READ_SELECTORS.homePlanetOf, account)
+        },
+        "latest"
+      ]
+    }));
+
+    if (homePlanetId === 0n) {
+      return {
+        kind: "not-settled"
+      };
+    }
+
+    const planet = await readGamePlanet(provider, contractAddress, homePlanetId);
+
+    return {
+      kind: "settled",
+      planet: planet ?? {
+        label: `Planet #${homePlanetId.toString()}`,
+        source: "chain"
+      }
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function readGamePlanet(
+  provider: Eip1193Provider,
+  contractAddress: string,
+  planetId: bigint
+): Promise<PlanetSummary | undefined> {
+  const result = await provider.request<string>({
+    method: "eth_call",
+    params: [
+      {
+        to: contractAddress,
+        data: encodeUintCall(READ_SELECTORS.planet, planetId)
+      },
+      "latest"
+    ]
+  });
+
+  return decodeGamePlanetWords(result);
+}
+
 export async function previewFirstPlanet(
   provider: Eip1193Provider,
   account: string,
@@ -629,6 +724,58 @@ export async function previewFirstPlanet(
   });
 
   return decodeFirstPlanetWords(result);
+}
+
+function decodeGamePlanetWords(hex: string): PlanetSummary | undefined {
+  const clean = hex.replace(/^0x/, "");
+
+  if (clean.length < 13 * 64 || /^0+$/.test(clean)) {
+    return undefined;
+  }
+
+  const words = clean.match(/.{1,64}/g) ?? [];
+  const galaxy = words[1] ? Number(decodeUintWord(words[1])) : undefined;
+  const system = words[2] ? Number(decodeUintWord(words[2])) : undefined;
+  const position = words[3] ? Number(decodeUintWord(words[3])) : undefined;
+  const fields = words[4] ? Number(decodeUintWord(words[4])) : undefined;
+  const temperature = words[5] ? Number(decodeSignedWord(words[5])) : undefined;
+  const lastSettledAt = words[9] ? decodeUintWord(words[9]) : undefined;
+  const metal = words[10] ? decodeUintWord(words[10]) : undefined;
+  const crystal = words[11] ? decodeUintWord(words[11]) : undefined;
+  const deuterium = words[12] ? decodeUintWord(words[12]) : undefined;
+
+  if (!Number.isFinite(galaxy) || !Number.isFinite(system) || !Number.isFinite(position)) {
+    return undefined;
+  }
+
+  const planet: PlanetSummary = {
+    label: `Planet ${galaxy}:${system}:${position}`,
+    coordinates: `${galaxy}:${system}:${position}`,
+    rarity: "Genesis settlement",
+    source: "chain"
+  };
+
+  if (lastSettledAt && lastSettledAt > 0n) {
+    planet.settledAt = new Date(Number(lastSettledAt) * 1_000).toISOString();
+  }
+
+  if (fields !== undefined && Number.isInteger(fields) && fields > 0 && fields <= 1_000) {
+    planet.fields = fields.toString();
+  }
+
+  if (temperature !== undefined && Number.isInteger(temperature) && temperature >= -200 && temperature <= 200) {
+    planet.temperature = temperature.toString();
+  }
+
+  if (metal !== undefined && crystal !== undefined && deuterium !== undefined) {
+    planet.resources = {
+      metal: metal.toString(),
+      crystal: crystal.toString(),
+      deuterium: deuterium.toString()
+    };
+  }
+
+  return planet;
 }
 
 function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
@@ -683,6 +830,24 @@ function decodeUintWord(word: string): bigint {
 
 function decodeSignedWord(word: string): bigint {
   return BigInt.asIntN(256, BigInt(`0x${word}`));
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+
+  return "Unexpected wallet request failure.";
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? (error as { code: unknown }).code
+    : undefined;
 }
 
 export async function fetchWalletSettlement(apiUrl: string, wallet: string): Promise<WalletSettlementResponse> {
