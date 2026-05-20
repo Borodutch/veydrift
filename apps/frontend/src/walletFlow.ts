@@ -21,6 +21,12 @@ export type OnChainResources = {
   deuterium: string;
 };
 
+export type OnChainEnergyBalance = {
+  produced: string;
+  required: string;
+  scaleBps: string;
+};
+
 export type PlanetSummary = {
   label: string;
   coordinates?: string;
@@ -61,6 +67,7 @@ export type QueueStateResponse = {
   targetLevel?: number;
   quantity?: number;
   readyAt: string | null;
+  startedAt?: string | null;
   cost: OnChainResources;
 };
 
@@ -112,6 +119,7 @@ export type ChainInfrastructureState = {
   unavailableReason?: string;
   resources: OnChainResources | null;
   productionPerHour: OnChainResources | null;
+  energyBalance: OnChainEnergyBalance | null;
   storageCaps: OnChainResources | null;
   buildings: Array<{
     id: number;

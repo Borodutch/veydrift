@@ -1,8 +1,12 @@
+import { Info, X } from "lucide-preact";
+import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import { buildingCatalog, buildingEffectMetrics, unmetBuildingRequirement } from "../playableMvp";
 import {
   buildingEnergyDetail,
+  buildingLevelInfoColumns,
+  buildingLevelInfoRows,
   buildingUpgradeStatus,
   formatBuildingRequirements,
   formatCost,
@@ -17,6 +21,12 @@ const shortResourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
   crystal: "Crystal",
   deuterium: "Deut.",
+};
+
+const fullResourceLabels: Record<keyof Resources, string> = {
+  metal: "Metal",
+  crystal: "Crystal",
+  deuterium: "Deuterium",
 };
 
 const loadedDetailImageKeys = new Set<BuildingKey>();
@@ -240,8 +250,10 @@ function BuildingDetailPanel({
   const energy = buildingEnergyDetail(state.buildings, building.key);
   const status = buildingUpgradeStatus(state, building.key, { actionUnavailableReason, chainCost });
   const effectRows = detailEffectRows(effect, energy);
+  const levelInfoRows = buildingLevelInfoRows(state.buildings, building.key, planetProductionProfile);
   const actionVerb = currentLevel === 0 ? "Build" : "Upgrade";
   const actionLabel = `${actionVerb} Level ${status.targetLevel}`;
+  const [isInfoOpen, setIsInfoOpen] = useState(false);
   const noticeClass = actionNotice?.tone === "error"
     ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
     : actionNotice?.tone === "success"
@@ -261,9 +273,18 @@ function BuildingDetailPanel({
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
               <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
-              <p className="mt-1 text-sm text-slate-400">
-                {currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
-              </p>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
+                <span>{currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}</span>
+                <button
+                  aria-label={`Open ${building.label} level table`}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-signal/40 hover:bg-signal/10 hover:text-signal"
+                  onClick={() => setIsInfoOpen(true)}
+                  title="Level table"
+                  type="button"
+                >
+                  <Info aria-hidden="true" size={15} strokeWidth={2.2} />
+                </button>
+              </div>
             </div>
             {currentLevel === 0 ? (
               <span className="rounded bg-white/5 px-2 py-1 text-xs font-semibold text-slate-400">
@@ -332,7 +353,158 @@ function BuildingDetailPanel({
       >
         {actionLabel}
       </button>
+
+      {isInfoOpen && (
+        <BuildingLevelInfoModal
+          buildingLabel={building.label}
+          currentLevel={currentLevel}
+          rows={levelInfoRows}
+          onClose={() => setIsInfoOpen(false)}
+        />
+      )}
     </aside>
+  );
+}
+
+function BuildingLevelInfoModal({
+  buildingLabel,
+  currentLevel,
+  onClose,
+  rows,
+}: {
+  buildingLabel: string;
+  currentLevel: number;
+  onClose: () => void;
+  rows: ReturnType<typeof buildingLevelInfoRows>;
+}) {
+  const columns = buildingLevelInfoColumns(rows);
+
+  return (
+    <div
+      aria-labelledby="building-level-info-title"
+      aria-modal="true"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
+      role="dialog"
+    >
+      <div className="max-h-[min(44rem,calc(100vh-1.5rem))] w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40">
+        <div className="flex min-w-0 items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div className="min-w-0">
+            <h3 id="building-level-info-title" className="break-words text-base font-semibold text-white">
+              {buildingLabel} levels
+            </h3>
+            <p className="mt-1 text-xs text-slate-400">
+              Current Level {currentLevel}
+            </p>
+          </div>
+          <button
+            aria-label="Close level table"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden="true" size={16} strokeWidth={2.2} />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(100vh-8rem)] overflow-auto">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+            <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
+              <tr>
+                <LevelInfoHeader className="min-w-28">Level</LevelInfoHeader>
+                <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
+                {columns.production && <LevelInfoHeader className="min-w-40">Production</LevelInfoHeader>}
+                {columns.storage && <LevelInfoHeader className="min-w-40">Storage</LevelInfoHeader>}
+                {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
+                {columns.energyRequired && <LevelInfoHeader className="min-w-36">Energy use</LevelInfoHeader>}
+                {columns.energyProduced && <LevelInfoHeader className="min-w-40">Energy output</LevelInfoHeader>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr
+                  className={`border-t border-white/10 ${
+                    row.current
+                      ? "bg-emerald-300/10"
+                      : row.next
+                        ? "bg-signal/10"
+                        : "odd:bg-white/[0.015]"
+                  }`}
+                  key={row.level}
+                >
+                  <LevelInfoCell>
+                    <span className="inline-flex items-center gap-2">
+                      <span className="font-semibold text-white">Level {row.level}</span>
+                      {row.current && <LevelPill tone="current">Current</LevelPill>}
+                      {row.next && <LevelPill tone="next">Next</LevelPill>}
+                    </span>
+                  </LevelInfoCell>
+                  <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
+                  {columns.production && (
+                    <LevelInfoCell>
+                      {row.production
+                        ? `${formatNumber(row.production.perHour)} ${fullResourceLabels[row.production.resource]}/h`
+                        : "N/A"}
+                    </LevelInfoCell>
+                  )}
+                  {columns.storage && (
+                    <LevelInfoCell>
+                      {row.storage
+                        ? `${formatNumber(row.storage.capacity)} ${fullResourceLabels[row.storage.resource]}`
+                        : "N/A"}
+                    </LevelInfoCell>
+                  )}
+                  {columns.effect && <LevelInfoCell>{row.effect ?? "N/A"}</LevelInfoCell>}
+                  {columns.energyRequired && (
+                    <LevelInfoCell>
+                      {row.energyRequired === undefined ? "N/A" : `${formatNumber(row.energyRequired)} required`}
+                    </LevelInfoCell>
+                  )}
+                  {columns.energyProduced && (
+                    <LevelInfoCell>
+                      {row.energyProduced === undefined ? "N/A" : `${formatNumber(row.energyProduced)} produced`}
+                    </LevelInfoCell>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LevelInfoHeader({
+  children,
+  className = "",
+}: {
+  children: ComponentChildren;
+  className?: string | undefined;
+}) {
+  return (
+    <th className={`border-b border-white/10 px-3 py-2 font-semibold ${className}`}>
+      {children}
+    </th>
+  );
+}
+
+function LevelInfoCell({ children }: { children: ComponentChildren }) {
+  return (
+    <td className="border-b border-white/10 px-3 py-2 align-top text-slate-200">
+      {children}
+    </td>
+  );
+}
+
+function LevelPill({ children, tone }: { children: string; tone: "current" | "next" }) {
+  const className = tone === "current"
+    ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-200"
+    : "border-signal/30 bg-signal/10 text-signal";
+
+  return (
+    <span className={`rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
+      {children}
+    </span>
   );
 }
 
@@ -483,11 +655,19 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Not built",
     });
   } else {
-    rows.push({
-      label: "Research speed",
-      next: `x${formatNumber(effect.nextFactor)}`,
-      value: `x${formatNumber(effect.currentFactor)}`,
-    });
+    const fasterPercent = effect.unlocked
+      ? Math.round(((effect.nextFactor / effect.currentFactor) - 1) * 100)
+      : 0;
+
+    const row = {
+      label: effect.unlocked ? "Research speed" : "Research capacity",
+      next: effect.nextUnlocked && !effect.unlocked
+        ? `Unlocks research (x${formatNumber(effect.nextFactor)})`
+        : `x${formatNumber(effect.nextFactor)}`,
+      value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Unavailable",
+    };
+
+    rows.push(fasterPercent > 0 ? { ...row, delta: `+${formatNumber(fasterPercent)}% faster` } : row);
   }
 
   if (energy.kind === "produces") {

@@ -3,6 +3,7 @@ import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { shortAddress } from "../walletFlow";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const BPS = 10_000;
 
 interface TopBarProps {
   resources?: Resources | undefined;
@@ -79,7 +80,11 @@ export function TopBar({
                 value={resources.deuterium}
               />
               {shouldShowTopBarEnergy(energy) && (
-                <EnergyPip produced={energy.produced} required={energy.required} />
+                <EnergyPip
+                  produced={energy.produced}
+                  required={energy.required}
+                  scaleBps={energy.scaleBps}
+                />
               )}
             </>
           )}
@@ -158,22 +163,31 @@ function ResourcePip({
 function EnergyPip({
   produced,
   required,
+  scaleBps,
 }: {
   produced: number;
   required: number;
+  scaleBps: number;
 }) {
   const current = produced - required;
   const tone = current < 0 ? "text-red-300" : "text-lime-300";
+  const showShortageFactor = current < 0 && required > 0 && scaleBps < BPS;
+  const productionPercent = Math.floor((scaleBps * 100) / BPS);
 
   return (
     <div
       className="inline-flex h-6 items-center justify-center whitespace-nowrap sm:justify-start"
-      title={`${format(produced)} produced / ${format(required)} required`}
+      title={showShortageFactor
+        ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%`
+        : `${format(produced)} produced / ${format(required)} required`}
     >
       <span className="inline-flex items-baseline gap-1.5">
         <span className={`text-xs font-semibold leading-none ${tone}`}>Energy</span>
         <span className={`text-xs leading-none ${current < 0 ? "text-red-200" : "text-white"}`}>{format(current)}</span>
         {required > 0 && <span className="text-[10px] leading-none text-slate-500">{format(produced)}/{format(required)}</span>}
+        {showShortageFactor && (
+          <span className="text-[10px] font-semibold leading-none text-red-200">{productionPercent}% output</span>
+        )}
       </span>
     </div>
   );

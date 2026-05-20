@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildingCosts,
+  energyBalanceFromChain,
   emptyContractState,
   infrastructurePlayableState,
 } from "../src/chainState";
@@ -19,6 +20,11 @@ const infrastructureState: ChainInfrastructureState = {
     metal: "30",
     crystal: "15",
     deuterium: "8",
+  },
+  energyBalance: {
+    produced: "60",
+    required: "100",
+    scaleBps: "6000",
   },
   storageCaps: {
     metal: "10000",
@@ -59,6 +65,11 @@ describe("contract state adapters", () => {
       metal: 240,
       crystal: 60,
       deuterium: 0,
+    });
+    expect(energyBalanceFromChain(infrastructureState.energyBalance)).toEqual({
+      produced: 60,
+      required: 100,
+      scaleBps: 6000,
     });
   });
 });

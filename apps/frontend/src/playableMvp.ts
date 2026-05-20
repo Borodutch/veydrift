@@ -192,6 +192,8 @@ export type BuildingEffectMetrics =
       kind: "researchSpeed";
       currentFactor: number;
       nextFactor: number;
+      unlocked: boolean;
+      nextUnlocked: boolean;
     };
 
 export const buildingCatalog: Array<{
@@ -979,6 +981,8 @@ export function buildingEffectMetrics(
     kind: "researchSpeed",
     currentFactor: buildings.researchLab + 1,
     nextFactor: nextBuildings.researchLab + 1,
+    unlocked: buildings.researchLab > 0,
+    nextUnlocked: nextBuildings.researchLab > 0,
   };
 }
 
@@ -1135,6 +1139,10 @@ export function progress(queue: QueueItem | undefined, now = Date.now()): number
 
   const total = queue.readyAt - queue.startedAt;
   const elapsed = now - queue.startedAt;
+  if (!Number.isFinite(total) || total <= 0) {
+    return now >= queue.readyAt ? 1 : 0;
+  }
+
   return Math.min(1, Math.max(0, elapsed / total));
 }
 
