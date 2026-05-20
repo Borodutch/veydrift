@@ -80,6 +80,9 @@ VEYDRIFT_CHAIN_ID=84532
 VEYDRIFT_CONTRACT_ADDRESS=0x...
 VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=0x...
 VEYDRIFT_GAME_CONTRACT_ADDRESS=0x...
+VEYDRIFT_METAL_TOKEN_ADDRESS=0x...
+VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
+VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
 VEYDRIFT_INDEX_FROM_BLOCK=0
 ALCHEMY_BASE_SEPOLIA_API_KEY=...
 ```
@@ -92,6 +95,9 @@ Shipyard transactions.
 `VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS` is the compact first-planet settlement
 contract used for settlement/universe context and must not be used as the game
 contract.
+`VEYDRIFT_METAL_TOKEN_ADDRESS`, `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`, and
+`VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
+proxies deployed for the game.
 Health/debug responses only report safe configuration metadata and never echo
 RPC URLs or API keys. Ownership remains canonical onchain; the in-memory index
 can be rebuilt from settlement events with `POST /index/rebuild`.
@@ -116,6 +122,18 @@ forge fmt --check
 forge build
 forge test
 ```
+
+Resource ERC-20 deployment for an already deployed game contract:
+
+```sh
+PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin VEYDRIFT_GAME_CONTRACT_ADDRESS=0xGame \
+  forge script script/DeployResourceTokens.s.sol:DeployResourceTokens \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
+```
+
+The token deploy script emits and returns the Metal, Crystal, and Deuterium
+proxy addresses. Configure those addresses as backend/runtime environment
+variables after deployment.
 
 ### Circuits
 
@@ -216,6 +234,9 @@ VEYDRIFT_CHAIN_ID=84532
 VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
 VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia compact settlement address>
 VEYDRIFT_GAME_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
+VEYDRIFT_METAL_TOKEN_ADDRESS=<Base Sepolia VeydriftMetal ERC-20 proxy address>
+VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=<Base Sepolia VeydriftCrystal ERC-20 proxy address>
+VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=<Base Sepolia VeydriftDeuterium ERC-20 proxy address>
 VEYDRIFT_NETWORK_NAME=Base Sepolia
 VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
 VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql
