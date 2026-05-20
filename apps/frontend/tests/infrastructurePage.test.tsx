@@ -134,18 +134,36 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
-  test("omits energy rows for buildings with no direct energy effect", () => {
+  test("shows Robotics Factory as an OGame construction-time divisor", () => {
     const state = createInitialPlayableState(1_000);
     const effect = buildingEffectMetrics(state.buildings, "roboticsFactory");
     const rows = detailEffectRows(effect, buildingEnergyDetail(state.buildings, "roboticsFactory"));
 
     expect(rows).toContainEqual({
-      label: "Construction speed",
+      delta: "+100% faster than current",
+      label: "Construction time divisor",
       next: "x2",
       value: "x1",
     });
     expect(rows.some((row) => row.label === "Energy")).toBe(false);
     expect(rows.some((row) => row.label === "Energy required")).toBe(false);
+  });
+
+  test("shows Robotics Factory level 1 to 2 as a 2x to 3x divisor upgrade", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      roboticsFactory: 1,
+    };
+    const effect = buildingEffectMetrics(buildings, "roboticsFactory");
+    const rows = detailEffectRows(effect, buildingEnergyDetail(buildings, "roboticsFactory"));
+
+    expect(rows).toContainEqual({
+      delta: "+50% faster than current",
+      label: "Construction time divisor",
+      next: "x3",
+      value: "x2",
+    });
   });
 
   test("shows Research Lab 1 as unlocking research with a 2x denominator", () => {
