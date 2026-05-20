@@ -1135,6 +1135,10 @@ export function progress(queue: QueueItem | undefined, now = Date.now()): number
 
   const total = queue.readyAt - queue.startedAt;
   const elapsed = now - queue.startedAt;
+  if (!Number.isFinite(total) || total <= 0) {
+    return now >= queue.readyAt ? 1 : 0;
+  }
+
   return Math.min(1, Math.max(0, elapsed / total));
 }
 

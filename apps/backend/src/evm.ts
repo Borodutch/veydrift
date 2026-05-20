@@ -43,6 +43,7 @@ export type QueueState = {
   targetLevel?: number;
   quantity?: number;
   readyAt: string | null;
+  startedAt?: string | null;
   cost: Resources;
 };
 
@@ -152,6 +153,10 @@ type RpcLog = {
   data: string;
 };
 
+type RpcBlock = {
+  timestamp: string;
+};
+
 export class HttpJsonRpcTransport {
   constructor(private readonly rpcUrl: string) {}
 
@@ -190,6 +195,7 @@ export class VeydriftGameReader implements ChainReader {
   private readonly transport: Pick<HttpJsonRpcTransport, "request">;
   private readonly gameContractAddress: Address;
   private readonly chainId: number;
+  private readonly indexFromBlock: bigint;
   private readonly settlementContractAddress: Address | undefined;
 
   constructor(config: BackendConfig, transport?: Pick<HttpJsonRpcTransport, "request">) {
@@ -203,6 +209,7 @@ export class VeydriftGameReader implements ChainReader {
     this.transport = transport ?? new HttpJsonRpcTransport(config.rpcUrl);
     this.gameContractAddress = config.gameContractAddress;
     this.chainId = config.chainId;
+    this.indexFromBlock = config.indexFromBlock;
     this.settlementContractAddress = config.settlementContractAddress;
   }
 
@@ -550,7 +557,7 @@ export class VeydriftGameReader implements ChainReader {
   private async readPlanetQueue(selector: string, planetId: bigint, kind: "building" | "defense" | "ship"): Promise<QueueState> {
     const words = splitWords(await this.call(selector, [encodeUint(planetId)]));
     const active = decodeBoolWord(wordAt(words, 0));
-    return {
+    const queue: QueueState = {
       active,
       kind: active ? kind : null,
       ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
@@ -560,6 +567,47 @@ export class VeydriftGameReader implements ChainReader {
       readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
       cost: decodeResources(words.slice(4, 7))
     };
+
+    if (kind === "building" && active) {
+      queue.startedAt = await this.readBuildingStartedAt(planetId, queue);
+    }
+
+    return queue;
+  }
+
+  private async readBuildingStartedAt(planetId: bigint, queue: QueueState): Promise<string | null> {
+    if (!queue.active || queue.itemId === undefined || queue.targetLevel === undefined || !queue.readyAt) {
+      return null;
+    }
+
+    try {
+      const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+        {
+          address: this.gameContractAddress,
+          fromBlock: toQuantity(this.indexFromBlock),
+          toBlock: "latest",
+          topics: [
+            buildingStartedTopic,
+            toTopic(planetId),
+            toTopic(BigInt(queue.itemId))
+          ]
+        }
+      ]);
+      const matchingLog = logs
+        .slice()
+        .reverse()
+        .find((log) => isMatchingBuildingStartedLog(log, queue));
+      if (!matchingLog) return null;
+
+      const block = await this.transport.request<RpcBlock>("eth_getBlockByNumber", [
+        matchingLog.blockNumber,
+        false
+      ]);
+      return decodeUint(block.timestamp).toString();
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
   }
 
   private async readResearchQueue(wallet: Address): Promise<QueueState> {
@@ -759,6 +807,7 @@ const shipCount = 16;
 const technologyCount = 16;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
+const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 
 export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
@@ -796,6 +845,19 @@ function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
   };
 }
 
+function isMatchingBuildingStartedLog(log: RpcLog, queue: QueueState): boolean {
+  try {
+    const words = splitWords(log.data);
+    return Number(decodeUintWord(wordAt(words, 0))) === queue.targetLevel
+      && decodeUintWord(wordAt(words, 1)).toString() === queue.readyAt
+      && decodeUintWord(wordAt(words, 2)).toString() === queue.cost.metal
+      && decodeUintWord(wordAt(words, 3)).toString() === queue.cost.crystal
+      && decodeUintWord(wordAt(words, 4)).toString() === queue.cost.deuterium;
+  } catch {
+    return false;
+  }
+}
+
 function encodeAddress(address: Address): string {
   assertAddress(address);
   return address.slice(2).toLowerCase().padStart(64, "0");
@@ -807,6 +869,10 @@ function encodeUint(value: bigint): string {
 
 function toQuantity(value: bigint): string {
   return `0x${value.toString(16)}`;
+}
+
+function toTopic(value: bigint): string {
+  return `0x${encodeUint(value)}`;
 }
 
 function splitWords(hex: string): string[] {

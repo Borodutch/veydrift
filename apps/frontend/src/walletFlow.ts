@@ -67,6 +67,7 @@ export type QueueStateResponse = {
   targetLevel?: number;
   quantity?: number;
   readyAt: string | null;
+  startedAt?: string | null;
   cost: OnChainResources;
 };
 

@@ -656,6 +656,86 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("hydrates active building queues with the BuildingStarted block timestamp", async () => {
+    const startedAt = 1_700_000_000n;
+    const readyAt = 1_700_000_600n;
+    const reader = new VeydriftGameReader(configuredTestConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_getLogs") {
+          const [filter] = params as [{ fromBlock: string }];
+          expect(filter.fromBlock).toBe("0x64");
+          return [
+            {
+              blockNumber: "0x2a",
+              transactionHash: "0xabc",
+              topics: [],
+              data: abiWords(1n, readyAt, 48n, 24n, 0n)
+            }
+          ] as T;
+        }
+
+        if (method === "eth_getBlockByNumber") {
+          return { timestamp: `0x${startedAt.toString(16)}` } as T;
+        }
+
+        const [call] = params as [{ data: string; to: string }];
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x0ff79fa5")) {
+          return abiWords(7n) as T;
+        }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x181c1bc4")) {
+          return abiWords(
+            BigInt(player),
+            2n,
+            44n,
+            9n,
+            211n,
+            1n,
+            9_788n,
+            10_233n,
+            10_584n,
+            1_700_000_000n,
+            5_000n,
+            4_900n,
+            4_800n
+          ) as T;
+        }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0xb8e835ab")) {
+          return abiWords(1n, 1n, 1n, readyAt, 48n, 24n, 0n) as T;
+        }
+        if (
+          call.to === configuredTestConfig.gameContractAddress
+          && (
+            call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0xb6f4b7b7")
+            || call.data.startsWith("0x2b98afc7")
+          )
+        ) {
+          return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        }
+
+        throw new Error(`Unexpected ${method} ${call.to} ${call.data.slice(0, 10)}`);
+      }
+    });
+
+    await expect(reader.getPlayerQueues(player)).resolves.toMatchObject({
+      wallet: player,
+      homePlanetId: "7",
+      building: {
+        active: true,
+        kind: "building",
+        itemId: 1,
+        targetLevel: 1,
+        readyAt: readyAt.toString(),
+        startedAt: startedAt.toString(),
+        cost: {
+          metal: "48",
+          crystal: "24",
+          deuterium: "0"
+        }
+      }
+    });
+  });
+
   test("rebuilds the cache and marks occupied system coordinates", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
