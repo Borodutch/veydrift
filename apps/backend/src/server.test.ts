@@ -490,7 +490,7 @@ describe("Veydrift backend", () => {
       chain: {
         hasRpcUrl: true,
         rpcSource: "alchemy-key",
-        resourceTokenAddressesConfigured: false,
+        resourceTokenAddressesConfigured: true,
         settlementContractConfigured: true,
         gameContractConfigured: true
       }
