@@ -1,5 +1,5 @@
 [phases.install]
-cmds = ["NODE_ENV=development bun install --frozen-lockfile && rm -rf /root/.cache/nix"]
+cmds = ["NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix"]
 
 [phases.build]
 cmds = ["cd apps/frontend && bun run build && rm -rf /root/.bun/install/cache /tmp/*"]

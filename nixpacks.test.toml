@@ -1,5 +1,5 @@
 [phases.install]
-cmds = ["NODE_ENV=development bun install --frozen-lockfile && rm -rf /root/.cache/nix"]
+cmds = ["NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix"]
 
 [phases.build]
 cmds = ["cd apps/frontend && node scripts/generate-image-variants.mjs && ../../node_modules/.bin/vite build --mode settlement && rm -rf /root/.bun/install/cache /tmp/*"]
