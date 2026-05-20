@@ -57,7 +57,28 @@ export async function waitForFinishedBuildingState(
     }
   }
 
-  return latest ?? load();
+  throw new Error(finishedBuildingTimeoutMessage(latest, expectation));
+}
+
+function finishedBuildingTimeoutMessage(
+  snapshot: FinishedBuildingSnapshot | undefined,
+  expectation: FinishedBuildingExpectation,
+): string {
+  const queueActive = Boolean(snapshot?.queues.building?.active || snapshot?.infrastructure.queue?.active);
+  const buildingLevel = expectation.itemId === undefined
+    ? undefined
+    : snapshot?.infrastructure.buildings.find((building) => building.id === expectation.itemId)?.level;
+  const target = expectation.targetLevel === undefined ? "the completed level" : `Level ${expectation.targetLevel}`;
+
+  if (queueActive) {
+    return "Building transaction confirmed, but the completed building queue is still syncing. Try refreshing the game state in a few seconds.";
+  }
+
+  if (buildingLevel !== undefined && expectation.targetLevel !== undefined && buildingLevel < expectation.targetLevel) {
+    return `Building transaction confirmed, but the API still shows Level ${buildingLevel} instead of ${target}. Try refreshing the game state in a few seconds.`;
+  }
+
+  return "Building transaction confirmed, but the completed building state is still syncing. Try refreshing the game state in a few seconds.";
 }
 
 function defaultDelay(ms: number): Promise<void> {
