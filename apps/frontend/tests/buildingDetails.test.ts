@@ -123,7 +123,7 @@ describe("building detail helpers", () => {
 
     expect(buildingUpgradeStatus(queued, "solarPlant")).toMatchObject({
       disabled: true,
-      reason: "Building queue occupied by Metal Mine",
+      reason: "Another building is currently upgrading: Metal Mine Level 1",
     });
     expect(buildingEnergyDetail({ ...queued.buildings, metalMine: 2 }, "metalMine")).toEqual({
       kind: "requires",
@@ -136,6 +136,37 @@ describe("building detail helpers", () => {
       current: 30,
       next: 60,
       delta: 30,
+    });
+  });
+
+  test("names the active building instead of the selected inactive detail", () => {
+    const queued = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+        roboticsFactory: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 2,
+      },
+    };
+
+    expect(buildingUpgradeStatus(queued, "researchLab")).toMatchObject({
+      disabled: true,
+      reason: "Another building is currently upgrading: Metal Mine Level 2",
+      targetLevel: 1,
+    });
+    expect(buildingUpgradeStatus(queued, "metalMine")).toMatchObject({
+      disabled: true,
+      reason: "Metal Mine Level 2 upgrade in progress",
+      targetLevel: 2,
     });
   });
 });

@@ -29,7 +29,6 @@ import {
   type ResearchKey,
   type ShipKey,
 } from "./playableMvp";
-import { formatDuration } from "./buildingDetails";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   buildingQueueItemForDisplay,
@@ -208,11 +207,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const isBuildingReadyToFinish = useMemo(() => {
     if (!onChainQueues?.building?.active || !onChainQueues.building.readyAt) return false;
     return Number(onChainQueues.building.readyAt) * 1_000 <= now;
-  }, [onChainQueues?.building, now]);
-
-  const buildingQueueRemainingSeconds = useMemo(() => {
-    if (!onChainQueues?.building?.active || !onChainQueues.building.readyAt) return 0;
-    return Math.max(0, Math.ceil((Number(onChainQueues.building.readyAt) * 1_000 - now) / 1_000));
   }, [onChainQueues?.building, now]);
 
   const refreshInfrastructureState = useCallback(async () => {
@@ -461,9 +455,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     return {
       ...settledState,
+      queue: buildingQueue,
       resources: onChainResources,
     };
-  }, [isWalletConnected, onChainResources, settledState]);
+  }, [buildingQueue, isWalletConnected, onChainResources, settledState]);
   const chainBuildingCosts = useMemo(() => buildingCosts(infrastructureChainState), [infrastructureChainState]);
   const infrastructureUnavailableReason = useMemo(() => {
     if (!isWalletConnected) return "Connect a wallet to load your infrastructure.";
@@ -480,28 +475,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
     }
     if (!infrastructureChainState) return "Infrastructure state unavailable.";
-    if (onChainQueues?.building?.active) {
-      const target = onChainQueues.building.targetLevel
-        ? ` to Level ${onChainQueues.building.targetLevel}`
-        : "";
-      if (isBuildingReadyToFinish) {
-        return `Building upgrade${target} is ready to finish!`;
-      }
-      const remaining = buildingQueueRemainingSeconds;
-      const timeStr = remaining > 0 ? ` Ready in ${formatDuration(remaining)}.` : "";
-      return `Building upgrade${target} already in progress.${timeStr}`;
-    }
     return undefined;
   }, [
     buildingAction,
-    buildingQueueRemainingSeconds,
     gameContract,
     infrastructureChainState,
     infrastructureError,
     infrastructureLoading,
-    isBuildingReadyToFinish,
     isWalletConnected,
-    onChainQueues?.building,
     onChainResources,
     onChainSettlement?.homePlanetId,
     onChainStatus,
