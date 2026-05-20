@@ -94,6 +94,11 @@ class MockChainReader implements ChainReader {
         crystal: "15",
         deuterium: "8"
       },
+      energyBalance: {
+        produced: "60",
+        required: "100",
+        scaleBps: "6000"
+      },
       storageCaps: {
         metal: "10000",
         crystal: "10000",
@@ -490,6 +495,11 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
     expect(body.wallet).toBe(player);
     expect(body.resources.metal).toBe("5000");
+    expect(body.energyBalance).toEqual({
+      produced: "60",
+      required: "100",
+      scaleBps: "6000"
+    });
     expect(body.buildings).toContainEqual({
       id: 0,
       level: 1,

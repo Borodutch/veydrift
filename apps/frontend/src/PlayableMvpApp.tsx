@@ -34,6 +34,7 @@ import { gameContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "
 import {
   buildingQueueItemForDisplay,
   buildingCosts,
+  energyBalanceFromChain,
   infrastructurePlayableState,
 } from "./chainState";
 import {
@@ -513,7 +514,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return undefined;
     }
 
-    return energyBalance(settledState.buildings);
+    return energyBalanceFromChain(infrastructureChainState.energyBalance)
+      ?? energyBalance(settledState.buildings);
   }, [
     infrastructureChainState,
     infrastructureError,

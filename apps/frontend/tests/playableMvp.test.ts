@@ -62,6 +62,7 @@ describe("playable MVP contract display helpers", () => {
       infrastructureAvailable: true,
       resources: { metal: "5100", crystal: "5000", deuterium: "4900" },
       productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
+      energyBalance: { produced: "60", required: "10", scaleBps: "10000" },
       storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
       buildings: [
         { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
