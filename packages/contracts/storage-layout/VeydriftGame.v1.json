@@ -43,94 +43,64 @@
       "type": "mapping(uint256 => mapping(enum Building => uint16))"
     },
     {
-      "label": "_defenseCounts",
-      "offset": 0,
-      "slot": "7",
-      "type": "mapping(uint256 => mapping(enum Defense => uint32))"
-    },
-    {
-      "label": "_shipCounts",
-      "offset": 0,
-      "slot": "8",
-      "type": "mapping(uint256 => mapping(enum Ship => uint32))"
-    },
-    {
-      "label": "_technologyLevels",
-      "offset": 0,
-      "slot": "9",
-      "type": "mapping(address => mapping(enum Technology => uint16))"
-    },
-    {
       "label": "buildingConstructions",
       "offset": 0,
-      "slot": "10",
+      "slot": "7",
       "type": "mapping(uint256 => struct BuildingConstruction)"
     },
     {
       "label": "defenseQueues",
       "offset": 0,
-      "slot": "11",
+      "slot": "8",
       "type": "mapping(uint256 => struct DefenseQueue)"
     },
     {
       "label": "shipQueues",
       "offset": 0,
-      "slot": "12",
+      "slot": "9",
       "type": "mapping(uint256 => struct ShipQueue)"
     },
     {
       "label": "researchQueues",
       "offset": 0,
-      "slot": "13",
+      "slot": "10",
       "type": "mapping(address => struct ResearchQueue)"
     },
     {
       "label": "nextFleetId",
       "offset": 0,
-      "slot": "14",
+      "slot": "11",
       "type": "uint256"
     },
     {
       "label": "planetCountOf",
       "offset": 0,
-      "slot": "15",
+      "slot": "12",
       "type": "mapping(address => uint256)"
-    },
-    {
-      "label": "_fleets",
-      "offset": 0,
-      "slot": "16",
-      "type": "mapping(uint256 => struct Fleet)"
     },
     {
       "label": "_resourceTokens",
       "offset": 0,
-      "slot": "17",
+      "slot": "13",
       "type": "mapping(enum Resource => contract IERC20ReserveToken)"
     },
     {
       "label": "_totalInternalResources",
       "offset": 0,
-      "slot": "18",
+      "slot": "14",
       "type": "Resources"
     },
     {
       "label": "_lockedWithdrawalResources",
       "offset": 0,
-      "slot": "20",
+      "slot": "16",
       "type": "Resources"
     },
     {
       "label": "resourceWithdrawals",
       "offset": 0,
-      "slot": "22",
+      "slot": "18",
       "type": "mapping(address => mapping(enum Resource => struct ResourceWithdrawal))"
-    },
-    {
-      "label": "_bridgeReentrancyStatus",
-      "offset": 0,
-      "slot": "23",
-      "type": "uint256"
     }
   ],
   "structs": {
@@ -196,80 +166,6 @@
         "offset": 0,
         "slot": "1",
         "type": "Resources"
-      }
-    ],
-    "Fleet": [
-      {
-        "label": "active",
-        "offset": 0,
-        "slot": "0",
-        "type": "bool"
-      },
-      {
-        "label": "returning",
-        "offset": 1,
-        "slot": "0",
-        "type": "bool"
-      },
-      {
-        "label": "owner",
-        "offset": 2,
-        "slot": "0",
-        "type": "address"
-      },
-      {
-        "label": "originPlanetId",
-        "offset": 0,
-        "slot": "1",
-        "type": "uint256"
-      },
-      {
-        "label": "destinationPlanetId",
-        "offset": 0,
-        "slot": "2",
-        "type": "uint256"
-      },
-      {
-        "label": "dispatchedAt",
-        "offset": 0,
-        "slot": "3",
-        "type": "uint64"
-      },
-      {
-        "label": "arrivesAt",
-        "offset": 8,
-        "slot": "3",
-        "type": "uint64"
-      },
-      {
-        "label": "fuelCost",
-        "offset": 16,
-        "slot": "3",
-        "type": "uint128"
-      },
-      {
-        "label": "cargo",
-        "offset": 0,
-        "slot": "4",
-        "type": "Resources"
-      },
-      {
-        "label": "smallCargo",
-        "offset": 0,
-        "slot": "6",
-        "type": "uint32"
-      },
-      {
-        "label": "recycler",
-        "offset": 4,
-        "slot": "6",
-        "type": "uint32"
-      },
-      {
-        "label": "colonyShip",
-        "offset": 8,
-        "slot": "6",
-        "type": "uint32"
       }
     ],
     "Planet": [
