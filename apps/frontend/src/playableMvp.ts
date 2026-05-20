@@ -192,6 +192,8 @@ export type BuildingEffectMetrics =
       kind: "researchSpeed";
       currentFactor: number;
       nextFactor: number;
+      unlocked: boolean;
+      nextUnlocked: boolean;
     };
 
 export const buildingCatalog: Array<{
@@ -979,6 +981,8 @@ export function buildingEffectMetrics(
     kind: "researchSpeed",
     currentFactor: buildings.researchLab + 1,
     nextFactor: nextBuildings.researchLab + 1,
+    unlocked: buildings.researchLab > 0,
+    nextUnlocked: nextBuildings.researchLab > 0,
   };
 }
 

@@ -655,11 +655,19 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Not built",
     });
   } else {
-    rows.push({
-      label: "Research speed",
-      next: `x${formatNumber(effect.nextFactor)}`,
-      value: `x${formatNumber(effect.currentFactor)}`,
-    });
+    const fasterPercent = effect.unlocked
+      ? Math.round(((effect.nextFactor / effect.currentFactor) - 1) * 100)
+      : 0;
+
+    const row = {
+      label: effect.unlocked ? "Research speed" : "Research capacity",
+      next: effect.nextUnlocked && !effect.unlocked
+        ? `Unlocks research (x${formatNumber(effect.nextFactor)})`
+        : `x${formatNumber(effect.nextFactor)}`,
+      value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Unavailable",
+    };
+
+    rows.push(fasterPercent > 0 ? { ...row, delta: `+${formatNumber(fasterPercent)}% faster` } : row);
   }
 
   if (energy.kind === "produces") {
