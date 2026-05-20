@@ -16,6 +16,7 @@ import {
   sendSettlementTransaction,
   settlementContractConfigured,
   waitForReceipt,
+  walletRequestErrorMessage,
   type Eip1193Provider,
   type SettlementConfig
 } from "./walletFlow";
@@ -208,9 +209,10 @@ export function FirstPlanetSettlementApp() {
         });
       }
     } catch (error) {
+      console.error("Wallet settlement state read failed", error);
       setPlanet({
         kind: "error",
-        message: errorMessage(error)
+        message: walletRequestErrorMessage(error)
       });
     }
   }
@@ -236,7 +238,7 @@ export function FirstPlanetSettlementApp() {
       });
       setPlanet({
         kind: isUserRejected(error) ? "rejected" : "error",
-        message: isUserRejected(error) ? "Wallet connection was rejected." : errorMessage(error)
+        message: isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error)
       });
     }
   }
@@ -256,7 +258,7 @@ export function FirstPlanetSettlementApp() {
     } catch (error) {
       setPlanet({
         kind: isUserRejected(error) ? "rejected" : "error",
-        message: isUserRejected(error) ? "Network switch was rejected." : errorMessage(error)
+        message: isUserRejected(error) ? "Network switch was rejected." : walletRequestErrorMessage(error)
       });
     }
   }
@@ -287,7 +289,7 @@ export function FirstPlanetSettlementApp() {
     } catch (error) {
       setPlanet({
         kind: isUserRejected(error) ? "rejected" : "error",
-        message: isUserRejected(error) ? "Settlement transaction was rejected." : errorMessage(error)
+        message: isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error)
       });
     }
   }
@@ -511,18 +513,6 @@ function PrimaryButton({
       {children}
     </button>
   );
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "object" && error !== null && "message" in error) {
-    return String((error as { message: unknown }).message);
-  }
-
-  return "Unexpected wallet request failure.";
 }
 
 function buildSettlementConfig(): SettlementConfig {
