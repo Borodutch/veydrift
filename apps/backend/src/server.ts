@@ -32,6 +32,11 @@ type RuntimeConfig = {
   gameContractAddress: string | null;
   graphqlUrl: string;
   network: string;
+  resourceTokenAddresses: {
+    crystal: string | null;
+    deuterium: string | null;
+    metal: string | null;
+  };
   rpcProvider: "alchemy" | "unknown";
 };
 
@@ -389,6 +394,11 @@ function getRuntimeConfig(): RuntimeConfig {
     process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS ??
     process.env.VEYDRIFT_CONTRACT_ADDRESS ??
     null;
+  const resourceTokenAddresses = {
+    crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
+    deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,
+    metal: process.env.VEYDRIFT_METAL_TOKEN_ADDRESS ?? null
+  };
 
   return {
     apiUrl,
@@ -397,6 +407,7 @@ function getRuntimeConfig(): RuntimeConfig {
     gameContractAddress,
     graphqlUrl,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
+    resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
   };
 }

@@ -78,6 +78,11 @@ Resources:
   when no ships are ready.
 - Production depends on mine levels, planet multipliers, and available solar energy.
 - Storage caps are enforced when resources are settled.
+- `VeydriftMetal`, `VeydriftCrystal`, and `VeydriftDeuterium` are UUPS ERC-20
+  resource token proxies with 6 decimals. Each mints an initial
+  `10,000,000,000 * 10^6` base-unit supply to the deployed `VeydriftGame`
+  contract or explicit game resource vault. The token owner can mint additional
+  supply, and ERC-20 transfers remain standard for future market integrations.
 
 Production:
 
@@ -212,6 +217,24 @@ Deploy the test game contract to Base Sepolia:
 ```bash
 PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
+```
+
+`Deploy.s.sol` deploys the game plus Metal, Crystal, and Deuterium ERC-20 proxy
+contracts and emits the proxy addresses. To attach resource tokens to an already
+deployed game contract, run:
+
+```bash
+PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin VEYDRIFT_GAME_CONTRACT_ADDRESS=0xGame \
+  forge script script/DeployResourceTokens.s.sol:DeployResourceTokens \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
+```
+
+After deployment, set the backend/runtime config values:
+
+```text
+VEYDRIFT_METAL_TOKEN_ADDRESS=<VeydriftMetal proxy>
+VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=<VeydriftCrystal proxy>
+VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=<VeydriftDeuterium proxy>
 ```
 
 Deploy the compact first-planet settlement contract to Base Sepolia:

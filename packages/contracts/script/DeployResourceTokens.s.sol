@@ -3,15 +3,14 @@ pragma solidity ^0.8.28;
 
 import {Script} from "forge-std/Script.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftCrystal, VeydriftDeuterium, VeydriftMetal} from "../src/VeydriftResourceToken.sol";
 
-contract Deploy is Script {
+contract DeployResourceTokens is Script {
     event ResourceTokenProxyDeployed(
         string resource, address indexed proxy, address indexed implementation
     );
 
-    event VeydriftDeployment(
+    event VeydriftResourceTokensDeployed(
         address indexed game,
         address indexed metalToken,
         address indexed crystalToken,
@@ -20,23 +19,17 @@ contract Deploy is Script {
 
     function run()
         external
-        returns (
-            address gameAddress,
-            address metalToken,
-            address crystalToken,
-            address deuteriumToken
-        )
+        returns (address metalToken, address crystalToken, address deuteriumToken)
     {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         address admin = vm.envOr("ADMIN_ADDRESS", vm.addr(privateKey));
+        address gameAddress = vm.envAddress("VEYDRIFT_GAME_CONTRACT_ADDRESS");
 
         vm.startBroadcast(privateKey);
-        VeydriftGame game = new VeydriftGame(admin);
-        gameAddress = address(game);
         metalToken = _deployMetal(admin, gameAddress);
         crystalToken = _deployCrystal(admin, gameAddress);
         deuteriumToken = _deployDeuterium(admin, gameAddress);
-        emit VeydriftDeployment(gameAddress, metalToken, crystalToken, deuteriumToken);
+        emit VeydriftResourceTokensDeployed(gameAddress, metalToken, crystalToken, deuteriumToken);
         vm.stopBroadcast();
     }
 
