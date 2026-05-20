@@ -237,6 +237,14 @@ contracts, wires them into the game as reserve tokens, and emits the proxy
 addresses. Because the setup call is owner-only, `ADMIN_ADDRESS` must match the
 `PRIVATE_KEY` broadcaster for this script.
 
+The Base Sepolia testnet game keeps the deployable first-playable surface under
+the EIP-170 runtime size limit. First-planet settlement, resource collection,
+building upgrades, ship/defense production, research, and ERC-20 reserve
+configuration are enabled. Colony creation, fleet transport, and Rift bridge
+market deposit/withdrawal entrypoints intentionally revert with
+`TestnetFeatureDisabled` until those advanced systems are split into separate
+deployable modules.
+
 To attach resource tokens to an already deployed game contract, run:
 
 ```bash

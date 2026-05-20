@@ -2,8 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
@@ -17,7 +15,6 @@ interface IERC20ReserveToken {
 /// @notice Playable Veydrift MVP: one home planet, lazy resources, production, units, and research.
 /// @dev MVP simplifications: no colonies, fleet movement, combat, espionage reports, markets, or NFTs.
 contract VeydriftGame {
-    using SafeERC20 for IERC20;
     using SafeCast for int256;
     using SafeCast for uint256;
 
@@ -191,6 +188,7 @@ contract VeydriftGame {
     error ResourceTokenUnset(Resource resource);
     error ResourceTransferFailed(Resource resource, address token, uint256 amount);
     error InsufficientResourceReserve(Resource resource, uint256 required, uint256 available);
+    error TestnetFeatureDisabled();
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -683,17 +681,24 @@ contract VeydriftGame {
 
     function createColonyAtNextSlot(uint256 originPlanetId, uint256 salt)
         external
-        returns (uint256 colonyPlanetId)
+        pure
+        returns (uint256)
     {
-        (uint16 galaxy, uint16 system, uint8 position) = nextColonyCoordinates(msg.sender, salt);
-        colonyPlanetId = _createColony(originPlanetId, galaxy, system, position);
+        originPlanetId;
+        salt;
+        revert TestnetFeatureDisabled();
     }
 
     function createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
         external
-        returns (uint256 colonyPlanetId)
+        pure
+        returns (uint256)
     {
-        colonyPlanetId = _createColony(originPlanetId, galaxy, system, position);
+        originPlanetId;
+        galaxy;
+        system;
+        position;
+        revert TestnetFeatureDisabled();
     }
 
     function dispatchTransport(
@@ -703,185 +708,49 @@ contract VeydriftGame {
         uint32 recycler,
         uint32 colonyShip,
         Resources calldata cargo
-    ) external returns (uint256 fleetId) {
-        _requirePlanetOwner(originPlanetId);
-        _requirePlanetOwner(destinationPlanetId);
-        if (originPlanetId == destinationPlanetId) {
-            revert SamePlanet();
-        }
-        if (smallCargo == 0 && recycler == 0 && colonyShip == 0) {
-            revert InvalidQuantity();
-        }
-
-        settlePlanet(originPlanetId);
-        settlePlanet(destinationPlanetId);
-
-        uint128 fuelCost = _debitTransportDeparture(
-            originPlanetId, destinationPlanetId, smallCargo, recycler, colonyShip, cargo
-        );
-        _spend(
-            originPlanetId,
-            Resources({
-                metal: cargo.metal,
-                crystal: cargo.crystal,
-                deuterium: _toUint128(uint256(cargo.deuterium) + uint256(fuelCost))
-            })
-        );
-        _increaseInternalResources(cargo);
-
-        uint64 currentTime = _currentTimestamp();
-        uint256 travelSeconds = transportTravelSeconds(originPlanetId, destinationPlanetId);
-        uint64 arrivesAt = (uint256(currentTime) + travelSeconds).toUint64();
-        fleetId = nextFleetId++;
-        Fleet memory launched = Fleet({
-            active: true,
-            returning: false,
-            owner: msg.sender,
-            originPlanetId: originPlanetId,
-            destinationPlanetId: destinationPlanetId,
-            dispatchedAt: currentTime,
-            arrivesAt: arrivesAt,
-            fuelCost: fuelCost,
-            cargo: cargo,
-            smallCargo: smallCargo,
-            recycler: recycler,
-            colonyShip: colonyShip
-        });
-        _fleets[fleetId] = launched;
-
-        _emitFleetDispatched(fleetId, launched);
+    ) external pure returns (uint256) {
+        originPlanetId;
+        destinationPlanetId;
+        smallCargo;
+        recycler;
+        colonyShip;
+        cargo;
+        revert TestnetFeatureDisabled();
     }
 
-    function recallFleet(uint256 fleetId) external {
-        Fleet storage fleetRef = _fleets[fleetId];
-        _requireActiveFleetOwner(fleetRef);
-        if (fleetRef.returning) {
-            revert FleetAlreadyReturning();
-        }
-        uint64 currentTime = _currentTimestamp();
-        if (currentTime >= fleetRef.arrivesAt) {
-            revert FleetAlreadyArrived();
-        }
-
-        uint256 elapsed = uint256(currentTime) - fleetRef.dispatchedAt;
-        if (elapsed < MIN_QUEUE_SECONDS) {
-            elapsed = MIN_QUEUE_SECONDS;
-        }
-        fleetRef.returning = true;
-        fleetRef.dispatchedAt = currentTime;
-        fleetRef.arrivesAt = (uint256(currentTime) + elapsed).toUint64();
-
-        emit FleetRecalled(
-            fleetId,
-            msg.sender,
-            fleetRef.originPlanetId,
-            fleetRef.destinationPlanetId,
-            fleetRef.arrivesAt
-        );
+    function recallFleet(uint256 fleetId) external pure {
+        fleetId;
+        revert TestnetFeatureDisabled();
     }
 
-    function settleFleetArrival(uint256 fleetId) external {
-        Fleet storage fleetRef = _fleets[fleetId];
-        _requireActiveFleetOwner(fleetRef);
-        if (_currentTimestamp() < fleetRef.arrivesAt) {
-            revert FleetNotArrived(fleetRef.arrivesAt);
-        }
-
-        uint256 arrivalPlanetId =
-            fleetRef.returning ? fleetRef.originPlanetId : fleetRef.destinationPlanetId;
-        settlePlanet(arrivalPlanetId);
-
-        Resources memory beforeResources = _planets[arrivalPlanetId].resources;
-        Resources memory nextResources =
-            _addWithCaps(arrivalPlanetId, beforeResources, fleetRef.cargo);
-        Resources memory arrivedCargo = _subtract(nextResources, beforeResources);
-        Resources memory lostCargo = _subtract(fleetRef.cargo, arrivedCargo);
-        _decreaseInternalResources(lostCargo);
-        _planets[arrivalPlanetId].resources = nextResources;
-        _shipCounts[arrivalPlanetId][Ship.SmallCargo] += fleetRef.smallCargo;
-        _shipCounts[arrivalPlanetId][Ship.Recycler] += fleetRef.recycler;
-        _shipCounts[arrivalPlanetId][Ship.ColonyShip] += fleetRef.colonyShip;
-
-        fleetRef.active = false;
-
-        emit FleetArrived(fleetId, msg.sender, arrivalPlanetId, fleetRef.returning);
-        emit ResourcesTransferred(
-            fleetId,
-            fleetRef.originPlanetId,
-            arrivalPlanetId,
-            fleetRef.cargo.metal,
-            fleetRef.cargo.crystal,
-            fleetRef.cargo.deuterium
-        );
+    function settleFleetArrival(uint256 fleetId) external pure {
+        fleetId;
+        revert TestnetFeatureDisabled();
     }
 
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount)
         external
-        nonReentrantBridge
+        pure
     {
-        _requirePlanetOwner(planetId);
-        _requireRiftStabilizer(planetId);
-        if (amount == 0) {
-            revert InvalidQuantity();
-        }
-        IERC20 token = _marketResourceToken(resource);
-
-        settlePlanet(planetId);
-        token.safeTransferFrom(msg.sender, address(this), amount);
-        _creditResource(planetId, resource, amount);
-
-        emit MarketResourceDeposited(msg.sender, planetId, resource, amount);
+        planetId;
+        resource;
+        amount;
+        revert TestnetFeatureDisabled();
     }
 
     function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
         external
-        nonReentrantBridge
+        pure
     {
-        _requirePlanetOwner(planetId);
-        _requireRiftStabilizer(planetId);
-        if (amount == 0) {
-            revert InvalidQuantity();
-        }
-        _marketResourceToken(resource);
-        ResourceWithdrawal storage withdrawal = resourceWithdrawals[msg.sender][resource];
-        if (withdrawal.active) {
-            revert WithdrawalActive(resource);
-        }
-
-        settlePlanet(planetId);
-        _debitResource(planetId, resource, amount);
-        Resources memory lockedAmount = _resourceAmount(resource, amount);
-        _lockedWithdrawalResources = _add(_lockedWithdrawalResources, lockedAmount);
-        uint64 unlocksAt = (uint256(_currentTimestamp()) + MARKET_WITHDRAWAL_DELAY).toUint64();
-        resourceWithdrawals[msg.sender][resource] = ResourceWithdrawal({
-            active: true,
-            planetId: planetId,
-            resource: resource,
-            amount: amount,
-            unlocksAt: unlocksAt
-        });
-
-        emit MarketResourceWithdrawalRequested(msg.sender, planetId, resource, amount, unlocksAt);
+        planetId;
+        resource;
+        amount;
+        revert TestnetFeatureDisabled();
     }
 
-    function finishMarketResourceWithdrawal(Resource resource) external nonReentrantBridge {
-        ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
-        if (!withdrawal.active) {
-            revert WithdrawalInactive(resource);
-        }
-        if (_currentTimestamp() < withdrawal.unlocksAt) {
-            revert WithdrawalNotReady(withdrawal.unlocksAt);
-        }
-        IERC20 token = _marketResourceToken(resource);
-
-        delete resourceWithdrawals[msg.sender][resource];
-        _lockedWithdrawalResources =
-            _subtract(_lockedWithdrawalResources, _resourceAmount(resource, withdrawal.amount));
-        token.safeTransfer(msg.sender, withdrawal.amount);
-
-        emit MarketResourceWithdrawalFinished(
-            msg.sender, withdrawal.planetId, resource, withdrawal.amount
-        );
+    function finishMarketResourceWithdrawal(Resource resource) external pure {
+        resource;
+        revert TestnetFeatureDisabled();
     }
 
     function planet(uint256 planetId) external view returns (Planet memory) {
@@ -1023,17 +892,12 @@ contract VeydriftGame {
 
     function transportTravelSeconds(uint256 originPlanetId, uint256 destinationPlanetId)
         public
-        view
+        pure
         returns (uint256)
     {
-        Planet storage origin = _planets[originPlanetId];
-        Planet storage destination = _planets[destinationPlanetId];
-        if (origin.owner == address(0) || destination.owner == address(0)) {
-            revert NoPlanet();
-        }
-        uint256 driveLevel = _technologyLevels[origin.owner][Technology.CombustionDrive];
-        return MIN_FLEET_TRAVEL_SECONDS + (_coordinateDistance(origin, destination) * 60)
-            / (driveLevel + 1);
+        originPlanetId;
+        destinationPlanetId;
+        revert TestnetFeatureDisabled();
     }
 
     function transportFuelCost(
@@ -1042,23 +906,13 @@ contract VeydriftGame {
         uint32 smallCargo,
         uint32 recycler,
         uint32 colonyShip
-    ) public view returns (uint128) {
-        Planet storage origin = _planets[originPlanetId];
-        Planet storage destination = _planets[destinationPlanetId];
-        if (origin.owner == address(0) || destination.owner == address(0)) {
-            revert NoPlanet();
-        }
-        uint256 ships = uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
-        if (ships == 0) {
-            return 0;
-        }
-        uint256 consumption =
-            uint256(smallCargo) * 10 + uint256(recycler) * 50 + uint256(colonyShip) * 100;
-        uint256 cost = (consumption * _coordinateDistance(origin, destination)) / 1_000;
-        if (cost < ships) {
-            cost = ships;
-        }
-        return _toUint128(cost);
+    ) public pure returns (uint128) {
+        originPlanetId;
+        destinationPlanetId;
+        smallCargo;
+        recycler;
+        colonyShip;
+        revert TestnetFeatureDisabled();
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
@@ -1500,12 +1354,6 @@ contract VeydriftGame {
         }
     }
 
-    function _requireRiftStabilizer(uint256 planetId) private view {
-        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] == 0) {
-            revert RiftStabilizerRequired(planetId);
-        }
-    }
-
     function _requireMarketResource(Resource resource) private pure {
         if (
             resource != Resource.Metal && resource != Resource.Crystal
@@ -1513,60 +1361,6 @@ contract VeydriftGame {
         ) {
             revert InvalidResource(resource);
         }
-    }
-
-    function _marketResourceToken(Resource resource) private view returns (IERC20) {
-        _requireMarketResource(resource);
-        address token = address(_resourceTokens[resource]);
-        if (token == address(0)) {
-            revert ResourceTokenNotConfigured(resource);
-        }
-        return IERC20(token);
-    }
-
-    function _creditResource(uint256 planetId, Resource resource, uint128 amount) private {
-        Resources memory increase = _resourceAmount(resource, amount);
-        Resources storage resources = _planets[planetId].resources;
-        if (resource == Resource.Metal) {
-            resources.metal = _toUint128(uint256(resources.metal) + amount);
-        } else if (resource == Resource.Crystal) {
-            resources.crystal = _toUint128(uint256(resources.crystal) + amount);
-        } else if (resource == Resource.Deuterium) {
-            resources.deuterium = _toUint128(uint256(resources.deuterium) + amount);
-        } else {
-            revert InvalidResource(resource);
-        }
-        _increaseInternalResources(increase);
-    }
-
-    function _debitResource(uint256 planetId, Resource resource, uint128 amount) private {
-        Resources memory decrease = _resourceAmount(resource, amount);
-        Resources storage resources = _planets[planetId].resources;
-        if (resource == Resource.Metal) {
-            if (resources.metal < amount) {
-                revert InsufficientResources(
-                    resources.metal, resources.crystal, resources.deuterium
-                );
-            }
-            resources.metal -= amount;
-        } else if (resource == Resource.Crystal) {
-            if (resources.crystal < amount) {
-                revert InsufficientResources(
-                    resources.metal, resources.crystal, resources.deuterium
-                );
-            }
-            resources.crystal -= amount;
-        } else if (resource == Resource.Deuterium) {
-            if (resources.deuterium < amount) {
-                revert InsufficientResources(
-                    resources.metal, resources.crystal, resources.deuterium
-                );
-            }
-            resources.deuterium -= amount;
-        } else {
-            revert InvalidResource(resource);
-        }
-        _decreaseInternalResources(decrease);
     }
 
     function _validateCoordinates(uint16 galaxy, uint16 system, uint8 position) private pure {
@@ -1830,23 +1624,6 @@ contract VeydriftGame {
 
     function _decreaseInternalResources(Resources memory amount) private {
         _totalInternalResources = _subtract(_totalInternalResources, amount);
-    }
-
-    function _resourceAmount(Resource resource, uint128 amount)
-        private
-        pure
-        returns (Resources memory)
-    {
-        if (resource == Resource.Metal) {
-            return Resources({metal: amount, crystal: 0, deuterium: 0});
-        }
-        if (resource == Resource.Crystal) {
-            return Resources({metal: 0, crystal: amount, deuterium: 0});
-        }
-        if (resource == Resource.Deuterium) {
-            return Resources({metal: 0, crystal: 0, deuterium: amount});
-        }
-        revert InvalidResource(resource);
     }
 
     function _cappedResourceIncrease(

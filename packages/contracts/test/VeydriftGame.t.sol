@@ -694,316 +694,52 @@ contract VeydriftGameTest is Test {
         game.startPlanet{value: 0.05 ether}();
     }
 
-    function testColonyCreationConsumesColonyShipAndReservesCoordinates() public {
-        uint256 originPlanetId = _prepareColonizer(player);
+    function testColoniesAreDisabledForDeployableTestnetGame() public {
+        uint256 originPlanetId = _startPlanet(player);
         (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(player, 42);
 
         vm.prank(player);
-        uint256 colonyPlanetId = game.createColony(originPlanetId, galaxy, system, position);
-
-        VeydriftGame.Planet memory colony = game.planet(colonyPlanetId);
-        assertEq(colony.owner, player);
-        assertEq(colony.galaxy, galaxy);
-        assertEq(colony.system, system);
-        assertEq(colony.position, position);
-        _assertOGameSlotTemperature(colony.position, colony.temperature);
-        assertEq(colony.resources.metal, 500);
-        assertEq(colony.resources.crystal, 500);
-        assertEq(colony.resources.deuterium, 0);
-        assertEq(game.planetCountOf(player), 2);
-        assertEq(game.maxPlanets(player), 2);
-        assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 0);
-        assertFalse(game.isCoordinateAvailable(galaxy, system, position));
-    }
-
-    function testColonyCreationRejectsOccupiedCoordinatesAndPlanetLimit() public {
-        uint256 originPlanetId = _prepareColonizer(player);
-        VeydriftGame.Planet memory home = game.planet(originPlanetId);
-
-        vm.prank(player);
-        vm.expectRevert(VeydriftGame.CoordinatesOccupied.selector);
-        game.createColony(originPlanetId, home.galaxy, home.system, home.position);
-
-        (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(player, 7);
-        vm.prank(player);
-        game.createColony(originPlanetId, galaxy, system, position);
-
-        (galaxy, system, position) = game.nextColonyCoordinates(player, 8);
-        vm.prank(player);
-        vm.expectRevert(abi.encodeWithSelector(VeydriftGame.PlanetLimitReached.selector, 2));
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
         game.createColony(originPlanetId, galaxy, system, position);
     }
 
-    function testTransportDispatchCapacityFuelTimingAndArrivalSettlement() public {
-        (uint256 originPlanetId, uint256 colonyPlanetId) = _prepareTransportRoute(player);
+    function testFleetActionsAreDisabledForDeployableTestnetGame() public {
         VeydriftGame.Resources memory cargo =
-            VeydriftGame.Resources({metal: 1_000, crystal: 500, deuterium: 100});
-        uint128 fuelCost = game.transportFuelCost(originPlanetId, colonyPlanetId, 1, 0, 0);
-        uint256 travelSeconds = game.transportTravelSeconds(originPlanetId, colonyPlanetId);
-        VeydriftGame.Planet memory originBefore = game.planet(originPlanetId);
-        uint256 dispatchedAt = block.timestamp;
+            VeydriftGame.Resources({metal: 1, crystal: 0, deuterium: 0});
 
-        vm.prank(player);
-        uint256 fleetId = game.dispatchTransport(originPlanetId, colonyPlanetId, 1, 0, 0, cargo);
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
+        game.transportFuelCost(1, 2, 1, 0, 0);
 
-        VeydriftGame.Fleet memory fleet = game.fleet(fleetId);
-        assertTrue(fleet.active);
-        assertEq(fleet.owner, player);
-        assertEq(fleet.arrivesAt, dispatchedAt + travelSeconds);
-        assertEq(fleet.fuelCost, fuelCost);
-        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
-        VeydriftGame.Planet memory originAfter = game.planet(originPlanetId);
-        assertEq(originAfter.resources.metal, originBefore.resources.metal - cargo.metal);
-        assertEq(originAfter.resources.crystal, originBefore.resources.crystal - cargo.crystal);
-        assertEq(
-            originAfter.resources.deuterium,
-            originBefore.resources.deuterium - cargo.deuterium - fuelCost
-        );
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
+        game.transportTravelSeconds(1, 2);
 
-        vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGame.FleetNotArrived.selector, fleet.arrivesAt)
-        );
-        game.settleFleetArrival(fleetId);
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
+        game.dispatchTransport(1, 2, 1, 0, 0, cargo);
 
-        vm.warp(fleet.arrivesAt);
-        vm.prank(player);
-        game.settleFleetArrival(fleetId);
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
+        game.recallFleet(1);
 
-        VeydriftGame.Fleet memory settledFleet = game.fleet(fleetId);
-        assertFalse(settledFleet.active);
-        assertEq(game.shipCount(colonyPlanetId, Ship.SmallCargo), 1);
-        VeydriftGame.Planet memory colony = game.planet(colonyPlanetId);
-        assertGe(colony.resources.metal, 1_500);
-        assertGe(colony.resources.crystal, 1_000);
-        assertGe(colony.resources.deuterium, 100);
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
+        game.settleFleetArrival(1);
     }
 
-    function testTransportCargoRemainsReserveBackedWhileInFlight() public {
-        (uint256 originPlanetId, uint256 colonyPlanetId) = _prepareTransportRoute(player);
-        VeydriftGame.Resources memory cargo =
-            VeydriftGame.Resources({metal: 700, crystal: 300, deuterium: 0});
-        uint128 fuelCost = game.transportFuelCost(originPlanetId, colonyPlanetId, 1, 0, 0);
-        VeydriftGame.Resources memory claimsBefore = game.totalInternalResources();
-
-        vm.prank(player);
-        uint256 fleetId = game.dispatchTransport(originPlanetId, colonyPlanetId, 1, 0, 0, cargo);
-
-        VeydriftGame.Resources memory claimsInFlight = game.totalInternalResources();
-        assertEq(claimsInFlight.metal, claimsBefore.metal);
-        assertEq(claimsInFlight.crystal, claimsBefore.crystal);
-        assertEq(claimsInFlight.deuterium, claimsBefore.deuterium - fuelCost);
-
-        VeydriftGame.Fleet memory fleet = game.fleet(fleetId);
-        vm.warp(fleet.arrivesAt);
-        vm.prank(player);
-        game.settleFleetArrival(fleetId);
-
-        VeydriftGame.Resources memory claimsAfterArrival = game.totalInternalResources();
-        assertEq(claimsAfterArrival.metal, claimsInFlight.metal);
-        assertEq(claimsAfterArrival.crystal, claimsInFlight.crystal);
-        assertEq(claimsAfterArrival.deuterium, claimsInFlight.deuterium);
-    }
-
-    function testTransportRejectsOverCapacityAndCanRecall() public {
-        (uint256 originPlanetId, uint256 colonyPlanetId) = _prepareTransportRoute(player);
-        VeydriftGame.Resources memory tooMuchCargo =
-            VeydriftGame.Resources({metal: 5_001, crystal: 0, deuterium: 0});
-
-        vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGame.CargoCapacityExceeded.selector, 5_000, 5_001)
-        );
-        game.dispatchTransport(originPlanetId, colonyPlanetId, 1, 0, 0, tooMuchCargo);
-
-        VeydriftGame.Resources memory cargo =
-            VeydriftGame.Resources({metal: 700, crystal: 300, deuterium: 0});
-        vm.prank(player);
-        uint256 fleetId = game.dispatchTransport(originPlanetId, colonyPlanetId, 1, 0, 0, cargo);
-
-        vm.warp(block.timestamp + 90 seconds);
-        vm.prank(player);
-        game.recallFleet(fleetId);
-        VeydriftGame.Fleet memory recalled = game.fleet(fleetId);
-        assertTrue(recalled.returning);
-
-        vm.prank(player);
-        vm.expectRevert(VeydriftGame.FleetAlreadyReturning.selector);
-        game.recallFleet(fleetId);
-
-        vm.warp(recalled.arrivesAt);
-        vm.prank(player);
-        game.settleFleetArrival(fleetId);
-
-        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
-        VeydriftGame.Planet memory origin = game.planet(originPlanetId);
-        assertGe(origin.resources.metal, cargo.metal);
-        assertGe(origin.resources.crystal, cargo.crystal);
-    }
-
-    function testMarketResourceDepositRequiresConfiguredTokenAndStabilizer() public {
+    function testRiftBridgeIsDisabledForDeployableTestnetGame() public {
         uint256 planetId = _startPlanet(player);
-        metalToken.mint(player, 1_000);
-        vm.prank(player);
-        metalToken.approve(address(game), 1_000);
 
-        vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGame.RiftStabilizerRequired.selector, planetId)
-        );
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
         game.depositMarketResource(planetId, Resource.Metal, 1_000);
+
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
+        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, 1_000);
+
+        vm.expectRevert(VeydriftGame.TestnetFeatureDisabled.selector);
+        game.finishMarketResourceWithdrawal(Resource.Metal);
 
         vm.prank(admin);
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftGame.InvalidResource.selector, Resource.Energy)
         );
         game.setResourceToken(Resource.Energy, address(metalToken));
-    }
-
-    function testMarketResourceDepositCreditsSpendableUnlockedBalance() public {
-        uint256 planetId = _prepareMarketBridgePlanet(player);
-        VeydriftGame.Planet memory beforePlanet = game.planet(planetId);
-        uint256 reserveBefore = metalToken.balanceOf(address(game));
-        metalToken.mint(player, 20_000);
-
-        vm.startPrank(player);
-        metalToken.approve(address(game), 20_000);
-        game.depositMarketResource(planetId, Resource.Metal, 20_000);
-        vm.stopPrank();
-
-        VeydriftGame.Planet memory afterDeposit = game.planet(planetId);
-        assertEq(afterDeposit.resources.metal, beforePlanet.resources.metal + 20_000);
-        assertEq(metalToken.balanceOf(address(game)), reserveBefore + 20_000);
-
-        vm.prank(player);
-        game.startBuildingUpgrade(planetId, Building.MetalStorage);
-        assertTrue(game.activeBuildingConstruction(planetId).active);
-    }
-
-    function testMarketResourceWithdrawalLocksBalanceAndFinishesAfterDelay() public {
-        uint256 planetId = _prepareMarketBridgePlanet(player);
-        uint256 reserveBefore = crystalToken.balanceOf(address(game));
-        crystalToken.mint(player, 5_000);
-
-        vm.startPrank(player);
-        crystalToken.approve(address(game), 5_000);
-        game.depositMarketResource(planetId, Resource.Crystal, 5_000);
-        VeydriftGame.Planet memory beforeWithdrawal = game.planet(planetId);
-        game.requestMarketResourceWithdrawal(planetId, Resource.Crystal, 5_000);
-        vm.stopPrank();
-
-        (
-            bool withdrawalActive,
-            uint256 withdrawalPlanetId,
-            Resource withdrawalResource,
-            uint128 withdrawalAmount,
-            uint64 withdrawalUnlocksAt
-        ) = game.resourceWithdrawals(player, Resource.Crystal);
-        assertTrue(withdrawalActive);
-        assertEq(withdrawalPlanetId, planetId);
-        assertEq(uint8(withdrawalResource), uint8(Resource.Crystal));
-        assertEq(withdrawalAmount, 5_000);
-        assertEq(withdrawalUnlocksAt, block.timestamp + game.MARKET_WITHDRAWAL_DELAY());
-
-        VeydriftGame.Planet memory afterRequest = game.planet(planetId);
-        assertEq(afterRequest.resources.crystal, beforeWithdrawal.resources.crystal - 5_000);
-        VeydriftGame.Resources memory locked = game.lockedWithdrawalResources();
-        assertEq(locked.crystal, 5_000);
-
-        vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGame.WithdrawalNotReady.selector, withdrawalUnlocksAt)
-        );
-        game.finishMarketResourceWithdrawal(Resource.Crystal);
-
-        vm.warp(withdrawalUnlocksAt);
-        vm.prank(player);
-        game.finishMarketResourceWithdrawal(Resource.Crystal);
-
-        assertEq(crystalToken.balanceOf(player), 5_000);
-        assertEq(crystalToken.balanceOf(address(game)), reserveBefore);
-        VeydriftGame.Resources memory lockedAfterFinish = game.lockedWithdrawalResources();
-        assertEq(lockedAfterFinish.crystal, 0);
-        (bool finishedActive,,,,) = game.resourceWithdrawals(player, Resource.Crystal);
-        assertFalse(finishedActive);
-
-        vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGame.WithdrawalInactive.selector, Resource.Crystal)
-        );
-        game.finishMarketResourceWithdrawal(Resource.Crystal);
-    }
-
-    function testMarketResourceWithdrawalLockedBalanceCannotBeSpent() public {
-        uint256 planetId = _prepareMarketBridgePlanet(player);
-        VeydriftGame.Planet memory beforeDeposit = game.planet(planetId);
-        uint128 depositAmount = 20_000;
-        uint128 withdrawalAmount =
-            uint128(uint256(beforeDeposit.resources.metal) + depositAmount - 500);
-        metalToken.mint(player, depositAmount);
-
-        vm.startPrank(player);
-        metalToken.approve(address(game), depositAmount);
-        game.depositMarketResource(planetId, Resource.Metal, depositAmount);
-        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, withdrawalAmount);
-        vm.expectRevert();
-        game.startBuildingUpgrade(planetId, Building.MetalStorage);
-        vm.stopPrank();
-
-        VeydriftGame.Planet memory afterRequest = game.planet(planetId);
-        assertEq(afterRequest.resources.metal, 500);
-    }
-
-    function testMarketResourceWithdrawalsTrackMultipleResourcesIndependently() public {
-        uint256 planetId = _prepareMarketBridgePlanet(player);
-        metalToken.mint(player, 1_000);
-        deuteriumToken.mint(player, 700);
-
-        vm.startPrank(player);
-        metalToken.approve(address(game), 1_000);
-        deuteriumToken.approve(address(game), 700);
-        game.depositMarketResource(planetId, Resource.Metal, 1_000);
-        game.depositMarketResource(planetId, Resource.Deuterium, 700);
-        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, 600);
-        game.requestMarketResourceWithdrawal(planetId, Resource.Deuterium, 300);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGame.WithdrawalActive.selector, Resource.Metal)
-        );
-        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, 1);
-        vm.stopPrank();
-
-        (,,, uint128 metalWithdrawalAmount,) = game.resourceWithdrawals(player, Resource.Metal);
-        (,,, uint128 deuteriumWithdrawalAmount,) =
-            game.resourceWithdrawals(player, Resource.Deuterium);
-        assertEq(metalWithdrawalAmount, 600);
-        assertEq(deuteriumWithdrawalAmount, 300);
-    }
-
-    function testMarketResourceDepositReentrancyDoesNotDoubleCredit() public {
-        uint256 planetId = _prepareMarketBridgePlanet(player);
-        MockResourceToken maliciousToken = new MockResourceToken();
-        maliciousToken.mint(address(game), RESERVE_FUNDING);
-        vm.prank(admin);
-        game.setResourceToken(Resource.Metal, address(maliciousToken));
-        maliciousToken.mint(player, 1_000);
-        uint256 reserveBefore = maliciousToken.balanceOf(address(game));
-        VeydriftGame.Planet memory beforeDeposit = game.planet(planetId);
-
-        maliciousToken.setReentry(
-            address(game),
-            abi.encodeWithSelector(
-                game.depositMarketResource.selector, planetId, Resource.Metal, uint128(50)
-            )
-        );
-
-        vm.startPrank(player);
-        maliciousToken.approve(address(game), 1_000);
-        game.depositMarketResource(planetId, Resource.Metal, 100);
-        vm.stopPrank();
-
-        VeydriftGame.Planet memory afterDeposit = game.planet(planetId);
-        assertEq(afterDeposit.resources.metal, beforeDeposit.resources.metal + 100);
-        assertEq(maliciousToken.balanceOf(address(game)), reserveBefore + 100);
     }
 
     function _startPlanet(address account) internal returns (uint256 planetId) {
