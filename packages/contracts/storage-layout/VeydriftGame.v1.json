@@ -119,6 +119,18 @@
       "offset": 0,
       "slot": "20",
       "type": "Resources"
+    },
+    {
+      "label": "resourceWithdrawals",
+      "offset": 0,
+      "slot": "22",
+      "type": "mapping(address => mapping(enum Resource => struct ResourceWithdrawal))"
+    },
+    {
+      "label": "_bridgeReentrancyStatus",
+      "offset": 0,
+      "slot": "23",
+      "type": "uint256"
     }
   ],
   "structs": {
@@ -358,6 +370,38 @@
         "offset": 0,
         "slot": "1",
         "type": "Resources"
+      }
+    ],
+    "ResourceWithdrawal": [
+      {
+        "label": "active",
+        "offset": 0,
+        "slot": "0",
+        "type": "bool"
+      },
+      {
+        "label": "planetId",
+        "offset": 0,
+        "slot": "1",
+        "type": "uint256"
+      },
+      {
+        "label": "resource",
+        "offset": 0,
+        "slot": "2",
+        "type": "enum Resource"
+      },
+      {
+        "label": "amount",
+        "offset": 1,
+        "slot": "2",
+        "type": "uint128"
+      },
+      {
+        "label": "unlocksAt",
+        "offset": 17,
+        "slot": "2",
+        "type": "uint64"
       }
     ],
     "Resources": [

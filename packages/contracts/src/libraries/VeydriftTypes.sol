@@ -16,7 +16,8 @@ enum Building {
     NaniteFactory,
     Terraformer,
     AllianceDepot,
-    MissileSilo
+    MissileSilo,
+    InterdimensionalRiftStabilizer
 }
 
 enum Defense {
