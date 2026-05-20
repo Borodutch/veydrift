@@ -3,6 +3,7 @@ import {
   BASE_SEPOLIA,
   decodeBoolResult,
   decodeUintResult,
+  encodeQuantity,
   encodeAddressUintCall,
   encodeAddressCall,
   encodeGameCall,
@@ -14,6 +15,7 @@ import {
   isBaseSepoliaChain,
   isUserRejected,
   parseRiftTokenAmount,
+  readSettlementFundingState,
   readSettlementState,
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
@@ -75,6 +77,7 @@ describe("walletFlow", () => {
         + "0000000000000000000000000000000000000000000000000000000000000000"
         + "0000000000000000000000000000000000000000000000000000000000000003"
     );
+    expect(encodeQuantity(50_000_000_000_000_000n)).toBe("0xb1a2bc2ec50000");
     expect(settlementTransactionData()).toBe("0x59268393");
   });
 
@@ -343,6 +346,57 @@ describe("walletFlow", () => {
     });
   });
 
+  test("surfaces legacy settlement when game homePlanetOf is empty", async () => {
+    const legacy = "0x3333333333333333333333333333333333333333";
+    const provider = mockProvider(async ({ method, params }) => {
+      if (method !== "eth_call") {
+        throw new Error(`Unexpected ${method}`);
+      }
+
+      const call = params?.[0] as { data: string; to: string };
+
+      if (call.to === contract && call.data.startsWith("0x1d750846")) {
+        throw { code: -32603, message: "Internal JSON-RPC error." };
+      }
+
+      if (call.to === contract && call.data.startsWith("0x0ff79fa5")) {
+        return word(0n);
+      }
+
+      if (call.to === legacy && call.data.startsWith("0x1d750846")) {
+        return word(1n);
+      }
+
+      if (call.to === legacy && call.data.startsWith("0x29147f24")) {
+        return [
+          word(2n),
+          word(88n),
+          word(14n),
+          word(206n),
+          word(BigInt.asUintN(256, -18n)),
+          word(1_800_000_000n),
+          word(123_456n)
+        ].join("");
+      }
+
+      throw new Error(`Unexpected call ${call.to} ${call.data}`);
+    });
+
+    await expect(readSettlementState(provider, account, { address: contract, legacyAddress: legacy })).resolves.toEqual({
+      kind: "legacy-settled",
+      planet: {
+        coordinates: "2:88:14",
+        fields: "206",
+        label: "Planet 2:88:14",
+        rarity: "Genesis settlement",
+        settledBlock: "123456",
+        settledAt: "2027-01-15T08:00:00.000Z",
+        source: "chain",
+        temperature: "-18",
+      }
+    });
+  });
+
   test("formats raw JSON-RPC provider errors into an actionable wallet message", () => {
     expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
       "wallet could not read the current game contract state"
@@ -360,10 +414,12 @@ describe("walletFlow", () => {
     });
   });
 
-  test("submits a VeydriftSettlement settleFirstPlanet transaction", async () => {
+  test("submits a value-bearing VeydriftGame startPlanet transaction when startPrice is available", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
+      if (method === "eth_call") return word(50_000_000_000_000_000n);
+      if (method === "eth_getBalance") return word(60_000_000_000_000_000n);
       return "0xabc";
     });
 
@@ -375,16 +431,112 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       {
+        method: "eth_call",
+        params: [
+          {
+            to: contract,
+            data: "0xf1a9af89"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_getBalance",
+        params: [
+          account,
+          "latest"
+        ]
+      },
+      {
         method: "eth_sendTransaction",
         params: [
           {
             from: account,
             to: contract,
-            data: "0x59268393"
+            data: "0xf45f1f18",
+            value: "0xb1a2bc2ec50000"
           }
         ]
       }
     ]);
+  });
+
+  test("blocks first planet transactions when the game start price exceeds wallet balance", async () => {
+    const provider = mockProvider(async ({ method }) => {
+      if (method === "eth_call") return word(50_000_000_000_000_000n);
+      if (method === "eth_getBalance") return word(31_000_000_000_000_000n);
+      throw new Error(`Unexpected ${method}`);
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, {
+        address: contract
+      })
+    ).rejects.toThrow("costs 0.05 ETH");
+  });
+
+  test("reports settlement funding from game startPrice and native balance", async () => {
+    const provider = mockProvider(async ({ method }) => {
+      if (method === "eth_call") return word(50_000_000_000_000_000n);
+      if (method === "eth_getBalance") return word(31_000_000_000_000_000n);
+      throw new Error(`Unexpected ${method}`);
+    });
+
+    await expect(readSettlementFundingState(provider, account, { address: contract })).resolves.toEqual({
+      affordable: false,
+      balanceWei: 31_000_000_000_000_000n,
+      contractKind: "game",
+      startPriceWei: 50_000_000_000_000_000n
+    });
+  });
+
+  test("blocks game settlement while resource token reserves are not configured", async () => {
+    const provider = mockProvider(async ({ method }) => {
+      if (method === "eth_call") return word(50_000_000_000_000_000n);
+      throw new Error(`Unexpected ${method}`);
+    });
+
+    await expect(
+      readSettlementFundingState(provider, account, {
+        address: contract,
+        resourceTokensConfigured: false
+      })
+    ).resolves.toEqual({
+      affordable: false,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: 50_000_000_000_000_000n,
+      unavailableReason: "Resource token reserves are not configured for this game deployment yet."
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, {
+        address: contract,
+        resourceTokensConfigured: false
+      })
+    ).rejects.toThrow("Resource token reserves are not configured");
+  });
+
+  test("falls back to legacy settleFirstPlanet when startPrice is unavailable", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") throw { code: -32603, message: "execution reverted" };
+      return "0xabc";
+    });
+
+    await expect(sendSettlementTransaction(provider, account, { address: contract })).resolves.toBe("0xabc");
+
+    expect(requests.at(-1)).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: "0x59268393"
+        }
+      ]
+    });
   });
 
   test("submits VeydriftGame building and shipyard transactions", async () => {
