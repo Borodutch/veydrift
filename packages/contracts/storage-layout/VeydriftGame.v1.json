@@ -103,21 +103,33 @@
       "type": "mapping(uint256 => struct Fleet)"
     },
     {
-      "label": "resourceTokenOf",
+      "label": "_resourceTokens",
       "offset": 0,
       "slot": "17",
-      "type": "mapping(enum Resource => address)"
+      "type": "mapping(enum Resource => contract IERC20ReserveToken)"
+    },
+    {
+      "label": "_totalInternalResources",
+      "offset": 0,
+      "slot": "18",
+      "type": "Resources"
+    },
+    {
+      "label": "_lockedWithdrawalResources",
+      "offset": 0,
+      "slot": "20",
+      "type": "Resources"
     },
     {
       "label": "resourceWithdrawals",
       "offset": 0,
-      "slot": "18",
+      "slot": "22",
       "type": "mapping(address => mapping(enum Resource => struct ResourceWithdrawal))"
     },
     {
       "label": "_bridgeReentrancyStatus",
       "offset": 0,
-      "slot": "19",
+      "slot": "23",
       "type": "uint256"
     }
   ],

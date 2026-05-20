@@ -29,6 +29,7 @@ contract Deploy is Script {
     {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         address admin = vm.envOr("ADMIN_ADDRESS", vm.addr(privateKey));
+        require(admin == vm.addr(privateKey), "ADMIN_MUST_MATCH_BROADCASTER");
 
         vm.startBroadcast(privateKey);
         VeydriftGame game = new VeydriftGame(admin);
@@ -36,6 +37,7 @@ contract Deploy is Script {
         metalToken = _deployMetal(admin, gameAddress);
         crystalToken = _deployCrystal(admin, gameAddress);
         deuteriumToken = _deployDeuterium(admin, gameAddress);
+        game.setResourceTokens(metalToken, crystalToken, deuteriumToken);
         emit VeydriftDeployment(gameAddress, metalToken, crystalToken, deuteriumToken);
         vm.stopBroadcast();
     }

@@ -9,6 +9,11 @@ import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
+interface IERC20ReserveToken {
+    function balanceOf(address account) external view returns (uint256);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+}
+
 /// @notice Playable Veydrift MVP: one home planet, lazy resources, production, units, and research.
 /// @dev MVP simplifications: no colonies, fleet movement, combat, espionage reports, markets, or NFTs.
 contract VeydriftGame {
@@ -139,7 +144,9 @@ contract VeydriftGame {
     uint256 public nextFleetId;
     mapping(address player => uint256 count) public planetCountOf;
     mapping(uint256 fleetId => Fleet fleet) private _fleets;
-    mapping(Resource resource => address token) public resourceTokenOf;
+    mapping(Resource resource => IERC20ReserveToken token) private _resourceTokens;
+    Resources private _totalInternalResources;
+    Resources private _lockedWithdrawalResources;
     mapping(address player => mapping(Resource resource => ResourceWithdrawal withdrawal)) public
         resourceWithdrawals;
     uint256 private _bridgeReentrancyStatus;
@@ -174,13 +181,16 @@ contract VeydriftGame {
     error FleetAlreadyReturning();
     error FleetAlreadyArrived();
     error RiftStabilizerRequired(uint256 planetId);
-    error InvalidResource(Resource resource);
     error ResourceTokenNotConfigured(Resource resource);
     error WithdrawalActive(Resource resource);
     error WithdrawalInactive(Resource resource);
     error WithdrawalNotReady(uint64 unlocksAt);
     error TransferFailed();
     error Unauthorized(address account);
+    error InvalidResource(Resource resource);
+    error ResourceTokenUnset(Resource resource);
+    error ResourceTransferFailed(Resource resource, address token, uint256 amount);
+    error InsufficientResourceReserve(Resource resource, uint256 required, uint256 available);
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -294,6 +304,10 @@ contract VeydriftGame {
     event ResourceTokenUpdated(
         Resource indexed resource, address indexed oldToken, address indexed newToken
     );
+    event ResourceTokensUpdated(address metalToken, address crystalToken, address deuteriumToken);
+    event ResourceReservesDeposited(
+        address indexed from, uint128 metal, uint128 crystal, uint128 deuterium
+    );
     event MarketResourceDeposited(
         address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
     );
@@ -343,6 +357,30 @@ contract VeydriftGame {
         emit StartPriceUpdated(oldPrice, nextPrice);
     }
 
+    function setResourceTokens(address metalToken, address crystalToken, address deuteriumToken)
+        external
+        onlyOwner
+    {
+        if (metalToken == address(0)) revert ResourceTokenUnset(Resource.Metal);
+        if (crystalToken == address(0)) revert ResourceTokenUnset(Resource.Crystal);
+        if (deuteriumToken == address(0)) revert ResourceTokenUnset(Resource.Deuterium);
+
+        _resourceTokens[Resource.Metal] = IERC20ReserveToken(metalToken);
+        _resourceTokens[Resource.Crystal] = IERC20ReserveToken(crystalToken);
+        _resourceTokens[Resource.Deuterium] = IERC20ReserveToken(deuteriumToken);
+        _requireCurrentReserveBacking();
+
+        emit ResourceTokensUpdated(metalToken, crystalToken, deuteriumToken);
+    }
+
+    function depositResourceReserves(Resources calldata amount) external onlyOwner {
+        _transferReserveIn(Resource.Metal, amount.metal);
+        _transferReserveIn(Resource.Crystal, amount.crystal);
+        _transferReserveIn(Resource.Deuterium, amount.deuterium);
+
+        emit ResourceReservesDeposited(msg.sender, amount.metal, amount.crystal, amount.deuterium);
+    }
+
     function withdrawFees(address payable to) external onlyOwner {
         uint256 amount = address(this).balance;
         (bool ok,) = to.call{value: amount}("");
@@ -354,8 +392,10 @@ contract VeydriftGame {
 
     function setResourceToken(Resource resource, address token) external onlyOwner {
         _requireMarketResource(resource);
-        address oldToken = resourceTokenOf[resource];
-        resourceTokenOf[resource] = token;
+        if (token == address(0)) revert ResourceTokenUnset(resource);
+        address oldToken = address(_resourceTokens[resource]);
+        _resourceTokens[resource] = IERC20ReserveToken(token);
+        _requireCurrentReserveBacking();
         emit ResourceTokenUpdated(resource, oldToken, token);
     }
 
@@ -424,6 +464,9 @@ contract VeydriftGame {
         (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
             VeydriftFormulas.planetMultipliers(temperature, fields);
 
+        Resources memory startingResources = Resources({metal: 500, crystal: 500, deuterium: 0});
+        _increaseInternalResources(startingResources);
+
         homePlanetOf[player] = planetId;
         planetCountOf[player] = 1;
         _planets[planetId] = Planet({
@@ -437,7 +480,7 @@ contract VeydriftGame {
             crystalMultiplierBps: crystalMultiplier,
             deuteriumMultiplierBps: deuteriumMultiplier,
             lastSettledAt: _currentTimestamp(),
-            resources: Resources({metal: 500, crystal: 500, deuterium: 0})
+            resources: startingResources
         });
 
         emit PlanetStarted(player, planetId, galaxy, system, position, fields, temperature);
@@ -684,6 +727,7 @@ contract VeydriftGame {
                 deuterium: _toUint128(uint256(cargo.deuterium) + uint256(fuelCost))
             })
         );
+        _increaseInternalResources(cargo);
 
         uint64 currentTime = _currentTimestamp();
         uint256 travelSeconds = transportTravelSeconds(originPlanetId, destinationPlanetId);
@@ -747,8 +791,13 @@ contract VeydriftGame {
             fleetRef.returning ? fleetRef.originPlanetId : fleetRef.destinationPlanetId;
         settlePlanet(arrivalPlanetId);
 
-        _planets[arrivalPlanetId].resources =
-            _addWithCaps(arrivalPlanetId, _planets[arrivalPlanetId].resources, fleetRef.cargo);
+        Resources memory beforeResources = _planets[arrivalPlanetId].resources;
+        Resources memory nextResources =
+            _addWithCaps(arrivalPlanetId, beforeResources, fleetRef.cargo);
+        Resources memory arrivedCargo = _subtract(nextResources, beforeResources);
+        Resources memory lostCargo = _subtract(fleetRef.cargo, arrivedCargo);
+        _decreaseInternalResources(lostCargo);
+        _planets[arrivalPlanetId].resources = nextResources;
         _shipCounts[arrivalPlanetId][Ship.SmallCargo] += fleetRef.smallCargo;
         _shipCounts[arrivalPlanetId][Ship.Recycler] += fleetRef.recycler;
         _shipCounts[arrivalPlanetId][Ship.ColonyShip] += fleetRef.colonyShip;
@@ -801,6 +850,8 @@ contract VeydriftGame {
 
         settlePlanet(planetId);
         _debitResource(planetId, resource, amount);
+        Resources memory lockedAmount = _resourceAmount(resource, amount);
+        _lockedWithdrawalResources = _add(_lockedWithdrawalResources, lockedAmount);
         uint64 unlocksAt = (uint256(_currentTimestamp()) + MARKET_WITHDRAWAL_DELAY).toUint64();
         resourceWithdrawals[msg.sender][resource] = ResourceWithdrawal({
             active: true,
@@ -824,6 +875,8 @@ contract VeydriftGame {
         IERC20 token = _marketResourceToken(resource);
 
         delete resourceWithdrawals[msg.sender][resource];
+        _lockedWithdrawalResources =
+            _subtract(_lockedWithdrawalResources, _resourceAmount(resource, withdrawal.amount));
         token.safeTransfer(msg.sender, withdrawal.amount);
 
         emit MarketResourceWithdrawalFinished(
@@ -833,6 +886,36 @@ contract VeydriftGame {
 
     function planet(uint256 planetId) external view returns (Planet memory) {
         return _planets[planetId];
+    }
+
+    function resourceToken(Resource resource) external view returns (address) {
+        return address(_requireReserveResource(resource));
+    }
+
+    function totalInternalResources() external view returns (Resources memory) {
+        return _totalInternalResources;
+    }
+
+    function lockedWithdrawalResources() external view returns (Resources memory) {
+        return _lockedWithdrawalResources;
+    }
+
+    function resourceReserveBalance(Resource resource) public view returns (uint256) {
+        IERC20ReserveToken token = _requireReserveResource(resource);
+        return token.balanceOf(address(this));
+    }
+
+    function resourceReserveRequirement() public view returns (Resources memory) {
+        return _add(_totalInternalResources, _lockedWithdrawalResources);
+    }
+
+    function resourceReserveAvailable() public view returns (Resources memory) {
+        Resources memory required = resourceReserveRequirement();
+        return Resources({
+            metal: _toUint128(_availableReserve(Resource.Metal, required.metal)),
+            crystal: _toUint128(_availableReserve(Resource.Crystal, required.crystal)),
+            deuterium: _toUint128(_availableReserve(Resource.Deuterium, required.deuterium))
+        });
     }
 
     function fleet(uint256 fleetId) external view returns (Fleet memory) {
@@ -997,7 +1080,8 @@ contract VeydriftGame {
             crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
             deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
         });
-        resources = _addWithCaps(planetId, resources, produced);
+        (, Resources memory added) = _cappedResourceIncrease(planetId, resources, produced);
+        resources = _add(resources, _reserveLimitedIncrease(added));
     }
 
     function productionPerHour(uint256 planetId)
@@ -1119,7 +1203,10 @@ contract VeydriftGame {
                 crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
                 deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
             });
-            planetRef.resources = _addWithCaps(planetId, planetRef.resources, produced);
+            (Resources memory capped, Resources memory added) =
+                _cappedResourceIncrease(planetId, planetRef.resources, produced);
+            _increaseInternalResources(added);
+            planetRef.resources = capped;
             planetRef.lastSettledAt = settledAt;
         }
         emit PlanetSettled(
@@ -1212,6 +1299,8 @@ contract VeydriftGame {
 
         occupiedCoordinates[key] = true;
         planetCountOf[msg.sender] += 1;
+        Resources memory startingResources = Resources({metal: 500, crystal: 500, deuterium: 0});
+        _increaseInternalResources(startingResources);
         _planets[colonyPlanetId] = Planet({
             owner: msg.sender,
             galaxy: galaxy,
@@ -1223,7 +1312,7 @@ contract VeydriftGame {
             crystalMultiplierBps: crystalMultiplier,
             deuteriumMultiplierBps: deuteriumMultiplier,
             lastSettledAt: _currentTimestamp(),
-            resources: Resources({metal: 500, crystal: 500, deuterium: 0})
+            resources: startingResources
         });
 
         emit ColonyCreated(
@@ -1428,7 +1517,7 @@ contract VeydriftGame {
 
     function _marketResourceToken(Resource resource) private view returns (IERC20) {
         _requireMarketResource(resource);
-        address token = resourceTokenOf[resource];
+        address token = address(_resourceTokens[resource]);
         if (token == address(0)) {
             revert ResourceTokenNotConfigured(resource);
         }
@@ -1436,23 +1525,22 @@ contract VeydriftGame {
     }
 
     function _creditResource(uint256 planetId, Resource resource, uint128 amount) private {
+        Resources memory increase = _resourceAmount(resource, amount);
         Resources storage resources = _planets[planetId].resources;
         if (resource == Resource.Metal) {
             resources.metal = _toUint128(uint256(resources.metal) + amount);
-            return;
-        }
-        if (resource == Resource.Crystal) {
+        } else if (resource == Resource.Crystal) {
             resources.crystal = _toUint128(uint256(resources.crystal) + amount);
-            return;
-        }
-        if (resource == Resource.Deuterium) {
+        } else if (resource == Resource.Deuterium) {
             resources.deuterium = _toUint128(uint256(resources.deuterium) + amount);
-            return;
+        } else {
+            revert InvalidResource(resource);
         }
-        revert InvalidResource(resource);
+        _increaseInternalResources(increase);
     }
 
     function _debitResource(uint256 planetId, Resource resource, uint128 amount) private {
+        Resources memory decrease = _resourceAmount(resource, amount);
         Resources storage resources = _planets[planetId].resources;
         if (resource == Resource.Metal) {
             if (resources.metal < amount) {
@@ -1461,27 +1549,24 @@ contract VeydriftGame {
                 );
             }
             resources.metal -= amount;
-            return;
-        }
-        if (resource == Resource.Crystal) {
+        } else if (resource == Resource.Crystal) {
             if (resources.crystal < amount) {
                 revert InsufficientResources(
                     resources.metal, resources.crystal, resources.deuterium
                 );
             }
             resources.crystal -= amount;
-            return;
-        }
-        if (resource == Resource.Deuterium) {
+        } else if (resource == Resource.Deuterium) {
             if (resources.deuterium < amount) {
                 revert InsufficientResources(
                     resources.metal, resources.crystal, resources.deuterium
                 );
             }
             resources.deuterium -= amount;
-            return;
+        } else {
+            revert InvalidResource(resource);
         }
-        revert InvalidResource(resource);
+        _decreaseInternalResources(decrease);
     }
 
     function _validateCoordinates(uint16 galaxy, uint16 system, uint8 position) private pure {
@@ -1657,6 +1742,7 @@ contract VeydriftGame {
         available.metal -= cost.metal;
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;
+        _decreaseInternalResources(cost);
     }
 
     function _addWithCaps(uint256 planetId, Resources memory resources, Resources memory addition)
@@ -1669,6 +1755,26 @@ contract VeydriftGame {
             metal: _addWithCap(resources.metal, addition.metal, metalCap),
             crystal: _addWithCap(resources.crystal, addition.crystal, crystalCap),
             deuterium: _addWithCap(resources.deuterium, addition.deuterium, deuteriumCap)
+        });
+    }
+
+    function _add(Resources memory a, Resources memory b) private pure returns (Resources memory) {
+        return Resources({
+            metal: a.metal + b.metal,
+            crystal: a.crystal + b.crystal,
+            deuterium: a.deuterium + b.deuterium
+        });
+    }
+
+    function _subtract(Resources memory a, Resources memory b)
+        private
+        pure
+        returns (Resources memory)
+    {
+        return Resources({
+            metal: a.metal - b.metal,
+            crystal: a.crystal - b.crystal,
+            deuterium: a.deuterium - b.deuterium
         });
     }
 
@@ -1704,6 +1810,152 @@ contract VeydriftGame {
             return _toUint128(effectiveCap);
         }
         return _toUint128(total);
+    }
+
+    function _transferReserveIn(Resource resource, uint128 amount) private {
+        if (amount == 0) {
+            return;
+        }
+
+        IERC20ReserveToken token = _requireReserveResource(resource);
+        if (!token.transferFrom(msg.sender, address(this), amount)) {
+            revert ResourceTransferFailed(resource, address(token), amount);
+        }
+    }
+
+    function _increaseInternalResources(Resources memory amount) private {
+        _requireReserveCapacity(amount);
+        _totalInternalResources = _add(_totalInternalResources, amount);
+    }
+
+    function _decreaseInternalResources(Resources memory amount) private {
+        _totalInternalResources = _subtract(_totalInternalResources, amount);
+    }
+
+    function _resourceAmount(Resource resource, uint128 amount)
+        private
+        pure
+        returns (Resources memory)
+    {
+        if (resource == Resource.Metal) {
+            return Resources({metal: amount, crystal: 0, deuterium: 0});
+        }
+        if (resource == Resource.Crystal) {
+            return Resources({metal: 0, crystal: amount, deuterium: 0});
+        }
+        if (resource == Resource.Deuterium) {
+            return Resources({metal: 0, crystal: 0, deuterium: amount});
+        }
+        revert InvalidResource(resource);
+    }
+
+    function _cappedResourceIncrease(
+        uint256 planetId,
+        Resources memory currentResources,
+        Resources memory produced
+    ) private view returns (Resources memory capped, Resources memory added) {
+        capped = _addWithCaps(planetId, currentResources, produced);
+        added = _subtract(capped, currentResources);
+    }
+
+    function _reserveLimitedIncrease(Resources memory amount)
+        private
+        view
+        returns (Resources memory)
+    {
+        Resources memory required = resourceReserveRequirement();
+        return Resources({
+            metal: _toUint128(
+                _min(amount.metal, _availableReserve(Resource.Metal, required.metal))
+            ),
+            crystal: _toUint128(
+                _min(amount.crystal, _availableReserve(Resource.Crystal, required.crystal))
+            ),
+            deuterium: _toUint128(
+                _min(amount.deuterium, _availableReserve(Resource.Deuterium, required.deuterium))
+            )
+        });
+    }
+
+    function _requireReserveCapacity(Resources memory increase) private view {
+        Resources memory required = resourceReserveRequirement();
+        _requireResourceReserve(Resource.Metal, required.metal, increase.metal);
+        _requireResourceReserve(Resource.Crystal, required.crystal, increase.crystal);
+        _requireResourceReserve(Resource.Deuterium, required.deuterium, increase.deuterium);
+    }
+
+    function _requireResourceReserve(Resource resource, uint128 currentRequired, uint128 increase)
+        private
+        view
+    {
+        if (increase == 0) {
+            return;
+        }
+
+        uint256 required = uint256(currentRequired) + uint256(increase);
+        _requireResourceReserveBalance(resource, required);
+    }
+
+    function _availableReserve(Resource resource, uint128 currentRequired)
+        private
+        view
+        returns (uint256)
+    {
+        if (!_isReserveTokenConfigured(resource)) {
+            return 0;
+        }
+
+        uint256 available = resourceReserveBalance(resource);
+        if (available <= currentRequired) {
+            return 0;
+        }
+
+        return available - currentRequired;
+    }
+
+    function _requireCurrentReserveBacking() private view {
+        Resources memory required = resourceReserveRequirement();
+        _requireResourceReserveBalance(Resource.Metal, required.metal);
+        _requireResourceReserveBalance(Resource.Crystal, required.crystal);
+        _requireResourceReserveBalance(Resource.Deuterium, required.deuterium);
+    }
+
+    function _requireResourceReserveBalance(Resource resource, uint256 required) private view {
+        uint256 available = resourceReserveBalance(resource);
+        if (available < required) {
+            revert InsufficientResourceReserve(resource, required, available);
+        }
+    }
+
+    function _isReserveTokenConfigured(Resource resource) private view returns (bool) {
+        if (
+            resource != Resource.Metal && resource != Resource.Crystal
+                && resource != Resource.Deuterium
+        ) {
+            revert InvalidResource(resource);
+        }
+
+        return address(_resourceTokens[resource]) != address(0);
+    }
+
+    function _requireReserveResource(Resource resource) private view returns (IERC20ReserveToken) {
+        if (
+            resource != Resource.Metal && resource != Resource.Crystal
+                && resource != Resource.Deuterium
+        ) {
+            revert InvalidResource(resource);
+        }
+
+        IERC20ReserveToken token = _resourceTokens[resource];
+        if (address(token) == address(0)) {
+            revert ResourceTokenUnset(resource);
+        }
+
+        return token;
+    }
+
+    function _min(uint256 a, uint256 b) private pure returns (uint256) {
+        return a < b ? a : b;
     }
 
     function _coordinateDistance(Planet storage origin, Planet storage destination)
