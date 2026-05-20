@@ -8,6 +8,7 @@ import type {
   PlanetState,
   PlayerQueues,
   ResearchState,
+  RiftState,
   SettledPlanetEvent,
   ShipyardState,
   WalletSettlement
@@ -270,6 +271,47 @@ class MockChainReader implements ChainReader {
     };
   }
 
+  async getRiftState(wallet: Address): Promise<RiftState> {
+    return {
+      wallet,
+      homePlanetId: planet.planetId,
+      riftAvailable: true,
+      unlocked: true,
+      withdrawalDelaySeconds: "2592000",
+      requirements: [
+        {
+          kind: "building",
+          key: "interdimensionalRiftStabilizer",
+          label: "Interdimensional Rift Stabilizer",
+          currentLevel: 1,
+          requiredLevel: 1
+        }
+      ],
+      resources: [
+        {
+          key: "metal",
+          label: "Metal",
+          resourceId: 0,
+          tokenAddress: "0x4444444444444444444444444444444444444444",
+          walletBalance: "25000000",
+          allowance: "5000000",
+          inGameBalance: "5000",
+          lockedBalance: "0"
+        }
+      ],
+      pendingWithdrawals: [
+        {
+          id: "0",
+          resource: "metal",
+          amount: "1000000",
+          requestedAt: "2026-05-01T00:00:00.000Z",
+          unlocksAt: "2026-05-31T00:00:00.000Z",
+          ready: false
+        }
+      ]
+    };
+  }
+
   async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> {
     this.rebuildCalls += 1;
     return [
@@ -301,6 +343,7 @@ describe("Veydrift backend", () => {
           metal: false
         },
         rpcSource: "missing",
+        resourceTokenAddressesConfigured: false,
         settlementContractConfigured: false,
         gameContractConfigured: false
       },
@@ -447,6 +490,7 @@ describe("Veydrift backend", () => {
       chain: {
         hasRpcUrl: true,
         rpcSource: "alchemy-key",
+        resourceTokenAddressesConfigured: true,
         settlementContractConfigured: true,
         gameContractConfigured: true
       }
@@ -589,6 +633,32 @@ describe("Veydrift backend", () => {
       }
     });
     expect(response.status).toBe(200);
+  });
+
+  test("answers Rift bridge state from a mocked chain reader", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader()
+    })(new Request(`http://localhost/wallet/${player}/rift`));
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.wallet).toBe(player);
+    expect(body.riftAvailable).toBe(true);
+    expect(body.resources).toContainEqual({
+      key: "metal",
+      label: "Metal",
+      resourceId: 0,
+      tokenAddress: "0x4444444444444444444444444444444444444444",
+      walletBalance: "25000000",
+      allowance: "5000000",
+      inGameBalance: "5000",
+      lockedBalance: "0"
+    });
+    expect(body.pendingWithdrawals[0]).toMatchObject({
+      resource: "metal",
+      ready: false
+    });
   });
 
   test("falls back to compact settlement reads when configured contract is not VeydriftGame", async () => {

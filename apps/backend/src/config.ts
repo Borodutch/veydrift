@@ -38,6 +38,7 @@ export type SafeConfigSummary = {
     metal: boolean;
   };
   rpcSource: BackendConfig["rpcSource"];
+  resourceTokenAddressesConfigured: boolean;
   settlementContractConfigured: boolean;
   indexFromBlock: string;
 };
@@ -122,6 +123,11 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
       metal: Boolean(config.resourceTokenAddresses.metal)
     },
     rpcSource: config.rpcSource,
+    resourceTokenAddressesConfigured: Boolean(
+      config.resourceTokenAddresses?.metal
+        && config.resourceTokenAddresses.crystal
+        && config.resourceTokenAddresses.deuterium
+    ),
     settlementContractConfigured: Boolean(config.settlementContractAddress),
     indexFromBlock: config.indexFromBlock.toString()
   };
