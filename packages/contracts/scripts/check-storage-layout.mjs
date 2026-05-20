@@ -71,3 +71,22 @@ if (currentJson !== expectedJson) {
 }
 
 console.log("VeydriftGame storage layout matches storage-layout/VeydriftGame.v1.json");
+
+for (const contractName of ["VeydriftMetal", "VeydriftCrystal", "VeydriftDeuterium"]) {
+  const tokenArtifactPath = join("out", "VeydriftResourceToken.sol", `${contractName}.json`);
+  const tokenArtifact = JSON.parse(readFileSync(tokenArtifactPath, "utf8"));
+  const tokenStorage = tokenArtifact.storageLayout?.storage;
+
+  if (!Array.isArray(tokenStorage)) {
+    throw new Error(
+      `Missing storageLayout in ${tokenArtifactPath}. Run forge build --extra-output storageLayout.`
+    );
+  }
+
+  if (tokenStorage.length !== 0) {
+    console.error(`${contractName} introduced custom storage. Review upgrade compatibility before updating the guard.`);
+    process.exit(1);
+  }
+}
+
+console.log("Resource token storage layouts have no custom storage entries");
