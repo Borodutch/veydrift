@@ -23,6 +23,7 @@ library VeydriftCatalog {
         if (building == Building.Terraformer) return (0, 50_000, 100_000);
         if (building == Building.AllianceDepot) return (20_000, 40_000, 0);
         if (building == Building.MissileSilo) return (20_000, 20_000, 1_000);
+        if (building == Building.InterdimensionalRiftStabilizer) return (8_000, 8_000, 4_000);
         revert InvalidId();
     }
 

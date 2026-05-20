@@ -954,7 +954,7 @@ export class VeydriftGameReader implements ChainReader {
 }
 
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
-const buildingCount = 10;
+const buildingCount = 16;
 const defenseCount = 10;
 const shipCount = 16;
 const technologyCount = 16;

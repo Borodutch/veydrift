@@ -8,7 +8,9 @@ import {Building, Defense, Resource, Ship, Technology} from "../src/libraries/Ve
 
 contract MockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
-    mapping(address account => mapping(address spender => uint256 amount)) public allowance;
+    mapping(address owner => mapping(address spender => uint256 amount)) public allowance;
+    address public reentryTarget;
+    bytes public reentryData;
 
     function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
@@ -23,16 +25,46 @@ contract MockResourceToken {
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
-        if (allowed < amount || balanceOf[from] < amount) {
+    function transfer(address to, uint256 amount) external returns (bool) {
+        if (!_move(msg.sender, to, amount)) {
             return false;
         }
+        _tryReenter();
+        return true;
+    }
 
-        allowance[from][msg.sender] = allowed - amount;
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        uint256 approved = allowance[from][msg.sender];
+        if (approved < amount) {
+            return false;
+        }
+        allowance[from][msg.sender] = approved - amount;
+        if (!_move(from, to, amount)) {
+            return false;
+        }
+        _tryReenter();
+        return true;
+    }
+
+    function setReentry(address target, bytes calldata data) external {
+        reentryTarget = target;
+        reentryData = data;
+    }
+
+    function _move(address from, address to, uint256 amount) private returns (bool) {
+        if (balanceOf[from] < amount) {
+            return false;
+        }
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         return true;
+    }
+
+    function _tryReenter() private {
+        if (reentryTarget != address(0)) {
+            (bool ok,) = reentryTarget.call(reentryData);
+            ok;
+        }
     }
 }
 
@@ -63,6 +95,11 @@ contract VeydriftGameTest is Test {
         deuteriumToken = new MockResourceToken();
         _configureFundedReserves(game, RESERVE_FUNDING);
         vm.deal(player, 1 ether);
+        vm.startPrank(admin);
+        game.setResourceToken(Resource.Metal, address(metalToken));
+        game.setResourceToken(Resource.Crystal, address(crystalToken));
+        game.setResourceToken(Resource.Deuterium, address(deuteriumToken));
+        vm.stopPrank();
     }
 
     function testInitializationAndOwnerGuard() public {
@@ -792,6 +829,171 @@ contract VeydriftGameTest is Test {
         assertGe(origin.resources.crystal, cargo.crystal);
     }
 
+    function testMarketResourceDepositRequiresConfiguredTokenAndStabilizer() public {
+        uint256 planetId = _startPlanet(player);
+        metalToken.mint(player, 1_000);
+        vm.prank(player);
+        metalToken.approve(address(game), 1_000);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.RiftStabilizerRequired.selector, planetId)
+        );
+        game.depositMarketResource(planetId, Resource.Metal, 1_000);
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.InvalidResource.selector, Resource.Energy)
+        );
+        game.setResourceToken(Resource.Energy, address(metalToken));
+    }
+
+    function testMarketResourceDepositCreditsSpendableUnlockedBalance() public {
+        uint256 planetId = _prepareMarketBridgePlanet(player);
+        VeydriftGame.Planet memory beforePlanet = game.planet(planetId);
+        uint256 reserveBefore = metalToken.balanceOf(address(game));
+        metalToken.mint(player, 20_000);
+
+        vm.startPrank(player);
+        metalToken.approve(address(game), 20_000);
+        game.depositMarketResource(planetId, Resource.Metal, 20_000);
+        vm.stopPrank();
+
+        VeydriftGame.Planet memory afterDeposit = game.planet(planetId);
+        assertEq(afterDeposit.resources.metal, beforePlanet.resources.metal + 20_000);
+        assertEq(metalToken.balanceOf(address(game)), reserveBefore + 20_000);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalStorage);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+    }
+
+    function testMarketResourceWithdrawalLocksBalanceAndFinishesAfterDelay() public {
+        uint256 planetId = _prepareMarketBridgePlanet(player);
+        uint256 reserveBefore = crystalToken.balanceOf(address(game));
+        crystalToken.mint(player, 5_000);
+
+        vm.startPrank(player);
+        crystalToken.approve(address(game), 5_000);
+        game.depositMarketResource(planetId, Resource.Crystal, 5_000);
+        VeydriftGame.Planet memory beforeWithdrawal = game.planet(planetId);
+        game.requestMarketResourceWithdrawal(planetId, Resource.Crystal, 5_000);
+        vm.stopPrank();
+
+        (
+            bool withdrawalActive,
+            uint256 withdrawalPlanetId,
+            Resource withdrawalResource,
+            uint128 withdrawalAmount,
+            uint64 withdrawalUnlocksAt
+        ) = game.resourceWithdrawals(player, Resource.Crystal);
+        assertTrue(withdrawalActive);
+        assertEq(withdrawalPlanetId, planetId);
+        assertEq(uint8(withdrawalResource), uint8(Resource.Crystal));
+        assertEq(withdrawalAmount, 5_000);
+        assertEq(withdrawalUnlocksAt, block.timestamp + game.MARKET_WITHDRAWAL_DELAY());
+
+        VeydriftGame.Planet memory afterRequest = game.planet(planetId);
+        assertEq(afterRequest.resources.crystal, beforeWithdrawal.resources.crystal - 5_000);
+        VeydriftGame.Resources memory locked = game.lockedWithdrawalResources();
+        assertEq(locked.crystal, 5_000);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.WithdrawalNotReady.selector, withdrawalUnlocksAt)
+        );
+        game.finishMarketResourceWithdrawal(Resource.Crystal);
+
+        vm.warp(withdrawalUnlocksAt);
+        vm.prank(player);
+        game.finishMarketResourceWithdrawal(Resource.Crystal);
+
+        assertEq(crystalToken.balanceOf(player), 5_000);
+        assertEq(crystalToken.balanceOf(address(game)), reserveBefore);
+        VeydriftGame.Resources memory lockedAfterFinish = game.lockedWithdrawalResources();
+        assertEq(lockedAfterFinish.crystal, 0);
+        (bool finishedActive,,,,) = game.resourceWithdrawals(player, Resource.Crystal);
+        assertFalse(finishedActive);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.WithdrawalInactive.selector, Resource.Crystal)
+        );
+        game.finishMarketResourceWithdrawal(Resource.Crystal);
+    }
+
+    function testMarketResourceWithdrawalLockedBalanceCannotBeSpent() public {
+        uint256 planetId = _prepareMarketBridgePlanet(player);
+        VeydriftGame.Planet memory beforeDeposit = game.planet(planetId);
+        uint128 depositAmount = 20_000;
+        uint128 withdrawalAmount =
+            uint128(uint256(beforeDeposit.resources.metal) + depositAmount - 500);
+        metalToken.mint(player, depositAmount);
+
+        vm.startPrank(player);
+        metalToken.approve(address(game), depositAmount);
+        game.depositMarketResource(planetId, Resource.Metal, depositAmount);
+        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, withdrawalAmount);
+        vm.expectRevert();
+        game.startBuildingUpgrade(planetId, Building.MetalStorage);
+        vm.stopPrank();
+
+        VeydriftGame.Planet memory afterRequest = game.planet(planetId);
+        assertEq(afterRequest.resources.metal, 500);
+    }
+
+    function testMarketResourceWithdrawalsTrackMultipleResourcesIndependently() public {
+        uint256 planetId = _prepareMarketBridgePlanet(player);
+        metalToken.mint(player, 1_000);
+        deuteriumToken.mint(player, 700);
+
+        vm.startPrank(player);
+        metalToken.approve(address(game), 1_000);
+        deuteriumToken.approve(address(game), 700);
+        game.depositMarketResource(planetId, Resource.Metal, 1_000);
+        game.depositMarketResource(planetId, Resource.Deuterium, 700);
+        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, 600);
+        game.requestMarketResourceWithdrawal(planetId, Resource.Deuterium, 300);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.WithdrawalActive.selector, Resource.Metal)
+        );
+        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, 1);
+        vm.stopPrank();
+
+        (,,, uint128 metalWithdrawalAmount,) = game.resourceWithdrawals(player, Resource.Metal);
+        (,,, uint128 deuteriumWithdrawalAmount,) =
+            game.resourceWithdrawals(player, Resource.Deuterium);
+        assertEq(metalWithdrawalAmount, 600);
+        assertEq(deuteriumWithdrawalAmount, 300);
+    }
+
+    function testMarketResourceDepositReentrancyDoesNotDoubleCredit() public {
+        uint256 planetId = _prepareMarketBridgePlanet(player);
+        MockResourceToken maliciousToken = new MockResourceToken();
+        maliciousToken.mint(address(game), RESERVE_FUNDING);
+        vm.prank(admin);
+        game.setResourceToken(Resource.Metal, address(maliciousToken));
+        maliciousToken.mint(player, 1_000);
+        uint256 reserveBefore = maliciousToken.balanceOf(address(game));
+        VeydriftGame.Planet memory beforeDeposit = game.planet(planetId);
+
+        maliciousToken.setReentry(
+            address(game),
+            abi.encodeWithSelector(
+                game.depositMarketResource.selector, planetId, Resource.Metal, uint128(50)
+            )
+        );
+
+        vm.startPrank(player);
+        maliciousToken.approve(address(game), 1_000);
+        game.depositMarketResource(planetId, Resource.Metal, 100);
+        vm.stopPrank();
+
+        VeydriftGame.Planet memory afterDeposit = game.planet(planetId);
+        assertEq(afterDeposit.resources.metal, beforeDeposit.resources.metal + 100);
+        assertEq(maliciousToken.balanceOf(address(game)), reserveBefore + 100);
+    }
+
     function _startPlanet(address account) internal returns (uint256 planetId) {
         vm.prank(account);
         planetId = game.startPlanet{value: 0.05 ether}();
@@ -881,6 +1083,23 @@ contract VeydriftGameTest is Test {
         (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(account, 101);
         vm.prank(account);
         colonyPlanetId = game.createColony(originPlanetId, galaxy, system, position);
+    }
+
+    function _prepareMarketBridgePlanet(address account) internal returns (uint256 planetId) {
+        planetId = _preparePlanetWithShipyardAndResearch(account);
+        _accrueToCaps(account, planetId);
+        _buildWithAccrual(account, planetId, Building.ResearchLab);
+        _buildWithAccrual(account, planetId, Building.CrystalStorage);
+        _buildWithAccrual(account, planetId, Building.CrystalStorage);
+        _buildWithAccrual(account, planetId, Building.DeuteriumTank);
+        while (game.buildingLevel(planetId, Building.RoboticsFactory) < 4) {
+            _buildWithAccrual(account, planetId, Building.RoboticsFactory);
+        }
+        for (uint256 i = game.technologyLevel(account, Technology.Energy); i < 5; i++) {
+            _researchWithAccrual(account, planetId, Technology.Energy);
+        }
+        _researchWithAccrual(account, planetId, Technology.Hyperspace);
+        _buildWithAccrual(account, planetId, Building.InterdimensionalRiftStabilizer);
     }
 
     function _buildWithAccrual(address account, uint256 planetId, Building building) internal {
