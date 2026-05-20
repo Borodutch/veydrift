@@ -611,7 +611,8 @@ export class VeydriftGameReader implements ChainReader {
       requirement.currentLevel !== null && requirement.currentLevel >= requirement.requiredLevel
     );
     const tokenAddressesConfigured = riftResourceCatalog.every((resource) => this.resourceTokenAddresses[resource.key]);
-    const resources = await this.readRiftResources(wallet, settlement.planet.resources);
+    const pendingWithdrawals = await this.readRiftWithdrawals(wallet);
+    const resources = await this.readRiftResources(wallet, settlement.planet.resources, pendingWithdrawals);
     const unavailableReason = riftLevel === null
       ? "This deployment does not expose the Interdimensional Rift Stabilizer building yet."
       : !unlocked
@@ -629,7 +630,7 @@ export class VeydriftGameReader implements ChainReader {
       withdrawalDelaySeconds: riftWithdrawalDelaySeconds.toString(),
       requirements,
       resources,
-      pendingWithdrawals: []
+      pendingWithdrawals
     };
   }
 
@@ -807,10 +808,15 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
-  private async readRiftResources(wallet: Address, inGameResources: Resources): Promise<RiftResourceState[]> {
+  private async readRiftResources(
+    wallet: Address,
+    inGameResources: Resources,
+    pendingWithdrawals: PendingWithdrawal[]
+  ): Promise<RiftResourceState[]> {
     return Promise.all(
       riftResourceCatalog.map(async (resource) => {
         const tokenAddress = this.resourceTokenAddresses[resource.key] ?? null;
+        const lockedBalance = pendingWithdrawals.find((withdrawal) => withdrawal.resource === resource.key)?.amount ?? "0";
         if (!tokenAddress) {
           return {
             ...resource,
@@ -818,7 +824,7 @@ export class VeydriftGameReader implements ChainReader {
             walletBalance: null,
             allowance: null,
             inGameBalance: inGameResources[resource.key],
-            lockedBalance: "0"
+            lockedBalance
           };
         }
 
@@ -833,10 +839,42 @@ export class VeydriftGameReader implements ChainReader {
           walletBalance: walletBalance.toString(),
           allowance: allowance.toString(),
           inGameBalance: inGameResources[resource.key],
-          lockedBalance: "0"
+          lockedBalance
         };
       })
     );
+  }
+
+  private async readRiftWithdrawals(wallet: Address): Promise<PendingWithdrawal[]> {
+    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+    const withdrawals = await Promise.all(
+      riftResourceCatalog.map(async (resource) => {
+        const words = splitWords(await this.call("0x91f8dfce", [encodeAddress(wallet), encodeUint(BigInt(resource.resourceId))]));
+        const active = decodeBoolWord(wordAt(words, 0));
+        if (!active) {
+          return null;
+        }
+
+        const amount = decodeUintWord(wordAt(words, 3));
+        const unlocksAt = decodeUintWord(wordAt(words, 4));
+        const requestedAt = unlocksAt > BigInt(riftWithdrawalDelaySeconds)
+          ? unlocksAt - BigInt(riftWithdrawalDelaySeconds)
+          : 0n;
+
+        const withdrawal: PendingWithdrawal = {
+          id: resource.key,
+          resource: resource.key,
+          amount: amount.toString(),
+          requestedAt: new Date(Number(requestedAt) * 1000).toISOString(),
+          unlocksAt: new Date(Number(unlocksAt) * 1000).toISOString(),
+          ready: nowSeconds >= unlocksAt
+        };
+
+        return withdrawal;
+      })
+    );
+
+    return withdrawals.filter((withdrawal): withdrawal is PendingWithdrawal => withdrawal !== null);
   }
 
   private async readOptionalUintCall(selector: string, args: string[]): Promise<bigint | null> {
@@ -1022,7 +1060,7 @@ function riftRequirements(
       key: "researchLab",
       label: "Research Lab",
       currentLevel: researchLabLevel,
-      requiredLevel: 3
+      requiredLevel: 2
     },
     {
       kind: "technology",

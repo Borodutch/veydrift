@@ -965,10 +965,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [account, gameContract, provider, runRiftTransaction]);
 
   const handleDepositRiftResource = useCallback((resource: RiftResourceState, amount: string) => {
-    if (!provider || !account || !gameContract || !riftState?.riftAvailable) {
+    if (!provider || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
       setRiftAction({ status: "error", label: riftState?.unavailableReason ?? "Rift bridge is unavailable." });
       return;
     }
+    const homePlanetId = riftState.homePlanetId;
 
     let parsed: bigint;
     try {
@@ -982,16 +983,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       provider,
       account,
       gameContract,
+      homePlanetId,
       resource.resourceId,
       parsed,
     ));
-  }, [account, gameContract, provider, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction]);
+  }, [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction]);
 
   const handleRequestRiftWithdrawal = useCallback((resource: RiftResourceState, amount: string) => {
-    if (!provider || !account || !gameContract || !riftState?.riftAvailable) {
+    if (!provider || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
       setRiftAction({ status: "error", label: riftState?.unavailableReason ?? "Rift bridge is unavailable." });
       return;
     }
+    const homePlanetId = riftState.homePlanetId;
 
     let parsed: bigint;
     try {
@@ -1005,10 +1008,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       provider,
       account,
       gameContract,
+      homePlanetId,
       resource.resourceId,
       parsed,
     ));
-  }, [account, gameContract, provider, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction]);
+  }, [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction]);
 
   const handleFinishRiftWithdrawal = useCallback((withdrawal: PendingWithdrawal) => {
     const resource = riftState?.resources.find((item) => item.key === withdrawal.resource);
@@ -1022,7 +1026,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       account,
       gameContract,
       resource.resourceId,
-      withdrawal.id,
     ));
   }, [account, gameContract, provider, riftState?.resources, runRiftTransaction]);
 

@@ -218,15 +218,15 @@ const READ_SELECTORS = {
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const GAME_SELECTORS = {
   collectResources: "0xdb43284d",
-  depositResource: "0x278f8c0f",
+  depositResource: "0x25819e15",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
-  finishResourceWithdrawal: "0x884a7fc1",
+  finishResourceWithdrawal: "0xde0f208c",
   startBuildingUpgrade: "0x165715e3",
   collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
-  requestResourceWithdrawal: "0xd015b908",
+  requestResourceWithdrawal: "0x62a10a46",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
@@ -454,6 +454,7 @@ export async function sendDepositResourceTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
+  planetId: string,
   resourceId: number,
   amount: bigint | number | string
 ): Promise<string> {
@@ -463,7 +464,7 @@ export async function sendDepositResourceTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.depositResource, [resourceId, amount])
+        data: encodeGameCall(GAME_SELECTORS.depositResource, [planetId, resourceId, amount])
       }
     ]
   });
@@ -473,6 +474,7 @@ export async function sendRequestResourceWithdrawalTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
+  planetId: string,
   resourceId: number,
   amount: bigint | number | string
 ): Promise<string> {
@@ -482,7 +484,7 @@ export async function sendRequestResourceWithdrawalTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [resourceId, amount])
+        data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [planetId, resourceId, amount])
       }
     ]
   });
@@ -492,8 +494,7 @@ export async function sendFinishResourceWithdrawalTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  resourceId: number,
-  withdrawalId: bigint | number | string
+  resourceId: number
 ): Promise<string> {
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -501,7 +502,7 @@ export async function sendFinishResourceWithdrawalTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId, withdrawalId])
+        data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId])
       }
     ]
   });
