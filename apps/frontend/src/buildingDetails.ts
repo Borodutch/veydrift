@@ -97,14 +97,16 @@ export function buildingUpgradeStatus(
     };
   }
 
-  if (state.queue) {
+  if (state.queue?.kind === "building") {
+    const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.label, state.queue.targetLevel);
+
     return {
       cost,
       disabled: true,
       durationSeconds,
       reason: state.queue.key === key
-        ? `Upgrade to Level ${state.queue.targetLevel} in progress`
-        : `Building queue occupied by ${state.queue.label}`,
+        ? `${queuedBuildingLabel} upgrade in progress`
+        : `Another building is currently upgrading: ${queuedBuildingLabel}`,
       targetLevel,
     };
   }
@@ -272,6 +274,10 @@ function formatMissingResources(resources: Resources, cost: Resources): string {
   return `Requires ${missing
     .map(([resource, deficit]) => `${formatNumber(deficit)} more ${resourceLabels[resource]}`)
     .join(", ")}`;
+}
+
+function formatBuildingQueueLabel(label: string, targetLevel: number | undefined): string {
+  return targetLevel ? `${label} Level ${targetLevel}` : label;
 }
 
 function resourceEntries(resources: Resources): Array<[keyof Resources, number]> {

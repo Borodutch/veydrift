@@ -11,20 +11,30 @@
  *   bun scripts/generate-image-variants.mjs
  */
 
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname, relative, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
-let sharp;
-try {
-  sharp = (await import("sharp")).default;
-} catch {
-  console.error(
-    "sharp is required to generate image variants. Install it with:\n" +
-      "  bun add -d sharp"
-  );
-  process.exit(1);
+let sharpModule;
+async function getSharp({ required = true } = {}) {
+  if (sharpModule) return sharpModule;
+
+  try {
+    sharpModule = (await import("sharp")).default;
+    return sharpModule;
+  } catch (error) {
+    if (!required) return null;
+
+    console.error(
+      "sharp is required when image variants are missing or stale. Install it with:\n" +
+        "  bun add -d sharp"
+    );
+    if (error instanceof Error && error.message) {
+      console.error(`Import error: ${error.message}`);
+    }
+    process.exit(1);
+  }
 }
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +46,15 @@ const VARIANT_WIDTHS = [64, 256, 512];
 
 /** Skip reference/concept images not used in the UI. */
 const EXCLUDED_DIRS = new Set(["concepts", "style-pass"]); // style-pass subdirs are included, but style-pass/README.md etc are not
+
+async function readExistingManifest() {
+  const manifestPath = join(SIZES_DIR, "manifest.json");
+  try {
+    return JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
 
 async function* walkGameImages(dir) {
   const entries = (await readdir(dir, { withFileTypes: true }))
@@ -80,6 +99,7 @@ async function generateVariant(originalPath, relPath, targetWidth) {
 
   await mkdir(sizeDir, { recursive: true });
 
+  const sharp = await getSharp();
   await sharp(originalPath)
     .resize({
       width: targetWidth,
@@ -91,6 +111,33 @@ async function generateVariant(originalPath, relPath, targetWidth) {
     .toFile(outPath);
 
   return { outPath, skipped: false };
+}
+
+async function getCurrentManifestEntry(originalPath, relPath, originalRel, existingManifest, { checkFreshness }) {
+  const existingEntry = existingManifest[originalRel];
+  if (!existingEntry || typeof existingEntry.width !== "number" || typeof existingEntry.height !== "number") {
+    return null;
+  }
+
+  const origStat = checkFreshness ? await stat(originalPath) : null;
+  const variants = existingEntry.variants ?? {};
+
+  for (const w of VARIANT_WIDTHS) {
+    if (w >= existingEntry.width) continue;
+
+    const expectedVariantRel = `/assets/game/sizes/${w}/${relPath.replace(/\\/g, "/")}`;
+    if (variants[w] !== expectedVariantRel) return null;
+
+    const outPath = join(SIZES_DIR, String(w), dirname(relPath), basename(relPath));
+    try {
+      const varStat = await stat(outPath);
+      if (origStat && varStat.mtimeMs < origStat.mtimeMs) return null;
+    } catch {
+      return null;
+    }
+  }
+
+  return existingEntry;
 }
 
 async function main() {
@@ -109,9 +156,41 @@ async function main() {
   let generated = 0;
   let skipped = 0;
   const manifest = {};
+  const existingManifest = await readExistingManifest();
 
   for (const { fullPath, relPath, name } of images) {
     const originalRel = `/assets/game/${relPath.replace(/\\/g, "/")}`;
+    const currentEntry = await getCurrentManifestEntry(fullPath, relPath, originalRel, existingManifest, {
+      checkFreshness: true,
+    });
+    if (currentEntry) {
+      manifest[originalRel] = currentEntry;
+
+      const cachedWidths = VARIANT_WIDTHS.filter((w) => w < currentEntry.width).length;
+      skipped += cachedWidths;
+
+      const label = `  ${relPath} (${currentEntry.width}×${currentEntry.height})`;
+      const results = VARIANT_WIDTHS.map((w) => (w >= currentEntry.width ? `${w}w→original` : `${w}w✓`));
+      console.log(`${label}  ${results.join(", ")}`);
+      continue;
+    }
+
+    const reusableEntry = await getCurrentManifestEntry(fullPath, relPath, originalRel, existingManifest, {
+      checkFreshness: false,
+    });
+    const sharp = await getSharp({ required: !reusableEntry });
+    if (!sharp && reusableEntry) {
+      manifest[originalRel] = reusableEntry;
+
+      const cachedWidths = VARIANT_WIDTHS.filter((w) => w < reusableEntry.width).length;
+      skipped += cachedWidths;
+
+      const label = `  ${relPath} (${reusableEntry.width}×${reusableEntry.height})`;
+      const results = VARIANT_WIDTHS.map((w) => (w >= reusableEntry.width ? `${w}w→original` : `${w}w✓`));
+      console.warn(`${label}  ${results.join(", ")} (reused; sharp unavailable)`);
+      continue;
+    }
+
     const meta = await sharp(fullPath).metadata();
     const width = meta.width ?? 1024;
     const height = meta.height ?? 1024;
