@@ -180,6 +180,7 @@ export type BuildingEffectMetrics =
       kind: "constructionSpeed";
       currentFactor: number;
       nextFactor: number;
+      relativeImprovementPercent: number;
     }
   | {
       kind: "shipyard";
@@ -960,10 +961,14 @@ export function buildingEffectMetrics(
   }
 
   if (key === "roboticsFactory") {
+    const currentFactor = buildings.roboticsFactory + 1;
+    const nextFactor = nextBuildings.roboticsFactory + 1;
+
     return {
       kind: "constructionSpeed",
-      currentFactor: buildings.roboticsFactory + 1,
-      nextFactor: nextBuildings.roboticsFactory + 1,
+      currentFactor,
+      nextFactor,
+      relativeImprovementPercent: Math.round(((nextFactor - currentFactor) / currentFactor) * 100),
     };
   }
 
@@ -1178,8 +1183,12 @@ function storageResourceForBuilding(key: BuildingKey): keyof Resources {
   return "deuterium";
 }
 
+const BUILDING_DURATION_COST_DIVISOR = 100;
+
 function buildingDurationSeconds(roboticsLevel: number, cost: Resources): number {
-  const raw = Math.floor((cost.metal + cost.crystal) / (100 * (roboticsLevel + 1)));
+  // Veydrift uses a faster MVP base duration than OGame, while preserving the Robotics Factory level + 1 divisor.
+  const roboticsDivisor = roboticsLevel + 1;
+  const raw = Math.floor((cost.metal + cost.crystal) / (BUILDING_DURATION_COST_DIVISOR * roboticsDivisor));
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 
