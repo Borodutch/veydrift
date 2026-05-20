@@ -101,6 +101,24 @@
       "offset": 0,
       "slot": "16",
       "type": "mapping(uint256 => struct Fleet)"
+    },
+    {
+      "label": "_resourceTokens",
+      "offset": 0,
+      "slot": "17",
+      "type": "mapping(enum Resource => contract IERC20ReserveToken)"
+    },
+    {
+      "label": "_totalInternalResources",
+      "offset": 0,
+      "slot": "18",
+      "type": "Resources"
+    },
+    {
+      "label": "_lockedWithdrawalResources",
+      "offset": 0,
+      "slot": "20",
+      "type": "Resources"
     }
   ],
   "structs": {

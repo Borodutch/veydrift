@@ -78,6 +78,18 @@ Resources:
   when no ships are ready.
 - Production depends on mine levels, planet multipliers, and available solar energy.
 - Storage caps are enforced when resources are settled.
+- Metal, crystal, and deuterium are an internal game ledger backed 1:1 by ERC-20 reserve
+  balances held by `VeydriftGame`.
+- `setResourceTokens(metal, crystal, deuterium)` configures the reserve ERC-20 contracts.
+- `depositResourceReserves({metal, crystal, deuterium})` lets the owner top up reserves after
+  approving `VeydriftGame` on each token.
+- Normal collection never transfers ERC-20 tokens to the player wallet. It only increases the
+  internal in-game balance if the configured reserve can back the new claim.
+- Spending on buildings, research, ships, defenses, transport fuel, and other game actions
+  consumes the internal ledger balance while reserve tokens remain in the game contract.
+- Test deployments should initialize/reset balances by minting or otherwise funding the three
+  resource token reserves, approving the game contract, and calling `depositResourceReserves`
+  before players start planets or collect produced resources.
 
 Production:
 
@@ -210,7 +222,9 @@ Scripts require a funded deployer key in the shell environment. Do not commit or
 Deploy the test game contract to Base Sepolia:
 
 ```bash
-PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin forge script script/Deploy.s.sol:Deploy \
+PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin \
+METAL_TOKEN_ADDRESS=0xMetal CRYSTAL_TOKEN_ADDRESS=0xCrystal DEUTERIUM_TOKEN_ADDRESS=0xDeuterium \
+forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
 ```
 
@@ -224,11 +238,15 @@ PRIVATE_KEY=... forge script script/DeploySettlement.s.sol:DeploySettlement \
 Deploy to Base mainnet:
 
 ```bash
-PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin forge script script/Deploy.s.sol:Deploy \
+PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin \
+METAL_TOKEN_ADDRESS=0xMetal CRYSTAL_TOKEN_ADDRESS=0xCrystal DEUTERIUM_TOKEN_ADDRESS=0xDeuterium \
+forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_MAINNET_RPC_URL" --broadcast --verify
 ```
 
-`ADMIN_ADDRESS` is optional; if omitted, the deployer address owns the game contract.
+`ADMIN_ADDRESS` is optional; if omitted, the deployer address owns the game contract. The game
+requires all three resource token addresses plus funded reserves before any planet can be started
+or new resources can be credited.
 
 `VeydriftGame` is intentionally deployed directly for the test MVP so it remains under the
 Base Sepolia contract size limit. `Upgrade.s.sol` is retained only as an explicit guard and
