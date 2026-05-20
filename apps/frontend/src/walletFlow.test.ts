@@ -3,6 +3,7 @@ import {
   BASE_SEPOLIA,
   decodeBoolResult,
   decodeUintResult,
+  encodeAddressUintCall,
   encodeAddressCall,
   encodeGameCall,
   encodeUintCall,
@@ -12,6 +13,7 @@ import {
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
+  parseRiftTokenAmount,
   readSettlementState,
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
@@ -58,6 +60,10 @@ describe("walletFlow", () => {
     expect(encodeUintCall("0xd2f16c7d", 7n)).toBe(
       "0xd2f16c7d0000000000000000000000000000000000000000000000000000000000000007"
     );
+    expect(encodeAddressUintCall("0x095ea7b3", contract, 1_500_000n)).toBe(
+      "0x095ea7b30000000000000000000000002222222222222222222222222222222222222222"
+        + "000000000000000000000000000000000000000000000000000000000016e360"
+    );
     expect(encodeGameCall("0x13aed9a2", [7n, 0, 3])).toBe(
       "0x13aed9a2"
         + "0000000000000000000000000000000000000000000000000000000000000007"
@@ -65,6 +71,14 @@ describe("walletFlow", () => {
         + "0000000000000000000000000000000000000000000000000000000000000003"
     );
     expect(settlementTransactionData()).toBe("0x59268393");
+  });
+
+  test("parses Rift token input as 6-decimal base units", () => {
+    expect(parseRiftTokenAmount("1")).toBe(1_000_000n);
+    expect(parseRiftTokenAmount("1.25")).toBe(1_250_000n);
+    expect(parseRiftTokenAmount("0.000001")).toBe(1n);
+    expect(() => parseRiftTokenAmount("0.0000001")).toThrow("Use at most 6 decimal places.");
+    expect(() => parseRiftTokenAmount("abc")).toThrow("Enter a valid token amount.");
   });
 
   test("decodes bool results", () => {

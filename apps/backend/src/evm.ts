@@ -114,6 +114,48 @@ export type ResearchState = {
   queue: QueueState | null;
 };
 
+export type RiftResourceKey = "metal" | "crystal" | "deuterium";
+
+export type RiftRequirement = {
+  kind: "building" | "technology";
+  key: string;
+  label: string;
+  currentLevel: number | null;
+  requiredLevel: number;
+};
+
+export type RiftResourceState = {
+  key: RiftResourceKey;
+  label: string;
+  resourceId: number;
+  tokenAddress: Address | null;
+  walletBalance: string | null;
+  allowance: string | null;
+  inGameBalance: string;
+  lockedBalance: string;
+};
+
+export type PendingWithdrawal = {
+  id: string;
+  resource: RiftResourceKey;
+  amount: string;
+  requestedAt: string;
+  unlocksAt: string;
+  ready: boolean;
+};
+
+export type RiftState = {
+  wallet: Address;
+  homePlanetId: string | null;
+  riftAvailable: boolean;
+  unlocked: boolean;
+  unavailableReason?: string;
+  withdrawalDelaySeconds: string;
+  requirements: RiftRequirement[];
+  resources: RiftResourceState[];
+  pendingWithdrawals: PendingWithdrawal[];
+};
+
 export type SettledPlanetEvent = PlanetState & {
   eventName: "PlanetStarted" | "ColonyCreated";
   transactionHash: string;
@@ -128,6 +170,7 @@ export interface ChainReader {
   getDefenseState(wallet: Address): Promise<DefenseState>;
   getShipyardState(wallet: Address): Promise<ShipyardState>;
   getResearchState(wallet: Address): Promise<ResearchState>;
+  getRiftState(wallet: Address): Promise<RiftState>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
 }
 
@@ -189,6 +232,7 @@ export class VeydriftGameReader implements ChainReader {
   private readonly gameContractAddress: Address;
   private readonly chainId: number;
   private readonly indexFromBlock: bigint;
+  private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
 
   constructor(config: BackendConfig, transport?: Pick<HttpJsonRpcTransport, "request">) {
@@ -203,6 +247,7 @@ export class VeydriftGameReader implements ChainReader {
     this.gameContractAddress = config.gameContractAddress;
     this.chainId = config.chainId;
     this.indexFromBlock = config.indexFromBlock;
+    this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
   }
 
@@ -517,6 +562,66 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  async getRiftState(wallet: Address): Promise<RiftState> {
+    let settlement: WalletSettlement;
+    try {
+      settlement = await this.getGameSettlement(wallet);
+    } catch (error) {
+      if (!isRpcRevert(error) || !this.settlementContractAddress) {
+        throw error;
+      }
+
+      return emptyRiftState(
+        wallet,
+        null,
+        "The deployed contract only supports first-planet settlement. The Rift bridge is not available on this deployment yet."
+      );
+    }
+
+    if (!settlement.homePlanetId || !settlement.planet) {
+      return emptyRiftState(wallet, null, "Settle a home planet before using the Interdimensional Rift Stabilizer.");
+    }
+
+    const planetId = BigInt(settlement.homePlanetId);
+    const [riftLevel, roboticsLevel, researchLabLevel, technologyLevels] = await Promise.all([
+      this.readOptionalUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(BigInt(riftBuildingId))]),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(4n)]),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(6n)]),
+      this.readTechnologyLevels(wallet)
+    ]);
+
+    const requirements = riftRequirements(
+      riftLevel === null ? null : Number(riftLevel),
+      Number(roboticsLevel),
+      Number(researchLabLevel),
+      technologyLevels
+    );
+    const unlocked = requirements.every((requirement) =>
+      requirement.currentLevel !== null && requirement.currentLevel >= requirement.requiredLevel
+    );
+    const tokenAddressesConfigured = riftResourceCatalog.every((resource) => this.resourceTokenAddresses[resource.key]);
+    const resources = await this.readRiftResources(wallet, settlement.planet.resources);
+    const unavailableReason = riftLevel === null
+      ? "This deployment does not expose the Interdimensional Rift Stabilizer building yet."
+      : !unlocked
+        ? "Build the Interdimensional Rift Stabilizer and meet its prerequisites to unlock resource bridging."
+        : !tokenAddressesConfigured
+          ? "Resource token addresses are not configured for this deployment yet."
+          : undefined;
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      riftAvailable: unlocked && tokenAddressesConfigured,
+      unlocked,
+      ...(unavailableReason ? { unavailableReason } : {}),
+      withdrawalDelaySeconds: riftWithdrawalDelaySeconds.toString(),
+      requirements,
+      resources,
+      pendingWithdrawals: []
+    };
+  }
+
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
     const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
       {
@@ -691,6 +796,54 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
+  private async readRiftResources(wallet: Address, inGameResources: Resources): Promise<RiftResourceState[]> {
+    return Promise.all(
+      riftResourceCatalog.map(async (resource) => {
+        const tokenAddress = this.resourceTokenAddresses[resource.key] ?? null;
+        if (!tokenAddress) {
+          return {
+            ...resource,
+            tokenAddress,
+            walletBalance: null,
+            allowance: null,
+            inGameBalance: inGameResources[resource.key],
+            lockedBalance: "0"
+          };
+        }
+
+        const [walletBalance, allowance] = await Promise.all([
+          this.readErc20Uint(tokenAddress, "0x70a08231", [encodeAddress(wallet)]),
+          this.readErc20Uint(tokenAddress, "0xdd62ed3e", [encodeAddress(wallet), encodeAddress(this.gameContractAddress)])
+        ]);
+
+        return {
+          ...resource,
+          tokenAddress,
+          walletBalance: walletBalance.toString(),
+          allowance: allowance.toString(),
+          inGameBalance: inGameResources[resource.key],
+          lockedBalance: "0"
+        };
+      })
+    );
+  }
+
+  private async readOptionalUintCall(selector: string, args: string[]): Promise<bigint | null> {
+    try {
+      return await this.readUintCall(selector, args);
+    } catch (error) {
+      if (isRpcRevert(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  private async readErc20Uint(tokenAddress: Address, selector: string, args: string[]): Promise<bigint> {
+    return decodeUintWord(wordAt(splitWords(await this.callContract(tokenAddress, selector, args)), 0));
+  }
+
   private async getCompactSettlement(wallet: Address): Promise<WalletSettlement> {
     if (!this.settlementContractAddress) {
       return {
@@ -785,6 +938,13 @@ const buildingCount = 10;
 const defenseCount = 10;
 const shipCount = 16;
 const technologyCount = 16;
+const riftBuildingId = 15;
+const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
+const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [
+  { key: "metal", label: "Metal", resourceId: 0 },
+  { key: "crystal", label: "Crystal", resourceId: 1 },
+  { key: "deuterium", label: "Deuterium", resourceId: 2 }
+];
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
@@ -793,6 +953,72 @@ export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
     throw new Error("Invalid EVM address.");
   }
+}
+
+function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailableReason: string): RiftState {
+  return {
+    wallet,
+    homePlanetId,
+    riftAvailable: false,
+    unlocked: false,
+    unavailableReason,
+    withdrawalDelaySeconds: riftWithdrawalDelaySeconds.toString(),
+    requirements: riftRequirements(null, 0, 0, {}),
+    resources: riftResourceCatalog.map((resource) => ({
+      ...resource,
+      tokenAddress: null,
+      walletBalance: null,
+      allowance: null,
+      inGameBalance: "0",
+      lockedBalance: "0"
+    })),
+    pendingWithdrawals: []
+  };
+}
+
+function riftRequirements(
+  riftLevel: number | null,
+  roboticsLevel: number,
+  researchLabLevel: number,
+  technologyLevels: Record<string, number>
+): RiftRequirement[] {
+  return [
+    {
+      kind: "building",
+      key: "interdimensionalRiftStabilizer",
+      label: "Interdimensional Rift Stabilizer",
+      currentLevel: riftLevel,
+      requiredLevel: 1
+    },
+    {
+      kind: "building",
+      key: "roboticsFactory",
+      label: "Robotics Factory",
+      currentLevel: roboticsLevel,
+      requiredLevel: 4
+    },
+    {
+      kind: "building",
+      key: "researchLab",
+      label: "Research Lab",
+      currentLevel: researchLabLevel,
+      requiredLevel: 3
+    },
+    {
+      kind: "technology",
+      key: "energy",
+      label: "Energy Technology",
+      currentLevel: technologyLevels["0"] ?? 0,
+      requiredLevel: 5
+    },
+    {
+      kind: "technology",
+      key: "hyperspace",
+      label: "Hyperspace Technology",
+      currentLevel: technologyLevels["9"] ?? 0,
+      requiredLevel: 2
+    }
+  ];
 }
 
 function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {

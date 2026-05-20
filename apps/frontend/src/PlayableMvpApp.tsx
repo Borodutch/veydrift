@@ -9,6 +9,7 @@ import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
+import { RiftPage } from "./components/RiftPage";
 import {
   mergePlanetWithSettlement,
   planetFromSettlementPlanet,
@@ -46,14 +47,20 @@ import {
   fetchDefenseState,
   fetchShipyardState,
   fetchResearchState,
+  fetchRiftState,
   sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
+  parseRiftTokenAmount,
+  sendApproveResourceTokenTransaction,
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
   sendFinishBuildingUpgradeTransaction,
+  sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
+  sendDepositResourceTransaction,
+  sendRequestResourceWithdrawalTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
   sendStartResearchTransaction,
@@ -62,9 +69,12 @@ import {
   type ChainDefenseState,
   type ChainInfrastructureState,
   type ChainResearchState,
+  type ChainRiftState,
   type ChainShipyardState,
   type Eip1193Provider,
+  type PendingWithdrawal,
   type PlanetSummary,
+  type RiftResourceState,
   type PlayerQueuesResponse,
   type WalletSettlementResponse,
 } from "./walletFlow";
@@ -83,6 +93,7 @@ type ShipyardActionState =
 
 type BuildingActionState = ShipyardActionState;
 type DefenseActionState = ShipyardActionState;
+type RiftActionState = ShipyardActionState;
 
 export function infrastructureActionNoticeFor(
   action: BuildingActionState,
@@ -133,6 +144,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchError, setResearchError] = useState<string | undefined>();
   const [researchAction, setResearchAction] = useState<ResearchActionState>({ status: "idle" });
+  const [riftState, setRiftState] = useState<ChainRiftState | null>(null);
+  const [riftLoading, setRiftLoading] = useState(false);
+  const [riftError, setRiftError] = useState<string | undefined>();
+  const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
@@ -298,6 +313,28 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .finally(() => {
         setResearchLoading(false);
+      });
+  }, [account, apiBaseUrl]);
+
+  const refreshRiftState = useCallback(() => {
+    if (!apiBaseUrl || !account) {
+      setRiftState(null);
+      return;
+    }
+
+    setRiftLoading(true);
+    setRiftError(undefined);
+    fetchRiftState(apiBaseUrl, account)
+      .then((next) => {
+        setRiftState(next);
+      })
+      .catch((error) => {
+        console.error(error);
+        setRiftState(null);
+        setRiftError(error instanceof Error ? error.message : "Rift state could not be loaded.");
+      })
+      .finally(() => {
+        setRiftLoading(false);
       });
   }, [account, apiBaseUrl]);
 
@@ -548,6 +585,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [page, refreshResearchState]);
 
   useEffect(() => {
+    if (page === "rift") {
+      refreshRiftState();
+    }
+  }, [page, refreshRiftState]);
+
+  useEffect(() => {
     const abortController = new AbortController();
     fetch(runtimeConfigUrl(), {
       headers: { accept: "application/json" },
@@ -726,6 +769,28 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshInfrastructureState, refreshOnChainState, refreshResearchState]);
 
+  const runRiftTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+    setRiftAction({ status: "pending", label });
+
+    try {
+      const txHash = await send();
+      setRiftAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+      if (provider) {
+        await waitForReceipt(provider, txHash);
+      }
+      setRiftAction({ status: "success", label: `${label} confirmed.` });
+      refreshRiftState();
+      void refreshOnChainState();
+      refreshInfrastructureState();
+    } catch (error) {
+      console.error(error);
+      setRiftAction({
+        status: "error",
+        label: error instanceof Error ? error.message : `${label} failed.`,
+      });
+    }
+  }, [provider, refreshInfrastructureState, refreshOnChainState, refreshRiftState]);
+
   const handleCollectResources = useCallback(() => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       return;
@@ -840,6 +905,91 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       gameContract,
     ));
   }, [account, gameContract, provider, runResearchTransaction]);
+
+  const handleApproveRiftResource = useCallback((resource: RiftResourceState, amount: string) => {
+    if (!provider || !account || !gameContract || !resource.tokenAddress) {
+      setRiftAction({ status: "error", label: "Wallet, game contract, or resource token is unavailable." });
+      return;
+    }
+
+    let parsed: bigint;
+    try {
+      parsed = parseRiftTokenAmount(amount);
+    } catch (error) {
+      setRiftAction({ status: "error", label: error instanceof Error ? error.message : "Invalid approval amount." });
+      return;
+    }
+
+    void runRiftTransaction(`${resource.label} approval`, () => sendApproveResourceTokenTransaction(
+      provider,
+      account,
+      resource.tokenAddress ?? "",
+      gameContract,
+      parsed,
+    ));
+  }, [account, gameContract, provider, runRiftTransaction]);
+
+  const handleDepositRiftResource = useCallback((resource: RiftResourceState, amount: string) => {
+    if (!provider || !account || !gameContract || !riftState?.riftAvailable) {
+      setRiftAction({ status: "error", label: riftState?.unavailableReason ?? "Rift bridge is unavailable." });
+      return;
+    }
+
+    let parsed: bigint;
+    try {
+      parsed = parseRiftTokenAmount(amount);
+    } catch (error) {
+      setRiftAction({ status: "error", label: error instanceof Error ? error.message : "Invalid deposit amount." });
+      return;
+    }
+
+    void runRiftTransaction(`${resource.label} deposit`, () => sendDepositResourceTransaction(
+      provider,
+      account,
+      gameContract,
+      resource.resourceId,
+      parsed,
+    ));
+  }, [account, gameContract, provider, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction]);
+
+  const handleRequestRiftWithdrawal = useCallback((resource: RiftResourceState, amount: string) => {
+    if (!provider || !account || !gameContract || !riftState?.riftAvailable) {
+      setRiftAction({ status: "error", label: riftState?.unavailableReason ?? "Rift bridge is unavailable." });
+      return;
+    }
+
+    let parsed: bigint;
+    try {
+      parsed = parseRiftTokenAmount(amount);
+    } catch (error) {
+      setRiftAction({ status: "error", label: error instanceof Error ? error.message : "Invalid withdrawal amount." });
+      return;
+    }
+
+    void runRiftTransaction(`${resource.label} withdrawal request`, () => sendRequestResourceWithdrawalTransaction(
+      provider,
+      account,
+      gameContract,
+      resource.resourceId,
+      parsed,
+    ));
+  }, [account, gameContract, provider, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction]);
+
+  const handleFinishRiftWithdrawal = useCallback((withdrawal: PendingWithdrawal) => {
+    const resource = riftState?.resources.find((item) => item.key === withdrawal.resource);
+    if (!provider || !account || !gameContract || !resource) {
+      setRiftAction({ status: "error", label: "Wallet, game contract, or withdrawal resource is unavailable." });
+      return;
+    }
+
+    void runRiftTransaction(`${resource.label} withdrawal finish`, () => sendFinishResourceWithdrawalTransaction(
+      provider,
+      account,
+      gameContract,
+      resource.resourceId,
+      withdrawal.id,
+    ));
+  }, [account, gameContract, provider, riftState?.resources, runRiftTransaction]);
 
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
@@ -971,6 +1121,24 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onFinish={handleFinishShipProduction}
           onRefresh={refreshShipyardState}
           shipyardState={shipyardState}
+        />
+      );
+    }
+
+    if (page === "rift") {
+      return (
+        <RiftPage
+          actionState={riftAction}
+          canTransact={Boolean(provider && account && gameContract)}
+          error={riftError}
+          loading={riftLoading}
+          now={now}
+          onApprove={handleApproveRiftResource}
+          onDeposit={handleDepositRiftResource}
+          onFinishWithdrawal={handleFinishRiftWithdrawal}
+          onRefresh={refreshRiftState}
+          onRequestWithdrawal={handleRequestRiftWithdrawal}
+          riftState={riftState}
         />
       );
     }

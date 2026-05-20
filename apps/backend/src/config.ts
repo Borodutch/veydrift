@@ -5,6 +5,7 @@ export type BackendConfig = {
   deploymentMode: DeploymentMode;
   gameContractAddress?: `0x${string}`;
   indexFromBlock: bigint;
+  resourceTokenAddresses?: Partial<Record<"metal" | "crystal" | "deuterium", `0x${string}`>>;
   rpcUrl?: string;
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
   settlementContractAddress?: `0x${string}`;
@@ -26,6 +27,7 @@ export type SafeConfigSummary = {
   gameContractConfigured: boolean;
   hasRpcUrl: boolean;
   rpcSource: BackendConfig["rpcSource"];
+  resourceTokenAddressesConfigured: boolean;
   settlementContractConfigured: boolean;
   indexFromBlock: string;
 };
@@ -51,6 +53,14 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS",
     problems
   );
+  const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
+  const crystalTokenAddress = parseAddress(env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS, "VEYDRIFT_CRYSTAL_TOKEN_ADDRESS", problems);
+  const deuteriumTokenAddress = parseAddress(env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS, "VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS", problems);
+  const resourceTokenAddresses: BackendConfig["resourceTokenAddresses"] = {
+    ...(metalTokenAddress ? { metal: metalTokenAddress } : {}),
+    ...(crystalTokenAddress ? { crystal: crystalTokenAddress } : {}),
+    ...(deuteriumTokenAddress ? { deuterium: deuteriumTokenAddress } : {})
+  };
 
   if (!rpcUrl) {
     problems.push({
@@ -74,6 +84,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(gameContractAddress ? { gameContractAddress } : {}),
       indexFromBlock,
       rpcSource,
+      resourceTokenAddresses,
       ...(rpcUrl ? { rpcUrl } : {}),
       ...(settlementContractAddress ? { settlementContractAddress } : {})
     },
@@ -88,6 +99,11 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     gameContractConfigured: Boolean(config.gameContractAddress),
     hasRpcUrl: Boolean(config.rpcUrl),
     rpcSource: config.rpcSource,
+    resourceTokenAddressesConfigured: Boolean(
+      config.resourceTokenAddresses?.metal
+        && config.resourceTokenAddresses.crystal
+        && config.resourceTokenAddresses.deuterium
+    ),
     settlementContractConfigured: Boolean(config.settlementContractAddress),
     indexFromBlock: config.indexFromBlock.toString()
   };

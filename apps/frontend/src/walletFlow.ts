@@ -138,6 +138,48 @@ export type ChainResearchState = {
   queue: QueueStateResponse | null;
 };
 
+export type RiftResourceKey = "metal" | "crystal" | "deuterium";
+
+export type RiftRequirement = {
+  kind: "building" | "technology";
+  key: string;
+  label: string;
+  currentLevel: number | null;
+  requiredLevel: number;
+};
+
+export type RiftResourceState = {
+  key: RiftResourceKey;
+  label: string;
+  resourceId: number;
+  tokenAddress: string | null;
+  walletBalance: string | null;
+  allowance: string | null;
+  inGameBalance: string;
+  lockedBalance: string;
+};
+
+export type PendingWithdrawal = {
+  id: string;
+  resource: RiftResourceKey;
+  amount: string;
+  requestedAt: string;
+  unlocksAt: string;
+  ready: boolean;
+};
+
+export type ChainRiftState = {
+  wallet: string;
+  homePlanetId: string | null;
+  riftAvailable: boolean;
+  unlocked: boolean;
+  unavailableReason?: string;
+  withdrawalDelaySeconds: string;
+  requirements: RiftRequirement[];
+  resources: RiftResourceState[];
+  pendingWithdrawals: PendingWithdrawal[];
+};
+
 export type SettlementState =
   | { kind: "unconfigured" }
   | { kind: "not-settled" }
@@ -169,15 +211,21 @@ const READ_SELECTORS = {
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const GAME_SELECTORS = {
   collectResources: "0xdb43284d",
+  depositResource: "0x278f8c0f",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
+  finishResourceWithdrawal: "0x884a7fc1",
   startBuildingUpgrade: "0x165715e3",
   collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
+  requestResourceWithdrawal: "0xd015b908",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
+} as const;
+const ERC20_SELECTORS = {
+  approve: "0x095ea7b3"
 } as const;
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
 
@@ -229,6 +277,25 @@ export function encodeUintCall(selector: string, value: bigint | number | string
 
 export function encodeGameCall(selector: string, values: Array<bigint | number | string>): string {
   return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
+}
+
+export function encodeAddressUintCall(selector: string, address: string, value: bigint | number | string): string {
+  return `${selector}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${BigInt(value).toString(16).padStart(64, "0")}`;
+}
+
+export function parseRiftTokenAmount(value: string, decimals = 6): bigint {
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) {
+    throw new Error("Enter a valid token amount.");
+  }
+
+  const [whole = "0", fraction = ""] = trimmed.split(".");
+  if (fraction.length > decimals) {
+    throw new Error(`Use at most ${decimals} decimal places.`);
+  }
+
+  const base = 10n ** BigInt(decimals);
+  return BigInt(whole) * base + BigInt(fraction.padEnd(decimals, "0") || "0");
 }
 
 export function decodeUintResult(hex: string): bigint {
@@ -352,6 +419,82 @@ export async function sendStartShipProductionTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(GAME_SELECTORS.startShipProduction, [planetId, shipId, quantity])
+      }
+    ]
+  });
+}
+
+export async function sendApproveResourceTokenTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  tokenAddress: string,
+  spenderAddress: string,
+  amount: bigint | number | string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: tokenAddress,
+        data: encodeAddressUintCall(ERC20_SELECTORS.approve, spenderAddress, amount)
+      }
+    ]
+  });
+}
+
+export async function sendDepositResourceTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  resourceId: number,
+  amount: bigint | number | string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.depositResource, [resourceId, amount])
+      }
+    ]
+  });
+}
+
+export async function sendRequestResourceWithdrawalTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  resourceId: number,
+  amount: bigint | number | string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [resourceId, amount])
+      }
+    ]
+  });
+}
+
+export async function sendFinishResourceWithdrawalTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  resourceId: number,
+  withdrawalId: bigint | number | string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId, withdrawalId])
       }
     ]
   });
@@ -700,6 +843,10 @@ export async function fetchDefenseState(apiUrl: string, wallet: string): Promise
 
 export async function fetchResearchState(apiUrl: string, wallet: string): Promise<ChainResearchState> {
   return fetchWalletJson<ChainResearchState>(apiUrl, wallet, "research", "Research");
+}
+
+export async function fetchRiftState(apiUrl: string, wallet: string): Promise<ChainRiftState> {
+  return fetchWalletJson<ChainRiftState>(apiUrl, wallet, "rift", "Rift");
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
