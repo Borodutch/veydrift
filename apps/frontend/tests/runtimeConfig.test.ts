@@ -16,6 +16,11 @@ describe("runtime config URL", () => {
       gameContractAddress: "0x2222222222222222222222222222222222222222",
       graphqlUrl: "https://api-test.veydrift.com/graphql",
       network: "Base Sepolia",
+      resourceTokenAddresses: {
+        crystal: null,
+        deuterium: null,
+        metal: null,
+      },
       rpcProvider: "alchemy",
     };
 
@@ -30,6 +35,11 @@ describe("runtime config URL", () => {
       gameContractAddress: null,
       graphqlUrl: "https://api-test.veydrift.com/graphql",
       network: "Base Sepolia",
+      resourceTokenAddresses: {
+        crystal: null,
+        deuterium: null,
+        metal: null,
+      },
       rpcProvider: "alchemy",
     };
 
