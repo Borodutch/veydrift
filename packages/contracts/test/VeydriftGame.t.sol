@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {Building, Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
 contract VeydriftGameTest is Test {
@@ -227,6 +228,28 @@ contract VeydriftGameTest is Test {
         assertEq(afterResources.deuterium, beforeResources.deuterium);
     }
 
+    function testOGameEnergyShortageScaleUsesProducedOverRequired() public view {
+        uint16 bps = game.BPS();
+
+        (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) =
+            VeydriftFormulas.energyBalance(0, 0, 5, 2, bps);
+        assertEq(producedEnergy, 60);
+        assertEq(requiredEnergy, 100);
+        assertEq(energyScaleBps, 6_000);
+
+        (producedEnergy, requiredEnergy, energyScaleBps) =
+            VeydriftFormulas.energyBalance(0, 0, 5, 0, bps);
+        assertEq(producedEnergy, 0);
+        assertEq(requiredEnergy, 100);
+        assertEq(energyScaleBps, 0);
+
+        (producedEnergy, requiredEnergy, energyScaleBps) =
+            VeydriftFormulas.energyBalance(0, 0, 5, 4, bps);
+        assertEq(producedEnergy, 120);
+        assertEq(requiredEnergy, 100);
+        assertEq(energyScaleBps, bps);
+    }
+
     function testBuildingCompletionSplitsProductionAtReadyAt() public {
         uint256 planetId = _startPlanet(player);
         _build(player, planetId, Building.MetalMine);
@@ -236,6 +259,36 @@ contract VeydriftGameTest is Test {
         VeydriftGame.BuildingConstruction memory construction =
             game.activeBuildingConstruction(planetId);
         VeydriftGame.Resources memory resourcesAfterSolarSpend = game.planet(planetId).resources;
+
+        vm.warp(construction.readyAt + 1 hours);
+        vm.prank(player);
+        game.finishBuildingUpgrade(planetId);
+
+        (uint256 metalPerHour,,) = game.productionPerHour(planetId);
+        VeydriftGame.Resources memory resourcesAfterSolarCompletion =
+        game.planet(planetId).resources;
+        assertEq(game.buildingLevel(planetId, Building.SolarPlant), 1);
+        assertEq(resourcesAfterSolarCompletion.metal, resourcesAfterSolarSpend.metal + metalPerHour);
+        assertEq(resourcesAfterSolarCompletion.crystal, resourcesAfterSolarSpend.crystal);
+        assertEq(resourcesAfterSolarCompletion.deuterium, resourcesAfterSolarSpend.deuterium);
+    }
+
+    function testEnergyImprovementDoesNotRetroactivelyPayShortageTime() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+
+        VeydriftGame.Resources memory resourcesAfterMine = game.planet(planetId).resources;
+        vm.warp(block.timestamp + 1 hours);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.SolarPlant);
+        VeydriftGame.Resources memory resourcesAfterSolarSpend = game.planet(planetId).resources;
+        VeydriftGame.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        assertEq(resourcesAfterSolarSpend.metal, resourcesAfterMine.metal - construction.cost.metal);
+        assertEq(
+            resourcesAfterSolarSpend.crystal, resourcesAfterMine.crystal - construction.cost.crystal
+        );
 
         vm.warp(construction.readyAt + 1 hours);
         vm.prank(player);

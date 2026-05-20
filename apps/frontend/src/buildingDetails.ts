@@ -5,11 +5,15 @@ import {
   buildingRequirementsFor,
   canAfford,
   energyBalance,
+  productionCapacityPerHour,
+  storageCaps,
   unmetBuildingRequirement,
+  type PlanetProductionProfile,
 } from "./playableMvp";
 export { formatDuration } from "./durationFormat";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+export const MAX_BUILDING_LEVEL = 50;
 
 const resourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
@@ -47,6 +51,32 @@ export type BuildingEnergyDetail =
   | {
       kind: "none";
     };
+
+export type BuildingLevelInfoRow = {
+  cost: Resources;
+  current: boolean;
+  effect?: string;
+  energyProduced?: number;
+  energyRequired?: number;
+  level: number;
+  next: boolean;
+  production?: {
+    resource: keyof Resources;
+    perHour: number;
+  };
+  storage?: {
+    resource: keyof Resources;
+    capacity: number;
+  };
+};
+
+export type BuildingLevelInfoColumns = {
+  effect: boolean;
+  energyProduced: boolean;
+  energyRequired: boolean;
+  production: boolean;
+  storage: boolean;
+};
 
 export function buildingUpgradeStatus(
   state: PlayableState,
@@ -108,6 +138,68 @@ export function buildingUpgradeStatus(
     durationSeconds,
     reason: `Ready for Level ${targetLevel}`,
     targetLevel,
+  };
+}
+
+export function buildingLevelInfoRows(
+  buildings: Record<BuildingKey, number>,
+  key: BuildingKey,
+  profile?: PlanetProductionProfile | undefined,
+  maxLevel = MAX_BUILDING_LEVEL,
+): BuildingLevelInfoRow[] {
+  const currentLevel = buildings[key];
+  const cappedMaxLevel = Math.max(1, maxLevel);
+
+  return Array.from({ length: cappedMaxLevel }, (_, index) => {
+    const level = index + 1;
+    const rowBuildings = { ...buildings, [key]: level };
+    const cost = buildingCost({ ...buildings, [key]: level - 1 }, key);
+    const row: BuildingLevelInfoRow = {
+      cost,
+      current: currentLevel === level,
+      level,
+      next: currentLevel + 1 === level,
+    };
+
+    if (key === "metalMine" || key === "crystalMine" || key === "deuteriumSynthesizer") {
+      const resource = productionResourceForBuilding(key);
+      row.production = {
+        resource,
+        perHour: productionCapacityPerHour(rowBuildings, profile)[resource],
+      };
+      const energyRequired = energyRequiredForBuildingLevel(key, level);
+      if (energyRequired !== undefined) {
+        row.energyRequired = energyRequired;
+      }
+      return row;
+    }
+
+    if (key === "solarPlant") {
+      row.energyProduced = energyBalance(rowBuildings).produced;
+      return row;
+    }
+
+    if (key === "metalStorage" || key === "crystalStorage" || key === "deuteriumTank") {
+      const resource = storageResourceForBuilding(key);
+      row.storage = {
+        resource,
+        capacity: storageCaps(rowBuildings)[resource],
+      };
+      return row;
+    }
+
+    row.effect = speedEffectForBuilding(key, level);
+    return row;
+  });
+}
+
+export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): BuildingLevelInfoColumns {
+  return {
+    effect: rows.some((row) => row.effect !== undefined),
+    energyProduced: rows.some((row) => row.energyProduced !== undefined),
+    energyRequired: rows.some((row) => row.energyRequired !== undefined),
+    production: rows.some((row) => row.production !== undefined),
+    storage: rows.some((row) => row.storage !== undefined),
   };
 }
 
@@ -194,6 +286,47 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
     ["crystal", resources.crystal],
     ["deuterium", resources.deuterium],
   ];
+}
+
+function energyRequiredForBuildingLevel(key: BuildingKey, level: number): number | undefined {
+  const perLevel = buildingEnergyConsumption[key];
+  return perLevel === undefined ? undefined : perLevel * level;
+}
+
+function productionResourceForBuilding(key: BuildingKey): keyof Resources {
+  if (key === "metalMine") {
+    return "metal";
+  }
+
+  if (key === "crystalMine") {
+    return "crystal";
+  }
+
+  return "deuterium";
+}
+
+function storageResourceForBuilding(key: BuildingKey): keyof Resources {
+  if (key === "metalStorage") {
+    return "metal";
+  }
+
+  if (key === "crystalStorage") {
+    return "crystal";
+  }
+
+  return "deuterium";
+}
+
+function speedEffectForBuilding(key: BuildingKey, level: number): string {
+  if (key === "shipyard") {
+    return `x${formatNumber(level + 1)} ship production`;
+  }
+
+  if (key === "researchLab") {
+    return `x${formatNumber(level + 1)} research speed`;
+  }
+
+  return `x${formatNumber(level + 1)} construction speed`;
 }
 
 function buildingLabel(key: BuildingKey): string {
