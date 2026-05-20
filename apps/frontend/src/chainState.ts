@@ -94,6 +94,17 @@ export function resourcesFromChain(value: ChainInfrastructureState["resources"])
   return toResources(value);
 }
 
+export function energyBalanceFromChain(
+  value: ChainInfrastructureState["energyBalance"],
+): { produced: number; required: number; scaleBps: number } | undefined {
+  if (!value) return undefined;
+  return {
+    produced: Number(value.produced),
+    required: Number(value.required),
+    scaleBps: Number(value.scaleBps),
+  };
+}
+
 export function buildingQueueForDisplay(
   infrastructureState: ChainInfrastructureState,
   now = Date.now(),

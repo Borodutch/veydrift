@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildingLevelInfoColumns,
+  buildingLevelInfoRows,
   buildingEnergyDetail,
   buildingUpgradeStatus,
   formatBuildingRequirements,
@@ -123,7 +125,7 @@ describe("building detail helpers", () => {
 
     expect(buildingUpgradeStatus(queued, "solarPlant")).toMatchObject({
       disabled: true,
-      reason: "Building queue occupied by Metal Mine",
+      reason: "Another building is currently upgrading: Metal Mine Level 1",
     });
     expect(buildingEnergyDetail({ ...queued.buildings, metalMine: 2 }, "metalMine")).toEqual({
       kind: "requires",
@@ -136,6 +138,112 @@ describe("building detail helpers", () => {
       current: 30,
       next: 60,
       delta: 30,
+    });
+  });
+
+  test("names the active building instead of the selected inactive detail", () => {
+    const queued = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+        roboticsFactory: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 2,
+      },
+    };
+
+    expect(buildingUpgradeStatus(queued, "researchLab")).toMatchObject({
+      disabled: true,
+      reason: "Another building is currently upgrading: Metal Mine Level 2",
+      targetLevel: 1,
+    });
+    expect(buildingUpgradeStatus(queued, "metalMine")).toMatchObject({
+      disabled: true,
+      reason: "Metal Mine Level 2 upgrade in progress",
+      targetLevel: 2,
+    });
+  });
+
+  test("builds Metal Mine level table rows with costs, production, and energy use", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+      },
+    };
+    const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 3);
+
+    expect(buildingLevelInfoColumns(rows)).toEqual({
+      effect: false,
+      energyProduced: false,
+      energyRequired: true,
+      production: true,
+      storage: false,
+    });
+    expect(rows[0]).toMatchObject({
+      cost: { metal: 60, crystal: 15, deuterium: 0 },
+      current: true,
+      energyRequired: 10,
+      level: 1,
+      next: false,
+      production: { resource: "metal", perHour: 24 },
+    });
+    expect(rows[1]).toMatchObject({
+      cost: { metal: 120, crystal: 30, deuterium: 0 },
+      current: false,
+      energyRequired: 20,
+      level: 2,
+      next: true,
+      production: { resource: "metal", perHour: 58 },
+    });
+  });
+
+  test("builds Solar Plant level table rows with energy output", () => {
+    const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "solarPlant", undefined, 2);
+
+    expect(buildingLevelInfoColumns(rows)).toEqual({
+      effect: false,
+      energyProduced: true,
+      energyRequired: false,
+      production: false,
+      storage: false,
+    });
+    expect(rows[0]).toMatchObject({
+      cost: { metal: 75, crystal: 30, deuterium: 0 },
+      energyProduced: 30,
+      level: 1,
+      next: true,
+    });
+    expect(rows[1]).toMatchObject({
+      cost: { metal: 150, crystal: 60, deuterium: 0 },
+      energyProduced: 60,
+      level: 2,
+    });
+  });
+
+  test("builds storage level table rows without production or energy columns", () => {
+    const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
+
+    expect(buildingLevelInfoColumns(rows)).toEqual({
+      effect: false,
+      energyProduced: false,
+      energyRequired: false,
+      production: false,
+      storage: true,
+    });
+    expect(rows[0]).toMatchObject({
+      cost: { metal: 1000, crystal: 0, deuterium: 0 },
+      level: 1,
+      storage: { resource: "metal", capacity: 20_000 },
     });
   });
 });
