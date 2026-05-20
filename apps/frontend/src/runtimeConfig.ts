@@ -5,6 +5,11 @@ export type RuntimeConfig = {
   gameContractAddress: string | null;
   graphqlUrl: string;
   network: string;
+  resourceTokenAddresses: {
+    crystal: string | null;
+    deuterium: string | null;
+    metal: string | null;
+  };
   rpcProvider: "alchemy" | "unknown";
 };
 
