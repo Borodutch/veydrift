@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildingQueueItemForDisplay, infrastructurePlayableState } from "./chainState";
+import { buildingQueueItemForDisplay, energyBalanceFromChain, infrastructurePlayableState } from "./chainState";
 import { createInitialPlayableState, progress } from "./playableMvp";
 
 describe("chainState", () => {
@@ -11,6 +11,7 @@ describe("chainState", () => {
       homePlanetId: "7",
       resources: { metal: "0", crystal: "0", deuterium: "0" },
       productionPerHour: null,
+      energyBalance: null,
       storageCaps: null,
       buildings: [],
       queue: {
@@ -53,5 +54,42 @@ describe("chainState", () => {
       startedAt: (readyAtSeconds - 60) * 1_000,
     });
     expect(progress(queue, (readyAtSeconds - 45) * 1_000)).toBe(0.25);
+  });
+
+  test("adapts contract energy shortage factor for display", () => {
+    expect(energyBalanceFromChain({
+      produced: "60",
+      required: "100",
+      scaleBps: "6000",
+    })).toEqual({
+      produced: 60,
+      required: 100,
+      scaleBps: 6000,
+    });
+  });
+
+  test("uses queue startedAt from the backend when a refreshed construction outlives the local duration estimate", () => {
+    const startedAtSeconds = 1_700_000_000;
+    const readyAtSeconds = 1_700_000_600;
+    const halfway = (startedAtSeconds + 300) * 1_000;
+    const state = createInitialPlayableState();
+    const queue = buildingQueueItemForDisplay({
+      active: true,
+      kind: "building",
+      itemId: 1,
+      targetLevel: 1,
+      startedAt: startedAtSeconds.toString(),
+      readyAt: readyAtSeconds.toString(),
+      cost: { metal: "48", crystal: "24", deuterium: "0" },
+    }, state.buildings, halfway);
+
+    expect(queue).toMatchObject({
+      kind: "building",
+      key: "crystalMine",
+      label: "Crystal Mine",
+      readyAt: readyAtSeconds * 1_000,
+      startedAt: startedAtSeconds * 1_000,
+    });
+    expect(progress(queue, halfway)).toBe(0.5);
   });
 });

@@ -94,6 +94,17 @@ export function resourcesFromChain(value: ChainInfrastructureState["resources"])
   return toResources(value);
 }
 
+export function energyBalanceFromChain(
+  value: ChainInfrastructureState["energyBalance"],
+): { produced: number; required: number; scaleBps: number } | undefined {
+  if (!value) return undefined;
+  return {
+    produced: Number(value.produced),
+    required: Number(value.required),
+    scaleBps: Number(value.scaleBps),
+  };
+}
+
 export function buildingQueueForDisplay(
   infrastructureState: ChainInfrastructureState,
   now = Date.now(),
@@ -110,15 +121,19 @@ export function buildingQueueItemForDisplay(
   const building = buildingCatalog.find((item) => buildingContractIds[item.key] === queue.itemId);
   if (!building) return undefined;
 
-  const readyAt = queue.readyAt ? Number(queue.readyAt) * 1_000 : now;
+  const readyAt = queueTimestampMs(queue.readyAt) ?? now;
+  const chainStartedAt = queueTimestampMs(queue.startedAt);
   const cost = toResources(queue.cost) ?? { metal: 0, crystal: 0, deuterium: 0 };
   const durationMs = buildingDurationEstimate(buildings, cost) * 1_000;
+  const startedAt = chainStartedAt !== undefined && chainStartedAt < readyAt
+    ? chainStartedAt
+    : readyAt - durationMs;
   return {
     kind: "building",
     key: building.key,
     label: building.label,
     readyAt,
-    startedAt: readyAt - durationMs,
+    startedAt,
     targetLevel: queue.targetLevel ?? 0,
   };
 }
@@ -141,6 +156,13 @@ export function researchQueueForDisplay(queue: QueueStateResponse | null): Playa
 
 function zeroResearchLevels(): PlayableState["research"] {
   return Object.fromEntries(researchCatalog.map((research) => [research.key, 0])) as PlayableState["research"];
+}
+
+function queueTimestampMs(value: string | null | undefined): number | undefined {
+  if (!value) return undefined;
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return undefined;
+  return timestamp * 1_000;
 }
 
 function toResources(resources: ChainInfrastructureState["resources"] | ChainInfrastructureState["buildings"][number]["cost"] | null | undefined): Resources | undefined {
