@@ -1,9 +1,85 @@
 import { describe, expect, test } from "bun:test";
-import { buildingEnergyDetail } from "../src/buildingDetails";
-import { detailEffectRows } from "../src/components/InfrastructurePage";
+import type { ComponentChildren, VNode } from "preact";
+import { buildingEnergyDetail, buildingLevelInfoRows } from "../src/buildingDetails";
+import {
+  BuildingLevelInfoButton,
+  BuildingLevelInfoModal,
+  detailEffectRows,
+} from "../src/components/InfrastructurePage";
 import { buildingEffectMetrics, createInitialPlayableState } from "../src/playableMvp";
 
 describe("Infrastructure page display helpers", () => {
+  test("renders a compact level info button with the building label", () => {
+    const button = BuildingLevelInfoButton({
+      buildingLabel: "Metal Mine",
+      onClick: () => undefined,
+    });
+
+    expect(button.type).toBe("button");
+    expect(button.props["aria-label"]).toBe("Open Metal Mine level table");
+    expect(button.props.title).toBe("Level table");
+  });
+
+  test("renders Metal Mine modal rows with cost, production, energy use, and current/next markers", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+      },
+    };
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Metal Mine",
+      currentLevel: 1,
+      rows: buildingLevelInfoRows(state.buildings, "metalMine", undefined, 3),
+      onClose: () => undefined,
+    });
+    const text = visibleText(modal);
+
+    expect(text).toContain("Metal Mine levels");
+    expect(text).toContain("Production");
+    expect(text).toContain("Energy use");
+    expect(text).toContain("Level 1 Current");
+    expect(text).toContain("Level 2 Next");
+    expect(text).toContain("Metal 120 / Crystal 30");
+    expect(text).toContain("58 Metal/h");
+    expect(text).toContain("20 required");
+  });
+
+  test("renders Solar Plant modal rows with energy output", () => {
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Solar Plant",
+      currentLevel: 0,
+      rows: buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "solarPlant", undefined, 2),
+      onClose: () => undefined,
+    });
+    const text = visibleText(modal);
+
+    expect(text).toContain("Solar Plant levels");
+    expect(text).toContain("Energy output");
+    expect(text).toContain("Level 1 Next");
+    expect(text).toContain("Metal 75 / Crystal 30");
+    expect(text).toContain("30 produced");
+    expect(text).toContain("60 produced");
+  });
+
+  test("renders storage modal rows without production or energy columns", () => {
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Metal Storage",
+      currentLevel: 0,
+      rows: buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2),
+      onClose: () => undefined,
+    });
+    const text = visibleText(modal);
+
+    expect(text).toContain("Metal Storage levels");
+    expect(text).toContain("Storage");
+    expect(text).toContain("20,000 Metal");
+    expect(text).not.toContain("Production");
+    expect(text).not.toContain("Energy use");
+    expect(text).not.toContain("Energy output");
+  });
+
   test("omits redundant delta wording from energy comparison rows", () => {
     const state = createInitialPlayableState(1_000);
     const mineBuildings = {
@@ -101,3 +177,24 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 });
+
+function visibleText(node: ComponentChildren): string {
+  return textParts(node).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function textParts(node: ComponentChildren): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return [];
+  }
+
+  if (typeof node === "string" || typeof node === "number") {
+    return [String(node)];
+  }
+
+  if (Array.isArray(node)) {
+    return node.flatMap(textParts);
+  }
+
+  const vnode = node as VNode;
+  return textParts(vnode.props?.children);
+}

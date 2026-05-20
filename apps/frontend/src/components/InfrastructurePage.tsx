@@ -275,15 +275,10 @@ function BuildingDetailPanel({
               <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
                 <span>{currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}</span>
-                <button
-                  aria-label={`Open ${building.label} level table`}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-signal/40 hover:bg-signal/10 hover:text-signal"
+                <BuildingLevelInfoButton
+                  buildingLabel={building.label}
                   onClick={() => setIsInfoOpen(true)}
-                  title="Level table"
-                  type="button"
-                >
-                  <Info aria-hidden="true" size={15} strokeWidth={2.2} />
-                </button>
+                />
               </div>
             </div>
             {currentLevel === 0 ? (
@@ -366,7 +361,27 @@ function BuildingDetailPanel({
   );
 }
 
-function BuildingLevelInfoModal({
+export function BuildingLevelInfoButton({
+  buildingLabel,
+  onClick,
+}: {
+  buildingLabel: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-label={`Open ${buildingLabel} level table`}
+      className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-signal/40 hover:bg-signal/10 hover:text-signal"
+      onClick={onClick}
+      title="Level table"
+      type="button"
+    >
+      <Info aria-hidden="true" size={15} strokeWidth={2.2} />
+    </button>
+  );
+}
+
+export function BuildingLevelInfoModal({
   buildingLabel,
   currentLevel,
   onClose,
