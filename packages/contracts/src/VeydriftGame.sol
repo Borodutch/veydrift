@@ -2,6 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
@@ -10,6 +12,7 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 /// @notice Playable Veydrift MVP: one home planet, lazy resources, production, units, and research.
 /// @dev MVP simplifications: no colonies, fleet movement, combat, espionage reports, markets, or NFTs.
 contract VeydriftGame {
+    using SafeERC20 for IERC20;
     using SafeCast for int256;
     using SafeCast for uint256;
 
@@ -23,6 +26,9 @@ contract VeydriftGame {
     uint16 public constant BPS = 10_000;
     uint32 public constant MIN_QUEUE_SECONDS = 60;
     uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
+    uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
+    uint256 private constant BRIDGE_NOT_ENTERED = 1;
+    uint256 private constant BRIDGE_ENTERED = 2;
     uint16 public constant MAX_GALAXY = 9;
     uint16 public constant MAX_SYSTEM = 499;
     uint8 public constant MAX_POSITION = 15;
@@ -106,6 +112,14 @@ contract VeydriftGame {
         uint32 colonyShip;
     }
 
+    struct ResourceWithdrawal {
+        bool active;
+        uint256 planetId;
+        Resource resource;
+        uint128 amount;
+        uint64 unlocksAt;
+    }
+
     uint256 public startPrice;
     uint256 public nextPlanetId;
     address private _owner;
@@ -125,6 +139,10 @@ contract VeydriftGame {
     uint256 public nextFleetId;
     mapping(address player => uint256 count) public planetCountOf;
     mapping(uint256 fleetId => Fleet fleet) private _fleets;
+    mapping(Resource resource => address token) public resourceTokenOf;
+    mapping(address player => mapping(Resource resource => ResourceWithdrawal withdrawal)) public
+        resourceWithdrawals;
+    uint256 private _bridgeReentrancyStatus;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -155,6 +173,12 @@ contract VeydriftGame {
     error FleetNotArrived(uint64 arrivesAt);
     error FleetAlreadyReturning();
     error FleetAlreadyArrived();
+    error RiftStabilizerRequired(uint256 planetId);
+    error InvalidResource(Resource resource);
+    error ResourceTokenNotConfigured(Resource resource);
+    error WithdrawalActive(Resource resource);
+    error WithdrawalInactive(Resource resource);
+    error WithdrawalNotReady(uint64 unlocksAt);
     error TransferFailed();
     error Unauthorized(address account);
 
@@ -267,6 +291,22 @@ contract VeydriftGame {
         uint128 crystal,
         uint128 deuterium
     );
+    event ResourceTokenUpdated(
+        Resource indexed resource, address indexed oldToken, address indexed newToken
+    );
+    event MarketResourceDeposited(
+        address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
+    );
+    event MarketResourceWithdrawalRequested(
+        address indexed player,
+        uint256 indexed planetId,
+        Resource indexed resource,
+        uint128 amount,
+        uint64 unlocksAt
+    );
+    event MarketResourceWithdrawalFinished(
+        address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
+    );
     event FeesWithdrawn(address indexed to, uint256 amount);
 
     constructor(address admin) {
@@ -274,6 +314,7 @@ contract VeydriftGame {
         startPrice = DEFAULT_START_PRICE;
         nextPlanetId = 1;
         nextFleetId = 1;
+        _bridgeReentrancyStatus = BRIDGE_NOT_ENTERED;
     }
 
     modifier onlyOwner() {
@@ -281,6 +322,15 @@ contract VeydriftGame {
             revert Unauthorized(msg.sender);
         }
         _;
+    }
+
+    modifier nonReentrantBridge() {
+        if (_bridgeReentrancyStatus == BRIDGE_ENTERED) {
+            revert TransferFailed();
+        }
+        _bridgeReentrancyStatus = BRIDGE_ENTERED;
+        _;
+        _bridgeReentrancyStatus = BRIDGE_NOT_ENTERED;
     }
 
     function owner() external view returns (address) {
@@ -300,6 +350,13 @@ contract VeydriftGame {
             revert TransferFailed();
         }
         emit FeesWithdrawn(to, amount);
+    }
+
+    function setResourceToken(Resource resource, address token) external onlyOwner {
+        _requireMarketResource(resource);
+        address oldToken = resourceTokenOf[resource];
+        resourceTokenOf[resource] = token;
+        emit ResourceTokenUpdated(resource, oldToken, token);
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -690,8 +747,8 @@ contract VeydriftGame {
             fleetRef.returning ? fleetRef.originPlanetId : fleetRef.destinationPlanetId;
         settlePlanet(arrivalPlanetId);
 
-        Resources memory nextResources = _add(_planets[arrivalPlanetId].resources, fleetRef.cargo);
-        _planets[arrivalPlanetId].resources = _capResources(arrivalPlanetId, nextResources);
+        _planets[arrivalPlanetId].resources =
+            _addWithCaps(arrivalPlanetId, _planets[arrivalPlanetId].resources, fleetRef.cargo);
         _shipCounts[arrivalPlanetId][Ship.SmallCargo] += fleetRef.smallCargo;
         _shipCounts[arrivalPlanetId][Ship.Recycler] += fleetRef.recycler;
         _shipCounts[arrivalPlanetId][Ship.ColonyShip] += fleetRef.colonyShip;
@@ -706,6 +763,71 @@ contract VeydriftGame {
             fleetRef.cargo.metal,
             fleetRef.cargo.crystal,
             fleetRef.cargo.deuterium
+        );
+    }
+
+    function depositMarketResource(uint256 planetId, Resource resource, uint128 amount)
+        external
+        nonReentrantBridge
+    {
+        _requirePlanetOwner(planetId);
+        _requireRiftStabilizer(planetId);
+        if (amount == 0) {
+            revert InvalidQuantity();
+        }
+        IERC20 token = _marketResourceToken(resource);
+
+        settlePlanet(planetId);
+        token.safeTransferFrom(msg.sender, address(this), amount);
+        _creditResource(planetId, resource, amount);
+
+        emit MarketResourceDeposited(msg.sender, planetId, resource, amount);
+    }
+
+    function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
+        external
+        nonReentrantBridge
+    {
+        _requirePlanetOwner(planetId);
+        _requireRiftStabilizer(planetId);
+        if (amount == 0) {
+            revert InvalidQuantity();
+        }
+        _marketResourceToken(resource);
+        ResourceWithdrawal storage withdrawal = resourceWithdrawals[msg.sender][resource];
+        if (withdrawal.active) {
+            revert WithdrawalActive(resource);
+        }
+
+        settlePlanet(planetId);
+        _debitResource(planetId, resource, amount);
+        uint64 unlocksAt = (uint256(_currentTimestamp()) + MARKET_WITHDRAWAL_DELAY).toUint64();
+        resourceWithdrawals[msg.sender][resource] = ResourceWithdrawal({
+            active: true,
+            planetId: planetId,
+            resource: resource,
+            amount: amount,
+            unlocksAt: unlocksAt
+        });
+
+        emit MarketResourceWithdrawalRequested(msg.sender, planetId, resource, amount, unlocksAt);
+    }
+
+    function finishMarketResourceWithdrawal(Resource resource) external nonReentrantBridge {
+        ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
+        if (!withdrawal.active) {
+            revert WithdrawalInactive(resource);
+        }
+        if (_currentTimestamp() < withdrawal.unlocksAt) {
+            revert WithdrawalNotReady(withdrawal.unlocksAt);
+        }
+        IERC20 token = _marketResourceToken(resource);
+
+        delete resourceWithdrawals[msg.sender][resource];
+        token.safeTransfer(msg.sender, withdrawal.amount);
+
+        emit MarketResourceWithdrawalFinished(
+            msg.sender, withdrawal.planetId, resource, withdrawal.amount
         );
     }
 
@@ -875,7 +997,7 @@ contract VeydriftGame {
             crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
             deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
         });
-        resources = _capResources(planetId, _add(resources, produced));
+        resources = _addWithCaps(planetId, resources, produced);
     }
 
     function productionPerHour(uint256 planetId)
@@ -997,7 +1119,7 @@ contract VeydriftGame {
                 crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
                 deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
             });
-            planetRef.resources = _capResources(planetId, _add(planetRef.resources, produced));
+            planetRef.resources = _addWithCaps(planetId, planetRef.resources, produced);
             planetRef.lastSettledAt = settledAt;
         }
         emit PlanetSettled(
@@ -1289,6 +1411,79 @@ contract VeydriftGame {
         }
     }
 
+    function _requireRiftStabilizer(uint256 planetId) private view {
+        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] == 0) {
+            revert RiftStabilizerRequired(planetId);
+        }
+    }
+
+    function _requireMarketResource(Resource resource) private pure {
+        if (
+            resource != Resource.Metal && resource != Resource.Crystal
+                && resource != Resource.Deuterium
+        ) {
+            revert InvalidResource(resource);
+        }
+    }
+
+    function _marketResourceToken(Resource resource) private view returns (IERC20) {
+        _requireMarketResource(resource);
+        address token = resourceTokenOf[resource];
+        if (token == address(0)) {
+            revert ResourceTokenNotConfigured(resource);
+        }
+        return IERC20(token);
+    }
+
+    function _creditResource(uint256 planetId, Resource resource, uint128 amount) private {
+        Resources storage resources = _planets[planetId].resources;
+        if (resource == Resource.Metal) {
+            resources.metal = _toUint128(uint256(resources.metal) + amount);
+            return;
+        }
+        if (resource == Resource.Crystal) {
+            resources.crystal = _toUint128(uint256(resources.crystal) + amount);
+            return;
+        }
+        if (resource == Resource.Deuterium) {
+            resources.deuterium = _toUint128(uint256(resources.deuterium) + amount);
+            return;
+        }
+        revert InvalidResource(resource);
+    }
+
+    function _debitResource(uint256 planetId, Resource resource, uint128 amount) private {
+        Resources storage resources = _planets[planetId].resources;
+        if (resource == Resource.Metal) {
+            if (resources.metal < amount) {
+                revert InsufficientResources(
+                    resources.metal, resources.crystal, resources.deuterium
+                );
+            }
+            resources.metal -= amount;
+            return;
+        }
+        if (resource == Resource.Crystal) {
+            if (resources.crystal < amount) {
+                revert InsufficientResources(
+                    resources.metal, resources.crystal, resources.deuterium
+                );
+            }
+            resources.crystal -= amount;
+            return;
+        }
+        if (resource == Resource.Deuterium) {
+            if (resources.deuterium < amount) {
+                revert InsufficientResources(
+                    resources.metal, resources.crystal, resources.deuterium
+                );
+            }
+            resources.deuterium -= amount;
+            return;
+        }
+        revert InvalidResource(resource);
+    }
+
     function _validateCoordinates(uint16 galaxy, uint16 system, uint8 position) private pure {
         if (
             galaxy == 0 || galaxy > MAX_GALAXY || system == 0 || system > MAX_SYSTEM
@@ -1351,8 +1546,13 @@ contract VeydriftGame {
     }
 
     function _requireBuildingDependencies(uint256 planetId, Building building) private view {
+        address player = _planets[planetId].owner;
         VeydriftDependencies.requireBuilding(
-            building, _buildingLevels[planetId][Building.RoboticsFactory]
+            building,
+            _buildingLevels[planetId][Building.RoboticsFactory],
+            _buildingLevels[planetId][Building.ResearchLab],
+            _technologyLevels[player][Technology.Energy],
+            _technologyLevels[player][Technology.Hyperspace]
         );
     }
 
@@ -1459,23 +1659,16 @@ contract VeydriftGame {
         available.deuterium -= cost.deuterium;
     }
 
-    function _capResources(uint256 planetId, Resources memory resources)
+    function _addWithCaps(uint256 planetId, Resources memory resources, Resources memory addition)
         private
         view
         returns (Resources memory)
     {
         (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = storageCaps(planetId);
-        if (resources.metal > metalCap) resources.metal = metalCap;
-        if (resources.crystal > crystalCap) resources.crystal = crystalCap;
-        if (resources.deuterium > deuteriumCap) resources.deuterium = deuteriumCap;
-        return resources;
-    }
-
-    function _add(Resources memory a, Resources memory b) private pure returns (Resources memory) {
         return Resources({
-            metal: a.metal + b.metal,
-            crystal: a.crystal + b.crystal,
-            deuterium: a.deuterium + b.deuterium
+            metal: _addWithCap(resources.metal, addition.metal, metalCap),
+            crystal: _addWithCap(resources.crystal, addition.crystal, crystalCap),
+            deuterium: _addWithCap(resources.deuterium, addition.deuterium, deuteriumCap)
         });
     }
 
@@ -1498,6 +1691,19 @@ contract VeydriftGame {
     {
         uint256 multiplier = 2 ** uint256(currentLevel);
         return _multiply(baseCost, multiplier);
+    }
+
+    function _addWithCap(uint128 current, uint128 addition, uint128 cap)
+        private
+        pure
+        returns (uint128)
+    {
+        uint256 total = uint256(current) + addition;
+        uint256 effectiveCap = current > cap ? current : cap;
+        if (total > effectiveCap) {
+            return _toUint128(effectiveCap);
+        }
+        return _toUint128(total);
     }
 
     function _coordinateDistance(Planet storage origin, Planet storage destination)

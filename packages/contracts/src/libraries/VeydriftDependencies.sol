@@ -7,7 +7,13 @@ import {Building, Defense, Ship, Technology} from "./VeydriftTypes.sol";
 library VeydriftDependencies {
     error MissingDependency(bytes32 dependency);
 
-    function requireBuilding(Building building, uint16 roboticsFactoryLevel) public pure {
+    function requireBuilding(
+        Building building,
+        uint16 roboticsFactoryLevel,
+        uint16 researchLabLevel,
+        uint16 energyLevel,
+        uint16 hyperspaceLevel
+    ) public pure {
         if (building == Building.Shipyard && roboticsFactoryLevel < 2) {
             revert MissingDependency("ROBOTICS_FACTORY_2");
         }
@@ -16,6 +22,18 @@ library VeydriftDependencies {
         }
         if (building == Building.NaniteFactory && roboticsFactoryLevel < 10) {
             revert MissingDependency("ROBOTICS_FACTORY_10");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 4) {
+            revert MissingDependency("ROBOTICS_FACTORY_4");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
+            revert MissingDependency("RESEARCH_LAB_2");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && energyLevel < 5) {
+            revert MissingDependency("ENERGY_5");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && hyperspaceLevel < 1) {
+            revert MissingDependency("HYPERSPACE_1");
         }
     }
 
