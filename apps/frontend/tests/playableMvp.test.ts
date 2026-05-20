@@ -15,6 +15,7 @@ import {
   productionCapacityPerHour,
   productionPerHour,
   researchCatalog,
+  researchDurationEstimate,
   researchRequirementsFor,
   shipCatalog,
   storageCaps,
@@ -240,6 +241,17 @@ describe("playable MVP contract display helpers", () => {
     };
     expect(buildingDurationEstimate(state.buildings, buildingCost(state.buildings, "metalMine"))).toBe(60);
     expect(buildingDurationEstimate(state.buildings, buildingCost(advancedMine, "metalMine"))).toBe(192);
+  });
+
+  test("estimates research duration with the OGame-style lab level plus one denominator", () => {
+    const state = createInitialPlayableState(1_000);
+    const cost = { metal: 12_000, crystal: 12_000, deuterium: 0 };
+    const labOne = { ...state.buildings, researchLab: 1 };
+    const labTwo = { ...state.buildings, researchLab: 2 };
+
+    expect(researchDurationEstimate(state.buildings, cost)).toBe(200);
+    expect(researchDurationEstimate(labOne, cost)).toBe(100);
+    expect(researchDurationEstimate(labTwo, cost)).toBe(66);
   });
 
   test("exposes building effect metrics from the same production and storage formulas", () => {
