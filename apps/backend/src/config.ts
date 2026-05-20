@@ -5,10 +5,16 @@ export type BackendConfig = {
   deploymentMode: DeploymentMode;
   gameContractAddress?: `0x${string}`;
   indexFromBlock: bigint;
-  resourceTokenAddresses?: Partial<Record<"metal" | "crystal" | "deuterium", `0x${string}`>>;
+  resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
   settlementContractAddress?: `0x${string}`;
+};
+
+export type ResourceTokenAddresses = {
+  crystal?: `0x${string}`;
+  deuterium?: `0x${string}`;
+  metal?: `0x${string}`;
 };
 
 export type ConfigProblem = {
@@ -26,6 +32,11 @@ export type SafeConfigSummary = {
   deploymentMode: DeploymentMode;
   gameContractConfigured: boolean;
   hasRpcUrl: boolean;
+  resourceTokensConfigured: {
+    crystal: boolean;
+    deuterium: boolean;
+    metal: boolean;
+  };
   rpcSource: BackendConfig["rpcSource"];
   resourceTokenAddressesConfigured: boolean;
   settlementContractConfigured: boolean;
@@ -54,9 +65,17 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     problems
   );
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
-  const crystalTokenAddress = parseAddress(env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS, "VEYDRIFT_CRYSTAL_TOKEN_ADDRESS", problems);
-  const deuteriumTokenAddress = parseAddress(env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS, "VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS", problems);
-  const resourceTokenAddresses: BackendConfig["resourceTokenAddresses"] = {
+  const crystalTokenAddress = parseAddress(
+    env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS,
+    "VEYDRIFT_CRYSTAL_TOKEN_ADDRESS",
+    problems
+  );
+  const deuteriumTokenAddress = parseAddress(
+    env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS,
+    "VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS",
+    problems
+  );
+  const resourceTokenAddresses = {
     ...(metalTokenAddress ? { metal: metalTokenAddress } : {}),
     ...(crystalTokenAddress ? { crystal: crystalTokenAddress } : {}),
     ...(deuteriumTokenAddress ? { deuterium: deuteriumTokenAddress } : {})
@@ -83,8 +102,8 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       deploymentMode,
       ...(gameContractAddress ? { gameContractAddress } : {}),
       indexFromBlock,
-      rpcSource,
       resourceTokenAddresses,
+      rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
       ...(settlementContractAddress ? { settlementContractAddress } : {})
     },
@@ -98,6 +117,11 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     deploymentMode: config.deploymentMode,
     gameContractConfigured: Boolean(config.gameContractAddress),
     hasRpcUrl: Boolean(config.rpcUrl),
+    resourceTokensConfigured: {
+      crystal: Boolean(config.resourceTokenAddresses.crystal),
+      deuterium: Boolean(config.resourceTokenAddresses.deuterium),
+      metal: Boolean(config.resourceTokenAddresses.metal)
+    },
     rpcSource: config.rpcSource,
     resourceTokenAddressesConfigured: Boolean(
       config.resourceTokenAddresses?.metal

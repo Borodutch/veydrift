@@ -3,12 +3,48 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
-import {Building, Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
+import {Building, Defense, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+
+contract MockResourceToken {
+    mapping(address account => uint256 balance) public balanceOf;
+    mapping(address account => mapping(address spender => uint256 amount)) public allowance;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function burn(address from, uint256 amount) external {
+        balanceOf[from] -= amount;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        uint256 allowed = allowance[from][msg.sender];
+        if (allowed < amount || balanceOf[from] < amount) {
+            return false;
+        }
+
+        allowance[from][msg.sender] = allowed - amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
 
 contract VeydriftGameTest is Test {
+    uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
+
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
     VeydriftGame internal game;
+    MockResourceToken internal metalToken;
+    MockResourceToken internal crystalToken;
+    MockResourceToken internal deuteriumToken;
 
     event FirstPlanetSettled(
         address indexed player,
@@ -22,6 +58,10 @@ contract VeydriftGameTest is Test {
 
     function setUp() public {
         game = new VeydriftGame(admin);
+        metalToken = new MockResourceToken();
+        crystalToken = new MockResourceToken();
+        deuteriumToken = new MockResourceToken();
+        _configureFundedReserves(game, RESERVE_FUNDING);
         vm.deal(player, 1 ether);
     }
 
@@ -199,6 +239,112 @@ contract VeydriftGameTest is Test {
         assertEq(afterResources.deuterium, beforeResources.deuterium);
     }
 
+    function testCollectCreditsInternalBalanceWithoutWalletTokens() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.SolarPlant);
+
+        VeydriftGame.Resources memory beforeResources = game.planet(planetId).resources;
+
+        vm.warp(block.timestamp + 2 hours);
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        VeydriftGame.Resources memory afterResources = game.planet(planetId).resources;
+        VeydriftGame.Resources memory internalClaims = game.totalInternalResources();
+        assertGt(afterResources.metal, beforeResources.metal);
+        assertEq(internalClaims.metal, afterResources.metal);
+        assertEq(internalClaims.crystal, afterResources.crystal);
+        assertEq(internalClaims.deuterium, afterResources.deuterium);
+        assertEq(metalToken.balanceOf(player), 0);
+        assertEq(crystalToken.balanceOf(player), 0);
+        assertEq(deuteriumToken.balanceOf(player), 0);
+    }
+
+    function testSpendingCollectedResourcesConsumesInternalClaimsButLeavesReserveHeld() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.SolarPlant);
+
+        vm.warp(block.timestamp + 2 hours);
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        VeydriftGame.Resources memory cost =
+            game.buildingUpgradeCost(planetId, Building.CrystalMine);
+        VeydriftGame.Resources memory claimsBefore = game.totalInternalResources();
+        uint256 reserveBefore = metalToken.balanceOf(address(game));
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.CrystalMine);
+
+        VeydriftGame.Resources memory claimsAfter = game.totalInternalResources();
+        assertEq(claimsAfter.metal, claimsBefore.metal - cost.metal);
+        assertEq(claimsAfter.crystal, claimsBefore.crystal - cost.crystal);
+        assertEq(claimsAfter.deuterium, claimsBefore.deuterium - cost.deuterium);
+        assertEq(metalToken.balanceOf(address(game)), reserveBefore);
+    }
+
+    function testCollectRevertsWhenResourceReserveCannotBackProducedBalance() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.SolarPlant);
+
+        VeydriftGame.Resources memory claims = game.totalInternalResources();
+        metalToken.burn(address(game), metalToken.balanceOf(address(game)) - claims.metal);
+
+        vm.warp(block.timestamp + 2 hours);
+        vm.prank(player);
+        vm.expectRevert();
+        game.collectResources(planetId);
+
+        VeydriftGame.Resources memory preview = game.previewResources(planetId);
+        VeydriftGame.Resources memory settled = game.planet(planetId).resources;
+        assertEq(preview.metal, settled.metal);
+    }
+
+    function testConfiguredReserveIsRequiredForStartingBalances() public {
+        VeydriftGame unfundedGame = new VeydriftGame(admin);
+        vm.prank(admin);
+        unfundedGame.setResourceTokens(
+            address(metalToken), address(crystalToken), address(deuteriumToken)
+        );
+
+        address nextPlayer = address(0xC0FFEE);
+        vm.deal(nextPlayer, 1 ether);
+        vm.prank(nextPlayer);
+        vm.expectRevert();
+        unfundedGame.startPlanet{value: 0.05 ether}();
+    }
+
+    function testResourceTokensMustBeConfiguredBeforeCreditingBalances() public {
+        VeydriftGame unconfiguredGame = new VeydriftGame(admin);
+
+        address nextPlayer = address(0xBADCAFE);
+        vm.deal(nextPlayer, 1 ether);
+        vm.prank(nextPlayer);
+        vm.expectRevert();
+        unconfiguredGame.startPlanet{value: 0.05 ether}();
+    }
+
+    function testNoNormalWithdrawalFunctionTransfersCollectedResources() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.SolarPlant);
+
+        vm.warp(block.timestamp + 2 hours);
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        vm.prank(player);
+        (bool ok,) =
+            address(game).call(abi.encodeWithSignature("withdrawResources(uint256)", planetId));
+        assertFalse(ok);
+        assertEq(metalToken.balanceOf(player), 0);
+        assertEq(crystalToken.balanceOf(player), 0);
+        assertEq(deuteriumToken.balanceOf(player), 0);
+    }
+
     function testMineProductionRequiresOnChainEnergy() public {
         uint256 planetId = _startPlanet(player);
         _build(player, planetId, Building.MetalMine);
@@ -227,6 +373,28 @@ contract VeydriftGameTest is Test {
         assertEq(afterResources.deuterium, beforeResources.deuterium);
     }
 
+    function testOGameEnergyShortageScaleUsesProducedOverRequired() public view {
+        uint16 bps = game.BPS();
+
+        (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) =
+            VeydriftFormulas.energyBalance(0, 0, 5, 2, bps);
+        assertEq(producedEnergy, 60);
+        assertEq(requiredEnergy, 100);
+        assertEq(energyScaleBps, 6_000);
+
+        (producedEnergy, requiredEnergy, energyScaleBps) =
+            VeydriftFormulas.energyBalance(0, 0, 5, 0, bps);
+        assertEq(producedEnergy, 0);
+        assertEq(requiredEnergy, 100);
+        assertEq(energyScaleBps, 0);
+
+        (producedEnergy, requiredEnergy, energyScaleBps) =
+            VeydriftFormulas.energyBalance(0, 0, 5, 4, bps);
+        assertEq(producedEnergy, 120);
+        assertEq(requiredEnergy, 100);
+        assertEq(energyScaleBps, bps);
+    }
+
     function testBuildingCompletionSplitsProductionAtReadyAt() public {
         uint256 planetId = _startPlanet(player);
         _build(player, planetId, Building.MetalMine);
@@ -236,6 +404,36 @@ contract VeydriftGameTest is Test {
         VeydriftGame.BuildingConstruction memory construction =
             game.activeBuildingConstruction(planetId);
         VeydriftGame.Resources memory resourcesAfterSolarSpend = game.planet(planetId).resources;
+
+        vm.warp(construction.readyAt + 1 hours);
+        vm.prank(player);
+        game.finishBuildingUpgrade(planetId);
+
+        (uint256 metalPerHour,,) = game.productionPerHour(planetId);
+        VeydriftGame.Resources memory resourcesAfterSolarCompletion =
+        game.planet(planetId).resources;
+        assertEq(game.buildingLevel(planetId, Building.SolarPlant), 1);
+        assertEq(resourcesAfterSolarCompletion.metal, resourcesAfterSolarSpend.metal + metalPerHour);
+        assertEq(resourcesAfterSolarCompletion.crystal, resourcesAfterSolarSpend.crystal);
+        assertEq(resourcesAfterSolarCompletion.deuterium, resourcesAfterSolarSpend.deuterium);
+    }
+
+    function testEnergyImprovementDoesNotRetroactivelyPayShortageTime() public {
+        uint256 planetId = _startPlanet(player);
+        _build(player, planetId, Building.MetalMine);
+
+        VeydriftGame.Resources memory resourcesAfterMine = game.planet(planetId).resources;
+        vm.warp(block.timestamp + 1 hours);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.SolarPlant);
+        VeydriftGame.Resources memory resourcesAfterSolarSpend = game.planet(planetId).resources;
+        VeydriftGame.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        assertEq(resourcesAfterSolarSpend.metal, resourcesAfterMine.metal - construction.cost.metal);
+        assertEq(
+            resourcesAfterSolarSpend.crystal, resourcesAfterMine.crystal - construction.cost.crystal
+        );
 
         vm.warp(construction.readyAt + 1 hours);
         vm.prank(player);
@@ -532,6 +730,32 @@ contract VeydriftGameTest is Test {
         assertGe(colony.resources.deuterium, 100);
     }
 
+    function testTransportCargoRemainsReserveBackedWhileInFlight() public {
+        (uint256 originPlanetId, uint256 colonyPlanetId) = _prepareTransportRoute(player);
+        VeydriftGame.Resources memory cargo =
+            VeydriftGame.Resources({metal: 700, crystal: 300, deuterium: 0});
+        uint128 fuelCost = game.transportFuelCost(originPlanetId, colonyPlanetId, 1, 0, 0);
+        VeydriftGame.Resources memory claimsBefore = game.totalInternalResources();
+
+        vm.prank(player);
+        uint256 fleetId = game.dispatchTransport(originPlanetId, colonyPlanetId, 1, 0, 0, cargo);
+
+        VeydriftGame.Resources memory claimsInFlight = game.totalInternalResources();
+        assertEq(claimsInFlight.metal, claimsBefore.metal);
+        assertEq(claimsInFlight.crystal, claimsBefore.crystal);
+        assertEq(claimsInFlight.deuterium, claimsBefore.deuterium - fuelCost);
+
+        VeydriftGame.Fleet memory fleet = game.fleet(fleetId);
+        vm.warp(fleet.arrivesAt);
+        vm.prank(player);
+        game.settleFleetArrival(fleetId);
+
+        VeydriftGame.Resources memory claimsAfterArrival = game.totalInternalResources();
+        assertEq(claimsAfterArrival.metal, claimsInFlight.metal);
+        assertEq(claimsAfterArrival.crystal, claimsInFlight.crystal);
+        assertEq(claimsAfterArrival.deuterium, claimsInFlight.deuterium);
+    }
+
     function testTransportRejectsOverCapacityAndCanRecall() public {
         (uint256 originPlanetId, uint256 colonyPlanetId) = _prepareTransportRoute(player);
         VeydriftGame.Resources memory tooMuchCargo =
@@ -571,6 +795,24 @@ contract VeydriftGameTest is Test {
     function _startPlanet(address account) internal returns (uint256 planetId) {
         vm.prank(account);
         planetId = game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _configureFundedReserves(VeydriftGame targetGame, uint128 amount) internal {
+        metalToken.mint(admin, amount);
+        crystalToken.mint(admin, amount);
+        deuteriumToken.mint(admin, amount);
+
+        vm.startPrank(admin);
+        targetGame.setResourceTokens(
+            address(metalToken), address(crystalToken), address(deuteriumToken)
+        );
+        metalToken.approve(address(targetGame), amount);
+        crystalToken.approve(address(targetGame), amount);
+        deuteriumToken.approve(address(targetGame), amount);
+        targetGame.depositResourceReserves(
+            VeydriftGame.Resources({metal: amount, crystal: amount, deuterium: amount})
+        );
+        vm.stopPrank();
     }
 
     function _preparePlanetWithShipyard(address account) internal returns (uint256 planetId) {

@@ -30,11 +30,11 @@ import {
   type ResearchKey,
   type ShipKey,
 } from "./playableMvp";
-import { formatDuration } from "./buildingDetails";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   buildingQueueItemForDisplay,
   buildingCosts,
+  energyBalanceFromChain,
   infrastructurePlayableState,
 } from "./chainState";
 import {
@@ -42,6 +42,10 @@ import {
   safeResourceNumber,
   type ChainLoadStatus,
 } from "./overviewData";
+import {
+  waitForFinishedBuildingState,
+  type FinishedBuildingExpectation,
+} from "./postTransactionRefresh";
 import {
   fetchInfrastructureState,
   fetchDefenseState,
@@ -225,11 +229,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     return Number(onChainQueues.building.readyAt) * 1_000 <= now;
   }, [onChainQueues?.building, now]);
 
-  const buildingQueueRemainingSeconds = useMemo(() => {
-    if (!onChainQueues?.building?.active || !onChainQueues.building.readyAt) return 0;
-    return Math.max(0, Math.ceil((Number(onChainQueues.building.readyAt) * 1_000 - now) / 1_000));
-  }, [onChainQueues?.building, now]);
-
   const refreshInfrastructureState = useCallback(async () => {
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
@@ -365,6 +364,49 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [account, apiBaseUrl, isWalletConnected]);
 
+  const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation) => {
+    if (!apiBaseUrl || !account) {
+      await refreshOnChainState();
+      await refreshInfrastructureState();
+      return;
+    }
+
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setInfrastructureLoading(true);
+    setInfrastructureError(undefined);
+
+    try {
+      const snapshot = await waitForFinishedBuildingState(
+        async () => {
+          const [settlement, queues, infrastructure] = await Promise.all([
+            fetchWalletSettlement(apiBaseUrl, account),
+            fetchWalletQueues(apiBaseUrl, account),
+            fetchInfrastructureState(apiBaseUrl, account),
+          ]);
+
+          return { settlement, queues, infrastructure };
+        },
+        expectation,
+      );
+
+      setOnChainSettlement(snapshot.settlement);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+      setInfrastructureChainState(snapshot.infrastructure);
+      setInfrastructureError(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load completed building state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setInfrastructureChainState(null);
+      setInfrastructureError(message);
+      throw error;
+    } finally {
+      setInfrastructureLoading(false);
+    }
+  }, [account, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
+
   useEffect(() => {
     if (!isWalletConnected || walletPlanetHydrated) {
       return;
@@ -498,9 +540,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     return {
       ...settledState,
+      queue: buildingQueue,
       resources: onChainResources,
     };
-  }, [isWalletConnected, onChainResources, settledState]);
+  }, [buildingQueue, isWalletConnected, onChainResources, settledState]);
   const chainBuildingCosts = useMemo(() => buildingCosts(infrastructureChainState), [infrastructureChainState]);
   const infrastructureUnavailableReason = useMemo(() => {
     if (!isWalletConnected) return "Connect a wallet to load your infrastructure.";
@@ -517,28 +560,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
     }
     if (!infrastructureChainState) return "Infrastructure state unavailable.";
-    if (onChainQueues?.building?.active) {
-      const target = onChainQueues.building.targetLevel
-        ? ` to Level ${onChainQueues.building.targetLevel}`
-        : "";
-      if (isBuildingReadyToFinish) {
-        return `Building upgrade${target} is ready to finish!`;
-      }
-      const remaining = buildingQueueRemainingSeconds;
-      const timeStr = remaining > 0 ? ` Ready in ${formatDuration(remaining)}.` : "";
-      return `Building upgrade${target} already in progress.${timeStr}`;
-    }
     return undefined;
   }, [
     buildingAction,
-    buildingQueueRemainingSeconds,
     gameContract,
     infrastructureChainState,
     infrastructureError,
     infrastructureLoading,
-    isBuildingReadyToFinish,
     isWalletConnected,
-    onChainQueues?.building,
     onChainResources,
     onChainSettlement?.homePlanetId,
     onChainStatus,
@@ -550,7 +579,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return undefined;
     }
 
-    return energyBalance(settledState.buildings);
+    return energyBalanceFromChain(infrastructureChainState.energyBalance)
+      ?? energyBalance(settledState.buildings);
   }, [
     infrastructureChainState,
     infrastructureError,
@@ -673,6 +703,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     setBuildingAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    const expectation = {
+      itemId: onChainQueues?.building?.itemId,
+      targetLevel: onChainQueues?.building?.targetLevel,
+    };
 
     try {
       const txHash = await sendFinishBuildingUpgradeTransaction(
@@ -683,8 +717,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       );
       setBuildingAction({ status: "pending", label: `Waiting for transaction confirmation ${txHash.slice(0, 10)}...` });
       await waitForReceipt(provider, txHash);
-      await refreshOnChainState();
-      await refreshInfrastructureState();
+      setBuildingAction({ status: "pending", label: "Syncing completed building state..." });
+      await refreshFinishedBuildingState(expectation);
       setBuildingAction({ status: "success", label: "Building upgrade finished." });
     } catch (error) {
       console.error(error);
@@ -698,9 +732,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     gameContract,
     isBuildingReadyToFinish,
     onChainSettlement?.homePlanetId,
+    onChainQueues?.building?.itemId,
+    onChainQueues?.building?.targetLevel,
     provider,
-    refreshInfrastructureState,
-    refreshOnChainState,
+    refreshFinishedBuildingState,
   ]);
 
   const runShipyardTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
