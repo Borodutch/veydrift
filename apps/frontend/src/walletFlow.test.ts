@@ -3,6 +3,7 @@ import {
   BASE_SEPOLIA,
   decodeBoolResult,
   decodeUintResult,
+  encodeAddressUintCall,
   encodeAddressCall,
   encodeGameCall,
   encodeUintCall,
@@ -12,13 +13,18 @@ import {
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
+  parseRiftTokenAmount,
   readSettlementState,
   sendCollectResourcesTransaction,
   sendCollectShipsTransaction,
+  sendApproveResourceTokenTransaction,
+  sendDepositResourceTransaction,
   sendFinishDefenseProductionTransaction,
   sendFinishBuildingUpgradeTransaction,
+  sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
+  sendRequestResourceWithdrawalTransaction,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
@@ -59,6 +65,10 @@ describe("walletFlow", () => {
     expect(encodeUintCall("0xd2f16c7d", 7n)).toBe(
       "0xd2f16c7d0000000000000000000000000000000000000000000000000000000000000007"
     );
+    expect(encodeAddressUintCall("0x095ea7b3", contract, 1_500_000n)).toBe(
+      "0x095ea7b30000000000000000000000002222222222222222222222222222222222222222"
+        + "000000000000000000000000000000000000000000000000000000000016e360"
+    );
     expect(encodeGameCall("0x13aed9a2", [7n, 0, 3])).toBe(
       "0x13aed9a2"
         + "0000000000000000000000000000000000000000000000000000000000000007"
@@ -66,6 +76,63 @@ describe("walletFlow", () => {
         + "0000000000000000000000000000000000000000000000000000000000000003"
     );
     expect(settlementTransactionData()).toBe("0x59268393");
+  });
+
+  test("parses Rift token input as 6-decimal base units", () => {
+    expect(parseRiftTokenAmount("1")).toBe(1_000_000n);
+    expect(parseRiftTokenAmount("1.25")).toBe(1_250_000n);
+    expect(parseRiftTokenAmount("0.000001")).toBe(1n);
+    expect(() => parseRiftTokenAmount("0.0000001")).toThrow("Use at most 6 decimal places.");
+    expect(() => parseRiftTokenAmount("abc")).toThrow("Enter a valid token amount.");
+  });
+
+  test("submits Rift approval, deposit, withdrawal request, and finish calls against the contract ABI", async () => {
+    const token = "0x3333333333333333333333333333333333333333";
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0xrift${requests.length}`;
+    });
+
+    await expect(sendApproveResourceTokenTransaction(provider, account, token, contract, 1_500_000n)).resolves.toBe("0xrift1");
+    await expect(sendDepositResourceTransaction(provider, account, contract, "7", 0, 1_500_000n)).resolves.toBe("0xrift2");
+    await expect(sendRequestResourceWithdrawalTransaction(provider, account, contract, "7", 1, 2_000_000n)).resolves.toBe("0xrift3");
+    await expect(sendFinishResourceWithdrawalTransaction(provider, account, contract, 1)).resolves.toBe("0xrift4");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: token,
+          data: encodeAddressUintCall("0x095ea7b3", contract, 1_500_000n),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x25819e15", [7, 0, 1_500_000n]),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x62a10a46", [7, 1, 2_000_000n]),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0xde0f208c", [1]),
+        }],
+      },
+    ]);
   });
 
   test("decodes bool results", () => {

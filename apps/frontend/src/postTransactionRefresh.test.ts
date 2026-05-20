@@ -49,6 +49,14 @@ describe("post-transaction refresh reconciliation", () => {
       deuterium: "0",
     });
   });
+
+  test("does not report success when every post-finish snapshot is still stale", async () => {
+    await expect(waitForFinishedBuildingState(
+      async () => staleSolarPlantSnapshot(),
+      { itemId: 3, targetLevel: 2 },
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    )).rejects.toThrow("completed building queue is still syncing");
+  });
 });
 
 function staleSolarPlantSnapshot(): FinishedBuildingSnapshot {

@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-preact";
-import { Factory, FlaskConical, Orbit, Radar, Rocket, Shield } from "lucide-preact";
+import { ArrowLeftRight, Factory, FlaskConical, Orbit, Radar, Rocket, Shield } from "lucide-preact";
 
 import { shortAddress } from "../walletFlow";
 
@@ -9,6 +9,7 @@ export type Page =
   | "defenses"
   | "research"
   | "shipyard"
+  | "rift"
   | "galaxy"
   | "planet";
 
@@ -25,6 +26,7 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "defenses", label: "Defenses", mobileLabel: "Defense", icon: Shield },
   { key: "research", label: "Research", mobileLabel: "Research", icon: FlaskConical },
   { key: "shipyard", label: "Shipyard", mobileLabel: "Shipyard", icon: Rocket },
+  { key: "rift", label: "Rift", mobileLabel: "Rift", icon: ArrowLeftRight },
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },
 ];
 
@@ -71,7 +73,7 @@ export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps
       </nav>
 
       {/* Mobile top tabs */}
-      <nav className="grid grid-cols-6 border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
+      <nav className="grid grid-cols-7 border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
         {pages.map((page) => (
           <MobileTab
             active={active === page.key || (active === "planet" && page.key === "galaxy")}
