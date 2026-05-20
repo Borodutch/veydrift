@@ -13,6 +13,16 @@ export type InjectedWindow = {
 
 export type SettlementConfig = {
   address?: string;
+  legacyAddress?: string;
+  resourceTokensConfigured?: boolean;
+};
+
+export type SettlementFundingState = {
+  affordable: boolean;
+  balanceWei: bigint | null;
+  contractKind: "game" | "legacy";
+  startPriceWei: bigint | null;
+  unavailableReason?: string;
 };
 
 export type OnChainResources = {
@@ -190,6 +200,7 @@ export type ChainRiftState = {
 export type SettlementState =
   | { kind: "unconfigured" }
   | { kind: "not-settled" }
+  | { kind: "legacy-settled"; planet: PlanetSummary }
   | { kind: "settled"; planet: PlanetSummary };
 
 export const BASE_SEPOLIA = {
@@ -218,6 +229,8 @@ const READ_SELECTORS = {
 } as const;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
+const START_PLANET_SELECTOR = "0xf45f1f18";
+const START_PRICE_SELECTOR = "0xf1a9af89";
 const GAME_SELECTORS = {
   collectResources: "0xdb43284d",
   depositResource: "0x25819e15",
@@ -332,6 +345,15 @@ export function decodeUintResult(hex: string): bigint {
   return BigInt(`0x${clean.slice(-64)}`);
 }
 
+export function encodeQuantity(value: bigint | number | string): string {
+  const quantity = BigInt(value);
+  if (quantity < 0n) {
+    throw new Error("Cannot encode a negative quantity.");
+  }
+
+  return `0x${quantity.toString(16)}`;
+}
+
 export function decodeBoolResult(hex: string): boolean {
   return decodeUintResult(hex) !== 0n;
 }
@@ -398,14 +420,16 @@ export async function readSettlementState(
   } catch (error) {
     const gameSettlement = await readGameSettlement(provider, config.address, account);
     if (gameSettlement) {
-      return gameSettlement;
+      return gameSettlement.kind === "not-settled"
+        ? await readLegacySettlementState(provider, account, config) ?? gameSettlement
+        : gameSettlement;
     }
 
     throw error;
   }
 
   if (!hasSettlement) {
-    return {
+    return await readLegacySettlementState(provider, account, config) ?? {
       kind: "not-settled"
     };
   }
@@ -438,6 +462,32 @@ export async function sendSettlementTransaction(
     throw new Error("Settlement contract address is not configured.");
   }
 
+  const startPrice = await readStartPrice(provider, config.address);
+  if (startPrice !== undefined) {
+    if (config.resourceTokensConfigured === false) {
+      throw new Error("Resource token reserves are not configured for this game deployment yet.");
+    }
+
+    const balance = await readNativeBalance(provider, account);
+    if (balance < startPrice) {
+      throw new Error(
+        `First planet settlement costs ${formatEth(startPrice)} ETH, but this wallet only has ${formatEth(balance)} ETH on Base Sepolia.`
+      );
+    }
+
+    return provider.request<string>({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: config.address,
+          data: START_PLANET_SELECTOR,
+          value: encodeQuantity(startPrice)
+        }
+      ]
+    });
+  }
+
   return provider.request<string>({
     method: "eth_sendTransaction",
     params: [
@@ -448,6 +498,44 @@ export async function sendSettlementTransaction(
       }
     ]
   });
+}
+
+export async function readSettlementFundingState(
+  provider: Eip1193Provider,
+  account: string,
+  config: SettlementConfig
+): Promise<SettlementFundingState> {
+  if (!settlementContractConfigured(config)) {
+    throw new Error("Settlement contract address is not configured.");
+  }
+
+  const startPrice = await readStartPrice(provider, config.address);
+  if (startPrice === undefined) {
+    return {
+      affordable: true,
+      balanceWei: null,
+      contractKind: "legacy",
+      startPriceWei: null
+    };
+  }
+
+  if (config.resourceTokensConfigured === false) {
+    return {
+      affordable: false,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: startPrice,
+      unavailableReason: "Resource token reserves are not configured for this game deployment yet."
+    };
+  }
+
+  const balance = await readNativeBalance(provider, account);
+  return {
+    affordable: balance >= startPrice,
+    balanceWei: balance,
+    contractKind: "game",
+    startPriceWei: startPrice
+  };
 }
 
 export async function sendStartShipProductionTransaction(
@@ -826,6 +914,68 @@ async function readGameSettlement(
   } catch {
     return undefined;
   }
+}
+
+async function readLegacySettlementState(
+  provider: Eip1193Provider,
+  account: string,
+  config: SettlementConfig
+): Promise<SettlementState | undefined> {
+  if (!config.legacyAddress || config.legacyAddress.toLowerCase() === config.address?.toLowerCase()) {
+    return undefined;
+  }
+
+  try {
+    const hasLegacySettlement = await readHasFirstPlanet(provider, config.legacyAddress, account);
+    if (!hasLegacySettlement) {
+      return undefined;
+    }
+
+    return {
+      kind: "legacy-settled",
+      planet: await readFirstPlanet(provider, config.legacyAddress, account)
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function readStartPrice(provider: Eip1193Provider, contractAddress: string): Promise<bigint | undefined> {
+  try {
+    return decodeUintResult(await provider.request<string>({
+      method: "eth_call",
+      params: [
+        {
+          to: contractAddress,
+          data: START_PRICE_SELECTOR
+        },
+        "latest"
+      ]
+    }));
+  } catch {
+    return undefined;
+  }
+}
+
+async function readNativeBalance(provider: Eip1193Provider, account: string): Promise<bigint> {
+  return decodeUintResult(await provider.request<string>({
+    method: "eth_getBalance",
+    params: [
+      account,
+      "latest"
+    ]
+  }));
+}
+
+function formatEth(wei: bigint): string {
+  const ether = 10n ** 18n;
+  const whole = wei / ether;
+  const fraction = wei % ether;
+  if (fraction === 0n) {
+    return whole.toString();
+  }
+
+  return `${whole.toString()}.${fraction.toString().padStart(18, "0").replace(/0+$/, "")}`;
 }
 
 async function readGamePlanet(

@@ -13,6 +13,7 @@ export type PlanetState =
   | { kind: "checking" }
   | { kind: "contract-unconfigured" }
   | { kind: "not-settled" }
+  | { kind: "legacy-settled"; planet: PlanetSummary }
   | { kind: "pending"; txHash?: string }
   | { kind: "success"; planet: PlanetSummary }
   | { kind: "already-settled"; planet: PlanetSummary }
@@ -55,6 +56,7 @@ export function preSettlementMode(wallet: WalletState, planet: PlanetState): Pre
     case "contract-unconfigured":
       return "contract-unconfigured";
     case "not-settled":
+    case "legacy-settled":
       return "settle";
     case "pending":
       return "pending";

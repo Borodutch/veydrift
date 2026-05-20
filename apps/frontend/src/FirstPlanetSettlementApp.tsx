@@ -11,6 +11,7 @@ import {
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
+  readSettlementFundingState,
   readSettlementState,
   requestAccounts,
   sendSettlementTransaction,
@@ -18,6 +19,7 @@ import {
   waitForReceipt,
   walletRequestErrorMessage,
   type Eip1193Provider,
+  type SettlementFundingState,
   type SettlementConfig
 } from "./walletFlow";
 
@@ -28,6 +30,12 @@ const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 type SettlementConfigState =
   | { status: "loading"; config: SettlementConfig }
   | { status: "ready"; config: SettlementConfig };
+
+type SettlementFunding =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; funding: SettlementFundingState }
+  | { status: "error"; message: string };
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -41,6 +49,7 @@ export function FirstPlanetSettlementApp() {
   const [planet, setPlanet] = useState<PlanetState>({
     kind: "idle"
   });
+  const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -60,9 +69,20 @@ export function FirstPlanetSettlementApp() {
       .then((runtimeConfig) => {
         if (abortController.signal.aborted) return;
         const address = gameContractAddress(runtimeConfig) ?? settlementConfig.address;
+        const legacyAddress = runtimeConfig.contractAddress && runtimeConfig.contractAddress !== address
+          ? runtimeConfig.contractAddress
+          : undefined;
         setSettlementConfigState({
           status: "ready",
-          config: address ? { address } : settlementConfig
+          config: address ? {
+            address,
+            ...(legacyAddress ? { legacyAddress } : {}),
+            resourceTokensConfigured: Boolean(
+              runtimeConfig.resourceTokenAddresses.metal
+                && runtimeConfig.resourceTokenAddresses.crystal
+                && runtimeConfig.resourceTokenAddresses.deuterium
+            )
+          } : settlementConfig
         });
       })
       .catch((error) => {
@@ -98,6 +118,7 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: "idle"
         });
+        setSettlementFunding({ status: "idle" });
       }
     };
 
@@ -127,6 +148,7 @@ export function FirstPlanetSettlementApp() {
       setWallet({
         kind: "no-wallet"
       });
+      setSettlementFunding({ status: "idle" });
       return;
     }
 
@@ -140,6 +162,7 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: "idle"
         });
+        setSettlementFunding({ status: "idle" });
         return;
       }
       setWallet({
@@ -159,6 +182,7 @@ export function FirstPlanetSettlementApp() {
       setPlanet({
         kind: "idle"
       });
+      setSettlementFunding({ status: "idle" });
       return;
     }
 
@@ -173,6 +197,7 @@ export function FirstPlanetSettlementApp() {
       setPlanet({
         kind: "idle"
       });
+      setSettlementFunding({ status: "idle" });
       return;
     }
 
@@ -195,23 +220,48 @@ export function FirstPlanetSettlementApp() {
       const settlement = await readSettlementState(injected, connectedAccount, settlementConfig);
 
       if (settlement.kind === "unconfigured") {
+        setSettlementFunding({ status: "idle" });
         setPlanet({
           kind: "contract-unconfigured"
         });
       } else if (settlement.kind === "settled") {
+        setSettlementFunding({ status: "idle" });
         setPlanet({
           kind: "already-settled",
           planet: settlement.planet
         });
+      } else if (settlement.kind === "legacy-settled") {
+        setPlanet({
+          kind: "legacy-settled",
+          planet: settlement.planet
+        });
+        await refreshSettlementFunding(injected, connectedAccount);
       } else {
         setPlanet({
           kind: "not-settled"
         });
+        await refreshSettlementFunding(injected, connectedAccount);
       }
     } catch (error) {
       console.error("Wallet settlement state read failed", error);
       setPlanet({
         kind: "error",
+        message: walletRequestErrorMessage(error)
+      });
+      setSettlementFunding({ status: "idle" });
+    }
+  }
+
+  async function refreshSettlementFunding(injected: Eip1193Provider, connectedAccount: string) {
+    setSettlementFunding({ status: "loading" });
+    try {
+      setSettlementFunding({
+        status: "ready",
+        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig)
+      });
+    } catch (error) {
+      setSettlementFunding({
+        status: "error",
         message: walletRequestErrorMessage(error)
       });
     }
@@ -324,6 +374,7 @@ export function FirstPlanetSettlementApp() {
             onSettle={settlePlanet}
             onSwitchNetwork={switchNetwork}
             planet={planet}
+            settlementFunding={settlementFunding}
             settlementReady={settlementContractConfigured(settlementConfig)}
             wallet={wallet}
           />
@@ -341,6 +392,7 @@ function FlowBody({
   onSettle,
   onSwitchNetwork,
   planet,
+  settlementFunding,
   settlementReady,
   wallet
 }: {
@@ -349,6 +401,7 @@ function FlowBody({
   onSettle: () => void;
   onSwitchNetwork: () => void;
   planet: PlanetState;
+  settlementFunding: SettlementFunding;
   settlementReady: boolean;
   wallet: WalletState;
 }) {
@@ -430,14 +483,65 @@ function FlowBody({
     );
   }
 
+  const actionBlocked = !settlementReady
+    || settlementFunding.status === "idle"
+    || settlementFunding.status === "loading"
+    || settlementFunding.status === "error"
+    || (settlementFunding.status === "ready" && !settlementFunding.funding.affordable);
+  const actionLabel = settlementFunding.status === "idle" || settlementFunding.status === "loading"
+    ? "Checking balance"
+    : "Launch settlement";
+  const title = settlementFunding.status === "ready" && settlementFunding.funding.unavailableReason
+    ? "Settlement setup incomplete"
+    : settlementFunding.status === "ready" && !settlementFunding.funding.affordable
+    ? "More Base Sepolia ETH required"
+    : planet.kind === "legacy-settled"
+      ? "Legacy planet detected"
+      : "Found your first world";
+
   return (
     <StateMessage
-      title="Found your first world"
-      body="Launch settlement and mint this wallet's home planet."
-      action={<PrimaryButton disabled={!settlementReady} onClick={onSettle}>Launch settlement</PrimaryButton>}
-      tone="ready"
+      title={title}
+      body={settlementBody(planet, settlementFunding)}
+      action={<PrimaryButton disabled={actionBlocked} onClick={onSettle}>{actionLabel}</PrimaryButton>}
+      tone={actionBlocked ? "warning" : "ready"}
     />
   );
+}
+
+function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding): string {
+  const prefix = planet.kind === "legacy-settled"
+    ? "This wallet has a legacy first planet but no game home planet yet. Launch a new game settlement to continue."
+    : "Launch settlement and mint this wallet's home planet.";
+
+  if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
+    return `${prefix} Checking the game start price and wallet balance.`;
+  }
+
+  if (settlementFunding.status === "error") {
+    return `Could not verify the game start price and wallet balance: ${settlementFunding.message}`;
+  }
+
+  if (settlementFunding.status === "ready" && settlementFunding.funding.contractKind === "game") {
+    const startPrice = formatEth(settlementFunding.funding.startPriceWei ?? 0n);
+    const balance = formatEth(settlementFunding.funding.balanceWei ?? 0n);
+    if (settlementFunding.funding.unavailableReason) {
+      return `${prefix} ${settlementFunding.funding.unavailableReason}`;
+    }
+
+    return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on Base Sepolia.`;
+  }
+
+  return prefix;
+}
+
+function formatEth(wei: bigint): string {
+  const ether = 10n ** 18n;
+  const whole = wei / ether;
+  const fraction = wei % ether;
+  if (fraction === 0n) return whole.toString();
+
+  return `${whole.toString()}.${fraction.toString().padStart(18, "0").replace(/0+$/, "")}`;
 }
 
 function StateMessage({
