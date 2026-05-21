@@ -10,6 +10,7 @@ import { DefensePage } from "./components/DefensePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import { RiftPage } from "./components/RiftPage";
+import { MoonPage } from "./components/MoonPage";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
@@ -481,6 +482,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       if (page === "defenses") refreshDefenseState();
       if (page === "research") refreshResearchState();
       if (page === "rift") refreshRiftState();
+      if (page === "moon") refreshInfrastructureState();
     };
     const updateSyncStatus = (event: MessageEvent) => {
       try {
@@ -665,6 +667,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       refreshRiftState();
     }
   }, [page, refreshRiftState]);
+
+  useEffect(() => {
+    if (page === "moon") {
+      refreshInfrastructureState();
+    }
+  }, [page, refreshInfrastructureState]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1168,15 +1176,23 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
-          moonError={moonError}
-          moonLoading={moonLoading}
-          moonState={moonState}
           now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}
           settledState={infrastructureState}
           state={state}
+        />
+      );
+    }
+
+    if (page === "moon") {
+      return (
+        <MoonPage
+          error={moonError}
+          loading={moonLoading}
+          moonState={moonState}
+          onRefresh={refreshInfrastructureState}
         />
       );
     }
