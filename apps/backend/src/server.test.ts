@@ -10,6 +10,7 @@ import type {
   InfrastructureState,
   ManagedPlanet,
   MoonState,
+  MoonChanceReportEvent,
   PlanetState,
   PlayerQueues,
   ResearchState,
@@ -550,6 +551,10 @@ class MockChainReader implements ChainReader {
         blockNumber: "123"
       }
     ];
+  }
+
+  async listMoonChanceReportEvents(): Promise<MoonChanceReportEvent[]> {
+    return [];
   }
 
   async listDebrisFieldEvents(): Promise<DebrisFieldEvent[]> {

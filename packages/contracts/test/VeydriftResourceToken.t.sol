@@ -143,6 +143,7 @@ contract VeydriftResourceTokenTest is Test {
         (
             address gameAddress,
             address moonSystemAddress,
+            address randomnessEngineAddress,
             address metalToken,
             address crystalToken,
             address deuteriumToken
@@ -153,6 +154,7 @@ contract VeydriftResourceTokenTest is Test {
 
         assertEq(deployedGame.owner(), deployer);
         assertTrue(moonSystemAddress.code.length > 0);
+        assertTrue(randomnessEngineAddress.code.length > 0);
         assertEq(deployedGame.resourceToken(Resource.Metal), metalToken);
         assertEq(deployedGame.resourceToken(Resource.Crystal), crystalToken);
         assertEq(deployedGame.resourceToken(Resource.Deuterium), deuteriumToken);
