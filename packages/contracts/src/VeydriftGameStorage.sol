@@ -230,6 +230,8 @@ abstract contract VeydriftGameStorage {
     address internal _spaceDockSystem;
     mapping(bytes32 attackKey => AttackWindow window) internal _attackWindows;
     mapping(bytes32 playerPairKey => bool enabled) internal _attackProtectionExemptions;
+    address internal _allianceSystem;
+    mapping(uint256 hostileMissionId => uint256[] missionIds) internal _fleetCounterplayMissions;
 
     error AlreadyStarted();
     error BadStartPayment();

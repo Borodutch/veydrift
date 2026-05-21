@@ -78,8 +78,7 @@ Resources:
 - `settlePlanet` / `collectResources` are idempotent collection calls: they can be called
   before queues are ready, apply any ready building, defense, ship, and research outputs, and
   leave not-yet-ready queues active.
-- `collectShips` is a ship-focused wrapper for claiming ready ship production without reverting
-  when no ships are ready.
+- Ready ship production is claimed through `finishShipProduction`.
 - Production depends on mine levels, planet multipliers, and available solar energy.
 - Storage caps are enforced when resources are settled.
 - `VeydriftMetal`, `VeydriftCrystal`, and `VeydriftDeuterium` are UUPS ERC-20
@@ -111,19 +110,20 @@ Colonies:
 
 - `maxPlanets(player)` is `1 + Computer` technology level. A player needs `Computer` level 1 before their first colony.
 - `createColony(originPlanetId, galaxy, system, position)` consumes one `ColonyShip` from the origin planet and reserves the target coordinate.
-- `createColonyAtNextSlot(originPlanetId, salt)` picks the first unoccupied deterministic slot from `nextColonyCoordinates(player, salt)`.
+- `createColonyAtNextSlot(originPlanetId, salt)` picks the first unoccupied deterministic slot from the same internal coordinate search used by direct colony creation.
 - `isCoordinateAvailable(galaxy, system, position)` and `coordinateKey(...)` are exposed for frontends/indexers.
 - New colonies start with `500 metal`, `500 crystal`, and `0 deuterium`; production and storage then follow normal planet settlement rules.
 
 Fleet missions:
 
-- `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, intercept, and missile attack mission types.
+- `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, and intercept mission types. Missile attacks use `launchInterplanetaryMissileAttack(...)`.
 - Departure settles involved planets, enforces fleet slots, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
+- For `AcsDefend` and `Intercept`, the `targetPlanetId` argument is the hostile attack mission id. The contract resolves the actual defended planet from that mission, requires alliance defense permission from `VeydriftAllianceSystem`, and links the launched fleet into the combat module's defender-side battle resolution.
 - Public-state anti-raid primitives are centralized in `VeydriftAntiRaidPrimitives`: fleet slots,
   travel/fuel, recall timing, hostile mission visibility, ACS cutoff, bashing/cooldown limits,
   score protection, loot/protected-storage caps, and defender recovery constants. Frontend/backend
   code may preview these values, but enforcement must remain contract-side.
-- `shipCargoCapacity(shipId)`, `transportFuelCost(...)`, and `transportTravelSeconds(...)` remain view helpers for UI previews while transport uses the generic mission path.
+- `VeydriftCatalog.shipCargoCapacity(shipId)` and `transportFuelCost(...)` remain helpers for UI previews while transport uses the generic mission path.
 - Arrivals are lazy: call `resolveFleetMission(missionId)` after `fleetMission(missionId).arrivalAt` to settle the target and resolve the mission.
 - Missions that return must later call `completeFleetMissionReturn(missionId)` after `fleetMission(missionId).returnAt` to land surviving ships and cargo.
 - `fleetMission(missionId)` is public and exposes owner, origin, target, timing, cargo, fuel, and status for every mission. `FleetMissionCargo` and `FleetMissionShips` expose the launch manifest so hostile inbound and returning fleets are indexable from contract truth.
@@ -146,8 +146,9 @@ Alliances:
   can query `attackLimitAllianceContext(attacker, defender)` for same-alliance,
   war, bashing, and score-protection exceptions.
 - ACS foundations are exposed through `openDefenseIntent(...)`,
-  `canCoordinateDefense(...)`, and `hostileMissionVisibilityContext(...)` so later
-  grouped defense/intercept work can join against the same public-state cutoff rules.
+  `canCoordinateDefense(...)`, and `hostileMissionVisibilityContext(...)`.
+  `VeydriftGame` calls `canCoordinateDefense(...)` before accepting ACS defend or intercept
+  counterplay for an inbound hostile attack.
 
 Indexer-facing events:
 
@@ -335,7 +336,7 @@ The proxy owner must be the broadcasting account for upgrades.
 
 This ticket intentionally leaves these systems for later work:
 
-- Full combat resolution, debris fields, grouped ACS battle math, and markets
+- Markets
 - NFTs or transferable planet ownership
 
 Veydrift uses public blockchain state as the source of truth. Espionage reports,

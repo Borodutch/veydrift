@@ -57,8 +57,10 @@ import {
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
 import {
+  emptyMissionShips,
   missionTypeId,
   type GalaxyAction,
+  type MissionShips,
 } from "./galaxyActions";
 import {
   fetchInfrastructureState,
@@ -76,7 +78,6 @@ import {
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
   sendCollectResourcesTransaction,
-  sendCollectShipsTransaction,
   sendFinishBuildingUpgradeTransaction,
   sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
@@ -138,6 +139,44 @@ export function displayHomeCoordinates(
   if (!coordinates) return fallbackCoordinates;
 
   return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
+}
+
+const counterplayShipPriority = [
+  "battlecruiser",
+  "reaper",
+  "destroyer",
+  "battleship",
+  "cruiser",
+  "heavyFighter",
+  "lightFighter",
+  "pathfinder",
+  "smallCargo",
+] as const satisfies ReadonlyArray<keyof MissionShips>;
+
+type CounterplayShipKey = (typeof counterplayShipPriority)[number];
+
+const counterplayShipIds: Record<CounterplayShipKey, number> = {
+  smallCargo: 0,
+  lightFighter: 1,
+  heavyFighter: 5,
+  cruiser: 6,
+  battleship: 7,
+  destroyer: 11,
+  battlecruiser: 13,
+  reaper: 14,
+  pathfinder: 15,
+};
+
+function selectCounterplayShips(shipyardState: ChainShipyardState | null): MissionShips | null {
+  const selected = emptyMissionShips();
+  for (const key of counterplayShipPriority) {
+    const ship = shipyardState?.ships.find((candidate) => candidate.id === counterplayShipIds[key]);
+    if (ship && ship.count > 0) {
+      selected[key] = 1;
+      return selected;
+    }
+  }
+  return null;
 }
 
 export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProps = {}) {
@@ -1071,20 +1110,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
 
-  const handleCollectShips = useCallback(() => {
-    if (!provider || !account || !gameContract || !shipyardState?.homePlanetId) {
-      setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
-      return;
-    }
-
-    void runShipyardTransaction("Shipyard refresh", () => sendCollectShipsTransaction(
-      provider,
-      account,
-      gameContract,
-      shipyardState.homePlanetId ?? "0",
-    ));
-  }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
-
   const handleBuildDefense = useCallback((defenseId: number, _key: DefenseKey, quantity: number) => {
     if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
       setDefenseAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
@@ -1373,6 +1398,31 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction]);
 
+  const handleCounterplay = useCallback((hostileMissionId: string, mode: "acsDefend" | "intercept") => {
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    const ships = selectCounterplayShips(shipyardState);
+    if (!ships) {
+      setGalaxyAction({ status: "error", label: "No ships available for counterplay." });
+      return;
+    }
+
+    void runGalaxyTransaction(mode === "acsDefend" ? "ACS defend mission" : "Intercept mission", () => sendLaunchFleetMissionTransaction(
+      provider,
+      account,
+      gameContract,
+      {
+        originPlanetId: onChainSettlement.homePlanetId ?? "0",
+        targetPlanetId: hostileMissionId,
+        missionType: missionTypeId(mode),
+        ships,
+      },
+    ));
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
+
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
     setSelectedCoords(undefined);
@@ -1552,7 +1602,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           error={shipyardError}
           loading={shipyardLoading}
           onBuild={handleBuildShip}
-          onCollect={handleCollectShips}
+          onCollect={refreshShipyardState}
           onFinish={handleFinishShipProduction}
           onRefresh={refreshShipyardState}
           shipyardState={shipyardState}
@@ -1594,6 +1644,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onChainQueues={onChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
+        onCounterplay={handleCounterplay}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
         homePlanet={homePlanetIdentity}

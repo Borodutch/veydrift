@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -84,6 +85,7 @@ contract VeydriftGameTest is Test {
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
     VeydriftGame internal game;
+    VeydriftAllianceSystem internal allianceSystem;
     MockResourceToken internal metalToken;
     MockResourceToken internal crystalToken;
     MockResourceToken internal deuteriumToken;
@@ -167,10 +169,13 @@ contract VeydriftGameTest is Test {
 
     function setUp() public {
         game = _newGame(admin);
+        allianceSystem = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         metalToken = new MockResourceToken();
         crystalToken = new MockResourceToken();
         deuteriumToken = new MockResourceToken();
         _fundGameReserves(RESERVE_FUNDING);
+        vm.prank(admin);
+        game.setAllianceSystem(address(allianceSystem));
         vm.deal(player, 1 ether);
     }
 
@@ -1049,7 +1054,7 @@ contract VeydriftGameTest is Test {
         game.launchFleetMission(
             originPlanetId,
             targetPlanetId,
-            VeydriftGameStorage.FleetMissionType.Intercept,
+            VeydriftGameStorage.FleetMissionType.Attack,
             _lightFighterManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             99
@@ -1102,7 +1107,7 @@ contract VeydriftGameTest is Test {
         uint256 recalledMissionId = game.launchFleetMission(
             originPlanetId,
             targetPlanetId,
-            VeydriftGameStorage.FleetMissionType.Intercept,
+            VeydriftGameStorage.FleetMissionType.Attack,
             ships,
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             123
@@ -1349,6 +1354,213 @@ contract VeydriftGameTest is Test {
         assertEq(maxLoot.metal, 5_000);
         assertEq(maxLoot.crystal, 0);
         assertEq(maxLoot.deuterium, 0);
+    }
+
+    function testFleetCounterplayRequiresAlliancePermission() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        vm.prank(player);
+        uint256 hostileMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            801
+        );
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.lightFighter = 1;
+        vm.prank(defender);
+        vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
+        game.launchFleetMission(
+            targetPlanetId,
+            hostileMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+    }
+
+    function testFleetCounterplayAcsDefendJoinsCombatModuleResolution() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(targetPlanetId, Ship.Battleship, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        vm.prank(player);
+        uint256 hostileMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            802
+        );
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(defender);
+        uint256 counterplayMissionId = game.launchFleetMission(
+            targetPlanetId,
+            hostileMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(hostileMissionId);
+        vm.warp(arrivalAt);
+        game.resolveFleetMission(hostileMissionId);
+
+        (VeydriftGameStorage.FleetMissionStatus hostileStatus,,,) = _fleetMission(hostileMissionId);
+        (VeydriftGameStorage.FleetMissionStatus counterStatus,, uint64 counterReturnAt,) =
+            _fleetMission(counterplayMissionId);
+        assertEq(uint8(hostileStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(uint8(counterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(game.planet(targetPlanetId).resources.metal, 10_000);
+
+        vm.warp(counterReturnAt);
+        game.completeFleetMissionReturn(counterplayMissionId);
+        assertEq(game.shipCount(targetPlanetId, Ship.Battleship), 1);
+    }
+
+    function testFleetCounterplayInterceptJoinsCombatModuleResolution() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(targetPlanetId, Ship.Battleship, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        vm.prank(player);
+        uint256 hostileMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            803
+        );
+
+        VeydriftGameStorage.MissionShips memory interceptors;
+        interceptors.battleship = 1;
+        vm.prank(defender);
+        uint256 counterplayMissionId = game.launchFleetMission(
+            targetPlanetId,
+            hostileMissionId,
+            VeydriftGameStorage.FleetMissionType.Intercept,
+            interceptors,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(hostileMissionId);
+        vm.warp(arrivalAt);
+        game.resolveFleetMission(hostileMissionId);
+
+        (VeydriftGameStorage.FleetMissionStatus hostileStatus,,,) = _fleetMission(hostileMissionId);
+        (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
+            _fleetMission(counterplayMissionId);
+        assertEq(uint8(hostileStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(uint8(counterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+    }
+
+    function testFleetCounterplayCannotReturnBeforeHostileAttackResolution() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        vm.prank(player);
+        uint256 hostileMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            805
+        );
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.lightFighter = 1;
+        vm.prank(defender);
+        uint256 counterplayMissionId = game.launchFleetMission(
+            targetPlanetId,
+            hostileMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(hostileMissionId);
+        vm.warp(arrivalAt);
+        game.resolveFleetMission(counterplayMissionId);
+        (VeydriftGameStorage.FleetMissionStatus pendingCounterStatus,,,) =
+            _fleetMission(counterplayMissionId);
+        assertEq(
+            uint8(pendingCounterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound)
+        );
+
+        game.resolveFleetMission(hostileMissionId);
+        (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
+            _fleetMission(counterplayMissionId);
+        assertEq(uint8(counterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+    }
+
+    function testFleetCounterplayRejectsTooLateArrival() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        vm.prank(player);
+        uint256 hostileMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            804
+        );
+        (, uint64 hostileArrivalAt,,) = _fleetMission(hostileMissionId);
+        vm.warp(hostileArrivalAt - 1);
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.lightFighter = 1;
+        vm.prank(defender);
+        vm.expectRevert(VeydriftGameStorage.FleetAlreadyArrived.selector);
+        game.launchFleetMission(
+            targetPlanetId,
+            hostileMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
     }
 
     function testAttackBattleDefenderWinDestroysAttackerFleet() public {
@@ -1813,11 +2025,6 @@ contract VeydriftGameTest is Test {
         game.finishResearch();
     }
 
-    function testAuditScopedReadEntrypointsAreContractBacked() public {
-        vm.expectRevert(VeydriftGameStorage.NoPlanet.selector);
-        game.transportTravelSeconds(1, 2);
-    }
-
     function _build(address account, uint256 planetId, Building building) internal {
         _build(game, account, planetId, building);
     }
@@ -1890,6 +2097,11 @@ contract VeydriftGameTest is Test {
         originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         targetPlanetId = game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _createAlliance(address leader) internal returns (uint256 allianceId) {
+        vm.prank(leader);
+        allianceId = allianceSystem.createAlliance("DEF", "Defenders", "ipfs://defenders");
     }
 
     function _setBuildingLevel(uint256 planetId, Building building, uint16 level) internal {

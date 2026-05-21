@@ -9,6 +9,14 @@ import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
+interface IVeydriftCounterplayAllianceSystem {
+    function canCoordinateDefense(
+        address viewer,
+        uint256 defenderPlanetId,
+        uint256 hostileMissionId
+    ) external view returns (bool);
+}
+
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
     using SafeCast for uint256;
@@ -94,9 +102,25 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 randomnessRequestId
     ) private returns (uint256 missionId) {
         _requirePlanetOwner(originPlanetId);
-        if (originPlanetId == targetPlanetId) revert SamePlanet();
+        uint256 hostileMissionId;
+        bool counterplayMission =
+            missionType == FleetMissionType.AcsDefend || missionType == FleetMissionType.Intercept;
+        if (counterplayMission) {
+            hostileMissionId = targetPlanetId;
+            FleetMission storage hostile = _fleetMissions[hostileMissionId];
+            if (
+                hostile.status != FleetMissionStatus.Outbound
+                    || hostile.missionType != FleetMissionType.Attack
+            ) {
+                revert InvalidMissionType(missionType);
+            }
+            targetPlanetId = hostile.targetPlanetId;
+        }
+        if (!counterplayMission && originPlanetId == targetPlanetId) revert SamePlanet();
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
-        _validateMissionType(missionType);
+        if (missionType == FleetMissionType.MissileAttack) {
+            revert InvalidMissionType(missionType);
+        }
         if (missionType == FleetMissionType.Attack) {
             _enforceAttackProtection(msg.sender, targetPlanetId);
         }
@@ -132,6 +156,21 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost =
             _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(shipTotal, travelDistance));
+        uint64 departureAt = _currentTimestamp();
+        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(travelDistance);
+        uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
+        if (counterplayMission) {
+            FleetMission storage hostile = _fleetMissions[hostileMissionId];
+            if (arrivalAt > hostile.arrivalAt) {
+                revert FleetAlreadyArrived();
+            }
+            if (!IVeydriftCounterplayAllianceSystem(_allianceSystem)
+                    .canCoordinateDefense(msg.sender, targetPlanetId, hostileMissionId)) {
+                revert InvalidQuantity();
+            }
+            arrivalAt = hostile.arrivalAt;
+            randomnessRequestId = hostileMissionId;
+        }
         Resources memory debit = Resources({
             metal: cargo.metal,
             crystal: cargo.crystal,
@@ -141,9 +180,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _increaseInternalResources(cargo);
         _debitMissionShips(originPlanetId, ships);
 
-        uint64 departureAt = _currentTimestamp();
-        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(travelDistance);
-        uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
         activeFleetMissionCount[msg.sender] += 1;
@@ -163,6 +199,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         });
         if (missionType == FleetMissionType.Attack) {
             _recordAttack(msg.sender, targetPlanetId);
+        } else if (counterplayMission) {
+            _fleetCounterplayMissions[hostileMissionId].push(missionId);
         }
 
         emit FleetMissionLaunched(
@@ -255,6 +293,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         ) {
             _delegateToCombatModule();
         } else {
+            if (_fleetMissions[mission.randomnessRequestId].status == FleetMissionStatus.Outbound) {
+                return;
+            }
             mission.status = FleetMissionStatus.Returning;
         }
 
@@ -354,20 +395,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         emit MarketResourceWithdrawalFinished(
             msg.sender, withdrawal.planetId, resource, withdrawal.amount
         );
-    }
-
-    function transportTravelSeconds(uint256 originPlanetId, uint256 destinationPlanetId)
-        external
-        view
-        returns (uint256)
-    {
-        return VeydriftAntiRaidPrimitives.travelSeconds(
-            _planetDistance(originPlanetId, destinationPlanetId)
-        );
-    }
-
-    function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
-        return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
     }
 
     function protectedResources(uint256 planetId) external view returns (Resources memory) {
@@ -600,12 +627,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 total = uint256(current) + addition;
         uint256 effectiveCap = current > cap ? current : cap;
         return _toUint128(total > effectiveCap ? effectiveCap : total);
-    }
-
-    function _validateMissionType(FleetMissionType missionType) private pure {
-        if (uint8(missionType) > uint8(FleetMissionType.MissileAttack)) {
-            revert InvalidMissionType(missionType);
-        }
     }
 
     function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
