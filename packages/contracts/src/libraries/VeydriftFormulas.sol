@@ -96,16 +96,16 @@ library VeydriftFormulas {
 
     function unitDuration(
         uint256 shipyardLevel,
+        uint256 naniteLevel,
         uint128 metalCost,
         uint128 crystalCost,
-        uint128 deuteriumCost,
+        uint128,
         uint32 quantity,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
-        uint256 raw =
-            (uint256(metalCost) + uint256(crystalCost) + uint256(deuteriumCost))
-                / (200 * (shipyardLevel + 1));
-        raw += quantity * 10;
+        uint256 denominator = 2500 * (shipyardLevel + 1) * (2 ** naniteLevel);
+        uint256 numerator = (uint256(metalCost) + uint256(crystalCost)) * quantity * 1 hours;
+        uint256 raw = (numerator + denominator - 1) / denominator;
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
 

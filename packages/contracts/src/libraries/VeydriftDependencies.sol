@@ -79,49 +79,135 @@ library VeydriftDependencies {
         uint16 impulseDriveLevel,
         uint16 hyperspaceDriveLevel,
         uint16 hyperspaceLevel,
-        uint16 gravitonLevel
+        uint16 gravitonLevel,
+        uint16 laserLevel,
+        uint16 ionLevel,
+        uint16 shieldingLevel,
+        uint16 armorLevel,
+        uint16 plasmaLevel
     ) public pure {
-        if (shipyardLevel == 0) {
-            revert MissingDependency("SHIPYARD");
+        if (ship == Ship.SmallCargo && shipyardLevel < 2) {
+            revert MissingDependency("SHIPYARD_2");
         }
-        if ((ship == Ship.SmallCargo || ship == Ship.LightFighter) && combustionDriveLevel < 1) {
-            revert MissingDependency("COMBUSTION_1");
-        }
-        if (ship == Ship.Recycler && combustionDriveLevel < 2) {
+        if (ship == Ship.SmallCargo && combustionDriveLevel < 2) {
             revert MissingDependency("COMBUSTION_2");
         }
-        if (ship == Ship.ColonyShip && combustionDriveLevel < 3) {
-            revert MissingDependency("COMBUSTION_3");
+        if (ship == Ship.LightFighter && shipyardLevel < 1) {
+            revert MissingDependency("SHIPYARD_1");
+        }
+        if (ship == Ship.LightFighter && combustionDriveLevel < 1) {
+            revert MissingDependency("COMBUSTION_1");
+        }
+        if (ship == Ship.Recycler && shipyardLevel < 4) {
+            revert MissingDependency("SHIPYARD_4");
+        }
+        if (ship == Ship.Recycler && combustionDriveLevel < 6) {
+            revert MissingDependency("COMBUSTION_6");
+        }
+        if (ship == Ship.Recycler && shieldingLevel < 2) {
+            revert MissingDependency("SHIELDING_2");
+        }
+        if (ship == Ship.ColonyShip && shipyardLevel < 4) {
+            revert MissingDependency("SHIPYARD_4");
+        }
+        if (ship == Ship.ColonyShip && impulseDriveLevel < 3) {
+            revert MissingDependency("IMPULSE_3");
+        }
+        if (ship == Ship.LargeCargo && shipyardLevel < 4) {
+            revert MissingDependency("SHIPYARD_4");
         }
         if (ship == Ship.LargeCargo && combustionDriveLevel < 6) {
             revert MissingDependency("COMBUSTION_6");
         }
+        if (ship == Ship.HeavyFighter && shipyardLevel < 3) {
+            revert MissingDependency("SHIPYARD_3");
+        }
         if (ship == Ship.HeavyFighter && impulseDriveLevel < 2) {
             revert MissingDependency("IMPULSE_2");
+        }
+        if (ship == Ship.HeavyFighter && armorLevel < 2) {
+            revert MissingDependency("ARMOR_2");
+        }
+        if (ship == Ship.Cruiser && shipyardLevel < 5) {
+            revert MissingDependency("SHIPYARD_5");
         }
         if (ship == Ship.Cruiser && impulseDriveLevel < 4) {
             revert MissingDependency("IMPULSE_4");
         }
+        if (ship == Ship.Cruiser && ionLevel < 2) {
+            revert MissingDependency("ION_2");
+        }
+        if (ship == Ship.Battleship && shipyardLevel < 7) {
+            revert MissingDependency("SHIPYARD_7");
+        }
         if (ship == Ship.Battleship && hyperspaceDriveLevel < 4) {
             revert MissingDependency("HYPERSPACE_DRIVE_4");
+        }
+        if (ship == Ship.EspionageProbe && shipyardLevel < 3) {
+            revert MissingDependency("SHIPYARD_3");
+        }
+        if (ship == Ship.EspionageProbe && combustionDriveLevel < 3) {
+            revert MissingDependency("COMBUSTION_3");
         }
         if (ship == Ship.EspionageProbe && espionageLevel < 2) {
             revert MissingDependency("ESPIONAGE_2");
         }
+        if (ship == Ship.Bomber && shipyardLevel < 8) {
+            revert MissingDependency("SHIPYARD_8");
+        }
         if (ship == Ship.Bomber && impulseDriveLevel < 6) {
             revert MissingDependency("IMPULSE_6");
+        }
+        if (ship == Ship.Bomber && plasmaLevel < 5) {
+            revert MissingDependency("PLASMA_5");
+        }
+        if (ship == Ship.SolarSatellite && shipyardLevel < 1) {
+            revert MissingDependency("SHIPYARD_1");
+        }
+        if (ship == Ship.Destroyer && shipyardLevel < 9) {
+            revert MissingDependency("SHIPYARD_9");
         }
         if (ship == Ship.Destroyer && hyperspaceDriveLevel < 6) {
             revert MissingDependency("HYPERSPACE_DRIVE_6");
         }
+        if (ship == Ship.Destroyer && hyperspaceLevel < 5) {
+            revert MissingDependency("HYPERSPACE_5");
+        }
+        if (ship == Ship.Deathstar && shipyardLevel < 12) {
+            revert MissingDependency("SHIPYARD_12");
+        }
+        if (ship == Ship.Deathstar && hyperspaceDriveLevel < 7) {
+            revert MissingDependency("HYPERSPACE_DRIVE_7");
+        }
+        if (ship == Ship.Deathstar && hyperspaceLevel < 6) {
+            revert MissingDependency("HYPERSPACE_6");
+        }
         if (ship == Ship.Deathstar && gravitonLevel < 1) {
             revert MissingDependency("GRAVITON_1");
+        }
+        if (ship == Ship.Battlecruiser && shipyardLevel < 8) {
+            revert MissingDependency("SHIPYARD_8");
         }
         if (ship == Ship.Battlecruiser && hyperspaceDriveLevel < 5) {
             revert MissingDependency("HYPERSPACE_DRIVE_5");
         }
+        if (ship == Ship.Battlecruiser && hyperspaceLevel < 5) {
+            revert MissingDependency("HYPERSPACE_5");
+        }
+        if (ship == Ship.Battlecruiser && laserLevel < 12) {
+            revert MissingDependency("LASER_12");
+        }
+        if (ship == Ship.Reaper && shipyardLevel < 10) {
+            revert MissingDependency("SHIPYARD_10");
+        }
         if (ship == Ship.Reaper && (hyperspaceDriveLevel < 7 || hyperspaceLevel < 6)) {
             revert MissingDependency("HYPERSPACE_DRIVE_7_HYPERSPACE_6");
+        }
+        if (ship == Ship.Reaper && shieldingLevel < 6) {
+            revert MissingDependency("SHIELDING_6");
+        }
+        if (ship == Ship.Pathfinder && shipyardLevel < 5) {
+            revert MissingDependency("SHIPYARD_5");
         }
         if (ship == Ship.Pathfinder && hyperspaceDriveLevel < 2) {
             revert MissingDependency("HYPERSPACE_DRIVE_2");
