@@ -129,6 +129,13 @@ Fleet missions:
 - `fleetMission(missionId)` is public and exposes owner, origin, target, timing, cargo, fuel, and status for every mission. `FleetMissionCargo` and `FleetMissionShips` expose the launch manifest so hostile inbound and returning fleets are indexable from contract truth.
 - The recall deadline is `arrivalAt - FLEET_RECALL_CUTOFF_SECONDS`. `recallFleetMission(missionId)` must be called by that deadline, spends an additional `FLEET_RECALL_COST_BPS` share of the launch fuel from the origin planet, and keeps the recalled fleet publicly visible until it lands. Original launch fuel remains spent.
 
+Moon chance:
+
+- `VeydriftMoonSystem.requestMoonChanceFromBattle(battleId, targetPlanetId, metalDebris, crystalDebris)` is the battle/debris integration hook. The configured moon-chance reporter should call it after a qualifying battle creates debris.
+- Moon chance follows the classic debris rule: 1% per 100,000 metal+crystal debris, capped at 20%. Battles below 100,000 debris do not create a randomness request.
+- The moon system requests one seed from `RandomnessEngine` and stores a pending outcome. `finalizeMoonChance(outcomeId)` can be called by anyone after fulfillment; before fulfillment it reverts through `RandomnessEngine.PendingRandomness`.
+- Duplicate battle/target requests are rejected, and targets that already have a moon emit a skip event instead of creating a second moon. Successful outcomes derive moon fields and diameter from the fulfilled random word and battle context.
+
 Alliances:
 
 - `VeydriftAllianceSystem` is a standalone canonical alliance authority linked to
@@ -153,6 +160,10 @@ Indexer-facing events:
 - `FleetMissionResolved(missionId, player, missionType, returnAt)`
 - `FleetMissionReturnExposed(missionId, player, status, originPlanetId, targetPlanetId, returnAt, metal, crystal, deuterium)`
 - `FleetMissionReturned(missionId, player, originPlanetId)`
+- `MoonChanceRequested(outcomeId, battleId, targetPlanetId, defender, metalDebris, crystalDebris, chanceBps, randomnessRequestId, purposeHash)`
+- `MoonChanceFinalized(outcomeId, battleId, targetPlanetId, chanceBps, moonCreated, randomWord, moonFields, moonDiameterKm)`
+- `MoonChanceSkippedExistingMoon(battleId, targetPlanetId, metalDebris, crystalDebris)`
+- `MoonCreated(owner, planetId, galaxy, system, position, fields, diameterKm)`
 
 `coordinateKey(galaxy, system, position)` and `planetSeed(galaxy, system, position)` are exposed
 for frontend/backend mapping. `planetSeed` is coordinate-only and domain-separated so the same
@@ -258,13 +269,15 @@ forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
 ```
 
-`Deploy.s.sol` deploys the game, the Moon System module, and the Metal, Crystal,
-and Deuterium ERC-20 proxy contracts. It wires the moon module into the game for
+`Deploy.s.sol` deploys the game, `RandomnessEngine`, the Moon System module, and
+the Metal, Crystal, and Deuterium ERC-20 proxy contracts. It authorizes the moon
+module as a randomness requester, wires the moon module into the game for
 moon-building resource debits, wires the resource tokens into the game as reserve
-tokens, and emits the proxy/module addresses. Configure the emitted moon module
-address as `VEYDRIFT_MOON_CONTRACT_ADDRESS` for backend moon reads. Because the
-setup calls are owner-only, `ADMIN_ADDRESS` must match the `PRIVATE_KEY`
-broadcaster for this script.
+tokens, and emits all proxy/module addresses. Configure the emitted moon module
+address as `VEYDRIFT_MOON_CONTRACT_ADDRESS` for backend moon reads, and the
+emitted randomness engine address for the backend fulfiller. Because the setup
+calls are owner-only, `ADMIN_ADDRESS` must match the `PRIVATE_KEY` broadcaster
+for this script.
 
 To attach resource tokens to an already deployed game contract, run:
 

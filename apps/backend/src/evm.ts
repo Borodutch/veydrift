@@ -294,6 +294,25 @@ export type SettledPlanetEvent = PlanetState & {
   blockNumber: string;
 };
 
+export type MoonChanceReportEvent = {
+  eventName: "MoonChanceRequested" | "MoonChanceFinalized" | "MoonChanceSkippedExistingMoon";
+  transactionHash: string;
+  blockNumber: string;
+  battleId: string;
+  targetPlanetId: string;
+  outcomeId?: string;
+  defender?: Address;
+  metalDebris?: string;
+  crystalDebris?: string;
+  chanceBps?: number;
+  randomnessRequestId?: string;
+  purposeHash?: string;
+  moonCreated?: boolean;
+  randomWord?: string;
+  moonFields?: number;
+  moonDiameterKm?: number;
+};
+
 export type DebrisFieldEvent = {
   eventName: "DebrisFieldUpdated";
   transactionHash: string;
@@ -321,7 +340,9 @@ export interface ChainReader {
   getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
+  listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
+  listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -1148,6 +1169,28 @@ export class VeydriftGameReader implements ChainReader {
     return logs.map((log) => decodeSettledPlanetLog(log));
   }
 
+  async listMoonChanceReportEvents(
+    fromBlock: bigint,
+    toBlock: bigint | "latest" = "latest"
+  ): Promise<MoonChanceReportEvent[]> {
+    if (!this.moonContractAddress) return [];
+
+    const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+      {
+        address: this.moonContractAddress,
+        fromBlock: toQuantity(fromBlock),
+        toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+        topics: [[
+          moonChanceRequestedTopic,
+          moonChanceFinalizedTopic,
+          moonChanceSkippedExistingMoonTopic
+        ]]
+      }
+    ]);
+
+    return logs.map((log) => decodeMoonChanceReportLog(log));
+  }
+
   async listDebrisFieldEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<DebrisFieldEvent[]> {
     const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
       {
@@ -1814,6 +1857,10 @@ const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d1
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack"] as const;
 const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
+const moonChanceRequestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";
+const moonChanceFinalizedTopic = "0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d76e501b618572e6705d04";
+const moonChanceSkippedExistingMoonTopic =
+  "0x93793f9a66f3a0a4cea93b7eb92e142d7283b5b33f657e14277879f2f8e7ab4e";
 
 export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
@@ -1934,6 +1981,62 @@ export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
       crystal: "0",
       deuterium: "0"
     }
+  };
+}
+
+export function isMoonChanceReportLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === moonChanceRequestedTopic
+    || topic === moonChanceFinalizedTopic
+    || topic === moonChanceSkippedExistingMoonTopic;
+}
+
+export function decodeMoonChanceReportLog(log: RpcLog): MoonChanceReportEvent {
+  const topic = topicAt(log.topics, 0);
+  const words = splitWords(log.data);
+  const base = {
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString()
+  };
+
+  if (topic === moonChanceRequestedTopic) {
+    return {
+      ...base,
+      eventName: "MoonChanceRequested",
+      outcomeId: decodeUint(topicAt(log.topics, 1)).toString(),
+      battleId: decodeUint(topicAt(log.topics, 2)).toString(),
+      targetPlanetId: decodeUint(topicAt(log.topics, 3)).toString(),
+      defender: decodeAddressWord(wordAt(words, 0)),
+      metalDebris: decodeUintWord(wordAt(words, 1)).toString(),
+      crystalDebris: decodeUintWord(wordAt(words, 2)).toString(),
+      chanceBps: Number(decodeUintWord(wordAt(words, 3))),
+      randomnessRequestId: decodeUintWord(wordAt(words, 4)).toString(),
+      purposeHash: `0x${wordAt(words, 5)}`
+    };
+  }
+
+  if (topic === moonChanceFinalizedTopic) {
+    return {
+      ...base,
+      eventName: "MoonChanceFinalized",
+      outcomeId: decodeUint(topicAt(log.topics, 1)).toString(),
+      battleId: decodeUint(topicAt(log.topics, 2)).toString(),
+      targetPlanetId: decodeUint(topicAt(log.topics, 3)).toString(),
+      chanceBps: Number(decodeUintWord(wordAt(words, 0))),
+      moonCreated: decodeBoolWord(wordAt(words, 1)),
+      randomWord: decodeUintWord(wordAt(words, 2)).toString(),
+      moonFields: Number(decodeUintWord(wordAt(words, 3))),
+      moonDiameterKm: Number(decodeUintWord(wordAt(words, 4)))
+    };
+  }
+
+  return {
+    ...base,
+    eventName: "MoonChanceSkippedExistingMoon",
+    battleId: decodeUint(topicAt(log.topics, 1)).toString(),
+    targetPlanetId: decodeUint(topicAt(log.topics, 2)).toString(),
+    metalDebris: decodeUintWord(wordAt(words, 0)).toString(),
+    crystalDebris: decodeUintWord(wordAt(words, 1)).toString()
   };
 }
 

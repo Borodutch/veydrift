@@ -9,6 +9,7 @@ import type {
   InfrastructureState,
   WalletPlanets,
   MoonState,
+  MoonChanceReportEvent,
   PlanetState,
   PlayerQueues,
   ResearchState,
@@ -93,6 +94,10 @@ export class CachedChainReader implements ChainReader {
 
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {
     return this.inner.listSettledPlanetEvents(fromBlock, toBlock);
+  }
+
+  listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]> {
+    return this.inner.listMoonChanceReportEvents(fromBlock, toBlock);
   }
 
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]> {

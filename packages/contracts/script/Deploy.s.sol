@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
+import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -12,7 +13,8 @@ contract Deploy is ResourceTokenDeployment {
     event VeydriftDeployment(
         address indexed game,
         address indexed moonSystem,
-        address indexed metalToken,
+        address indexed randomnessEngine,
+        address metalToken,
         address crystalToken,
         address deuteriumToken
     );
@@ -22,6 +24,7 @@ contract Deploy is ResourceTokenDeployment {
         returns (
             address gameAddress,
             address moonSystemAddress,
+            address randomnessEngineAddress,
             address metalToken,
             address crystalToken,
             address deuteriumToken
@@ -38,13 +41,21 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftGame game =
             new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
         gameAddress = address(game);
-        VeydriftMoonSystem moonSystem = new VeydriftMoonSystem(gameAddress);
+        RandomnessEngine randomnessEngine = new RandomnessEngine(admin, admin);
+        randomnessEngineAddress = address(randomnessEngine);
+        VeydriftMoonSystem moonSystem = new VeydriftMoonSystem(gameAddress, randomnessEngineAddress);
         moonSystemAddress = address(moonSystem);
         (metalToken, crystalToken, deuteriumToken) = _deployResourceTokens(admin, gameAddress);
         game.setResourceTokens(metalToken, crystalToken, deuteriumToken);
         game.setMoonSystem(moonSystemAddress);
+        randomnessEngine.setRequesterAuthorization(moonSystemAddress, true);
         emit VeydriftDeployment(
-            gameAddress, moonSystemAddress, metalToken, crystalToken, deuteriumToken
+            gameAddress,
+            moonSystemAddress,
+            randomnessEngineAddress,
+            metalToken,
+            crystalToken,
+            deuteriumToken
         );
         vm.stopBroadcast();
     }
