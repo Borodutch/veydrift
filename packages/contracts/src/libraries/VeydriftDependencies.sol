@@ -35,6 +35,43 @@ library VeydriftDependencies {
         }
     }
 
+    function requireBuilding(
+        Building building,
+        uint16 deuteriumSynthesizerLevel,
+        uint16 roboticsFactoryLevel,
+        uint16 shipyardLevel,
+        uint16 researchLabLevel,
+        uint16 naniteFactoryLevel,
+        uint16,
+        uint16,
+        uint16
+    ) public pure {
+        if (building == Building.FusionReactor && deuteriumSynthesizerLevel < 5) {
+            revert MissingDependency("DEUTERIUM_SYNTHESIZER_5");
+        }
+        if (building == Building.Shipyard && roboticsFactoryLevel < 2) {
+            revert MissingDependency("ROBOTICS_FACTORY_2");
+        }
+        if (building == Building.ResearchLab && roboticsFactoryLevel < 1) {
+            revert MissingDependency("ROBOTICS_FACTORY_1");
+        }
+        if (building == Building.NaniteFactory && roboticsFactoryLevel < 10) {
+            revert MissingDependency("ROBOTICS_FACTORY_10");
+        }
+        if (building == Building.Terraformer && naniteFactoryLevel < 1) {
+            revert MissingDependency("NANITE_FACTORY_1");
+        }
+        if (building == Building.MissileSilo && shipyardLevel < 1) {
+            revert MissingDependency("SHIPYARD_1");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 4) {
+            revert MissingDependency("ROBOTICS_FACTORY_4");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
+            revert MissingDependency("RESEARCH_LAB_2");
+        }
+    }
+
     function requireDefense(
         Defense defense,
         uint16 shipyardLevel,
@@ -253,6 +290,46 @@ library VeydriftDependencies {
         if (ship == Ship.Pathfinder && hyperspaceDriveLevel < 2) {
             revert MissingDependency("HYPERSPACE_DRIVE_2");
         }
+        if (ship == Ship.Crawler && shipyardLevel < 5) {
+            revert MissingDependency("SHIPYARD_5");
+        }
+        if (ship == Ship.Crawler && (combustionDriveLevel < 4 || armorLevel < 4 || laserLevel < 4))
+        {
+            revert MissingDependency("COMBUSTION_4_ARMOR_4_LASER_4");
+        }
+    }
+
+    function requireShip(
+        Ship ship,
+        uint16 shipyardLevel,
+        uint16,
+        uint16 laserLevel,
+        uint16 ionLevel,
+        uint16 plasmaLevel,
+        uint16 espionageLevel,
+        uint16 combustionDriveLevel,
+        uint16 impulseDriveLevel,
+        uint16 hyperspaceDriveLevel,
+        uint16 hyperspaceLevel,
+        uint16 gravitonLevel,
+        uint16 armorLevel,
+        uint16 shieldingLevel
+    ) public pure {
+        requireShip(
+            ship,
+            shipyardLevel,
+            espionageLevel,
+            combustionDriveLevel,
+            impulseDriveLevel,
+            hyperspaceDriveLevel,
+            hyperspaceLevel,
+            gravitonLevel,
+            laserLevel,
+            ionLevel,
+            shieldingLevel,
+            armorLevel,
+            plasmaLevel
+        );
     }
 
     function requireResearch(

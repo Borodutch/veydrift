@@ -549,24 +549,17 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _requireBuildingDependencies(uint256 planetId, Building building) private view {
-        uint16 roboticsFactoryLevel = _buildingLevels[planetId][Building.RoboticsFactory];
-        uint16 researchLabLevel = _buildingLevels[planetId][Building.ResearchLab];
-
-        if (building == Building.Shipyard && roboticsFactoryLevel < 2) {
-            revert MissingDependency("ROBOTICS_FACTORY_2");
-        }
-        if (building == Building.ResearchLab && roboticsFactoryLevel < 1) {
-            revert MissingDependency("ROBOTICS_FACTORY_1");
-        }
-        if (building == Building.NaniteFactory && roboticsFactoryLevel < 10) {
-            revert MissingDependency("ROBOTICS_FACTORY_10");
-        }
-        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 4) {
-            revert MissingDependency("ROBOTICS_FACTORY_4");
-        }
-        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
-            revert MissingDependency("RESEARCH_LAB_2");
-        }
+        VeydriftDependencies.requireBuilding(
+            building,
+            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
+            _buildingLevels[planetId][Building.RoboticsFactory],
+            _buildingLevels[planetId][Building.Shipyard],
+            _buildingLevels[planetId][Building.ResearchLab],
+            _buildingLevels[planetId][Building.NaniteFactory],
+            0,
+            0,
+            0
+        );
     }
 
     function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
@@ -762,11 +755,11 @@ contract VeydriftGame is VeydriftResourceReserves {
             }
         }
 
-        uint8 missileSlots = VeydriftCatalog.missileSlots(defense);
-        if (missileSlots == 0) return;
+        uint8 slotsPerUnit = VeydriftCatalog.missileSlots(defense);
+        if (slotsPerUnit == 0) return;
 
         uint32 usedSlots = _missileSiloSlotsUsed(planetId);
-        uint32 requestedSlots = uint32(missileSlots) * quantity;
+        uint32 requestedSlots = uint32(slotsPerUnit) * quantity;
         uint32 capacity =
             VeydriftCatalog.missileSiloCapacity(_buildingLevels[planetId][Building.MissileSilo]);
         if (usedSlots + requestedSlots > capacity) {

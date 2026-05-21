@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {Building, Defense, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
@@ -61,6 +62,10 @@ contract VeydriftGameTest is Test {
     bytes32 internal constant DEP_SHIPYARD_2 = "SHIPYARD_2";
     bytes32 internal constant DEP_WEAPONS_3 = "WEAPONS_3";
     bytes32 internal constant DEP_MISSILE_SILO_4 = "MISSILE_SILO_4";
+    bytes32 internal constant MISSILE_SILO_2 = "MISSILE_SILO_2";
+    bytes32 internal constant MISSILE_SILO_4 = "MISSILE_SILO_4";
+    bytes32 internal constant CRAWLER_TECH_REQUIREMENT = "COMBUSTION_4_ARMOR_4_LASER_4";
+    bytes32 internal constant RESEARCH_LAB_12 = "RESEARCH_LAB_12";
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
@@ -205,6 +210,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
         assertEq(game.technologyLevel(player, Technology.Energy), 0);
+        assertEq(game.shipCargoCapacity(Ship.Crawler), 0);
         assertEq(game.maxPlanets(player), 1);
         assertEq(game.transportCargoCapacity(1, 1, 1), 32_500);
 
@@ -464,6 +470,58 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         vm.expectRevert(VeydriftGameStorage.ConstructionActive.selector);
         game.startBuildingUpgrade(planetId, Building.CrystalMine);
+    }
+
+    function testCatalogIncludesCrawlerAndMissileRules() public view {
+        VeydriftGame.Resources memory crawlerCost = game.shipCost(Ship.Crawler);
+
+        assertEq(crawlerCost.metal, 2_000);
+        assertEq(crawlerCost.crystal, 2_000);
+        assertEq(crawlerCost.deuterium, 1_000);
+        assertEq(VeydriftCatalog.missileSlots(Defense.AntiBallisticMissile), 1);
+        assertEq(VeydriftCatalog.missileSlots(Defense.InterplanetaryMissile), 2);
+        assertEq(VeydriftCatalog.missileSiloCapacity(3), 30);
+        assertEq(VeydriftCatalog.maxDefensePerPlanet(Defense.SmallShieldDome), 1);
+        assertEq(VeydriftCatalog.maxDefensePerPlanet(Defense.LargeShieldDome), 1);
+        assertEq(VeydriftCatalog.maxDefensePerPlanet(Defense.RocketLauncher), type(uint32).max);
+    }
+
+    function testDefenseDependencyCatalogRequiresMissileSilo() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, MISSILE_SILO_2)
+        );
+        VeydriftDependencies.requireDefense(Defense.AntiBallisticMissile, 1, 1, 0, 0, 0, 0, 0, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, MISSILE_SILO_4)
+        );
+        VeydriftDependencies.requireDefense(
+            Defense.InterplanetaryMissile, 1, 3, 0, 0, 0, 0, 0, 1, 0
+        );
+
+        VeydriftDependencies.requireDefense(
+            Defense.InterplanetaryMissile, 1, 4, 0, 0, 0, 0, 0, 1, 0
+        );
+    }
+
+    function testCrawlerDependencyCatalogRequiresVanillaUnlocks() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftDependencies.MissingDependency.selector, CRAWLER_TECH_REQUIREMENT
+            )
+        );
+        VeydriftDependencies.requireShip(Ship.Crawler, 5, 0, 3, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0);
+
+        VeydriftDependencies.requireShip(Ship.Crawler, 5, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 4, 0);
+    }
+
+    function testResearchDependencyCatalogUsesLabRequirements() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, RESEARCH_LAB_12)
+        );
+        VeydriftDependencies.requireResearch(Technology.Graviton, 11, 0, 0, 0, 0, 0, 0, 0, 0);
+
+        VeydriftDependencies.requireResearch(Technology.Graviton, 12, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     function testBuildingUpgradeRejectsInsufficientResources() public {

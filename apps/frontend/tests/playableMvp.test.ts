@@ -140,6 +140,7 @@ describe("playable MVP contract display helpers", () => {
       [13, "battlecruiser", "Battlecruiser"],
       [14, "reaper", "Reaper"],
       [15, "pathfinder", "Pathfinder"],
+      [16, "crawler", "Crawler"],
     ]);
     expect(shipCatalog.map((ship) => ship.asset)).toEqual(shipAssetManifest.map((asset) => asset.src));
   });

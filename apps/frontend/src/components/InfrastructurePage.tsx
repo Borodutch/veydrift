@@ -43,7 +43,12 @@ const buildingDescriptions: Record<BuildingKey, string> = {
   metalStorage: "Raises the real metal storage cap for this planet.",
   crystalStorage: "Raises the real crystal storage cap for this planet.",
   deuteriumTank: "Raises the real deuterium storage cap for this planet.",
-  interdimensionalRiftStabilizer: "Stabilizes the planet's Rift bridge so resource transfers can come online once the structure is built.",
+  fusionReactor: "Converts deuterium into supplemental power once the required energy research path is available.",
+  naniteFactory: "Advanced automation for high-tier construction and later production-speed upgrades.",
+  terraformer: "Expands usable planetary fields after nanite construction and high energy research are available.",
+  allianceDepot: "A core OGame facility kept in catalog parity; alliance logistics behavior is not active in this MVP.",
+  missileSilo: "Stores anti-ballistic and interplanetary missiles and gates missile production.",
+  interdimensionalRiftStabilizer: "Custom Veydrift facility for later resource-token withdrawal and rift mechanics.",
 };
 
 interface InfrastructurePageProps {
@@ -672,13 +677,7 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       next: effect.nextUnlocked && !effect.unlocked ? "Unlocks orbital production" : `x${formatNumber(effect.nextFactor)}`,
       value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Not built",
     });
-  } else if (effect.kind === "riftBridge") {
-    rows.push({
-      label: "Rift bridge",
-      next: effect.nextUnlocked && !effect.unlocked ? "Unlocks resource bridge" : "Bridge online",
-      value: effect.unlocked ? "Online" : "Locked",
-    });
-  } else {
+  } else if (effect.kind === "researchSpeed") {
     const fasterPercent = effect.unlocked
       ? Math.round(((effect.nextFactor / effect.currentFactor) - 1) * 100)
       : 0;
@@ -692,6 +691,12 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     };
 
     rows.push(fasterPercent > 0 ? { ...row, delta: `+${formatNumber(fasterPercent)}% faster` } : row);
+  } else {
+    rows.push({
+      label: effect.label,
+      next: `Level ${effect.nextLevel}`,
+      value: effect.currentLevel > 0 ? `Level ${effect.currentLevel}` : "Not built",
+    });
   }
 
   if (energy.kind === "produces") {
@@ -729,8 +734,8 @@ function compactEffect(effect: BuildingEffectMetrics): string {
     return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
   }
 
-  if (effect.kind === "riftBridge") {
-    return effect.unlocked ? "Online" : "Locked";
+  if (effect.kind === "facility") {
+    return effect.currentLevel > 0 ? `Level ${effect.currentLevel}` : "Locked";
   }
 
   return `x${formatNumber(effect.currentFactor)}`;

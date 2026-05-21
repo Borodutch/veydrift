@@ -17,6 +17,11 @@ export type BuildingKey =
   | "metalStorage"
   | "crystalStorage"
   | "deuteriumTank"
+  | "fusionReactor"
+  | "naniteFactory"
+  | "terraformer"
+  | "allianceDepot"
+  | "missileSilo"
   | "interdimensionalRiftStabilizer";
 
 export const buildingContractIds: Record<BuildingKey, number> = {
@@ -30,6 +35,11 @@ export const buildingContractIds: Record<BuildingKey, number> = {
   metalStorage: 7,
   crystalStorage: 8,
   deuteriumTank: 9,
+  fusionReactor: 10,
+  naniteFactory: 11,
+  terraformer: 12,
+  allianceDepot: 13,
+  missileSilo: 14,
   interdimensionalRiftStabilizer: 15,
 };
 
@@ -49,7 +59,8 @@ export type ShipKey =
   | "deathstar"
   | "battlecruiser"
   | "reaper"
-  | "pathfinder";
+  | "pathfinder"
+  | "crawler";
 export type DefenseKey =
   | "rocketLauncher"
   | "lightLaser"
@@ -95,15 +106,17 @@ export type ResearchRequirement =
       produced: number;
     };
 
-export type BuildingRequirement = {
-  type: "building";
-  key: BuildingKey;
-  level: number;
-} | {
-  type: "research";
-  key: ResearchKey;
-  level: number;
-};
+export type BuildingRequirement =
+  | {
+      type: "building";
+      key: BuildingKey;
+      level: number;
+    }
+  | {
+      type: "research";
+      key: ResearchKey;
+      level: number;
+    };
 
 export type UnlockBuildingKey = BuildingKey | "missileSilo";
 
@@ -209,9 +222,10 @@ export type BuildingEffectMetrics =
       nextUnlocked: boolean;
     }
   | {
-      kind: "riftBridge";
-      unlocked: boolean;
-      nextUnlocked: boolean;
+      kind: "facility";
+      currentLevel: number;
+      nextLevel: number;
+      label: string;
     };
 
 export const buildingCatalog: Array<{
@@ -279,6 +293,36 @@ export const buildingCatalog: Array<{
     label: "Deuterium Tank",
     baseCost: { metal: 1_000, crystal: 1_000, deuterium: 0 },
     asset: "/assets/game/style-pass/generated/buildings/deuterium-tank-mid.webp",
+  },
+  {
+    key: "fusionReactor",
+    label: "Fusion Reactor",
+    baseCost: { metal: 900, crystal: 360, deuterium: 180 },
+    asset: "/assets/game/style-pass/generated/buildings/fusion-reactor-mid.webp",
+  },
+  {
+    key: "naniteFactory",
+    label: "Nanite Factory",
+    baseCost: { metal: 1_000_000, crystal: 500_000, deuterium: 100_000 },
+    asset: "/assets/game/style-pass/generated/buildings/nanite-factory-mid.webp",
+  },
+  {
+    key: "terraformer",
+    label: "Terraformer",
+    baseCost: { metal: 0, crystal: 50_000, deuterium: 100_000 },
+    asset: "/assets/game/style-pass/generated/buildings/terraformer-mid.webp",
+  },
+  {
+    key: "allianceDepot",
+    label: "Alliance Depot",
+    baseCost: { metal: 20_000, crystal: 40_000, deuterium: 0 },
+    asset: "/assets/game/style-pass/generated/buildings/alliance-depot-mid.webp",
+  },
+  {
+    key: "missileSilo",
+    label: "Missile Silo",
+    baseCost: { metal: 20_000, crystal: 20_000, deuterium: 1_000 },
+    asset: "/assets/game/style-pass/generated/buildings/missile-silo-mid.webp",
   },
   {
     key: "interdimensionalRiftStabilizer",
@@ -485,6 +529,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 7 },
       { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 6 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 6 },
+      { kind: "technology", key: "energy", label: "Energy", level: 5 },
     ],
     asset: shipAssetByKey.reaper,
   },
@@ -499,6 +544,20 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
     ],
     asset: shipAssetByKey.pathfinder,
+  },
+  {
+    key: "crawler",
+    id: 16,
+    label: "Crawler",
+    group: "special",
+    baseCost: { metal: 2_000, crystal: 2_000, deuterium: 1_000 },
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 4 },
+      { kind: "technology", key: "armor", label: "Armor", level: 4 },
+      { kind: "technology", key: "laser", label: "Laser", level: 4 },
+    ],
+    asset: shipAssetByKey.crawler,
   },
 ];
 
@@ -834,10 +893,24 @@ const BASE_RESEARCH_REQUIREMENTS: ResearchRequirement[] = [];
 const BUILDING_REQUIREMENTS: Partial<Record<BuildingKey, BuildingRequirement[]>> = {
   researchLab: [{ type: "building", key: "roboticsFactory", level: 1 }],
   shipyard: [{ type: "building", key: "roboticsFactory", level: 2 }],
+  fusionReactor: [
+    { type: "building", key: "deuteriumSynthesizer", level: 5 },
+    { type: "research", key: "energy", level: 3 },
+  ],
+  naniteFactory: [
+    { type: "building", key: "roboticsFactory", level: 10 },
+    { type: "research", key: "computer", level: 10 },
+  ],
+  terraformer: [
+    { type: "building", key: "naniteFactory", level: 1 },
+    { type: "research", key: "energy", level: 12 },
+  ],
+  missileSilo: [{ type: "building", key: "shipyard", level: 1 }],
   interdimensionalRiftStabilizer: [
-    { type: "building", key: "roboticsFactory", level: 2 },
-    { type: "building", key: "researchLab", level: 1 },
-    { type: "research", key: "energy", level: 2 },
+    { type: "building", key: "roboticsFactory", level: 4 },
+    { type: "building", key: "researchLab", level: 2 },
+    { type: "research", key: "energy", level: 5 },
+    { type: "research", key: "hyperspace", level: 1 },
   ],
 };
 
@@ -865,6 +938,11 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       metalStorage: 0,
       crystalStorage: 0,
       deuteriumTank: 0,
+      fusionReactor: 0,
+      naniteFactory: 0,
+      terraformer: 0,
+      allianceDepot: 0,
+      missileSilo: 0,
       interdimensionalRiftStabilizer: 0,
     },
     research: {
@@ -902,6 +980,7 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       battlecruiser: 0,
       reaper: 0,
       pathfinder: 0,
+      crawler: 0,
     },
     defenses: {
       rocketLauncher: 0,
@@ -1055,20 +1134,21 @@ export function buildingEffectMetrics(
     };
   }
 
-  if (key === "interdimensionalRiftStabilizer") {
+  if (key === "researchLab") {
     return {
-      kind: "riftBridge",
-      unlocked: buildings.interdimensionalRiftStabilizer > 0,
-      nextUnlocked: nextBuildings.interdimensionalRiftStabilizer > 0,
+      kind: "researchSpeed",
+      currentFactor: buildings.researchLab + 1,
+      nextFactor: nextBuildings.researchLab + 1,
+      unlocked: buildings.researchLab > 0,
+      nextUnlocked: nextBuildings.researchLab > 0,
     };
   }
 
   return {
-    kind: "researchSpeed",
-    currentFactor: buildings.researchLab + 1,
-    nextFactor: nextBuildings.researchLab + 1,
-    unlocked: buildings.researchLab > 0,
-    nextUnlocked: nextBuildings.researchLab > 0,
+    kind: "facility",
+    currentLevel: buildings[key],
+    nextLevel: nextBuildings[key],
+    label: "Catalog facility",
   };
 }
 
@@ -1162,11 +1242,27 @@ export function uniqueRequirementMessages(messages: readonly string[]): string[]
 function uniqueRequirements<T extends BuildingRequirement | ResearchRequirement>(
   requirements: readonly T[],
 ): T[] {
-  return uniqueBy(requirements, (requirement) => (
-    requirement.type === "energy"
-      ? `${requirement.type}:${requirement.produced}`
-      : `${requirement.type}:${requirement.key}:${requirement.level}`
-  ));
+  const highestLevelByKey = new Map<string, number>();
+  for (const requirement of requirements) {
+    if (requirement.type === "energy") {
+      continue;
+    }
+
+    const key = `${requirement.type}:${requirement.key}`;
+    highestLevelByKey.set(key, Math.max(highestLevelByKey.get(key) ?? 0, requirement.level));
+  }
+
+  return uniqueBy(
+    requirements.filter((requirement) => (
+      requirement.type === "energy"
+        || requirement.level === highestLevelByKey.get(`${requirement.type}:${requirement.key}`)
+    )),
+    (requirement) => (
+      requirement.type === "energy"
+        ? `${requirement.type}:${requirement.produced}`
+        : `${requirement.type}:${requirement.key}:${requirement.level}`
+    ),
+  );
 }
 
 function uniqueUnlockRequirements(requirements: readonly UnlockRequirement[]): UnlockRequirement[] {

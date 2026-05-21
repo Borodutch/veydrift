@@ -352,29 +352,34 @@ function buildingLabel(key: BuildingKey): string {
     metalStorage: "Metal Storage",
     crystalStorage: "Crystal Storage",
     deuteriumTank: "Deuterium Tank",
+    fusionReactor: "Fusion Reactor",
+    naniteFactory: "Nanite Factory",
+    terraformer: "Terraformer",
+    allianceDepot: "Alliance Depot",
+    missileSilo: "Missile Silo",
     interdimensionalRiftStabilizer: "Interdimensional Rift Stabilizer",
   };
   return labels[key];
 }
 
-function researchLabel(key: ResearchKey): string {
-  const labels: Record<ResearchKey, string> = {
+function researchLabel(key: ReturnType<typeof buildingRequirementsFor>[number]["key"]): string {
+  const labels = {
     energy: "Energy Technology",
-    laser: "Laser",
-    ion: "Ion",
+    laser: "Laser Technology",
+    ion: "Ion Technology",
     combustionDrive: "Combustion Drive",
-    espionage: "Espionage",
-    computer: "Computer",
-    weapons: "Weapons",
-    shielding: "Shielding",
-    armor: "Armor",
-    hyperspace: "Hyperspace",
+    espionage: "Espionage Technology",
+    computer: "Computer Technology",
+    weapons: "Weapons Technology",
+    shielding: "Shielding Technology",
+    armor: "Armor Technology",
+    hyperspace: "Hyperspace Technology",
     impulseDrive: "Impulse Drive",
     hyperspaceDrive: "Hyperspace Drive",
-    plasma: "Plasma",
+    plasma: "Plasma Technology",
     astrophysics: "Astrophysics",
     intergalacticResearchNetwork: "Intergalactic Research Network",
     graviton: "Graviton Technology",
   };
-  return labels[key];
+  return labels[key as keyof typeof labels];
 }

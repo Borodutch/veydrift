@@ -1004,7 +1004,7 @@ export class VeydriftGameReader implements ChainReader {
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
 const buildingCount = 16;
 const defenseCount = 10;
-const shipCount = 16;
+const shipCount = 17;
 const technologyCount = 16;
 const riftBuildingId = 15;
 const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
