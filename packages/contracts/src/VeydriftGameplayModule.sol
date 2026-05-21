@@ -56,6 +56,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
     }
 
+    function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
+        _spaceDockSystem = nextSpaceDockSystem;
+    }
+
     function createColonyAtNextSlot(uint256 originPlanetId, uint256 salt)
         external
         returns (uint256)
@@ -244,11 +248,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             mission.status = FleetMissionStatus.Resolved;
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
-        } else if (mission.missionType == FleetMissionType.Attack) {
+        } else if (
+            mission.missionType == FleetMissionType.Attack
+                || mission.missionType == FleetMissionType.Harvest
+        ) {
             _delegateToCombatModule();
-        } else if (mission.missionType == FleetMissionType.Harvest) {
-            _harvestDebris(mission);
-            mission.status = FleetMissionStatus.Returning;
         } else {
             mission.status = FleetMissionStatus.Returning;
         }
@@ -363,6 +367,31 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return VeydriftAntiRaidPrimitives.travelSeconds(
             _planetDistance(originPlanetId, destinationPlanetId)
         );
+    }
+
+    function protectedResources(uint256 planetId) external view returns (Resources memory) {
+        return _protectedResources(planetId);
+    }
+
+    function raidableResources(uint256 planetId) external view returns (Resources memory) {
+        Resources memory protected = _protectedResources(planetId);
+        return _unprotectedResources(_planets[planetId].resources, protected);
+    }
+
+    function maxRaidLoot(uint256 planetId, uint256 cargoCapacity)
+        external
+        view
+        returns (Resources memory)
+    {
+        Resources memory protected = _protectedResources(planetId);
+        return _selectRaidLoot(
+            _unprotectedResources(_planets[planetId].resources, protected), cargoCapacity
+        );
+    }
+
+    function debrisField(uint256 planetId) external view returns (uint128 metal, uint128 crystal) {
+        DebrisField storage field = _debrisFields[planetId];
+        return (field.metal, field.crystal);
     }
 
     function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
@@ -546,7 +575,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (
             available.metal < cost.metal || available.crystal < cost.crystal
                 || available.deuterium < cost.deuterium
-        ) revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        }
         available.metal -= cost.metal;
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;
@@ -756,29 +787,47 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return 0;
     }
 
-    function _harvestDebris(FleetMission storage mission) private {
-        DebrisField storage field = _debrisFields[mission.targetPlanetId];
-        uint256 capacity = _missionCargoCapacity(mission.ships);
-        uint256 cargoTotal =
-            uint256(mission.cargo.metal) + mission.cargo.crystal + mission.cargo.deuterium;
-        if (capacity <= cargoTotal || (field.metal == 0 && field.crystal == 0)) return;
-
-        capacity -= cargoTotal;
-        uint128 metal = _toUint128(_min(field.metal, capacity));
-        field.metal -= metal;
-        capacity -= metal;
-
-        uint128 crystal = _toUint128(_min(field.crystal, capacity));
-        field.crystal -= crystal;
-
-        mission.cargo.metal += metal;
-        mission.cargo.crystal += crystal;
-        _emitDebrisFieldUpdated(mission.targetPlanetId);
+    function _protectedResources(uint256 planetId) private view returns (Resources memory) {
+        (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = _storageCaps(planetId);
+        return Resources({
+            metal: _toUint128((uint256(metalCap) * RAID_PROTECTED_STORAGE_BPS) / BPS),
+            crystal: _toUint128((uint256(crystalCap) * RAID_PROTECTED_STORAGE_BPS) / BPS),
+            deuterium: _toUint128((uint256(deuteriumCap) * RAID_PROTECTED_STORAGE_BPS) / BPS)
+        });
     }
 
-    function _emitDebrisFieldUpdated(uint256 planetId) private {
-        DebrisField storage field = _debrisFields[planetId];
-        emit DebrisFieldUpdated(planetId, field.metal, field.crystal);
+    function _unprotectedResources(Resources storage resources, Resources memory protected)
+        private
+        view
+        returns (Resources memory)
+    {
+        return Resources({
+            metal: resources.metal > protected.metal ? resources.metal - protected.metal : 0,
+            crystal: resources.crystal > protected.crystal
+                ? resources.crystal - protected.crystal
+                : 0,
+            deuterium: resources.deuterium > protected.deuterium
+                ? resources.deuterium - protected.deuterium
+                : 0
+        });
+    }
+
+    function _selectRaidLoot(Resources memory unprotected, uint256 capacity)
+        private
+        pure
+        returns (Resources memory)
+    {
+        uint128 metalCap = _toUint128((uint256(unprotected.metal) * RAID_LOOT_BPS) / BPS);
+        uint128 metal = _toUint128(_min(metalCap, capacity));
+        capacity -= metal;
+
+        uint128 crystalCap = _toUint128((uint256(unprotected.crystal) * RAID_LOOT_BPS) / BPS);
+        uint128 crystal = _toUint128(_min(crystalCap, capacity));
+        capacity -= crystal;
+
+        uint128 deuteriumCap = _toUint128((uint256(unprotected.deuterium) * RAID_LOOT_BPS) / BPS);
+        uint128 deuterium = _toUint128(_min(deuteriumCap, capacity));
+        return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
     }
 
     function _coordinateKey(uint16 galaxy, uint16 system, uint8 position)

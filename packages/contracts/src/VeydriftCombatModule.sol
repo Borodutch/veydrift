@@ -30,6 +30,12 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
+        if (mission.missionType == FleetMissionType.Harvest) {
+            _harvestDebris(mission);
+            mission.status = FleetMissionStatus.Returning;
+            return;
+        }
+
         BattleSettlement memory settlement = _runBattle(missionId, mission);
         uint256 capacity = _missionCargoCapacity(mission.ships);
 
@@ -275,6 +281,26 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     function _emitDebrisFieldUpdated(uint256 planetId) private {
         DebrisField storage field = _debrisFields[planetId];
         emit DebrisFieldUpdated(planetId, field.metal, field.crystal);
+    }
+
+    function _harvestDebris(FleetMission storage mission) private {
+        DebrisField storage field = _debrisFields[mission.targetPlanetId];
+        uint256 capacity = _missionCargoCapacity(mission.ships);
+        uint256 cargoTotal =
+            uint256(mission.cargo.metal) + mission.cargo.crystal + mission.cargo.deuterium;
+        if (capacity <= cargoTotal || (field.metal == 0 && field.crystal == 0)) return;
+
+        capacity -= cargoTotal;
+        uint128 metal = _toUint128(_min(field.metal, capacity));
+        field.metal -= metal;
+        capacity -= metal;
+
+        uint128 crystal = _toUint128(_min(field.crystal, capacity));
+        field.crystal -= crystal;
+
+        mission.cargo.metal += metal;
+        mission.cargo.crystal += crystal;
+        _emitDebrisFieldUpdated(mission.targetPlanetId);
     }
 
     function _setMissionShipQuantity(MissionShips storage ships, Ship ship, uint32 quantity)

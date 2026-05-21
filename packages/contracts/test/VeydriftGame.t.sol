@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftSpaceDockSystem} from "../src/VeydriftSpaceDockSystem.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
@@ -1184,6 +1185,28 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.metal, 900);
     }
 
+    function testRaidProtectionReadEntrypointsExposeProtectedRaidableAndMaxLoot() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.MetalStorage, 1);
+        _setResources(planetId, 20_000, 20_000, 20_000);
+
+        VeydriftGameStorage.Resources memory protected = game.protectedResources(planetId);
+        assertEq(protected.metal, 2_000);
+        assertEq(protected.crystal, 1_000);
+        assertEq(protected.deuterium, 1_000);
+
+        VeydriftGameStorage.Resources memory raidable = game.raidableResources(planetId);
+        assertEq(raidable.metal, 18_000);
+        assertEq(raidable.crystal, 19_000);
+        assertEq(raidable.deuterium, 19_000);
+
+        VeydriftGameStorage.Resources memory maxLoot = game.maxRaidLoot(planetId, 5_000);
+        assertEq(maxLoot.metal, 5_000);
+        assertEq(maxLoot.crystal, 0);
+        assertEq(maxLoot.deuterium, 0);
+    }
+
     function testAttackBattleDefenderWinDestroysAttackerFleet() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
@@ -1793,7 +1816,9 @@ contract VeydriftGameTest is Test {
     }
 
     function _newGame(address owner) internal returns (VeydriftGame) {
-        return new VeydriftGame(owner, address(new VeydriftCombatModule()));
+        return new VeydriftGame(
+            owner, address(new VeydriftGameplayModule(address(new VeydriftCombatModule())))
+        );
     }
 
     function _fundGameReserves(

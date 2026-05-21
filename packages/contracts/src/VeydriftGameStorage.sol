@@ -19,6 +19,8 @@ abstract contract VeydriftGameStorage {
     uint8 public constant MAX_RESOURCE_ID = uint8(type(Resource).max);
     uint16 public constant MAX_LEVEL = 50;
     uint16 public constant BPS = 10_000;
+    uint16 public constant RAID_LOOT_CAP_BPS = 5_000;
+    uint16 public constant PROTECTED_STORAGE_BPS = 1_000;
     uint32 public constant MIN_QUEUE_SECONDS = 60;
     uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
     uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
@@ -454,6 +456,16 @@ abstract contract VeydriftGameStorage {
         uint256 indexed missionId, address indexed owner, uint256 indexed planetId
     );
     event DebrisFieldUpdated(uint256 indexed planetId, uint128 metal, uint128 crystal);
+    event RaidLootResolved(
+        uint256 indexed targetPlanetId,
+        uint256 cargoCapacity,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium,
+        uint128 protectedMetal,
+        uint128 protectedCrystal,
+        uint128 protectedDeuterium
+    );
     event ResourceTokenUpdated(
         Resource indexed resource, address indexed oldToken, address indexed newToken
     );

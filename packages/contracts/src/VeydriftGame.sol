@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {VeydriftGameplayModule} from "./VeydriftGameplayModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
@@ -18,8 +17,8 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     address private immutable _gameplayModule;
 
-    constructor(address admin, address combatModule) VeydriftResourceReserves(admin) {
-        _gameplayModule = address(new VeydriftGameplayModule(combatModule));
+    constructor(address admin, address gameplayModule) VeydriftResourceReserves(admin) {
+        _gameplayModule = gameplayModule;
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -213,8 +212,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         _moonSystem = nextMoonSystem;
     }
 
-    function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
-        _spaceDockSystem = nextSpaceDockSystem;
+    function setSpaceDockSystem(address) external {
+        _delegateToGameplayModule();
     }
 
     function spendMoonResources(uint256 planetId, Resources calldata cost) external {
@@ -303,9 +302,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
-    function debrisField(uint256 planetId) external view returns (uint128 metal, uint128 crystal) {
-        DebrisField storage field = _debrisFields[planetId];
-        return (field.metal, field.crystal);
+    function debrisField(uint256) external returns (uint128, uint128) {
+        _delegateToGameplayModule();
     }
 
     function activeBuildingConstruction(uint256 planetId)
@@ -486,6 +484,18 @@ contract VeydriftGame is VeydriftResourceReserves {
             _buildingLevels[planetId][Building.CrystalStorage],
             _buildingLevels[planetId][Building.DeuteriumTank]
         );
+    }
+
+    function protectedResources(uint256) external returns (Resources memory) {
+        _delegateToGameplayModule();
+    }
+
+    function raidableResources(uint256) external returns (Resources memory) {
+        _delegateToGameplayModule();
+    }
+
+    function maxRaidLoot(uint256, uint256) external returns (Resources memory) {
+        _delegateToGameplayModule();
     }
 
     function buildingUpgradeCost(uint256 planetId, Building building)
