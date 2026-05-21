@@ -60,13 +60,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         });
     }
 
-    function settlePlanet(uint256 planetId) public {
+    function settlePlanet(uint256 planetId) external {
         _requirePlanetOwner(planetId);
         _settleResources(planetId);
     }
 
     function collectResources(uint256 planetId) external {
-        settlePlanet(planetId);
+        _requirePlanetOwner(planetId);
+        _settleResources(planetId);
     }
 
     function collectShips(uint256 planetId) external view {
@@ -82,7 +83,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (_usedFields(planetId) >= _planets[planetId].fields) revert FieldCapacityReached();
 
         _requireBuildingDependencies(planetId, building);
-        settlePlanet(planetId);
+        _settleResources(planetId);
 
         Resources memory cost = buildingUpgradeCost(planetId, building);
         _spend(planetId, cost);
@@ -117,7 +118,7 @@ contract VeydriftGame is VeydriftResourceReserves {
 
         _requireDefenseDependencies(planetId, defense);
         _requireDefenseCapacity(planetId, defense, quantity);
-        settlePlanet(planetId);
+        _settleResources(planetId);
 
         Resources memory unitCost = defenseCost(defense);
         Resources memory totalCost = _multiply(unitCost, quantity);
@@ -153,13 +154,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
     }
 
-    function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external view {
-        _validateShipProduction(planetId, ship, quantity);
-        revert UnsupportedGameplayModule();
+    function startShipProduction(uint256, Ship, uint32 quantity) external pure {
+        if (quantity == 0) revert InvalidQuantity();
+        _unsupported();
     }
 
     function finishShipProduction(uint256) external pure {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function startResearch(uint256 planetId, Technology technology) external {
@@ -169,7 +170,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint16 currentLevel = _technologyLevels[msg.sender][technology];
         if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
 
-        settlePlanet(planetId);
+        _settleResources(planetId);
         _requireResearchDependencies(planetId, msg.sender, technology, currentLevel);
 
         Resources memory cost = researchCost(msg.sender, technology);
@@ -203,17 +204,27 @@ contract VeydriftGame is VeydriftResourceReserves {
         emit ResearchCompleted(msg.sender, queue.technology, queue.targetLevel);
     }
 
+    function setMoonSystem(address nextMoonSystem) external onlyOwner {
+        _moonSystem = nextMoonSystem;
+    }
+
+    function spendMoonResources(uint256 planetId, Resources calldata cost) external {
+        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
+        _settleResources(planetId);
+        _spend(planetId, cost);
+    }
+
     function createColonyAtNextSlot(uint256 originPlanetId, uint256)
         external
         view
         returns (uint256)
     {
         _validateColonyCreation(originPlanetId);
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function createColony(uint256, uint16, uint16, uint8) external pure returns (uint256) {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function dispatchTransport(uint256, uint256, uint32, uint32, uint32, Resources calldata)
@@ -221,27 +232,27 @@ contract VeydriftGame is VeydriftResourceReserves {
         pure
         returns (uint256)
     {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function recallFleet(uint256) external pure {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function settleFleetArrival(uint256) external pure {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function depositMarketResource(uint256, Resource, uint128) external pure {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function requestMarketResourceWithdrawal(uint256, Resource, uint128) external pure {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function finishMarketResourceWithdrawal(Resource) external pure {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function planet(uint256 planetId) external view returns (Planet memory) {
@@ -288,7 +299,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         return _technologyLevels[player][technology];
     }
 
-    function maxPlanets(address) public pure returns (uint256) {
+    function maxPlanets(address) external pure returns (uint256) {
         return 1;
     }
 
@@ -328,24 +339,25 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function nextColonyCoordinates(address, uint256) external pure returns (uint16, uint16, uint8) {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
-    function shipCargoCapacity(Ship ship) public pure returns (uint256) {
+    function shipCargoCapacity(Ship ship) external pure returns (uint256) {
         return VeydriftCatalog.shipCargoCapacity(ship);
     }
 
     function transportCargoCapacity(uint32 smallCargo, uint32 recycler, uint32 colonyShip)
-        public
+        external
         pure
         returns (uint256)
     {
-        return smallCargo * shipCargoCapacity(Ship.SmallCargo) + recycler
-            * shipCargoCapacity(Ship.Recycler) + colonyShip * shipCargoCapacity(Ship.ColonyShip);
+        return smallCargo * VeydriftCatalog.shipCargoCapacity(Ship.SmallCargo) + recycler
+            * VeydriftCatalog.shipCargoCapacity(Ship.Recycler) + colonyShip
+            * VeydriftCatalog.shipCargoCapacity(Ship.ColonyShip);
     }
 
     function transportTravelSeconds(uint256, uint256) public pure returns (uint256) {
-        revert UnsupportedGameplayModule();
+        _unsupported();
     }
 
     function transportFuelCost(
@@ -445,7 +457,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         return Resources(metal, crystal, deuterium);
     }
 
-    function shipCost(Ship ship) public pure returns (Resources memory) {
+    function shipCost(Ship ship) external pure returns (Resources memory) {
         (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.shipCost(ship);
         return Resources(metal, crystal, deuterium);
     }
@@ -562,46 +574,9 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
-    function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
-        _requirePlanetOwner(planetId);
-        if (quantity == 0) revert InvalidQuantity();
-        if (shipQueues[planetId].active) revert QueueActive();
-
-        VeydriftDependencies.requireShip(
-            ship,
-            _buildingLevels[planetId][Building.Shipyard],
-            _technologyLevels[msg.sender][Technology.Espionage],
-            _technologyLevels[msg.sender][Technology.CombustionDrive],
-            _technologyLevels[msg.sender][Technology.ImpulseDrive],
-            _technologyLevels[msg.sender][Technology.HyperspaceDrive],
-            _technologyLevels[msg.sender][Technology.Hyperspace],
-            _technologyLevels[msg.sender][Technology.Graviton],
-            _technologyLevels[msg.sender][Technology.Energy],
-            _technologyLevels[msg.sender][Technology.Laser],
-            _technologyLevels[msg.sender][Technology.Ion],
-            _technologyLevels[msg.sender][Technology.Shielding],
-            _technologyLevels[msg.sender][Technology.Armor],
-            _technologyLevels[msg.sender][Technology.Plasma]
-        );
-
-        _requireAffordable(planetId, _multiply(shipCost(ship), quantity));
-    }
-
     function _validateColonyCreation(uint256 originPlanetId) private view {
         _requirePlanetOwner(originPlanetId);
-        if (planetCountOf[msg.sender] >= maxPlanets(msg.sender)) {
-            revert PlanetLimitReached(maxPlanets(msg.sender));
-        }
-    }
-
-    function _requireAffordable(uint256 planetId, Resources memory cost) private view {
-        Resources memory available = _planets[planetId].resources;
-        if (
-            available.metal < cost.metal || available.crystal < cost.crystal
-                || available.deuterium < cost.deuterium
-        ) {
-            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
-        }
+        if (planetCountOf[msg.sender] >= 1) revert PlanetLimitReached(1);
     }
 
     function _settleResources(uint256 planetId) private {
@@ -867,5 +842,9 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _currentTimestamp() private view returns (uint64) {
         return uint64(block.timestamp);
+    }
+
+    function _unsupported() private pure {
+        revert UnsupportedGameplayModule();
     }
 }

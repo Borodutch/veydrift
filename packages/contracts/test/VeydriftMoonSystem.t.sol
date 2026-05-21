@@ -48,6 +48,8 @@ contract VeydriftMoonSystemTest is Test {
         deuteriumToken.mint(address(game), RESERVE_FUNDING);
         vm.prank(admin);
         game.setResourceTokens(address(metalToken), address(crystalToken), address(deuteriumToken));
+        vm.prank(admin);
+        game.setMoonSystem(address(moons));
         vm.deal(player, 1 ether);
     }
 
@@ -75,9 +77,38 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(cost.crystal, 40_000);
         assertEq(cost.deuterium, 20_000);
 
+        _fundPlanet(planetId, 100_000, 100_000, 100_000);
         _buildMoon(planetId, MoonBuilding.LunarBase);
         assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 1);
         assertEq(moons.moon(planetId).fields, 4);
+    }
+
+    function testMoonBuildingUpgradeSpendsPlanetResources() public {
+        uint256 planetId = _startPlanet();
+
+        vm.prank(player);
+        moons.createMoon(planetId);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.InsufficientResources.selector, 500, 500, 0)
+        );
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
+
+        _fundPlanet(planetId, 100_000, 100_000, 100_000);
+        vm.prank(player);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
+
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+        assertEq(planet.resources.metal, 80_000);
+        assertEq(planet.resources.crystal, 60_000);
+        assertEq(planet.resources.deuterium, 80_000);
+
+        VeydriftGameStorage.Resources memory cost =
+            moons.moonBuildingUpgradeCost(planetId, MoonBuilding.LunarBase);
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        game.spendMoonResources(planetId, cost);
     }
 
     function testSensorPhalanxRequiresLunarBaseAndScansRange() public {
@@ -94,6 +125,7 @@ contract VeydriftMoonSystemTest is Test {
         );
         moons.startMoonBuildingUpgrade(planetId, MoonBuilding.SensorPhalanx);
 
+        _fundPlanet(planetId, 1_000_000, 1_000_000, 1_000_000);
         _buildMoon(planetId, MoonBuilding.LunarBase);
         _buildMoon(planetId, MoonBuilding.SensorPhalanx);
         _buildMoon(planetId, MoonBuilding.SensorPhalanx);
@@ -123,11 +155,13 @@ contract VeydriftMoonSystemTest is Test {
 
         vm.prank(player);
         moons.createMoon(planetId);
+        _fundPlanet(planetId, 3_000_000, 5_000_000, 3_000_000);
         _buildMoon(planetId, MoonBuilding.LunarBase);
         _buildMoon(planetId, MoonBuilding.JumpGate);
 
         vm.prank(player);
         moons.createMoon(secondPlanetId);
+        _fundPlanet(secondPlanetId, 3_000_000, 5_000_000, 3_000_000);
         _buildMoon(secondPlanetId, MoonBuilding.LunarBase);
         _buildMoon(secondPlanetId, MoonBuilding.JumpGate);
 
@@ -162,6 +196,19 @@ contract VeydriftMoonSystemTest is Test {
     function _setPlanetOwner(uint256 planetId, address owner) internal {
         uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
         vm.store(address(game), bytes32(planetBase), bytes32(uint256(uint160(owner))));
+    }
+
+    function _fundPlanet(uint256 planetId, uint128 metal, uint128 crystal, uint128 deuterium)
+        internal
+    {
+        bytes32 packedMetalCrystal = bytes32(uint256(metal) | (uint256(crystal) << 128));
+        bytes32 deuteriumWord = bytes32(uint256(deuterium));
+        uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
+
+        vm.store(address(game), bytes32(planetBase + 2), packedMetalCrystal);
+        vm.store(address(game), bytes32(planetBase + 3), deuteriumWord);
+        vm.store(address(game), bytes32(uint256(14)), packedMetalCrystal);
+        vm.store(address(game), bytes32(uint256(15)), deuteriumWord);
     }
 
     function _setTechnologyLevel(address account, Technology technology, uint16 level) internal {

@@ -113,6 +113,12 @@
       "offset": 0,
       "slot": "20",
       "type": "mapping(address => mapping(enum Technology => uint16))"
+    },
+    {
+      "label": "_moonSystem",
+      "offset": 0,
+      "slot": "21",
+      "type": "address"
     }
   ],
   "structs": {

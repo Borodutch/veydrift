@@ -232,10 +232,13 @@ forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
 ```
 
-`Deploy.s.sol` deploys the game plus Metal, Crystal, and Deuterium ERC-20 proxy
-contracts, wires them into the game as reserve tokens, and emits the proxy
-addresses. Because the setup call is owner-only, `ADMIN_ADDRESS` must match the
-`PRIVATE_KEY` broadcaster for this script.
+`Deploy.s.sol` deploys the game, the Moon System module, and the Metal, Crystal,
+and Deuterium ERC-20 proxy contracts. It wires the moon module into the game for
+moon-building resource debits, wires the resource tokens into the game as reserve
+tokens, and emits the proxy/module addresses. Configure the emitted moon module
+address as `VEYDRIFT_MOON_CONTRACT_ADDRESS` for backend moon reads. Because the
+setup calls are owner-only, `ADMIN_ADDRESS` must match the `PRIVATE_KEY`
+broadcaster for this script.
 
 To attach resource tokens to an already deployed game contract, run:
 
