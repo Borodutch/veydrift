@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { buildingEnergyDetail, buildingLevelInfoRows } from "../src/buildingDetails";
 import {
+  ActiveBuildingQueueDetail,
   BuildingLevelInfoButton,
   BuildingLevelInfoModal,
   detailEffectRows,
@@ -166,6 +167,54 @@ describe("Infrastructure page display helpers", () => {
       next: "x3",
       value: "x2",
     });
+  });
+
+  test("renders selected active building queue timer with progress", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "deuteriumSynthesizer" as const,
+      label: "Deuterium Synthesizer",
+      readyAt: 1_700_000_120_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+
+    const panel = ActiveBuildingQueueDetail({
+      isSelectedBuilding: true,
+      now: 1_700_000_060_000,
+      queue,
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("Construction in progress");
+    expect(text).toContain("Deuterium Synthesizer Level 2 is upgrading");
+    expect(text).toContain("50 %");
+    expect(text).toContain("Time remaining");
+    expect(text).toContain("1m");
+    expect(text).toContain("Ready at");
+  });
+
+  test("renders active queue context separately for an unselected building", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_120_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 3,
+    };
+
+    const panel = ActiveBuildingQueueDetail({
+      isSelectedBuilding: false,
+      now: 1_700_000_030_000,
+      queue,
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("Active construction");
+    expect(text).toContain("Solar Plant Level 3 is upgrading");
+    expect(text).toContain("the selected building is waiting for this queue.");
+    expect(text).toContain("25 %");
   });
 
   test("shows Research Lab 1 as unlocking research with a 2x denominator", () => {
