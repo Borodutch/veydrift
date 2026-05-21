@@ -250,6 +250,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
+        _delegateToGameplayModule();
+    }
+
     function depositMarketResource(uint256, Resource, uint128) external {
         _delegateToGameplayModule();
     }

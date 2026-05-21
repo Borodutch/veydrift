@@ -279,6 +279,41 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
     }
 
+    function launchInterplanetaryMissileAttack(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        Defense primaryTarget,
+        uint32 quantity
+    ) external {
+        _requirePlanetOwner(originPlanetId);
+        if (originPlanetId == targetPlanetId) revert SamePlanet();
+        if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+
+        uint32 available = _defenseCounts[originPlanetId][Defense.InterplanetaryMissile];
+        if (quantity == 0 || available < quantity) {
+            revert InvalidQuantity();
+        }
+        _defenseCounts[originPlanetId][Defense.InterplanetaryMissile] = available - quantity;
+        uint32 antiBallistic = _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile];
+        uint32 intercepted = antiBallistic < quantity ? antiBallistic : quantity;
+        _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile] = antiBallistic - intercepted;
+        uint32 hits = quantity - intercepted;
+        uint32 targetDefense = _defenseCounts[targetPlanetId][primaryTarget];
+        uint32 destroyedPrimary = targetDefense < hits ? targetDefense : hits;
+        _defenseCounts[targetPlanetId][primaryTarget] = targetDefense - destroyedPrimary;
+
+        emit InterplanetaryMissileAttack(
+            msg.sender,
+            originPlanetId,
+            targetPlanetId,
+            primaryTarget,
+            quantity,
+            intercepted,
+            hits,
+            destroyedPrimary
+        );
+    }
+
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
         _requireRiftUnlocked(planetId);
