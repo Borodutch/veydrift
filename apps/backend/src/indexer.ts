@@ -27,6 +27,19 @@ export class SettlementIndexer {
     return [...this.planets.values()].filter((planet) => planet.galaxy === galaxy && planet.system === system);
   }
 
+  settledPlanets(): SettledPlanetEvent[] {
+    return [...this.planets.values()];
+  }
+
+  settledPlanetsByOwner(): Map<string, SettledPlanetEvent[]> {
+    const planetsByOwner = new Map<string, SettledPlanetEvent[]>();
+    for (const planet of this.planets.values()) {
+      const owner = planet.owner.toLowerCase();
+      planetsByOwner.set(owner, [...(planetsByOwner.get(owner) ?? []), planet]);
+    }
+    return planetsByOwner;
+  }
+
   applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
     this.planets.set(event.planetId, event);
     this.lastRebuiltAt = new Date().toISOString();

@@ -17,7 +17,7 @@ import {
 import { formatDurationUntil } from "../durationFormat";
 import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
-import type { ChainMoonState, OnChainResources } from "../walletFlow";
+import type { OnChainResources } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -60,9 +60,6 @@ interface InfrastructurePageProps {
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
-  moonError?: string | undefined;
-  moonLoading?: boolean | undefined;
-  moonState?: ChainMoonState | null | undefined;
   onFinishBuilding?: (() => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   protectedResources?: OnChainResources | null | undefined;
@@ -78,9 +75,6 @@ export function InfrastructurePage({
   actionUnavailableReason,
   chainCosts,
   isBuildingReadyToFinish,
-  moonError,
-  moonLoading,
-  moonState,
   now = Date.now(),
   onFinishBuilding,
   planetProductionProfile,
@@ -132,12 +126,10 @@ export function InfrastructurePage({
         </div>
       </div>
 
-      <MoonSystemsPanel error={moonError} loading={moonLoading} moonState={moonState} />
       <RaidProtectionPanel
         protectedResources={protectedResources}
         raidableResources={raidableResources}
       />
-
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
         <div className="order-2 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:order-1 xl:grid-cols-3 2xl:grid-cols-4">
           {buildingCatalog.map((building) => {
@@ -177,73 +169,6 @@ export function InfrastructurePage({
           />
         </div>
       </div>
-    </div>
-  );
-}
-
-function MoonSystemsPanel({
-  error,
-  loading,
-  moonState,
-}: {
-  error?: string | undefined;
-  loading?: boolean | undefined;
-  moonState?: ChainMoonState | null | undefined;
-}) {
-  const moon = moonState?.moon;
-
-  return (
-    <section className="rounded-md border border-white/10 bg-[#101624] p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-white">Moon Systems</h3>
-          <p className="text-xs text-slate-400">
-            {loading
-              ? "Loading moon state"
-              : error
-                ? error
-                : moon?.exists
-                  ? `Moon ${moon.diameterKm.toLocaleString()} km / ${moon.fields} fields`
-                  : moonState?.unavailableReason ?? "No moon is present for this planet."}
-          </p>
-        </div>
-        {moon?.exists ? (
-          <div className="grid grid-cols-2 gap-2 text-right text-xs sm:grid-cols-3">
-            <Metric label="Phalanx" value={`${moonState?.sensorPhalanxRange ?? "0"} systems`} />
-            <Metric label="Gate" value={formatMoonReadyAt(moon.jumpGateReadyAt)} />
-            <Metric label="Created" value={formatMoonReadyAt(moon.createdAt)} />
-          </div>
-        ) : null}
-      </div>
-
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        {(moonState?.buildings ?? fallbackMoonBuildings()).map((building) => (
-          <div className="rounded border border-white/10 bg-black/15 p-2" key={building.key}>
-            <div className="flex items-center justify-between gap-2">
-              <span className="min-w-0 truncate text-xs font-semibold text-slate-100">{building.label}</span>
-              <span className="shrink-0 text-xs text-signal">L{building.level}</span>
-            </div>
-            <div className="mt-1 text-[11px] text-slate-400">{formatCost(resourcesFromChain(building.cost))}</div>
-          </div>
-        ))}
-      </div>
-
-      {moonState?.queue?.active ? (
-        <div className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-xs text-amber-200">
-          Moon queue: {moonBuildingLabel(moonState.queue.itemId)}{" "}
-          {moonState.queue.targetLevel ? `L${moonState.queue.targetLevel}` : ""} / ready{" "}
-          {formatMoonReadyAt(moonState.queue.readyAt)}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[10px] uppercase tracking-normal text-slate-500">{label}</div>
-      <div className="truncate text-xs font-semibold text-slate-200">{value}</div>
     </div>
   );
 }
@@ -302,30 +227,6 @@ function ResourceSummaryBlock({
       </div>
     </div>
   );
-}
-
-function fallbackMoonBuildings(): ChainMoonState["buildings"] {
-  return [
-    { id: 0, key: "lunarBase", label: "Lunar Base", level: 0, cost: { metal: "0", crystal: "0", deuterium: "0" } },
-    { id: 1, key: "sensorPhalanx", label: "Sensor Phalanx", level: 0, cost: { metal: "0", crystal: "0", deuterium: "0" } },
-    { id: 2, key: "jumpGate", label: "Jump Gate", level: 0, cost: { metal: "0", crystal: "0", deuterium: "0" } },
-  ];
-}
-
-function moonBuildingLabel(itemId: number | undefined): string {
-  return fallbackMoonBuildings().find((building) => building.id === itemId)?.label ?? "Moon building";
-}
-
-function formatMoonReadyAt(value: string | null | undefined): string {
-  if (!value || value === "0") return "Ready";
-  const timestamp = Number(value);
-  if (!Number.isFinite(timestamp)) return "Unknown";
-  return new Date(timestamp * 1_000).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function formatQueueReadyAt(readyAtMs: number): string {

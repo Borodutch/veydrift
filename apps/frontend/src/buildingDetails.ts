@@ -368,7 +368,6 @@ function researchLabel(key: ReturnType<typeof buildingRequirementsFor>[number]["
     laser: "Laser Technology",
     ion: "Ion Technology",
     combustionDrive: "Combustion Drive",
-    espionage: "Espionage Technology",
     computer: "Computer Technology",
     weapons: "Weapons Technology",
     shielding: "Shielding Technology",
