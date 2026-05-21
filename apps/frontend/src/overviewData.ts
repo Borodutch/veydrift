@@ -192,3 +192,45 @@ export function queueProgressBarState({
     progress: Math.min(1, Math.max(0, progress ?? 0)),
   };
 }
+
+export function queueProgressFillState({
+  indeterminate,
+  now,
+  progress,
+  readyAt,
+  remaining,
+  startedAt,
+}: {
+  indeterminate?: boolean | undefined;
+  now: number;
+  progress?: number | undefined;
+  readyAt?: number | undefined;
+  remaining: string;
+  startedAt?: number | undefined;
+}): {
+  animated: boolean;
+  durationMs: number;
+  elapsedMs: number;
+  progress: number;
+} {
+  const progressBar = queueProgressBarState({ indeterminate, progress, remaining });
+  if (progressBar.indeterminate) {
+    return { animated: false, durationMs: 0, elapsedMs: 0, progress: 0 };
+  }
+
+  const durationMs = typeof readyAt === "number" && typeof startedAt === "number"
+    ? readyAt - startedAt
+    : 0;
+  const elapsedMs = typeof startedAt === "number" ? now - startedAt : 0;
+  const canAnimate = durationMs > 0
+    && elapsedMs >= 0
+    && elapsedMs < durationMs
+    && progressBar.progress < 1;
+
+  return {
+    animated: canAnimate,
+    durationMs: canAnimate ? durationMs : 0,
+    elapsedMs: canAnimate ? elapsedMs : 0,
+    progress: progressBar.progress,
+  };
+}
