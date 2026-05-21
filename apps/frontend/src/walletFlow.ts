@@ -273,6 +273,30 @@ export type MissionShips = {
   pathfinder: number;
 };
 
+export type ChainAllianceState = {
+  wallet: string;
+  allianceAvailable: boolean;
+  unavailableReason?: string;
+  membership: {
+    allianceId: string;
+    role: "none" | "member" | "officer" | "leader";
+    joinedAt: string;
+  };
+  profile: {
+    active: boolean;
+    tag: string;
+    name: string;
+    metadataURI: string;
+    founder: string;
+    createdAt: string;
+    memberCount: number;
+  } | null;
+  defenseCoordination: {
+    acsDefendSupported: boolean;
+    interceptSupported: boolean;
+  };
+};
+
 export type HighscoreCategory = "total" | "economy" | "research" | "fleet" | "defense";
 
 export type HighscoreEntry = {
@@ -342,6 +366,12 @@ const GAME_SELECTORS = {
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
+} as const;
+const ALLIANCE_SELECTORS = {
+  createAlliance: "0x944cde0e",
+  inviteMember: "0x9e6d6830",
+  acceptInvite: "0xbf8e9176",
+  openDefenseIntent: "0x56f919e7"
 } as const;
 const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
@@ -454,8 +484,28 @@ export function encodeLaunchFleetMissionCall({
   ]);
 }
 
+export function encodeStringTripleCall(selector: string, values: [string, string, string]): string {
+  const heads: string[] = [];
+  const tails: string[] = [];
+  let offset = 32n * BigInt(values.length);
+  for (const value of values) {
+    const encoded = encodeAbiString(value);
+    heads.push(offset.toString(16).padStart(64, "0"));
+    tails.push(encoded);
+    offset += BigInt(encoded.length / 2);
+  }
+  return `${selector}${heads.join("")}${tails.join("")}`;
+}
+
 export function encodeAddressUintCall(selector: string, address: string, value: bigint | number | string): string {
   return `${selector}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${BigInt(value).toString(16).padStart(64, "0")}`;
+}
+
+function encodeAbiString(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  const body = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const paddedLength = Math.ceil(body.length / 64) * 64;
+  return `${bytes.length.toString(16).padStart(64, "0")}${body.padEnd(paddedLength, "0")}`;
 }
 
 export function parseRiftTokenAmount(value: string, decimals = 6): bigint {
@@ -788,6 +838,64 @@ export async function sendStartDefenseProductionTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(GAME_SELECTORS.startDefenseProduction, [planetId, defenseId, quantity])
+      }
+    ]
+  });
+}
+
+export async function sendCreateAllianceTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  tag: string,
+  name: string,
+  metadataURI: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, metadataURI])
+      }
+    ]
+  });
+}
+
+export async function sendAllianceInviteTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: `${ALLIANCE_SELECTORS.inviteMember}${BigInt(allianceId).toString(16).padStart(64, "0")}${playerAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`
+      }
+    ]
+  });
+}
+
+export async function sendOpenDefenseIntentTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  defenderPlanetId: string,
+  hostileMissionId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(ALLIANCE_SELECTORS.openDefenseIntent, [defenderPlanetId, hostileMissionId])
       }
     ]
   });
@@ -1355,6 +1463,10 @@ export async function fetchResearchState(apiUrl: string, wallet: string): Promis
 
 export async function fetchRiftState(apiUrl: string, wallet: string): Promise<ChainRiftState> {
   return fetchWalletJson<ChainRiftState>(apiUrl, wallet, "rift", "Rift");
+}
+
+export async function fetchAllianceState(apiUrl: string, wallet: string): Promise<ChainAllianceState> {
+  return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance", "Alliance");
 }
 
 export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {
