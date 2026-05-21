@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type { Coordinates, Planet } from "./types";
-import { GalaxyView } from "./components/GalaxyView";
+import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
@@ -54,6 +54,10 @@ import {
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
 import {
+  missionTypeId,
+  type GalaxyAction,
+} from "./galaxyActions";
+import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchDefenseState,
@@ -71,6 +75,8 @@ import {
   sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
+  sendCreateColonyTransaction,
+  sendLaunchFleetMissionTransaction,
   sendDepositResourceTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendStartBuildingUpgradeTransaction,
@@ -143,6 +149,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
+  const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
   const [researchState, setResearchState] = useState<ChainResearchState | null>(null);
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchError, setResearchError] = useState<string | undefined>();
@@ -477,7 +484,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     const refreshFromChainEvent = () => {
       void refreshOnChainState();
       refreshInfrastructureState();
-      if (page === "shipyard") refreshShipyardState();
+      if (page === "shipyard" || page === "galaxy") refreshShipyardState();
       if (page === "defenses") refreshDefenseState();
       if (page === "research") refreshResearchState();
       if (page === "rift") refreshRiftState();
@@ -643,7 +650,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, []);
 
   useEffect(() => {
-    if (page === "shipyard") {
+    if (page === "shipyard" || page === "galaxy") {
       refreshShipyardState();
     }
   }, [page, refreshShipyardState]);
@@ -888,6 +895,28 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshInfrastructureState, refreshOnChainState, refreshRiftState]);
 
+  const runGalaxyTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+    setGalaxyAction({ status: "pending", label });
+
+    try {
+      const txHash = await send();
+      setGalaxyAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+      if (provider) {
+        await waitForReceipt(provider, txHash);
+      }
+      setGalaxyAction({ status: "success", label: `${label} confirmed.` });
+      refreshShipyardState();
+      void refreshOnChainState();
+      refreshInfrastructureState();
+    } catch (error) {
+      console.error(error);
+      setGalaxyAction({
+        status: "error",
+        label: error instanceof Error ? error.message : `${label} failed.`,
+      });
+    }
+  }, [provider, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
+
   const handleCollectResources = useCallback(() => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       return;
@@ -1091,6 +1120,45 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, gameContract, provider, riftState?.resources, runRiftTransaction]);
 
+  const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
+    if (!action.enabled) return;
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    if (action.mode === "colonize") {
+      void runGalaxyTransaction("Colony launch", () => sendCreateColonyTransaction(
+        provider,
+        account,
+        gameContract,
+        onChainSettlement.homePlanetId ?? "0",
+        coords.galaxy,
+        coords.system,
+        coords.position,
+      ));
+      return;
+    }
+
+    const targetPlanetId = target?.occupiedBy?.planetId;
+    if (!targetPlanetId) {
+      setGalaxyAction({ status: "error", label: "Target planet is not contract-indexed yet." });
+      return;
+    }
+
+    void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchFleetMissionTransaction(
+      provider,
+      account,
+      gameContract,
+      {
+        originPlanetId: onChainSettlement.homePlanetId ?? "0",
+        targetPlanetId,
+        missionType: missionTypeId(action.mission),
+        ships: action.ships,
+      },
+    ));
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction]);
+
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
     setSelectedCoords(undefined);
@@ -1137,10 +1205,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (page === "galaxy") {
       return (
         <GalaxyView
+          account={account}
+          actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
           galaxy={galaxyNav.galaxy}
           homeCoords={homeCoords}
+          homePlanetId={onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
+          shipyardState={shipyardState}
+          onAction={handleGalaxyAction}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}

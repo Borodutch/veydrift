@@ -224,6 +224,24 @@ export type ChainRiftState = {
   pendingWithdrawals: PendingWithdrawal[];
 };
 
+export type MissionShips = {
+  smallCargo: number;
+  lightFighter: number;
+  recycler: number;
+  colonyShip: number;
+  largeCargo: number;
+  heavyFighter: number;
+  cruiser: number;
+  battleship: number;
+  espionageProbe: number;
+  bomber: number;
+  destroyer: number;
+  deathstar: number;
+  battlecruiser: number;
+  reaper: number;
+  pathfinder: number;
+};
+
 export type SettlementState =
   | { kind: "unconfigured" }
   | { kind: "not-settled" }
@@ -260,10 +278,12 @@ const START_PLANET_SELECTOR = "0xf45f1f18";
 const START_PRICE_SELECTOR = "0xf1a9af89";
 const GAME_SELECTORS = {
   collectResources: "0xdb43284d",
+  createColony: "0x71358ab8",
   depositResource: "0x25819e15",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
   finishResourceWithdrawal: "0xde0f208c",
+  launchFleetMission: "0x0c9d601c",
   startBuildingUpgrade: "0x165715e3",
   collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
@@ -341,6 +361,47 @@ export function encodeUintCall(selector: string, value: bigint | number | string
 
 export function encodeGameCall(selector: string, values: Array<bigint | number | string>): string {
   return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
+}
+
+export function encodeLaunchFleetMissionCall({
+  originPlanetId,
+  targetPlanetId,
+  missionType,
+  ships,
+  cargo,
+  randomnessRequestId = 0,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  missionType: number;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  randomnessRequestId?: bigint | number | string | undefined;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.launchFleetMission, [
+    originPlanetId,
+    targetPlanetId,
+    missionType,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    0,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
+    randomnessRequestId,
+  ]);
 }
 
 export function encodeAddressUintCall(selector: string, address: string, value: bigint | number | string): string {
@@ -822,6 +883,45 @@ export async function sendCollectShipsTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(GAME_SELECTORS.collectShips, [planetId])
+      }
+    ]
+  });
+}
+
+export async function sendLaunchFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeLaunchFleetMissionCall(params)
+      }
+    ]
+  });
+}
+
+export async function sendCreateColonyTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  originPlanetId: string,
+  galaxy: number,
+  system: number,
+  position: number
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.createColony, [originPlanetId, galaxy, system, position])
       }
     ]
   });
