@@ -4,7 +4,9 @@ pragma solidity ^0.8.28;
 import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
+import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 
 contract Deploy is ResourceTokenDeployment {
     event VeydriftDeployment(
@@ -31,7 +33,10 @@ contract Deploy is ResourceTokenDeployment {
 
         vm.startBroadcast(privateKey);
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
-        VeydriftGame game = new VeydriftGame(admin, address(combatModule));
+        VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
+        VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
+        VeydriftGame game =
+            new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
         gameAddress = address(game);
         VeydriftMoonSystem moonSystem = new VeydriftMoonSystem(gameAddress);
         moonSystemAddress = address(moonSystem);

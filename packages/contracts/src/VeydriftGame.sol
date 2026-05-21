@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {VeydriftGameplayModule} from "./VeydriftGameplayModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
@@ -17,9 +16,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     using SafeCast for uint256;
 
     address private immutable _gameplayModule;
+    address private immutable _planetManagementModule;
 
-    constructor(address admin, address combatModule) VeydriftResourceReserves(admin) {
-        _gameplayModule = address(new VeydriftGameplayModule(combatModule));
+    constructor(address admin, address gameplayModule, address planetManagementModule)
+        VeydriftResourceReserves(admin)
+    {
+        if (gameplayModule == address(0)) revert UnsupportedGameplayModule();
+        if (planetManagementModule == address(0)) revert UnsupportedGameplayModule();
+        _gameplayModule = gameplayModule;
+        _planetManagementModule = planetManagementModule;
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -220,19 +225,19 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function createColonyAtNextSlot(uint256, uint256) external returns (uint256) {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function createColony(uint256, uint16, uint16, uint8) external returns (uint256) {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function renamePlanet(uint256, string calldata) external {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function abandonPlanet(uint256) external {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function launchFleetMission(
@@ -877,6 +882,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToGameplayModule() private {
         (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToPlanetManagementModule() private {
+        (bool ok, bytes memory result) = _planetManagementModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

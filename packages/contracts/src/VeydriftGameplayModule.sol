@@ -7,7 +7,6 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
-import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
@@ -54,59 +53,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint32 total = _shipCounts[planetId][queue.ship] + queue.quantity;
         _shipCounts[planetId][queue.ship] = total;
         emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
-    }
-
-    function createColonyAtNextSlot(uint256 originPlanetId, uint256 salt)
-        external
-        returns (uint256)
-    {
-        _validateColonyCreation(originPlanetId);
-        (uint16 galaxy, uint16 system, uint8 position) = _nextColonyCoordinates(msg.sender, salt);
-        return _createColony(originPlanetId, galaxy, system, position);
-    }
-
-    function createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
-        external
-        returns (uint256)
-    {
-        _validateColonyCreation(originPlanetId);
-        return _createColony(originPlanetId, galaxy, system, position);
-    }
-
-    function renamePlanet(uint256 planetId, string calldata name) external {
-        _requirePlanetOwner(planetId);
-        uint256 length = bytes(name).length;
-        if (length == 0 || length > 32) revert InvalidPlanetName();
-
-        planetNames[planetId] = name;
-    }
-
-    function abandonPlanet(uint256 planetId) external {
-        _requirePlanetOwner(planetId);
-        if (homePlanetOf[msg.sender] == planetId) revert CannotAbandonHomePlanet();
-        if (
-            buildingConstructions[planetId].active || defenseQueues[planetId].active
-                || shipQueues[planetId].active
-        ) {
-            revert PlanetHasActiveQueues();
-        }
-        if (activeFleetMissionCount[msg.sender] != 0) revert PlanetHasActiveFleetMissions();
-
-        _settleResources(planetId);
-        Planet memory planetRef = _planets[planetId];
-        if (
-            planetRef.resources.metal != 0 || planetRef.resources.crystal != 0
-                || planetRef.resources.deuterium != 0
-        ) {
-            revert PlanetHasResources();
-        }
-
-        delete _planets[planetId];
-        delete planetNames[planetId];
-        occupiedCoordinates[
-            _coordinateKey(planetRef.galaxy, planetRef.system, planetRef.position)
-        ] = false;
-        planetCountOf[msg.sender] -= 1;
     }
 
     function launchFleetMission(
@@ -425,79 +371,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             _technologyLevels[player][Technology.Armor],
             _technologyLevels[player][Technology.Plasma]
         );
-    }
-
-    function _validateColonyCreation(uint256 originPlanetId) private view {
-        _requirePlanetOwner(originPlanetId);
-        uint256 limit = 1 + _technologyLevels[msg.sender][Technology.Astrophysics];
-        if (planetCountOf[msg.sender] >= limit) revert PlanetLimitReached(limit);
-        _requireShips(originPlanetId, Ship.ColonyShip, 1);
-    }
-
-    function _createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
-        private
-        returns (uint256 colonyPlanetId)
-    {
-        bytes32 coordinates = _coordinateKey(galaxy, system, position);
-        if (occupiedCoordinates[coordinates]) revert CoordinatesOccupied();
-
-        _settleResources(originPlanetId);
-        _shipCounts[originPlanetId][Ship.ColonyShip] -= 1;
-        colonyPlanetId = nextPlanetId++;
-        occupiedCoordinates[coordinates] = true;
-        planetCountOf[msg.sender] += 1;
-
-        bytes32 seed = _planetSeed(galaxy, system, position);
-        uint16 fields = uint16(160 + (uint256(seed) % 80));
-        int16 temperature = VeydriftPlanetGeneration.slotTemperature(
-            position, (uint256(seed) >> 16) % 21, (uint256(seed) >> 24) % 21
-        );
-        (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
-            VeydriftFormulas.planetMultipliers(temperature, fields);
-        _planets[colonyPlanetId] = Planet({
-            owner: msg.sender,
-            galaxy: galaxy,
-            system: system,
-            position: position,
-            fields: fields,
-            temperature: temperature,
-            metalMultiplierBps: metalMultiplier,
-            crystalMultiplierBps: crystalMultiplier,
-            deuteriumMultiplierBps: deuteriumMultiplier,
-            lastSettledAt: _currentTimestamp(),
-            resources: Resources({metal: 0, crystal: 0, deuterium: 0})
-        });
-        emit ColonyCreated(
-            msg.sender,
-            originPlanetId,
-            colonyPlanetId,
-            galaxy,
-            system,
-            position,
-            fields,
-            temperature
-        );
-    }
-
-    function _nextColonyCoordinates(address player, uint256 salt)
-        private
-        view
-        returns (uint16 galaxy, uint16 system, uint8 position)
-    {
-        for (uint256 attempt = 0; attempt < 64; attempt++) {
-            bytes32 seed = keccak256(
-                abi.encode(
-                    PLANET_SEED_DOMAIN, block.chainid, player, salt, planetCountOf[player], attempt
-                )
-            );
-            galaxy = uint16((uint256(seed) % MAX_GALAXY) + 1);
-            system = uint16(((uint256(seed) >> 16) % MAX_SYSTEM) + 1);
-            position = uint8(((uint256(seed) >> 32) % MAX_POSITION) + 1);
-            if (!occupiedCoordinates[_coordinateKey(galaxy, system, position)]) {
-                return (galaxy, system, position);
-            }
-        }
-        revert CoordinatesExhausted();
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {
@@ -821,33 +694,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint128 deuteriumCap = _toUint128((uint256(unprotected.deuterium) * RAID_LOOT_BPS) / BPS);
         uint128 deuterium = _toUint128(_min(deuteriumCap, capacity));
         return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
-    }
-
-    function _coordinateKey(uint16 galaxy, uint16 system, uint8 position)
-        private
-        view
-        returns (bytes32)
-    {
-        return VeydriftPlanetGeneration.coordinateKey(
-            block.chainid, galaxy, system, position, MAX_GALAXY, MAX_SYSTEM, MAX_POSITION
-        );
-    }
-
-    function _planetSeed(uint16 galaxy, uint16 system, uint8 position)
-        private
-        view
-        returns (bytes32)
-    {
-        return VeydriftPlanetGeneration.planetSeed(
-            PLANET_SEED_DOMAIN,
-            block.chainid,
-            galaxy,
-            system,
-            position,
-            MAX_GALAXY,
-            MAX_SYSTEM,
-            MAX_POSITION
-        );
     }
 
     function _delegateToCombatModule() private {

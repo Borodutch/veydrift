@@ -6,6 +6,8 @@ import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAlli
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
+import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
 
 contract AllianceMockResourceToken {
@@ -52,7 +54,10 @@ contract VeydriftAllianceSystemTest is Test {
     AllianceMockResourceToken internal deuteriumToken;
 
     function setUp() public {
-        game = new VeydriftGame(admin, address(new VeydriftCombatModule()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule();
+        VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
+        VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
+        game = new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         metalToken = new AllianceMockResourceToken();
         crystalToken = new AllianceMockResourceToken();
