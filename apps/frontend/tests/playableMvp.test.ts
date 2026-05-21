@@ -276,9 +276,9 @@ describe("playable MVP contract display helpers", () => {
     const labOne = { ...state.buildings, researchLab: 1 };
     const labTwo = { ...state.buildings, researchLab: 2 };
 
-    expect(researchDurationEstimate(state.buildings, cost)).toBe(200);
-    expect(researchDurationEstimate(labOne, cost)).toBe(100);
-    expect(researchDurationEstimate(labTwo, cost)).toBe(66);
+    expect(researchDurationEstimate(state.buildings, cost)).toBe(86_400);
+    expect(researchDurationEstimate(labOne, cost)).toBe(43_200);
+    expect(researchDurationEstimate(labTwo, cost)).toBe(28_800);
   });
 
   test("exposes building effect metrics from the same production and storage formulas", () => {
