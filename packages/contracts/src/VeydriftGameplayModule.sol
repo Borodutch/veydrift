@@ -291,6 +291,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
     }
 
+    function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
+        _delegateToCombatModule();
+    }
+
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
         _requireRiftUnlocked(planetId);
@@ -367,6 +371,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return VeydriftAntiRaidPrimitives.travelSeconds(
             _planetDistance(originPlanetId, destinationPlanetId)
         );
+    }
+
+    function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
+        return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
     }
 
     function protectedResources(uint256 planetId) external view returns (Resources memory) {

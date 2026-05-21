@@ -3,8 +3,8 @@ pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
-import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
@@ -253,6 +253,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
+        _delegateToGameplayModule();
+    }
+
     function depositMarketResource(uint256, Resource, uint128) external {
         _delegateToGameplayModule();
     }
@@ -415,8 +419,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         return _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
     }
 
-    function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
-        return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
+    function fleetSlotLimit(uint16) external returns (uint256) {
+        _delegateToGameplayModule();
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
