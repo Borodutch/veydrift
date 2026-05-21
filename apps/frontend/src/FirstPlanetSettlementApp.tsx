@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import heroUrl from "./assets/veydrift-hero.webp";
 import { PlayableMvpApp } from "./PlayableMvpApp";
+import { waitForSettledPlanet } from "./postSettlementSync";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import {
@@ -24,8 +25,6 @@ import {
 } from "./walletFlow";
 
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
-const POST_SETTLEMENT_READ_ATTEMPTS = 8;
-const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 
 type SettlementConfigState =
   | { status: "loading"; config: SettlementConfig }
@@ -623,29 +622,4 @@ function buildSettlementConfig(): SettlementConfig {
   const address = import.meta.env.VITE_VEYDRIFT_SETTLEMENT_ADDRESS;
 
   return address ? { address } : {};
-}
-
-async function waitForSettledPlanet(
-  provider: Eip1193Provider,
-  account: string,
-  settlementConfig: SettlementConfig,
-) {
-  let lastSettlement = await readSettlementState(provider, account, settlementConfig);
-
-  for (let attempt = 0; attempt < POST_SETTLEMENT_READ_ATTEMPTS; attempt += 1) {
-    if (lastSettlement.kind === "settled" && lastSettlement.planet.coordinates) {
-      return lastSettlement;
-    }
-
-    await delay(POST_SETTLEMENT_READ_INTERVAL_MS);
-    lastSettlement = await readSettlementState(provider, account, settlementConfig);
-  }
-
-  throw new Error("Settlement is confirmed, but the planet is still syncing. Retry once the chain read catches up.");
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
