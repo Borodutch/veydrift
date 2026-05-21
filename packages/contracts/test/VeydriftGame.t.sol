@@ -163,12 +163,141 @@ contract VeydriftGameTest is Test {
         assertEq(deuteriumCap, 10_000);
     }
 
+    function testBuildingConstructionAndCompletion() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+
+        VeydriftGame.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        assertTrue(construction.active);
+        assertEq(uint8(construction.building), uint8(Building.MetalMine));
+        assertEq(construction.targetLevel, 1);
+        assertEq(construction.cost.metal, 60);
+        assertEq(construction.cost.crystal, 15);
+        assertEq(construction.cost.deuterium, 0);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.ConstructionNotReady.selector, construction.readyAt)
+        );
+        game.finishBuildingUpgrade(planetId);
+
+        vm.warp(construction.readyAt);
+        vm.prank(player);
+        game.finishBuildingUpgrade(planetId);
+
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 1);
+        assertFalse(game.activeBuildingConstruction(planetId).active);
+        VeydriftGame.Resources memory nextCost =
+            game.buildingUpgradeCost(planetId, Building.MetalMine);
+        assertEq(nextCost.metal, 120);
+        assertEq(nextCost.crystal, 30);
+        assertEq(nextCost.deuterium, 0);
+    }
+
+    function testBuildingUpgradeSpendsInternalResources() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+
+        VeydriftGame.Resources memory resources = game.previewResources(planetId);
+        VeydriftGame.Resources memory required = game.resourceReserveRequirement();
+        assertEq(resources.metal, 440);
+        assertEq(resources.crystal, 485);
+        assertEq(resources.deuterium, 0);
+        assertEq(required.metal, 440);
+        assertEq(required.crystal, 485);
+        assertEq(required.deuterium, 0);
+    }
+
+    function testBuildingUpgradeRejectsActiveQueueAndBadDependencies() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        bytes32 roboticsDependency = "ROBOTICS_FACTORY_2";
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.MissingDependency.selector, roboticsDependency)
+        );
+        game.startBuildingUpgrade(planetId, Building.Shipyard);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.ConstructionActive.selector);
+        game.startBuildingUpgrade(planetId, Building.CrystalMine);
+    }
+
+    function testBuildingUpgradeRejectsInsufficientResources() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.InsufficientResources.selector, 500, 500, 0)
+        );
+        game.startBuildingUpgrade(planetId, Building.MetalStorage);
+    }
+
+    function testCollectResourcesAccruesProductionAfterInfrastructureUpgrade() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.SolarPlant);
+
+        VeydriftGame.Resources memory beforeResources = game.previewResources(planetId);
+        vm.warp(block.timestamp + 1 hours);
+
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        VeydriftGame.Resources memory afterResources = game.previewResources(planetId);
+        VeydriftGame.Resources memory required = game.resourceReserveRequirement();
+        assertGt(afterResources.metal, beforeResources.metal);
+        assertEq(afterResources.crystal, beforeResources.crystal);
+        assertEq(afterResources.deuterium, beforeResources.deuterium);
+        assertEq(required.metal, afterResources.metal);
+        assertEq(required.crystal, afterResources.crystal);
+        assertEq(required.deuterium, afterResources.deuterium);
+    }
+
+    function testCollectResourcesCompletesReadyBuildingQueue() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        VeydriftGame.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+
+        vm.warp(construction.readyAt);
+        vm.prank(player);
+        game.collectResources(planetId);
+
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 1);
+        assertFalse(game.activeBuildingConstruction(planetId).active);
+    }
+
     function testAdvancedGameplayModulesFailExplicitly() public {
         vm.expectRevert(VeydriftGame.UnsupportedGameplayModule.selector);
-        game.startBuildingUpgrade(1, Building.MetalMine);
-
-        vm.expectRevert(VeydriftGame.UnsupportedGameplayModule.selector);
         game.depositMarketResource(1, Resource.Metal, 1);
+    }
+
+    function _build(address account, uint256 planetId, Building building) internal {
+        vm.prank(account);
+        game.startBuildingUpgrade(planetId, building);
+        VeydriftGame.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        vm.warp(construction.readyAt);
+        vm.prank(account);
+        game.finishBuildingUpgrade(planetId);
     }
 
     function _fundGameReserves(uint256 amount) internal {
