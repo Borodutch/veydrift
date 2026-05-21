@@ -12,7 +12,7 @@ library VeydriftCatalog {
         if (building == Building.CrystalMine) return (48, 24, 0);
         if (building == Building.DeuteriumSynthesizer) return (225, 75, 0);
         if (building == Building.SolarPlant) return (75, 30, 0);
-        if (building == Building.RoboticsFactory) return (400, 120, 0);
+        if (building == Building.RoboticsFactory) return (400, 120, 200);
         if (building == Building.Shipyard) return (400, 200, 100);
         if (building == Building.ResearchLab) return (200, 400, 200);
         if (building == Building.MetalStorage) return (1_000, 0, 0);
@@ -25,6 +25,33 @@ library VeydriftCatalog {
         if (building == Building.MissileSilo) return (20_000, 20_000, 1_000);
         if (building == Building.InterdimensionalRiftStabilizer) return (8_000, 8_000, 4_000);
         revert InvalidId();
+    }
+
+    function buildingCostFactor(Building building)
+        public
+        pure
+        returns (uint8 numerator, uint8 denominator)
+    {
+        if (building == Building.MetalMine) return (15, 10);
+        if (building == Building.CrystalMine) return (16, 10);
+        if (building == Building.DeuteriumSynthesizer) return (15, 10);
+        if (building == Building.SolarPlant) return (15, 10);
+        if (building == Building.FusionReactor) return (18, 10);
+        return (2, 1);
+    }
+
+    function buildingUpgradeCost(Building building, uint16 currentLevel)
+        public
+        pure
+        returns (uint128, uint128, uint128)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = buildingBaseCost(building);
+        (uint8 numerator, uint8 denominator) = buildingCostFactor(building);
+        return (
+            _scaleByFactor(metal, currentLevel, numerator, denominator),
+            _scaleByFactor(crystal, currentLevel, numerator, denominator),
+            _scaleByFactor(deuterium, currentLevel, numerator, denominator)
+        );
     }
 
     function defenseCost(Defense defense) public pure returns (uint128, uint128, uint128) {
@@ -90,8 +117,8 @@ library VeydriftCatalog {
         if (ship == Ship.Destroyer) return 2_000;
         if (ship == Ship.Deathstar) return 1_000_000;
         if (ship == Ship.Battlecruiser) return 750;
-        if (ship == Ship.Reaper) return 10_000;
-        if (ship == Ship.Pathfinder) return 10_000;
+        if (ship == Ship.Reaper) return 7_000;
+        if (ship == Ship.Pathfinder) return 12_000;
         revert InvalidId();
     }
 
@@ -121,5 +148,15 @@ library VeydriftCatalog {
         }
         if (technology == Technology.Graviton) return (0, 0, 0);
         revert InvalidId();
+    }
+
+    function _scaleByFactor(uint128 value, uint16 exponent, uint8 numerator, uint8 denominator)
+        private
+        pure
+        returns (uint128)
+    {
+        return uint128(
+            (uint256(value) * (uint256(numerator) ** exponent)) / (uint256(denominator) ** exponent)
+        );
     }
 }

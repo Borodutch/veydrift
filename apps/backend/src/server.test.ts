@@ -13,7 +13,7 @@ import type {
   ShipyardState,
   WalletSettlement
 } from "./evm";
-import { VeydriftGameReader } from "./evm";
+import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { createRequestHandler } from "./server";
 
@@ -51,6 +51,41 @@ const planet: PlanetState = {
     deuterium: "4800"
   }
 };
+
+describe("Rift requirement projection", () => {
+  test("matches the current Interdimensional Rift Stabilizer build dependencies", () => {
+    expect(riftRequirements(0, 0, 0, {})).toEqual([
+      {
+        kind: "building",
+        key: "interdimensionalRiftStabilizer",
+        label: "Interdimensional Rift Stabilizer",
+        currentLevel: 0,
+        requiredLevel: 1
+      },
+      {
+        kind: "building",
+        key: "roboticsFactory",
+        label: "Robotics Factory",
+        currentLevel: 0,
+        requiredLevel: 2
+      },
+      {
+        kind: "building",
+        key: "researchLab",
+        label: "Research Lab",
+        currentLevel: 0,
+        requiredLevel: 1
+      },
+      {
+        kind: "technology",
+        key: "energy",
+        label: "Energy Technology",
+        currentLevel: 0,
+        requiredLevel: 2
+      }
+    ]);
+  });
+});
 
 class MockChainReader implements ChainReader {
   rebuildCalls = 0;
@@ -143,6 +178,7 @@ class MockChainReader implements ChainReader {
       productionAvailable: true,
       resources: planet.resources,
       shipyardLevel: 1,
+      naniteLevel: 0,
       technologyLevels: {
         "3": 1
       },
