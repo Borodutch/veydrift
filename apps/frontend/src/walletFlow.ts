@@ -271,6 +271,25 @@ export type MissionShips = {
   pathfinder: number;
 };
 
+export type HighscoreCategory = "total" | "economy" | "research" | "fleet" | "defense";
+
+export type HighscoreEntry = {
+  rank: number;
+  wallet: string;
+  homePlanetId: string | null;
+  planetCount: number;
+  score: Record<HighscoreCategory, string>;
+};
+
+export type HighscoreResponse = {
+  generatedAt: string;
+  formula: {
+    pointsDivisor: string;
+    summary: string;
+  };
+  rankings: Record<HighscoreCategory, HighscoreEntry[]>;
+};
+
 export type SettlementState =
   | { kind: "unconfigured" }
   | { kind: "not-settled" }
@@ -1334,6 +1353,16 @@ export async function fetchResearchState(apiUrl: string, wallet: string): Promis
 
 export async function fetchRiftState(apiUrl: string, wallet: string): Promise<ChainRiftState> {
   return fetchWalletJson<ChainRiftState>(apiUrl, wallet, "rift", "Rift");
+}
+
+export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?limit=${limit}`, {
+    headers: {
+      accept: "application/json"
+    }
+  });
+  if (!response.ok) throw new Error(`Highscores API failed: ${response.status}`);
+  return response.json();
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
