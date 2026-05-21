@@ -13,7 +13,7 @@ apps/
   frontend/      Preact + TypeScript + Tailwind public coming-soon app
 packages/
   contracts/     Foundry Solidity playable smart-contract MVP for Base deployments
-  circuits/      zk circuit placeholder workspace and proving stack notes
+  circuits/      Retired circuit placeholder workspace; no zk gameplay roadmap
 ```
 
 ## Requirements
@@ -147,9 +147,14 @@ variables after deployment.
 
 ### Circuits
 
-`packages/circuits` contains placeholder circuit inputs, proof artifact notes,
-and a proving-stack decision log. It does not commit to a concrete zk use case or
-proving system yet.
+Veydrift gameplay state is public onchain state. There is no privacy, zk,
+hidden-state backend, committed-root, or espionage roadmap for gameplay. See
+`docs/public-onchain-state-architecture.md` for the canonical state model and
+backend/indexer boundary.
+
+`packages/circuits` contains retired placeholder files only. It remains in the
+workspace so existing scripts keep passing until a cleanup task removes or
+repurposes it; it must not be used as product guidance for zk gameplay.
 
 ```sh
 cd packages/circuits

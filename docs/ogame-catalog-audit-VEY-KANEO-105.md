@@ -2,6 +2,12 @@
 
 Source basis: OGame Wiki/Fandom `Dependency Tree`, `Buildings`, `Ships`, `Defense`, and `Formulas` pages, plus the missile silo slot rule documented by OGame wiki mirrors. Veydrift intentionally keeps faster MVP timing in `VeydriftFormulas`, but the catalog IDs, base costs, and unlock gates should not silently diverge from the vanilla/core OGame catalog.
 
+Supersession note: VEY-KANEO-117 makes Veydrift public onchain state final
+product direction, and VEY-KANEO-111 removes espionage from Veydrift scope.
+Espionage-named entries below are historical OGame catalog parity notes or
+legacy IDs only; they are not guidance to implement probe scans, espionage
+reports, hidden enemy-state reveal, or fog-of-war.
+
 ## Scope Decision
 
 Implemented in this task:

@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftGameplayModule} from "./VeydriftGameplayModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
@@ -404,8 +405,26 @@ contract VeydriftGame is VeydriftResourceReserves {
     ) public pure returns (uint128) {
         uint256 ships =
             uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
-        if (ships == 0) return 0;
-        return _toUint128(ships);
+        return _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
+    }
+
+    function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
+        return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
+    }
+
+    function protectedStorageAmount(uint256 storageCap) external pure returns (uint256) {
+        return VeydriftAntiRaidPrimitives.protectedStorageAmount(storageCap);
+    }
+
+    function raidableResource(
+        uint256 balance,
+        uint256 cargoRemaining,
+        uint256 protectedAmount,
+        uint16 lootCapBps
+    ) external pure returns (uint256) {
+        return VeydriftAntiRaidPrimitives.raidableResource(
+            balance, cargoRemaining, protectedAmount, lootCapBps
+        );
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
