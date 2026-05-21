@@ -60,6 +60,7 @@ import {
   fetchShipyardState,
   fetchResearchState,
   fetchRiftState,
+  fetchFleetMissionVisibility,
   sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
@@ -85,6 +86,7 @@ import {
   type ChainRiftState,
   type ChainShipyardState,
   type Eip1193Provider,
+  type FleetMissionVisibilityResponse,
   type PendingWithdrawal,
   type PlanetSummary,
   type RiftResourceState,
@@ -126,6 +128,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
   const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
+  const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
   const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
   const [onChainError, setOnChainError] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
@@ -350,6 +353,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (!apiBaseUrl || !account) {
       setOnChainSettlement(undefined);
       setOnChainQueues(undefined);
+      setFleetVisibility(undefined);
       setOnChainError(undefined);
       setOnChainStatus(isWalletConnected ? "loading" : "local");
       return;
@@ -357,18 +361,21 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
     try {
-      const [settlement, queues] = await Promise.all([
+      const [settlement, queues, visibility] = await Promise.all([
         fetchWalletSettlement(apiBaseUrl, account),
         fetchWalletQueues(apiBaseUrl, account),
+        fetchFleetMissionVisibility(apiBaseUrl, account),
       ]);
       setOnChainSettlement(settlement);
       setOnChainQueues(queues);
+      setFleetVisibility(visibility);
       setOnChainError(undefined);
       setOnChainStatus("ready");
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainSettlement(undefined);
       setOnChainQueues(undefined);
+      setFleetVisibility(undefined);
       setOnChainStatus("error");
     }
   }, [account, apiBaseUrl, isWalletConnected]);
@@ -1253,6 +1260,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         isWalletConnected={isWalletConnected}
         now={now}
         onChainError={onChainError}
+        fleetVisibility={fleetVisibility}
         onChainQueues={onChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}

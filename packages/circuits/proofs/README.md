@@ -1,6 +1,7 @@
 # Proof Artifact Notes
 
-Generated proving artifacts are intentionally excluded from git. Keep local
-proofs, witnesses, keys, and transcripts under this directory only while
-debugging, then remove them before committing unless a future task explicitly
-defines a checked-in fixture format.
+Veydrift has no zk gameplay roadmap. Do not add gameplay proofs, witnesses,
+keys, transcripts, hidden-state commitments, or checked-in proving fixtures here.
+
+This directory is retained only because the retired circuit workspace still has
+a placeholder check.
