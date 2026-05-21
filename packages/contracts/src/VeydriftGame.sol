@@ -18,8 +18,8 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     address private immutable _gameplayModule;
 
-    constructor(address admin) VeydriftResourceReserves(admin) {
-        _gameplayModule = address(new VeydriftGameplayModule());
+    constructor(address admin, address combatModule) VeydriftResourceReserves(admin) {
+        _gameplayModule = address(new VeydriftGameplayModule(combatModule));
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -410,21 +410,6 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
         return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
-    }
-
-    function protectedStorageAmount(uint256 storageCap) external pure returns (uint256) {
-        return VeydriftAntiRaidPrimitives.protectedStorageAmount(storageCap);
-    }
-
-    function raidableResource(
-        uint256 balance,
-        uint256 cargoRemaining,
-        uint256 protectedAmount,
-        uint16 lootCapBps
-    ) external pure returns (uint256) {
-        return VeydriftAntiRaidPrimitives.raidableResource(
-            balance, cargoRemaining, protectedAmount, lootCapBps
-        );
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
