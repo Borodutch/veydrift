@@ -7,6 +7,7 @@ import {
   encodeAddressUintCall,
   encodeAddressCall,
   encodeGameCall,
+  encodeLaunchFleetMissionCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
   fetchInfrastructureState,
@@ -26,6 +27,11 @@ import {
   sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
+  sendCreateColonyTransaction,
+  sendLaunchFleetMissionTransaction,
+  sendAllianceInviteTransaction,
+  sendCreateAllianceTransaction,
+  sendOpenDefenseIntentTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
@@ -79,6 +85,68 @@ describe("walletFlow", () => {
     );
     expect(encodeQuantity(50_000_000_000_000_000n)).toBe("0xb1a2bc2ec50000");
     expect(settlementTransactionData()).toBe("0x59268393");
+  });
+
+  test("encodes public Galaxy mission and colony contract calls without probe payloads", async () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      espionageProbe: 99,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const missionData = encodeLaunchFleetMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    });
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0xgalaxy${requests.length}`;
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    })).resolves.toBe("0xgalaxy1");
+    await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10)).resolves.toBe("0xgalaxy2");
+
+    expect(missionData.startsWith("0x0c9d601c")).toBe(true);
+    expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000007");
+    expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000009");
+    expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: missionData,
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x71358ab8", [7, 2, 44, 10]),
+        }],
+      },
+    ]);
   });
 
   test("parses Rift token input as 6-decimal base units", () => {
@@ -691,6 +759,50 @@ describe("walletFlow", () => {
         ]
       }
     ]);
+  });
+
+  test("submits alliance foundation transactions", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0xalliance${requests.length}`;
+    });
+
+    await expect(
+      sendCreateAllianceTransaction(provider, account, contract, "VDFT", "Veydrift Union", "ipfs://union")
+    ).resolves.toBe("0xalliance1");
+    await expect(
+      sendAllianceInviteTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+    ).resolves.toBe("0xalliance2");
+    await expect(
+      sendOpenDefenseIntentTransaction(provider, account, contract, "7", "42")
+    ).resolves.toBe("0xalliance3");
+
+    expect(requests[0]).toMatchObject({
+      method: "eth_sendTransaction",
+      params: [{ from: account, to: contract }]
+    });
+    expect((requests[0] as { params: Array<{ data: string }> }).params[0]?.data.startsWith("0x944cde0e")).toBe(true);
+    expect(requests[1]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: `0x9e6d6830${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}`
+        }
+      ]
+    });
+    expect(requests[2]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x56f919e7", [7, 42])
+        }
+      ]
+    });
   });
 
   test("fetches dynamic wallet state without browser cache", async () => {

@@ -1,7 +1,9 @@
 import type {
   Address,
+  AllianceState,
   ChainReader,
   DefenseState,
+  FleetMissionVisibility,
   InfrastructureState,
   WalletPlanets,
   MoonState,
@@ -52,6 +54,10 @@ export class CachedChainReader implements ChainReader {
     return this.cached(`infrastructure:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getInfrastructureState(wallet, planetId));
   }
 
+  getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
+    return this.cached(`fleet-visibility:${wallet.toLowerCase()}`, () => this.inner.getFleetMissionVisibility(wallet));
+  }
+
   getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState> {
     return this.cached(`moon:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getMoonState(wallet, planetId));
   }
@@ -70,6 +76,10 @@ export class CachedChainReader implements ChainReader {
 
   getRiftState(wallet: Address, planetId?: bigint): Promise<RiftState> {
     return this.cached(`rift:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getRiftState(wallet, planetId));
+  }
+
+  getAllianceState(wallet: Address): Promise<AllianceState> {
+    return this.cached(`alliance:${wallet.toLowerCase()}`, () => this.inner.getAllianceState(wallet));
   }
 
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {

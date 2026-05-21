@@ -1,4 +1,5 @@
 export type RuntimeConfig = {
+  allianceContractAddress: string | null;
   apiUrl: string;
   chainId: number;
   contractAddress: string | null;
@@ -26,4 +27,8 @@ export function runtimeConfigUrl(apiUrl = playableApiUrl): string {
 
 export function gameContractAddress(config: RuntimeConfig): string | undefined {
   return config.gameContractAddress ?? config.contractAddress ?? undefined;
+}
+
+export function allianceContractAddress(config: RuntimeConfig): string | undefined {
+  return config.allianceContractAddress ?? undefined;
 }

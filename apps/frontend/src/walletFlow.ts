@@ -122,12 +122,41 @@ export type PlayerQueuesResponse = {
   research: QueueStateResponse | null;
 };
 
+export type FleetMissionSummary = {
+  missionId: string;
+  status: string;
+  missionType: string;
+  owner: string;
+  originPlanetId: string;
+  targetPlanetId: string;
+  arrivalAt: string;
+  returnAt: string;
+  fuelCost: string;
+  recallCost: string | null;
+  cargo: OnChainResources;
+  ships: Record<string, string>;
+  transactionHash: string;
+  blockNumber: string;
+};
+
+export type FleetMissionVisibilityResponse = {
+  wallet: string;
+  homePlanetId: string | null;
+  incoming: FleetMissionSummary[];
+  outgoing: FleetMissionSummary[];
+  returning: FleetMissionSummary[];
+};
+
 export type ChainShipyardState = {
   wallet: string;
   homePlanetId: string | null;
   productionAvailable?: boolean;
   unavailableReason?: string;
   resources: OnChainResources | null;
+  fleetSlots?: {
+    active: number;
+    limit: number;
+  };
   shipyardLevel: number;
   naniteLevel: number;
   technologyLevels: Record<string, number>;
@@ -256,6 +285,67 @@ export type ChainRiftState = {
   pendingWithdrawals: PendingWithdrawal[];
 };
 
+export type MissionShips = {
+  smallCargo: number;
+  lightFighter: number;
+  recycler: number;
+  colonyShip: number;
+  largeCargo: number;
+  heavyFighter: number;
+  cruiser: number;
+  battleship: number;
+  espionageProbe: number;
+  bomber: number;
+  destroyer: number;
+  deathstar: number;
+  battlecruiser: number;
+  reaper: number;
+  pathfinder: number;
+};
+
+export type ChainAllianceState = {
+  wallet: string;
+  allianceAvailable: boolean;
+  unavailableReason?: string;
+  membership: {
+    allianceId: string;
+    role: "none" | "member" | "officer" | "leader";
+    joinedAt: string;
+  };
+  profile: {
+    active: boolean;
+    tag: string;
+    name: string;
+    metadataURI: string;
+    founder: string;
+    createdAt: string;
+    memberCount: number;
+  } | null;
+  defenseCoordination: {
+    acsDefendSupported: boolean;
+    interceptSupported: boolean;
+  };
+};
+
+export type HighscoreCategory = "total" | "economy" | "research" | "fleet" | "defense";
+
+export type HighscoreEntry = {
+  rank: number;
+  wallet: string;
+  homePlanetId: string | null;
+  planetCount: number;
+  score: Record<HighscoreCategory, string>;
+};
+
+export type HighscoreResponse = {
+  generatedAt: string;
+  formula: {
+    pointsDivisor: string;
+    summary: string;
+  };
+  rankings: Record<HighscoreCategory, HighscoreEntry[]>;
+};
+
 export type SettlementState =
   | { kind: "unconfigured" }
   | { kind: "not-settled" }
@@ -293,10 +383,12 @@ const START_PRICE_SELECTOR = "0xf1a9af89";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
   collectResources: "0xdb43284d",
+  createColony: "0x71358ab8",
   depositResource: "0x25819e15",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
   finishResourceWithdrawal: "0xde0f208c",
+  launchFleetMission: "0x0c9d601c",
   startBuildingUpgrade: "0x165715e3",
   collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
@@ -306,6 +398,12 @@ const GAME_SELECTORS = {
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
+} as const;
+const ALLIANCE_SELECTORS = {
+  createAlliance: "0x944cde0e",
+  inviteMember: "0x9e6d6830",
+  acceptInvite: "0xbf8e9176",
+  openDefenseIntent: "0x56f919e7"
 } as const;
 const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
@@ -384,8 +482,69 @@ export function encodePlanetNameCall(selector: string, planetId: bigint | number
   return `${selector}${BigInt(planetId).toString(16).padStart(64, "0")}${(64n).toString(16).padStart(64, "0")}${BigInt(length).toString(16).padStart(64, "0")}${chunks}`;
 }
 
+export function encodeLaunchFleetMissionCall({
+  originPlanetId,
+  targetPlanetId,
+  missionType,
+  ships,
+  cargo,
+  randomnessRequestId = 0,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  missionType: number;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  randomnessRequestId?: bigint | number | string | undefined;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.launchFleetMission, [
+    originPlanetId,
+    targetPlanetId,
+    missionType,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    0,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
+    randomnessRequestId,
+  ]);
+}
+
+export function encodeStringTripleCall(selector: string, values: [string, string, string]): string {
+  const heads: string[] = [];
+  const tails: string[] = [];
+  let offset = 32n * BigInt(values.length);
+  for (const value of values) {
+    const encoded = encodeAbiString(value);
+    heads.push(offset.toString(16).padStart(64, "0"));
+    tails.push(encoded);
+    offset += BigInt(encoded.length / 2);
+  }
+  return `${selector}${heads.join("")}${tails.join("")}`;
+}
+
 export function encodeAddressUintCall(selector: string, address: string, value: bigint | number | string): string {
   return `${selector}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${BigInt(value).toString(16).padStart(64, "0")}`;
+}
+
+function encodeAbiString(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  const body = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const paddedLength = Math.ceil(body.length / 64) * 64;
+  return `${bytes.length.toString(16).padStart(64, "0")}${body.padEnd(paddedLength, "0")}`;
 }
 
 export function parseRiftTokenAmount(value: string, decimals = 6): bigint {
@@ -723,6 +882,64 @@ export async function sendStartDefenseProductionTransaction(
   });
 }
 
+export async function sendCreateAllianceTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  tag: string,
+  name: string,
+  metadataURI: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, metadataURI])
+      }
+    ]
+  });
+}
+
+export async function sendAllianceInviteTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: `${ALLIANCE_SELECTORS.inviteMember}${BigInt(allianceId).toString(16).padStart(64, "0")}${playerAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`
+      }
+    ]
+  });
+}
+
+export async function sendOpenDefenseIntentTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  defenderPlanetId: string,
+  hostileMissionId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(ALLIANCE_SELECTORS.openDefenseIntent, [defenderPlanetId, hostileMissionId])
+      }
+    ]
+  });
+}
+
 export async function sendStartBuildingUpgradeTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -900,6 +1117,45 @@ export async function sendCollectShipsTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(GAME_SELECTORS.collectShips, [planetId])
+      }
+    ]
+  });
+}
+
+export async function sendLaunchFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeLaunchFleetMissionCall(params)
+      }
+    ]
+  });
+}
+
+export async function sendCreateColonyTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  originPlanetId: string,
+  galaxy: number,
+  system: number,
+  position: number
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.createColony, [originPlanetId, galaxy, system, position])
       }
     ]
   });
@@ -1261,6 +1517,10 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId
   return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withPlanetId("queues", planetId), "Queues");
 }
 
+export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string): Promise<FleetMissionVisibilityResponse> {
+  return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, "fleet-visibility", "Fleet visibility");
+}
+
 export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainInfrastructureState> {
   return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, withPlanetId("infrastructure", planetId), "Infrastructure");
 }
@@ -1283,6 +1543,20 @@ export async function fetchResearchState(apiUrl: string, wallet: string, planetI
 
 export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainRiftState> {
   return fetchWalletJson<ChainRiftState>(apiUrl, wallet, withPlanetId("rift", planetId), "Rift");
+}
+
+export async function fetchAllianceState(apiUrl: string, wallet: string): Promise<ChainAllianceState> {
+  return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance", "Alliance");
+}
+
+export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?limit=${limit}`, {
+    headers: {
+      accept: "application/json"
+    }
+  });
+  if (!response.ok) throw new Error(`Highscores API failed: ${response.status}`);
+  return response.json();
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {

@@ -414,7 +414,7 @@
         "type": "uint32"
       },
       {
-        "label": "espionageProbe",
+        "label": "removedShipSlot",
         "offset": 0,
         "slot": "1",
         "type": "uint32"

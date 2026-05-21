@@ -3,6 +3,7 @@ import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import { assertAddress, type ChainReader, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
+import { highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import { SettlementIndexer } from "./indexer";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
@@ -28,6 +29,7 @@ type HealthPayload = {
 };
 
 type RuntimeConfig = {
+  allianceContractAddress: string | null;
   apiUrl: string;
   chainId: number;
   contractAddress: string | null;
@@ -183,6 +185,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const ready = requireChainReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        assertAddress(wallet);
+        return Response.json(await ready.getFleetMissionVisibility(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       const ready = requireChainReader(chainReader, loaded.problems);
@@ -258,6 +275,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/alliance$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const ready = requireChainReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        assertAddress(wallet);
+        return Response.json(await ready.getAllianceState(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/rift$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       const ready = requireChainReader(chainReader, loaded.problems);
@@ -268,6 +300,63 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return Response.json(await ready.getRiftState(wallet, selectedPlanetId(url)), {
           headers: corsHeaders
         });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/highscore$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const ready = requireHighscoreReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        assertAddress(wallet);
+        if (indexer?.snapshot().indexedPlanets === 0) {
+          await indexer.rebuild();
+        }
+        const indexedPlanets = indexer?.settledPlanetsByOwner().get(wallet.toLowerCase()) ?? [];
+        return Response.json(
+          {
+            formula: highscoreFormula,
+            entry: await ready.getHighscoreForWallet(wallet, indexedPlanets.map((planet) => planet.planetId))
+          },
+          {
+            headers: corsHeaders
+          }
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/highscores") {
+      const ready = requireHighscoreReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 250);
+        if (indexer?.snapshot().indexedPlanets === 0) {
+          await indexer.rebuild();
+        }
+        const planetsByOwner: Map<string, SettledPlanetEvent[]> = indexer?.settledPlanetsByOwner() ?? new Map();
+        const entries = await Promise.all(
+          [...planetsByOwner.entries()].map(([owner, planets]) =>
+            ready.getHighscoreForWallet(owner as `0x${string}`, planets.map((planet) => planet.planetId))
+          )
+        );
+        const rankings = highscoreRankings(entries, limit);
+
+        return Response.json(
+          {
+            generatedAt: new Date().toISOString(),
+            formula: highscoreFormula,
+            rankings
+          },
+          {
+            headers: corsHeaders
+          }
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -476,6 +565,7 @@ function getRuntimeConfig(): RuntimeConfig {
     process.env.VEYDRIFT_CONTRACT_ADDRESS ??
     null;
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
+  const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
     deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,
@@ -483,6 +573,7 @@ function getRuntimeConfig(): RuntimeConfig {
   };
 
   return {
+    allianceContractAddress,
     apiUrl,
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
     contractAddress,
@@ -507,6 +598,63 @@ function requireChainReader(chainReader: ChainReader | undefined, problems: Conf
   }
 
   return chainReader;
+}
+
+type HighscoreReader = ChainReader & Required<Pick<ChainReader, "getHighscoreForWallet">>;
+
+function requireHighscoreReader(chainReader: ChainReader | undefined, problems: ConfigProblem[]): HighscoreReader | Response {
+  const ready = requireChainReader(chainReader, problems);
+  if (ready instanceof Response) return ready;
+  if (!ready.getHighscoreForWallet) {
+    return Response.json(
+      {
+        error: "highscores_not_supported"
+      },
+      {
+        headers: jsonHeaders,
+        status: 503
+      }
+    );
+  }
+
+  return ready as HighscoreReader;
+}
+
+type RankedHighscoreEntry = HighscoreEntry & {
+  rank: number;
+};
+
+type HighscoreCategory = keyof ScoreBreakdown;
+
+function highscoreRankings(
+  entries: HighscoreEntry[],
+  limit: number
+): Record<HighscoreCategory, RankedHighscoreEntry[]> {
+  return {
+    total: rankHighscores(entries, "total", limit),
+    economy: rankHighscores(entries, "economy", limit),
+    research: rankHighscores(entries, "research", limit),
+    fleet: rankHighscores(entries, "fleet", limit),
+    defense: rankHighscores(entries, "defense", limit)
+  };
+}
+
+function rankHighscores(
+  entries: HighscoreEntry[],
+  category: HighscoreCategory,
+  limit: number
+): RankedHighscoreEntry[] {
+  return [...entries]
+    .sort((left, right) => {
+      const delta = BigInt(right.score[category]) - BigInt(left.score[category]);
+      if (delta !== 0n) return delta > 0n ? 1 : -1;
+      return left.wallet.localeCompare(right.wallet);
+    })
+    .slice(0, limit)
+    .map((entry, index) => ({
+      ...entry,
+      rank: index + 1
+    }));
 }
 
 function unavailableResponse(problems: ConfigProblem[]): Response {

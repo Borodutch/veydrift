@@ -12,7 +12,7 @@ import {
 import { overviewHeroImage } from "../overviewHeroImage";
 import { formatPlanetType } from "../data/mockUniverse";
 import type { Planet } from "../types";
-import type { PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
+import type { FleetMissionVisibilityResponse, PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
@@ -40,6 +40,7 @@ interface OverviewPageProps {
   onFinishBuilding?: (() => void) | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onChainError?: string | undefined;
+  fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
   onChainQueues?: PlayerQueuesResponse | undefined;
   onChainStatus: ChainLoadStatus;
@@ -60,6 +61,7 @@ export function OverviewPage({
   onFinishBuilding,
   onNavigate,
   onChainError,
+  fleetVisibility,
   onChainSettlement,
   onChainQueues,
   onChainStatus,
@@ -149,6 +151,14 @@ export function OverviewPage({
         <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100 sm:p-4">
           Planet data is unavailable right now. Overview stats and resources are hidden until the game API responds with live values.
           {onChainError ? <span className="block truncate text-amber-200/70">{onChainError}</span> : null}
+        </div>
+      )}
+
+      {isWalletConnected && fleetVisibility && (
+        <div className="grid gap-3 lg:grid-cols-3">
+          <MissionPanel label="Incoming" tone="danger" missions={fleetVisibility.incoming} now={now} />
+          <MissionPanel label="Returning" tone="warning" missions={fleetVisibility.returning} now={now} />
+          <MissionPanel label="Outbound" tone="neutral" missions={fleetVisibility.outgoing} now={now} />
         </div>
       )}
 
@@ -291,6 +301,54 @@ export function OverviewPage({
         </div>
       )}
 
+    </div>
+  );
+}
+
+type MissionList = FleetMissionVisibilityResponse["incoming"];
+
+function MissionPanel({
+  label,
+  missions,
+  now,
+  tone,
+}: {
+  label: string;
+  missions: MissionList;
+  now: number;
+  tone: "danger" | "neutral" | "warning";
+}) {
+  const border = tone === "danger"
+    ? "border-red-300/25 bg-red-400/10"
+    : tone === "warning"
+      ? "border-amber-300/25 bg-amber-300/10"
+      : "border-white/10 bg-white/[0.04]";
+  return (
+    <div className={`min-w-0 rounded-lg border p-3 ${border}`}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-300">{label}</h3>
+        <span className="text-xs tabular-nums text-slate-400">{missions.length}</span>
+      </div>
+      {missions.length === 0 ? (
+        <p className="text-xs text-slate-500">No visible missions.</p>
+      ) : (
+        <div className="grid gap-2">
+          {missions.slice(0, 3).map((mission) => (
+            <div key={mission.missionId} className="min-w-0 rounded-md border border-white/10 bg-black/20 p-2">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-medium text-slate-200">{mission.missionType} #{mission.missionId}</span>
+                <span className="text-slate-400">{mission.status}</span>
+              </div>
+              <p className="mt-1 truncate text-[11px] text-slate-500">
+                {mission.originPlanetId} {"->"} {mission.targetPlanetId}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Arrival {formatDurationUntil(Number(mission.arrivalAt) * 1_000, now)} · Return {formatDurationUntil(Number(mission.returnAt) * 1_000, now)}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
