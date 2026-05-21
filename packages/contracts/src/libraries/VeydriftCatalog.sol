@@ -109,7 +109,6 @@ library VeydriftCatalog {
         if (ship == Ship.HeavyFighter) return (6_000, 4_000, 0);
         if (ship == Ship.Cruiser) return (20_000, 7_000, 2_000);
         if (ship == Ship.Battleship) return (45_000, 15_000, 0);
-        if (ship == Ship.EspionageProbe) return (0, 1_000, 0);
         if (ship == Ship.Bomber) return (50_000, 25_000, 15_000);
         if (ship == Ship.SolarSatellite) return (0, 2_000, 500);
         if (ship == Ship.Destroyer) return (60_000, 50_000, 15_000);
@@ -130,7 +129,6 @@ library VeydriftCatalog {
         if (ship == Ship.HeavyFighter) return 100;
         if (ship == Ship.Cruiser) return 800;
         if (ship == Ship.Battleship) return 1_500;
-        if (ship == Ship.EspionageProbe) return 5;
         if (ship == Ship.Bomber) return 500;
         if (ship == Ship.SolarSatellite) return 0;
         if (ship == Ship.Destroyer) return 2_000;
@@ -191,7 +189,6 @@ library VeydriftCatalog {
         if (technology == Technology.Laser) return (200, 100, 0);
         if (technology == Technology.Ion) return (1_000, 300, 100);
         if (technology == Technology.CombustionDrive) return (400, 0, 600);
-        if (technology == Technology.Espionage) return (200, 1_000, 200);
         if (technology == Technology.Computer) return (0, 400, 600);
         if (technology == Technology.Weapons) return (800, 200, 0);
         if (technology == Technology.Shielding) return (200, 600, 0);
@@ -247,7 +244,6 @@ library VeydriftCatalog {
         if (technology == Technology.Laser) return 1;
         if (technology == Technology.Ion) return 4;
         if (technology == Technology.CombustionDrive) return 1;
-        if (technology == Technology.Espionage) return 3;
         if (technology == Technology.Computer) return 1;
         if (technology == Technology.Weapons) return 4;
         if (technology == Technology.Shielding) return 6;

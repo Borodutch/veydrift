@@ -738,7 +738,6 @@ contract VeydriftGame is VeydriftResourceReserves {
             _technologyLevels[player][Technology.Laser],
             _technologyLevels[player][Technology.Ion],
             _technologyLevels[player][Technology.Hyperspace],
-            _technologyLevels[player][Technology.Espionage],
             _technologyLevels[player][Technology.ImpulseDrive],
             _technologyLevels[player][Technology.Computer],
             _technologyLevels[player][Technology.Shielding]
