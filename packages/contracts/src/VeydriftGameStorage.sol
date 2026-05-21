@@ -21,12 +21,19 @@ abstract contract VeydriftGameStorage {
     uint16 public constant BPS = 10_000;
     uint32 public constant MIN_QUEUE_SECONDS = 60;
     uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
+    uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
+    uint16 public constant FLEET_RECALL_COST_BPS = 2_500;
     uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
     uint16 public constant MAX_GALAXY = 9;
     uint16 public constant MAX_SYSTEM = 499;
     uint8 public constant MAX_POSITION = 15;
     bytes32 public constant FIRST_PLANET_DOMAIN = keccak256("veydrift.first-planet.v1");
     bytes32 public constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
+    bytes32 public constant ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
+    uint8 public constant BATTLE_MAX_ROUNDS = 6;
+    uint16 public constant RAID_LOOT_BPS = 5_000;
+    uint16 public constant RAID_PROTECTED_STORAGE_BPS = 1_000;
+    uint16 public constant COMBAT_DEBRIS_BPS = 3_000;
 
     struct Resources {
         uint128 metal;
@@ -125,6 +132,12 @@ abstract contract VeydriftGameStorage {
         Recalled
     }
 
+    enum BattleOutcome {
+        Draw,
+        AttackerWin,
+        DefenderWin
+    }
+
     struct MissionShips {
         uint32 smallCargo;
         uint32 lightFighter;
@@ -134,7 +147,7 @@ abstract contract VeydriftGameStorage {
         uint32 heavyFighter;
         uint32 cruiser;
         uint32 battleship;
-        uint32 espionageProbe;
+        uint32 removedShipSlot;
         uint32 bomber;
         uint32 destroyer;
         uint32 deathstar;
@@ -231,6 +244,7 @@ abstract contract VeydriftGameStorage {
     error FleetNotArrived(uint64 arrivesAt);
     error FleetAlreadyReturning();
     error FleetAlreadyArrived();
+    error FleetRecallCutoffPassed(uint64 recallDeadline);
     error InvalidMissionType(FleetMissionType missionType);
     error FleetSlotLimitReached(uint256 limit);
     error FleetMissionNotResolved(uint64 returnAt);
@@ -369,12 +383,72 @@ abstract contract VeydriftGameStorage {
         uint64 returnAt,
         uint256 randomnessRequestId
     );
-    event FleetMissionRecalled(uint256 indexed missionId, address indexed owner, uint64 returnAt);
+    event FleetMissionCargo(
+        uint256 indexed missionId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium,
+        uint128 fuelCost
+    );
+    event FleetMissionShips(
+        uint256 indexed missionId,
+        uint32 smallCargo,
+        uint32 lightFighter,
+        uint32 recycler,
+        uint32 colonyShip,
+        uint32 largeCargo,
+        uint32 heavyFighter,
+        uint32 cruiser,
+        uint32 battleship,
+        uint32 bomber,
+        uint32 destroyer,
+        uint32 deathstar,
+        uint32 battlecruiser,
+        uint32 reaper,
+        uint32 pathfinder
+    );
+    event FleetMissionRecalled(
+        uint256 indexed missionId, address indexed owner, uint64 returnAt, uint128 recallCost
+    );
     event FleetMissionResolved(
         uint256 indexed missionId,
         address indexed resolver,
         FleetMissionType indexed missionType,
         uint64 returnAt
+    );
+    event AttackBattleResolved(
+        uint256 indexed missionId,
+        address indexed attacker,
+        uint256 indexed targetPlanetId,
+        BattleOutcome outcome,
+        uint8 rounds,
+        uint256 randomSeed,
+        uint128 lootMetal,
+        uint128 lootCrystal,
+        uint128 lootDeuterium
+    );
+    event CombatLosses(
+        uint256 indexed missionId,
+        uint128 attackerMetal,
+        uint128 attackerCrystal,
+        uint128 attackerDeuterium,
+        uint128 defenderMetal,
+        uint128 defenderCrystal,
+        uint128 defenderDeuterium
+    );
+    event CombatDebrisSignaled(
+        uint256 indexed missionId, uint256 indexed targetPlanetId, uint128 metal, uint128 crystal
+    );
+    event FleetMissionReturnExposed(
+        uint256 indexed missionId,
+        address indexed owner,
+        FleetMissionStatus indexed status,
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        uint64 returnAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
     );
     event FleetMissionReturned(
         uint256 indexed missionId, address indexed owner, uint256 indexed planetId

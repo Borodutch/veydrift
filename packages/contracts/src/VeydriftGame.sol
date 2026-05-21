@@ -18,8 +18,8 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     address private immutable _gameplayModule;
 
-    constructor(address admin) VeydriftResourceReserves(admin) {
-        _gameplayModule = address(new VeydriftGameplayModule());
+    constructor(address admin, address combatModule) VeydriftResourceReserves(admin) {
+        _gameplayModule = address(new VeydriftGameplayModule(combatModule));
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -303,8 +303,9 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
-    function debrisField(uint256 planetId) external view returns (DebrisField memory) {
-        return _debrisFields[planetId];
+    function debrisField(uint256 planetId) external view returns (uint128 metal, uint128 crystal) {
+        DebrisField storage field = _debrisFields[planetId];
+        return (field.metal, field.crystal);
     }
 
     function activeBuildingConstruction(uint256 planetId)
@@ -418,21 +419,6 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
         return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
-    }
-
-    function protectedStorageAmount(uint256 storageCap) external pure returns (uint256) {
-        return VeydriftAntiRaidPrimitives.protectedStorageAmount(storageCap);
-    }
-
-    function raidableResource(
-        uint256 balance,
-        uint256 cargoRemaining,
-        uint256 protectedAmount,
-        uint16 lootCapBps
-    ) external pure returns (uint256) {
-        return VeydriftAntiRaidPrimitives.raidableResource(
-            balance, cargoRemaining, protectedAmount, lootCapBps
-        );
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
@@ -746,7 +732,6 @@ contract VeydriftGame is VeydriftResourceReserves {
             _technologyLevels[player][Technology.Laser],
             _technologyLevels[player][Technology.Ion],
             _technologyLevels[player][Technology.Hyperspace],
-            _technologyLevels[player][Technology.Espionage],
             _technologyLevels[player][Technology.ImpulseDrive],
             _technologyLevels[player][Technology.Computer],
             _technologyLevels[player][Technology.Shielding]

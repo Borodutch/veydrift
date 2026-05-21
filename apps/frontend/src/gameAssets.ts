@@ -21,7 +21,6 @@ export const shipAssetManifest = [
   { key: "heavyFighter", src: `${SHIP_BASE}/heavy-fighter.webp`, category: "ship", status: "production" },
   { key: "cruiser", src: `${SHIP_BASE}/cruiser.webp`, category: "ship", status: "production" },
   { key: "battleship", src: `${SHIP_BASE}/battleship.webp`, category: "ship", status: "production" },
-  { key: "espionageProbe", src: `${SHIP_BASE}/espionage-probe.webp`, category: "ship", status: "production" },
   { key: "bomber", src: `${SHIP_BASE}/bomber.webp`, category: "ship", status: "production" },
   { key: "solarSatellite", src: `${SHIP_BASE}/solar-satellite.webp`, category: "ship", status: "production" },
   { key: "destroyer", src: `${SHIP_BASE}/destroyer.webp`, category: "ship", status: "production" },
@@ -56,7 +55,6 @@ export const researchAssetManifest = [
     category: "research",
     status: "generated-preview",
   },
-  { key: "espionage", src: `${RESEARCH_BASE}/espionage.webp`, category: "research", status: "generated-preview" },
   { key: "computer", src: `${RESEARCH_BASE}/computer.webp`, category: "research", status: "generated-preview" },
   { key: "astrophysics", src: `${RESEARCH_BASE}/astrophysics.webp`, category: "research", status: "generated-preview" },
   {

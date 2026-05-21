@@ -166,11 +166,6 @@
       "image": "/assets/game/style-pass/generated/ships/battleship.webp",
       "status": "generated-preview"
     },
-    "espionage-probe": {
-      "name": "Espionage Probe",
-      "image": "/assets/game/style-pass/generated/ships/espionage-probe.webp",
-      "status": "generated-preview"
-    },
     "bomber": {
       "name": "Bomber",
       "image": "/assets/game/style-pass/generated/ships/bomber.webp",
@@ -354,11 +349,6 @@
     "hyperspace-drive": {
       "name": "Hyperspace Drive",
       "image": "/assets/game/style-pass/generated/research/hyperspace-drive.webp",
-      "status": "generated-preview"
-    },
-    "espionage": {
-      "name": "Espionage Technology",
-      "image": "/assets/game/style-pass/generated/research/espionage.webp",
       "status": "generated-preview"
     },
     "computer": {

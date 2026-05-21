@@ -1,4 +1,5 @@
 import type { BackendConfig } from "./config";
+import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import type { Coordinates } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
@@ -56,12 +57,41 @@ export type PlayerQueues = {
   research: QueueState | null;
 };
 
+export type FleetMissionVisibility = {
+  wallet: Address;
+  homePlanetId: string | null;
+  incoming: FleetMissionSummary[];
+  outgoing: FleetMissionSummary[];
+  returning: FleetMissionSummary[];
+};
+
+export type FleetMissionSummary = {
+  missionId: string;
+  status: string;
+  missionType: string;
+  owner: Address;
+  originPlanetId: string;
+  targetPlanetId: string;
+  arrivalAt: string;
+  returnAt: string;
+  fuelCost: string;
+  recallCost: string | null;
+  cargo: Resources;
+  ships: Record<string, string>;
+  transactionHash: string;
+  blockNumber: string;
+};
+
 export type ShipyardState = {
   wallet: Address;
   homePlanetId: string | null;
   productionAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
+  fleetSlots: {
+    active: number;
+    limit: number;
+  };
   shipyardLevel: number;
   naniteLevel: number;
   technologyLevels: Record<string, number>;
@@ -190,6 +220,30 @@ export type RiftState = {
   pendingWithdrawals: PendingWithdrawal[];
 };
 
+export type AllianceState = {
+  wallet: Address;
+  allianceAvailable: boolean;
+  unavailableReason?: string;
+  membership: {
+    allianceId: string;
+    role: "none" | "member" | "officer" | "leader";
+    joinedAt: string;
+  };
+  profile: {
+    active: boolean;
+    tag: string;
+    name: string;
+    metadataURI: string;
+    founder: Address;
+    createdAt: string;
+    memberCount: number;
+  } | null;
+  defenseCoordination: {
+    acsDefendSupported: boolean;
+    interceptSupported: boolean;
+  };
+};
+
 export type SettledPlanetEvent = PlanetState & {
   eventName: "PlanetStarted" | "ColonyCreated";
   transactionHash: string;
@@ -211,12 +265,15 @@ export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address): Promise<PlayerQueues>;
+  getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility>;
   getInfrastructureState(wallet: Address): Promise<InfrastructureState>;
   getMoonState(wallet: Address): Promise<MoonState>;
   getDefenseState(wallet: Address): Promise<DefenseState>;
   getShipyardState(wallet: Address): Promise<ShipyardState>;
   getResearchState(wallet: Address): Promise<ResearchState>;
   getRiftState(wallet: Address): Promise<RiftState>;
+  getAllianceState(wallet: Address): Promise<AllianceState>;
+  getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   rpcMetrics?(): RpcMetrics;
@@ -350,6 +407,7 @@ export class HttpJsonRpcTransport {
 export class VeydriftGameReader implements ChainReader {
   private readonly transport: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>;
   private readonly gameContractAddress: Address;
+  private readonly allianceContractAddress: Address | undefined;
   private readonly moonContractAddress: Address | undefined;
   private readonly chainId: number;
   private readonly indexFromBlock: bigint;
@@ -368,6 +426,7 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     this.transport = transport ?? new HttpJsonRpcTransport(config.rpcUrl);
+    this.allianceContractAddress = config.allianceContractAddress;
     this.gameContractAddress = config.gameContractAddress;
     this.moonContractAddress = config.moonContractAddress;
     this.chainId = config.chainId;
@@ -448,6 +507,51 @@ export class VeydriftGameReader implements ChainReader {
       defense,
       ship,
       research
+    };
+  }
+
+  async getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
+    const settlement = await this.getGameSettlement(wallet);
+    if (!settlement.homePlanetId) {
+      return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [] };
+    }
+
+    const missionLogs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+      {
+        address: this.gameContractAddress,
+        fromBlock: toQuantity(this.indexFromBlock),
+        toBlock: "latest",
+        topics: [[
+          fleetMissionLaunchedTopic,
+          fleetMissionCargoTopic,
+          fleetMissionShipsTopic,
+          fleetMissionRecalledTopic,
+          fleetMissionResolvedTopic,
+          fleetMissionReturnExposedTopic
+        ]]
+      }
+    ]);
+    const walletLower = wallet.toLowerCase();
+    const homePlanetId = settlement.homePlanetId;
+    const missions = decodeFleetMissionLogs(missionLogs);
+    const summaries = [...missions.values()].filter(isCompleteFleetMissionSummary);
+
+    return {
+      wallet,
+      homePlanetId,
+      incoming: summaries.filter((mission) =>
+        mission.owner.toLowerCase() !== walletLower
+          && mission.targetPlanetId === homePlanetId
+          && ["Attack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && mission.status === "Outbound"
+      ),
+      outgoing: summaries.filter((mission) =>
+        mission.owner.toLowerCase() === walletLower && mission.status === "Outbound"
+      ),
+      returning: summaries.filter((mission) =>
+        mission.owner.toLowerCase() === walletLower
+          && (mission.status === "Returning" || mission.status === "Recalled")
+      )
     };
   }
 
@@ -590,6 +694,7 @@ export class VeydriftGameReader implements ChainReader {
         unavailableReason:
           "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
         resources: null,
+        fleetSlots: { active: 0, limit: 1 },
         shipyardLevel: 0,
         naniteLevel: 0,
         technologyLevels: {},
@@ -604,10 +709,11 @@ export class VeydriftGameReader implements ChainReader {
         homePlanetId: null,
         productionAvailable: true,
         resources: null,
+        fleetSlots: { active: 0, limit: 1 },
         shipyardLevel: 0,
         naniteLevel: 0,
         technologyLevels: {},
-        ships: Array.from({ length: shipCount }, (_, id) => ({
+        ships: supportedShipIds.map((id) => ({
           id,
           count: 0,
           cost: zeroResources()
@@ -617,13 +723,14 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, shipyardLevel, naniteLevel, queue, technologyLevels, ships] = await Promise.all([
+    const [resources, shipyardLevel, naniteLevel, queue, technologyLevels, ships, activeFleetMissions] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readTechnologyLevels(wallet),
-      this.readShipRows(planetId)
+      this.readShipRows(planetId),
+      this.readUintCall("0x423f9f10", [encodeAddress(wallet)])
     ]);
 
     return {
@@ -631,6 +738,10 @@ export class VeydriftGameReader implements ChainReader {
       homePlanetId: settlement.homePlanetId,
       productionAvailable: true,
       resources,
+      fleetSlots: {
+        active: Number(activeFleetMissions),
+        limit: 1 + (technologyLevels["5"] ?? 0)
+      },
       shipyardLevel: Number(shipyardLevel),
       naniteLevel: Number(naniteLevel),
       technologyLevels,
@@ -735,7 +846,7 @@ export class VeydriftGameReader implements ChainReader {
         resources: null,
         researchLabLevel: 0,
         technologyLevels: {},
-        technologies: Array.from({ length: technologyCount }, (_, id) => ({
+        technologies: supportedTechnologyIds.map((id) => ({
           id,
           level: 0,
           cost: zeroResources()
@@ -824,6 +935,95 @@ export class VeydriftGameReader implements ChainReader {
       resources,
       pendingWithdrawals
     };
+  }
+
+  async getAllianceState(wallet: Address): Promise<AllianceState> {
+    assertAddress(wallet);
+    const unavailable = (reason: string): AllianceState => ({
+      wallet,
+      allianceAvailable: false,
+      unavailableReason: reason,
+      membership: { allianceId: "0", role: "none", joinedAt: "0" },
+      profile: null,
+      defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+    });
+
+    if (!this.allianceContractAddress) {
+      return unavailable("Alliance contract is not configured for this deployment yet.");
+    }
+
+    const membershipWords = splitWords(
+      await this.callContract(this.allianceContractAddress, "0xad642b52", [encodeAddress(wallet)])
+    );
+    const allianceId = decodeUintWord(wordAt(membershipWords, 0));
+    const role = allianceRoleName(Number(decodeUintWord(wordAt(membershipWords, 1))));
+    const joinedAt = decodeUintWord(wordAt(membershipWords, 2)).toString();
+    if (allianceId === 0n) {
+      return {
+        wallet,
+        allianceAvailable: true,
+        membership: { allianceId: "0", role, joinedAt },
+        profile: null,
+        defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+      };
+    }
+
+    const profileWords = splitWords(
+      await this.callContract(this.allianceContractAddress, "0x79c76adf", [encodeUint(allianceId)])
+    );
+    return {
+      wallet,
+      allianceAvailable: true,
+      membership: { allianceId: allianceId.toString(), role, joinedAt },
+      profile: {
+        active: decodeBoolWord(wordAt(profileWords, 0)),
+        tag: decodeString(profileWords, 1),
+        name: decodeString(profileWords, 2),
+        metadataURI: decodeString(profileWords, 3),
+        founder: decodeAddressWord(wordAt(profileWords, 4)),
+        createdAt: decodeUintWord(wordAt(profileWords, 5)).toString(),
+        memberCount: Number(decodeUintWord(wordAt(profileWords, 6)))
+      },
+      defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+    };
+  }
+
+  async getHighscoreForWallet(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry> {
+    assertAddress(wallet);
+    const settlement = await this.getWalletSettlement(wallet);
+    const candidatePlanetIds = planetIds?.length
+      ? planetIds
+      : settlement.homePlanetId
+        ? [settlement.homePlanetId]
+        : [];
+
+    const planetStates = await Promise.all(
+      candidatePlanetIds.map(async (planetId) => {
+        const planet = await this.getPlanet(BigInt(planetId));
+        return planet?.owner.toLowerCase() === wallet.toLowerCase() ? planet : null;
+      })
+    );
+    const ownedPlanets = planetStates.filter((planet): planet is PlanetState => planet !== null);
+    const planetScores = await Promise.all(
+      ownedPlanets.map(async (planet) => {
+        const planetId = BigInt(planet.planetId);
+        const [buildings, defenses, ships] = await Promise.all([
+          this.readBuildingRows(planetId),
+          this.readDefenseRows(planetId),
+          this.readShipRows(planetId)
+        ]);
+        return { buildings, defenses, ships };
+      })
+    );
+    const technologies = await this.readTechnologyRows(wallet);
+
+    return calculateHighscore({
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      planetCount: ownedPlanets.length,
+      planets: planetScores,
+      technologies
+    });
   }
 
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
@@ -949,7 +1149,7 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readTechnologyLevels(wallet: Address): Promise<Record<string, number>> {
     const entries = await Promise.all(
-      Array.from({ length: technologyCount }, async (_, id) => [
+      supportedTechnologyIds.map(async (id) => [
         id.toString(),
         Number(await this.readUintCall("0xe512884c", [encodeAddress(wallet), encodeUint(BigInt(id))]))
       ] as const)
@@ -960,7 +1160,7 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readShipRows(planetId: bigint): Promise<ShipyardState["ships"]> {
     return Promise.all(
-      Array.from({ length: shipCount }, async (_, id) => {
+      supportedShipIds.map(async (id) => {
         const [count, cost] = await Promise.all([
           this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
           this.readResources("0xc4222030", BigInt(id))
@@ -1052,7 +1252,7 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readTechnologyRows(wallet: Address): Promise<ResearchState["technologies"]> {
     return Promise.all(
-      Array.from({ length: technologyCount }, async (_, id) => {
+      supportedTechnologyIds.map(async (id) => {
         const [level, cost] = await Promise.all([
           this.readUintCall("0xe512884c", [encodeAddress(wallet), encodeUint(BigInt(id))]),
           this.readResourcesCall("0x6e984888", [encodeAddress(wallet), encodeUint(BigInt(id))])
@@ -1282,11 +1482,111 @@ export class VeydriftGameReader implements ChainReader {
   }
 }
 
+type MutableFleetMissionSummary = Partial<FleetMissionSummary> & { missionId: string };
+
+function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleetMissionSummary> {
+  const missions = new Map<string, MutableFleetMissionSummary>();
+  for (const log of logs) {
+    const topic = topicAt(log.topics, 0);
+    const missionId = decodeUint(topicAt(log.topics, 1)).toString();
+    const mission = missions.get(missionId) ?? {
+      missionId,
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      ships: {},
+      fuelCost: "0",
+      recallCost: null,
+      transactionHash: log.transactionHash,
+      blockNumber: BigInt(log.blockNumber).toString()
+    };
+    mission.transactionHash = log.transactionHash;
+    mission.blockNumber = BigInt(log.blockNumber).toString();
+
+    if (topic === fleetMissionLaunchedTopic) {
+      const words = splitWords(log.data);
+      mission.owner = decodeAddressWord(topicAt(log.topics, 2));
+      mission.missionType = missionTypeLabel(decodeUint(topicAt(log.topics, 3)));
+      mission.status = "Outbound";
+      mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
+      mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
+      mission.arrivalAt = decodeUintWord(wordAt(words, 2)).toString();
+      mission.returnAt = decodeUintWord(wordAt(words, 3)).toString();
+    } else if (topic === fleetMissionCargoTopic) {
+      const words = splitWords(log.data);
+      mission.cargo = decodeResources(words.slice(0, 3));
+      mission.fuelCost = decodeUintWord(wordAt(words, 3)).toString();
+    } else if (topic === fleetMissionShipsTopic) {
+      const words = splitWords(log.data);
+      mission.ships = Object.fromEntries([
+        "smallCargo",
+        "lightFighter",
+        "recycler",
+        "colonyShip",
+        "largeCargo",
+        "heavyFighter",
+        "cruiser",
+        "battleship",
+        "bomber",
+        "destroyer",
+        "deathstar",
+        "battlecruiser",
+        "reaper",
+        "pathfinder"
+      ].map((key, index) => [key, decodeUintWord(wordAt(words, index)).toString()]));
+    } else if (topic === fleetMissionRecalledTopic) {
+      const words = splitWords(log.data);
+      mission.owner = decodeAddressWord(topicAt(log.topics, 2));
+      mission.status = "Recalled";
+      mission.returnAt = decodeUintWord(wordAt(words, 0)).toString();
+      mission.recallCost = decodeUintWord(wordAt(words, 1)).toString();
+    } else if (topic === fleetMissionResolvedTopic) {
+      mission.returnAt = decodeUintWord(wordAt(splitWords(log.data), 0)).toString();
+      mission.status = "Resolved";
+    } else if (topic === fleetMissionReturnExposedTopic) {
+      const words = splitWords(log.data);
+      mission.owner = decodeAddressWord(topicAt(log.topics, 2));
+      mission.status = missionStatusLabel(decodeUint(topicAt(log.topics, 3)));
+      mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
+      mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
+      mission.returnAt = decodeUintWord(wordAt(words, 2)).toString();
+      mission.cargo = decodeResources(words.slice(3, 6));
+    }
+
+    missions.set(missionId, mission);
+  }
+
+  return missions;
+}
+
+function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mission is FleetMissionSummary {
+  return Boolean(
+    mission.status
+      && mission.missionType
+      && mission.owner
+      && mission.originPlanetId
+      && mission.targetPlanetId
+      && mission.arrivalAt
+      && mission.returnAt
+      && mission.fuelCost !== undefined
+      && mission.cargo
+      && mission.ships
+      && mission.transactionHash
+      && mission.blockNumber
+  );
+}
+
+function missionTypeLabel(value: bigint): string {
+  return missionTypes[Number(value)] ?? `Unknown:${value.toString()}`;
+}
+
+function missionStatusLabel(value: bigint): string {
+  return missionStatuses[Number(value)] ?? `Unknown:${value.toString()}`;
+}
+
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
 const buildingCount = 16;
 const defenseCount = 10;
-const shipCount = 17;
-const technologyCount = 16;
+const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16];
+const supportedTechnologyIds = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const riftBuildingId = 15;
 const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
 const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [
@@ -1303,6 +1603,14 @@ const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
+const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
+const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
+const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
+const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack"] as const;
+const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
 
 export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
@@ -1516,6 +1824,31 @@ function decodeBoolWord(word: string): boolean {
 
 function decodeAddressWord(word: string): Address {
   return `0x${word.slice(-40)}` as Address;
+}
+
+function decodeString(words: string[], headIndex: number): string {
+  const offset = Number(decodeUintWord(wordAt(words, headIndex))) / 32;
+  const length = Number(decodeUintWord(wordAt(words, offset)));
+  let hex = "";
+  for (let index = offset + 1; hex.length < length * 2; index += 1) {
+    hex += wordAt(words, index);
+  }
+  return new TextDecoder().decode(hexToBytes(hex.slice(0, length * 2)));
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function allianceRoleName(role: number): AllianceState["membership"]["role"] {
+  if (role === 1) return "member";
+  if (role === 2) return "officer";
+  if (role === 3) return "leader";
+  return "none";
 }
 
 function decodeResources(words: string[]): Resources {

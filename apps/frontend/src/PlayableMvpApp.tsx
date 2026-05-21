@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type { Coordinates, Planet } from "./types";
-import { GalaxyView } from "./components/GalaxyView";
+import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
 import { OverviewPage } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
+import { AlliancePage } from "./components/AlliancePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import { RiftPage } from "./components/RiftPage";
+import { MoonPage } from "./components/MoonPage";
+import { RankingsPage } from "./components/RankingsPage";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
@@ -37,7 +40,7 @@ import {
   type ResearchKey,
   type ShipKey,
 } from "./playableMvp";
-import { gameContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
+import { allianceContractAddress, gameContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   buildingQueueItemForDisplay,
   buildingCosts,
@@ -54,12 +57,18 @@ import {
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
 import {
+  missionTypeId,
+  type GalaxyAction,
+} from "./galaxyActions";
+import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchDefenseState,
   fetchShipyardState,
   fetchResearchState,
   fetchRiftState,
+  fetchFleetMissionVisibility,
+  fetchAllianceState,
   sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
@@ -71,20 +80,27 @@ import {
   sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
+  sendCreateColonyTransaction,
+  sendLaunchFleetMissionTransaction,
   sendDepositResourceTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
+  sendAllianceInviteTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
+  sendCreateAllianceTransaction,
+  sendOpenDefenseIntentTransaction,
   waitForReceipt,
   type ChainDefenseState,
+  type ChainAllianceState,
   type ChainInfrastructureState,
   type ChainMoonState,
   type ChainResearchState,
   type ChainRiftState,
   type ChainShipyardState,
   type Eip1193Provider,
+  type FleetMissionVisibilityResponse,
   type PendingWithdrawal,
   type PlanetSummary,
   type RiftResourceState,
@@ -105,6 +121,7 @@ type ShipyardActionState =
   | { status: "error"; label: string };
 
 type DefenseActionState = ShipyardActionState;
+type AllianceActionState = ShipyardActionState;
 type RiftActionState = ShipyardActionState;
 
 export function displayHomeCoordinates(
@@ -126,6 +143,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
   const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
+  const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
   const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
   const [onChainError, setOnChainError] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
@@ -139,10 +157,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [defenseLoading, setDefenseLoading] = useState(false);
   const [defenseError, setDefenseError] = useState<string | undefined>();
   const [defenseAction, setDefenseAction] = useState<DefenseActionState>({ status: "idle" });
+  const [allianceState, setAllianceState] = useState<ChainAllianceState | null>(null);
+  const [allianceLoading, setAllianceLoading] = useState(false);
+  const [allianceError, setAllianceError] = useState<string | undefined>();
+  const [allianceAction, setAllianceAction] = useState<AllianceActionState>({ status: "idle" });
   const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
+  const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
   const [researchState, setResearchState] = useState<ChainResearchState | null>(null);
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchError, setResearchError] = useState<string | undefined>();
@@ -222,6 +245,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const gameContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? gameContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const allianceContract = useMemo(() => {
+    return runtimeConfig.status === "ready" ? allianceContractAddress(runtimeConfig.config) : undefined;
+  }, [runtimeConfig]);
 
   const isBuildingReadyToFinish = useMemo(() => {
     if (!onChainQueues?.building?.active || !onChainQueues.building.readyAt) return false;
@@ -277,6 +303,28 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .finally(() => {
         setDefenseLoading(false);
+      });
+  }, [account, apiBaseUrl]);
+
+  const refreshAllianceState = useCallback(() => {
+    if (!apiBaseUrl || !account) {
+      setAllianceState(null);
+      return;
+    }
+
+    setAllianceLoading(true);
+    setAllianceError(undefined);
+    fetchAllianceState(apiBaseUrl, account)
+      .then((next) => {
+        setAllianceState(next);
+      })
+      .catch((error) => {
+        console.error(error);
+        setAllianceState(null);
+        setAllianceError(error instanceof Error ? error.message : "Alliance state could not be loaded.");
+      })
+      .finally(() => {
+        setAllianceLoading(false);
       });
   }, [account, apiBaseUrl]);
 
@@ -350,6 +398,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (!apiBaseUrl || !account) {
       setOnChainSettlement(undefined);
       setOnChainQueues(undefined);
+      setFleetVisibility(undefined);
       setOnChainError(undefined);
       setOnChainStatus(isWalletConnected ? "loading" : "local");
       return;
@@ -357,18 +406,21 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
     try {
-      const [settlement, queues] = await Promise.all([
+      const [settlement, queues, visibility] = await Promise.all([
         fetchWalletSettlement(apiBaseUrl, account),
         fetchWalletQueues(apiBaseUrl, account),
+        fetchFleetMissionVisibility(apiBaseUrl, account),
       ]);
       setOnChainSettlement(settlement);
       setOnChainQueues(queues);
+      setFleetVisibility(visibility);
       setOnChainError(undefined);
       setOnChainStatus("ready");
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainSettlement(undefined);
       setOnChainQueues(undefined);
+      setFleetVisibility(undefined);
       setOnChainStatus("error");
     }
   }, [account, apiBaseUrl, isWalletConnected]);
@@ -477,10 +529,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     const refreshFromChainEvent = () => {
       void refreshOnChainState();
       refreshInfrastructureState();
-      if (page === "shipyard") refreshShipyardState();
+      if (page === "shipyard" || page === "galaxy") refreshShipyardState();
       if (page === "defenses") refreshDefenseState();
+      if (page === "alliance") refreshAllianceState();
       if (page === "research") refreshResearchState();
       if (page === "rift") refreshRiftState();
+      if (page === "moon") refreshInfrastructureState();
     };
     const updateSyncStatus = (event: MessageEvent) => {
       try {
@@ -501,6 +555,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     apiBaseUrl,
     page,
     refreshDefenseState,
+    refreshAllianceState,
     refreshInfrastructureState,
     refreshOnChainState,
     refreshResearchState,
@@ -643,7 +698,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, []);
 
   useEffect(() => {
-    if (page === "shipyard") {
+    if (page === "shipyard" || page === "galaxy") {
       refreshShipyardState();
     }
   }, [page, refreshShipyardState]);
@@ -653,6 +708,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       refreshDefenseState();
     }
   }, [page, refreshDefenseState]);
+
+  useEffect(() => {
+    if (page === "alliance") {
+      refreshAllianceState();
+    }
+  }, [page, refreshAllianceState]);
 
   useEffect(() => {
     if (page === "research") {
@@ -665,6 +726,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       refreshRiftState();
     }
   }, [page, refreshRiftState]);
+
+  useEffect(() => {
+    if (page === "moon") {
+      refreshInfrastructureState();
+    }
+  }, [page, refreshInfrastructureState]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -844,6 +911,26 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshDefenseState, refreshInfrastructureState, refreshOnChainState]);
 
+  const runAllianceTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+    setAllianceAction({ status: "pending", label });
+
+    try {
+      const txHash = await send();
+      setAllianceAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+      if (provider) {
+        await waitForReceipt(provider, txHash);
+      }
+      setAllianceAction({ status: "success", label: `${label} confirmed.` });
+      refreshAllianceState();
+    } catch (error) {
+      console.error(error);
+      setAllianceAction({
+        status: "error",
+        label: error instanceof Error ? error.message : `${label} failed.`,
+      });
+    }
+  }, [provider, refreshAllianceState]);
+
   const runResearchTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setResearchAction({ status: "pending", label });
 
@@ -887,6 +974,28 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       });
     }
   }, [provider, refreshInfrastructureState, refreshOnChainState, refreshRiftState]);
+
+  const runGalaxyTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+    setGalaxyAction({ status: "pending", label });
+
+    try {
+      const txHash = await send();
+      setGalaxyAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+      if (provider) {
+        await waitForReceipt(provider, txHash);
+      }
+      setGalaxyAction({ status: "success", label: `${label} confirmed.` });
+      refreshShipyardState();
+      void refreshOnChainState();
+      refreshInfrastructureState();
+    } catch (error) {
+      console.error(error);
+      setGalaxyAction({
+        status: "error",
+        label: error instanceof Error ? error.message : `${label} failed.`,
+      });
+    }
+  }, [provider, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
 
   const handleCollectResources = useCallback(() => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -974,6 +1083,52 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       defenseState.homePlanetId ?? "0",
     ));
   }, [account, defenseState?.homePlanetId, gameContract, provider, runDefenseTransaction]);
+
+  const handleCreateAlliance = useCallback((tag: string, name: string, metadataURI: string) => {
+    if (!provider || !account || !allianceContract) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance creation", () => sendCreateAllianceTransaction(
+      provider,
+      account,
+      allianceContract,
+      tag,
+      name,
+      metadataURI,
+    ));
+  }, [account, allianceContract, provider, runAllianceTransaction]);
+
+  const handleInviteAllianceMember = useCallback((playerAddress: string) => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance invite", () => sendAllianceInviteTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddress,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
+  const handleOpenDefenseIntent = useCallback((defenderPlanetId: string, hostileMissionId: string) => {
+    if (!provider || !account || !allianceContract) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("ACS defense intent", () => sendOpenDefenseIntentTransaction(
+      provider,
+      account,
+      allianceContract,
+      defenderPlanetId,
+      hostileMissionId,
+    ));
+  }, [account, allianceContract, provider, runAllianceTransaction]);
 
   const handleResearch = useCallback((technologyId: number, _key: ResearchKey) => {
     if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
@@ -1091,6 +1246,45 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, gameContract, provider, riftState?.resources, runRiftTransaction]);
 
+  const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
+    if (!action.enabled) return;
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    if (action.mode === "colonize") {
+      void runGalaxyTransaction("Colony launch", () => sendCreateColonyTransaction(
+        provider,
+        account,
+        gameContract,
+        onChainSettlement.homePlanetId ?? "0",
+        coords.galaxy,
+        coords.system,
+        coords.position,
+      ));
+      return;
+    }
+
+    const targetPlanetId = target?.occupiedBy?.planetId;
+    if (!targetPlanetId) {
+      setGalaxyAction({ status: "error", label: "Target planet is not contract-indexed yet." });
+      return;
+    }
+
+    void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchFleetMissionTransaction(
+      provider,
+      account,
+      gameContract,
+      {
+        originPlanetId: onChainSettlement.homePlanetId ?? "0",
+        targetPlanetId,
+        missionType: missionTypeId(action.mission),
+        ships: action.ships,
+      },
+    ));
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction]);
+
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
     setSelectedCoords(undefined);
@@ -1137,10 +1331,21 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (page === "galaxy") {
       return (
         <GalaxyView
+          account={account}
+          actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
           galaxy={galaxyNav.galaxy}
           homeCoords={homeCoords}
+          homePlanetId={onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
+          missionPlanner={{
+            fleetSlots: shipyardState?.fleetSlots,
+            now,
+            resources: onChainResources,
+            ships: shipyardState?.ships,
+          }}
+          shipyardState={shipyardState}
+          onAction={handleGalaxyAction}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
@@ -1168,15 +1373,23 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
-          moonError={moonError}
-          moonLoading={moonLoading}
-          moonState={moonState}
           now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}
           settledState={infrastructureState}
           state={state}
+        />
+      );
+    }
+
+    if (page === "moon") {
+      return (
+        <MoonPage
+          error={moonError}
+          loading={moonLoading}
+          moonState={moonState}
+          onRefresh={refreshInfrastructureState}
         />
       );
     }
@@ -1209,6 +1422,22 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onBuild={handleBuildDefense}
           onFinish={handleFinishDefenseProduction}
           onRefresh={refreshDefenseState}
+        />
+      );
+    }
+
+    if (page === "alliance") {
+      return (
+        <AlliancePage
+          actionState={allianceAction}
+          allianceState={allianceState}
+          canTransact={Boolean(provider && account && allianceContract)}
+          error={allianceError}
+          loading={allianceLoading}
+          onCreate={handleCreateAlliance}
+          onInvite={handleInviteAllianceMember}
+          onOpenDefenseIntent={handleOpenDefenseIntent}
+          onRefresh={refreshAllianceState}
         />
       );
     }
@@ -1247,12 +1476,19 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       );
     }
 
+    if (page === "rankings") {
+      return (
+        <RankingsPage apiBaseUrl={apiBaseUrl} />
+      );
+    }
+
     return (
       <OverviewPage
         caps={caps}
         isWalletConnected={isWalletConnected}
         now={now}
         onChainError={onChainError}
+        fleetVisibility={fleetVisibility}
         onChainQueues={onChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
@@ -1272,10 +1508,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   })();
 
   return (
-    <div className="min-h-dvh bg-[#070913] text-slate-100">
+    <div className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#05070f] text-slate-100">
       {topBar}
 
-      <div className="mx-auto flex max-w-7xl flex-col md:h-[calc(100dvh-52px)] md:flex-row md:overflow-hidden">
+      <div className="relative z-10 mx-auto flex max-w-7xl flex-col md:h-[calc(100dvh-52px)] md:flex-row md:overflow-hidden">
         <NavBar
           account={account}
           active={page}

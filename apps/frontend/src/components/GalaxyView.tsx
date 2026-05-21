@@ -12,21 +12,85 @@ import {
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
+import type { ChainShipyardState } from "../walletFlow";
+import {
+  galaxyActionsForSlot,
+  type GalaxyAction,
+} from "../galaxyActions";
 import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
+const MISSION_SPEED_BPS = 10_000;
+const MIN_FLEET_TRAVEL_SECONDS = 300;
+const SMALL_CARGO_CAPACITY = 5_000;
+const SMALL_CARGO_SHIP_ID = 0;
+
+type MissionResources = {
+  metal?: number;
+  crystal?: number;
+  deuterium?: number;
+};
+
+export type GalaxyMissionPlanner = {
+  fleetSlots?: {
+    active: number;
+    limit: number;
+  } | undefined;
+  resources?: MissionResources | undefined;
+  ships?: Array<{ id: number; count: number }> | undefined;
+  now?: number | undefined;
+};
+
+export type GalaxyMissionPreview = {
+  blockedReason?: string | undefined;
+  cargoCapacity: number;
+  fleetSlots: {
+    active: number;
+    limit: number;
+  };
+  fuelCost: number;
+  arrivalAt: number;
+  returnAt: number;
+};
+
+export type GalaxyActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
+
 interface Props {
+  account?: string | undefined;
+  actionState?: GalaxyActionState | undefined;
   galaxy: number;
   system: number;
   apiBaseUrl?: string | undefined;
   homeCoords?: Coordinates | undefined;
+  homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
+  missionPlanner?: GalaxyMissionPlanner | undefined;
+  shipyardState?: ChainShipyardState | null | undefined;
+  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
 }
 
-export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onSelectPlanet, onNavigate }: Props) {
+export function GalaxyView({
+  account,
+  actionState = { status: "idle" },
+  galaxy,
+  system,
+  apiBaseUrl = playableApiUrl,
+  homeCoords,
+  homePlanetId,
+  homePlanet,
+  missionPlanner,
+  shipyardState = null,
+  onAction,
+  onSelectPlanet,
+  onNavigate,
+}: Props) {
   const [planets, setPlanets] = useState<Planet[]>([]);
   const [loading, setLoading] = useState(true);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
@@ -168,6 +232,17 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
             {formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem))}
           </span>
         </div>
+        {actionState.status !== "idle" ? (
+          <div className={`rounded border px-3 py-2 text-xs ${
+            actionState.status === "error"
+              ? "border-red-300/30 bg-red-500/10 text-red-100"
+              : actionState.status === "success"
+                ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
+                : "border-signal/25 bg-signal/10 text-signal"
+          }`}>
+            {actionState.label}
+          </div>
+        ) : null}
 
         <div className="grid gap-1.5">
           {loading && (
@@ -185,10 +260,17 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
                   galaxy={galaxy}
                   isHome={isHome}
                   key={pos}
+                  missionPlanner={missionPlanner}
+                  missionHomeCoords={homeCoords}
+                  account={account}
+                  actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
+                  onAction={onAction}
                   homeCoords={homeCoordsInSystem}
+                  homePlanetId={homePlanetId}
                   planet={planet}
                   position={pos}
+                  shipyardState={shipyardState}
                   system={system}
                 />
               );
@@ -278,26 +360,106 @@ export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): strin
   return formatPlanetType(planetTypeFromTemperature(orbitalTemperature));
 }
 
+export function estimateGalaxyMissionPreview({
+  homeCoords,
+  now = Date.now(),
+  planner,
+  target,
+}: {
+  homeCoords: Coordinates | undefined;
+  now?: number;
+  planner: GalaxyMissionPlanner | undefined;
+  target: Coordinates;
+}): GalaxyMissionPreview | undefined {
+  if (!homeCoords || !planner) return undefined;
+  const fleetSlots = planner.fleetSlots ?? { active: 0, limit: 1 };
+  const smallCargoCount = planner.ships?.find((ship) => ship.id === SMALL_CARGO_SHIP_ID)?.count ?? 0;
+  const travelSeconds = galaxyMissionTravelSeconds(homeCoords, target);
+  const fuelCost = galaxyMissionFuelCost(homeCoords, target, 1);
+  const arrivalAt = now + travelSeconds * 1_000;
+  const returnAt = arrivalAt + travelSeconds * 1_000;
+  let blockedReason: string | undefined;
+
+  if (sameCoordinateValues(homeCoords, target)) {
+    blockedReason = "Origin planet";
+  } else if (fleetSlots.active >= fleetSlots.limit) {
+    blockedReason = "No fleet slots open";
+  } else if (smallCargoCount < 1) {
+    blockedReason = "No Small Cargo available";
+  } else if ((planner.resources?.deuterium ?? 0) < fuelCost) {
+    blockedReason = `Need ${fuelCost.toLocaleString()} deuterium`;
+  }
+
+  return {
+    blockedReason,
+    cargoCapacity: SMALL_CARGO_CAPACITY,
+    fleetSlots,
+    fuelCost,
+    arrivalAt,
+    returnAt,
+  };
+}
+
+export function galaxyMissionTravelSeconds(origin: Coordinates, target: Coordinates): number {
+  const distance = galaxyMissionDistance(origin, target);
+  return MIN_FLEET_TRAVEL_SECONDS + Math.ceil((distance * 10_000) / MISSION_SPEED_BPS);
+}
+
+export function galaxyMissionFuelCost(origin: Coordinates, target: Coordinates, shipCount: number): number {
+  if (shipCount <= 0) return 0;
+  const distance = Math.max(galaxyMissionDistance(origin, target), 1);
+  const scaledFuel = Math.floor((shipCount * distance * MISSION_SPEED_BPS) / (10_000 * 1_000));
+  return Math.max(scaledFuel, shipCount);
+}
+
+function galaxyMissionDistance(origin: Coordinates, target: Coordinates): number {
+  return Math.abs(origin.galaxy - target.galaxy) * SYSTEM_COUNT * POSITION_COUNT
+    + Math.abs(origin.system - target.system) * POSITION_COUNT
+    + Math.abs(origin.position - target.position);
+}
+
 function GalaxySlot({
+  account,
+  actionState,
   galaxy,
   system,
   position,
   planet,
+  missionPlanner,
+  missionHomeCoords,
   homeCoords,
+  homePlanetId,
   isHome,
+  shipyardState,
+  onAction,
   onSelectPlanet,
 }: {
+  account: string | undefined;
+  actionState: GalaxyActionState;
   galaxy: number;
   system: number;
   position: number;
   planet: Planet | undefined;
+  missionPlanner: GalaxyMissionPlanner | undefined;
+  missionHomeCoords: Coordinates | undefined;
   homeCoords: Coordinates | undefined;
+  homePlanetId: string | null | undefined;
   isHome: boolean;
+  shipyardState: ChainShipyardState | null;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const isPendingHomePlanet = !planet && homeCoords?.position === position;
+  const coords = { galaxy, system, position };
+  const actions = galaxyActionsForSlot({
+    account,
+    homePlanetId,
+    isOrigin: isHome,
+    planet,
+    shipyardState,
+  });
 
   useEffect(() => {
     setImageLoaded(isImageReady(imageRef.current));
@@ -321,13 +483,19 @@ function GalaxySlot({
     }
 
     return (
-      <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-white/5 bg-black/15 px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_7rem]">
+      <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-white/5 bg-black/15 px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_minmax(8rem,auto)]">
         <SlotNumber position={position} muted />
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-500">Empty space</div>
           <div className="text-xs text-slate-700">No generated or indexed planet at this position.</div>
         </div>
-        <div className="hidden justify-self-end text-xs text-slate-700 sm:block">No action</div>
+        <ActionButtons
+          actions={actions}
+          busy={actionState.status === "pending"}
+          coords={coords}
+          onAction={onAction}
+          planet={undefined}
+        />
       </div>
     );
   }
@@ -340,20 +508,27 @@ function GalaxySlot({
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
+  const missionPreview = estimateGalaxyMissionPreview({
+    homeCoords: missionHomeCoords,
+    planner: missionPlanner,
+    target: { galaxy, system, position },
+  });
 
   return (
-    <button
+    <div
       className={`group grid min-h-16 w-full grid-cols-[3rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2 text-left transition sm:grid-cols-[4rem_minmax(0,1fr)_7rem_auto] ${
         isHome
           ? "border-cyan-300/40 bg-cyan-300/10 shadow-[0_0_18px_rgba(103,232,249,0.10)]"
           : "border-white/10 bg-white/[0.035] hover:border-signal/35 hover:bg-white/[0.06]"
       }`}
-      onClick={() => onSelectPlanet({ galaxy, system, position })}
-      type="button"
     >
       <SlotNumber position={position} />
 
-      <div className="flex min-w-0 items-center gap-3">
+      <button
+        className="flex min-w-0 items-center gap-3 text-left"
+        onClick={() => onSelectPlanet(coords)}
+        type="button"
+      >
         <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
           isHome ? "border-cyan-300/35" : "border-white/15"
         }`}>
@@ -400,18 +575,87 @@ function GalaxySlot({
               </>
             ) : null}
           </div>
+          {missionPreview ? (
+            <div className={`mt-1 text-xs ${missionPreview.blockedReason ? "text-amber-200/80" : "text-cyan-100/80"}`}>
+              {formatMissionPreview(missionPreview)}
+            </div>
+          ) : null}
         </div>
-      </div>
+      </button>
 
       <div className={`hidden justify-self-end text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
         {ownerLabel}
       </div>
 
-      <span className="justify-self-end rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal group-hover:bg-signal/10">
-        {debrisLabel ? "Harvest" : "Inspect"}
-      </span>
-    </button>
+      <div className="flex flex-wrap justify-end gap-1.5">
+        <button
+          className="rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal hover:bg-signal/10"
+          onClick={() => onSelectPlanet(coords)}
+          type="button"
+        >
+          Inspect
+        </button>
+        <ActionButtons
+          actions={actions}
+          busy={actionState.status === "pending"}
+          coords={coords}
+          onAction={onAction}
+          planet={planet}
+        />
+      </div>
+    </div>
   );
+}
+
+function ActionButtons({
+  actions,
+  busy,
+  coords,
+  onAction,
+  planet,
+}: {
+  actions: GalaxyAction[];
+  busy: boolean;
+  coords: Coordinates;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  planet: Planet | undefined;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-1.5">
+      {actions.map((action) => (
+        <button
+          className={`rounded border px-2 py-1 text-xs font-medium transition ${
+            action.enabled
+              ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
+              : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
+          }`}
+          disabled={!action.enabled || busy || !onAction}
+          key={action.kind}
+          onClick={() => {
+            if (action.enabled) onAction?.(action, planet, coords);
+          }}
+          title={action.enabled ? action.label : action.reason}
+          type="button"
+        >
+          {action.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function formatMissionPreview(preview: GalaxyMissionPreview): string {
+  const slotLabel = `Fleet ${preview.fleetSlots.active}/${preview.fleetSlots.limit}`;
+  if (preview.blockedReason) return `${slotLabel} / ${preview.blockedReason}`;
+
+  return `${slotLabel} / Fuel ${preview.fuelCost.toLocaleString()} D / Cargo ${preview.cargoCapacity.toLocaleString()} / Arrives ${formatMissionClock(preview.arrivalAt)} / Returns ${formatMissionClock(preview.returnAt)}`;
+}
+
+function formatMissionClock(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
 }
 
 function formatCompactResource(value: number): string {
@@ -439,6 +683,12 @@ function sameCoordinates(homeCoords: Coordinates | undefined, planet: Planet): b
       && homeCoords.system === planet.system
       && homeCoords.position === planet.position
   );
+}
+
+function sameCoordinateValues(left: Coordinates, right: Coordinates): boolean {
+  return left.galaxy === right.galaxy
+    && left.system === right.system
+    && left.position === right.position;
 }
 
 function withHomePlanet(

@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Factory, FlaskConical, Orbit, Radar, Rocket, Shield } from "lucide-preact";
+import { ArrowLeftRight, Factory, FlaskConical, Moon, Orbit, Radar, Rocket, Shield, Trophy, Users } from "lucide-preact";
 
 import { shortAddress } from "../walletFlow";
 
@@ -9,7 +9,10 @@ export type Page =
   | "defenses"
   | "research"
   | "shipyard"
+  | "moon"
+  | "alliance"
   | "rift"
+  | "rankings"
   | "galaxy"
   | "planet";
 
@@ -26,7 +29,10 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "defenses", label: "Defenses", mobileLabel: "Defense", icon: Shield },
   { key: "research", label: "Research", mobileLabel: "Research", icon: FlaskConical },
   { key: "shipyard", label: "Shipyard", mobileLabel: "Shipyard", icon: Rocket },
+  { key: "moon", label: "Moon", mobileLabel: "Moon", icon: Moon },
+  { key: "alliance", label: "Alliance", mobileLabel: "Ally", icon: Users },
   { key: "rift", label: "Rift", mobileLabel: "Rift", icon: ArrowLeftRight },
+  { key: "rankings", label: "Rankings", mobileLabel: "Ranks", icon: Trophy },
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },
 ];
 
@@ -73,7 +79,7 @@ export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps
       </nav>
 
       {/* Mobile top tabs */}
-      <nav className="grid grid-cols-7 border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
+      <nav className="grid grid-cols-4 border-b border-white/10 bg-[#0c111b]/95 backdrop-blur sm:grid-cols-9 md:hidden">
         {pages.map((page) => (
           <MobileTab
             active={active === page.key || (active === "planet" && page.key === "galaxy")}

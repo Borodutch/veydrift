@@ -1,8 +1,10 @@
 import type {
   Address,
+  AllianceState,
   ChainReader,
   DebrisFieldEvent,
   DefenseState,
+  FleetMissionVisibility,
   InfrastructureState,
   MoonState,
   PlanetState,
@@ -44,6 +46,10 @@ export class CachedChainReader implements ChainReader {
     return this.cached(`queues:${wallet.toLowerCase()}`, () => this.inner.getPlayerQueues(wallet));
   }
 
+  getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
+    return this.cached(`fleet-visibility:${wallet.toLowerCase()}`, () => this.inner.getFleetMissionVisibility(wallet));
+  }
+
   getInfrastructureState(wallet: Address): Promise<InfrastructureState> {
     return this.cached(`infrastructure:${wallet.toLowerCase()}`, () => this.inner.getInfrastructureState(wallet));
   }
@@ -66,6 +72,10 @@ export class CachedChainReader implements ChainReader {
 
   getRiftState(wallet: Address): Promise<RiftState> {
     return this.cached(`rift:${wallet.toLowerCase()}`, () => this.inner.getRiftState(wallet));
+  }
+
+  getAllianceState(wallet: Address): Promise<AllianceState> {
+    return this.cached(`alliance:${wallet.toLowerCase()}`, () => this.inner.getAllianceState(wallet));
   }
 
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {

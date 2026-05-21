@@ -183,7 +183,6 @@ library VeydriftDependencies {
     function requireShip(
         Ship ship,
         uint16 shipyardLevel,
-        uint16 espionageLevel,
         uint16 combustionDriveLevel,
         uint16 impulseDriveLevel,
         uint16 hyperspaceDriveLevel,
@@ -252,15 +251,6 @@ library VeydriftDependencies {
         }
         if (ship == Ship.Battleship && hyperspaceDriveLevel < 4) {
             revert MissingDependency("HYPERSPACE_DRIVE_4");
-        }
-        if (ship == Ship.EspionageProbe && shipyardLevel < 3) {
-            revert MissingDependency("SHIPYARD_3");
-        }
-        if (ship == Ship.EspionageProbe && combustionDriveLevel < 3) {
-            revert MissingDependency("COMBUSTION_3");
-        }
-        if (ship == Ship.EspionageProbe && espionageLevel < 2) {
-            revert MissingDependency("ESPIONAGE_2");
         }
         if (ship == Ship.Bomber && shipyardLevel < 8) {
             revert MissingDependency("SHIPYARD_8");
@@ -344,7 +334,6 @@ library VeydriftDependencies {
         uint16 laserLevel,
         uint16 ionLevel,
         uint16 hyperspaceLevel,
-        uint16 espionageLevel,
         uint16 impulseDriveLevel,
         uint16 computerLevel,
         uint16 shieldingLevel
@@ -385,9 +374,8 @@ library VeydriftDependencies {
         {
             revert MissingDependency("ENERGY_8_LASER_10_ION_5");
         }
-        if (technology == Technology.Astrophysics && (espionageLevel < 4 || impulseDriveLevel < 3))
-        {
-            revert MissingDependency("ESPIONAGE_4_IMPULSE_3");
+        if (technology == Technology.Astrophysics && impulseDriveLevel < 3) {
+            revert MissingDependency("IMPULSE_3");
         }
         if (
             technology == Technology.IntergalacticResearchNetwork

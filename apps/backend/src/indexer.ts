@@ -40,6 +40,19 @@ export class SettlementIndexer {
     });
   }
 
+  settledPlanets(): SettledPlanetEvent[] {
+    return [...this.planets.values()];
+  }
+
+  settledPlanetsByOwner(): Map<string, SettledPlanetEvent[]> {
+    const planetsByOwner = new Map<string, SettledPlanetEvent[]>();
+    for (const planet of this.planets.values()) {
+      const owner = planet.owner.toLowerCase();
+      planetsByOwner.set(owner, [...(planetsByOwner.get(owner) ?? []), planet]);
+    }
+    return planetsByOwner;
+  }
+
   applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
     this.planets.set(event.planetId, event);
     this.lastRebuiltAt = new Date().toISOString();

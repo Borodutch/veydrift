@@ -93,14 +93,14 @@ contract VeydriftOGameFormulaConformanceTest is Test {
                 VeydriftDependencies.MissingDependency.selector, DEP_COMBUSTION_2
             )
         );
-        VeydriftDependencies.requireShip(Ship.SmallCargo, 2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-        VeydriftDependencies.requireShip(Ship.SmallCargo, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        VeydriftDependencies.requireShip(Ship.SmallCargo, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        VeydriftDependencies.requireShip(Ship.SmallCargo, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, DEP_ION_2)
         );
-        VeydriftDependencies.requireShip(Ship.Cruiser, 5, 0, 0, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0);
-        VeydriftDependencies.requireShip(Ship.Cruiser, 5, 0, 0, 4, 0, 0, 0, 0, 0, 2, 0, 0, 0);
+        VeydriftDependencies.requireShip(Ship.Cruiser, 5, 0, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0);
+        VeydriftDependencies.requireShip(Ship.Cruiser, 5, 0, 4, 0, 0, 0, 0, 0, 2, 0, 0, 0);
     }
 
     function testVanillaOGameDefenseCostsAndRequirements() public {
@@ -128,8 +128,8 @@ contract VeydriftOGameFormulaConformanceTest is Test {
                 VeydriftDependencies.MissingDependency.selector, DEP_PLASMA_RESEARCH
             )
         );
-        VeydriftDependencies.requireResearch(Technology.Plasma, 4, 8, 10, 4, 0, 0, 0, 0, 0);
-        VeydriftDependencies.requireResearch(Technology.Plasma, 4, 8, 10, 5, 0, 0, 0, 0, 0);
+        VeydriftDependencies.requireResearch(Technology.Plasma, 4, 8, 10, 4, 0, 0, 0, 0);
+        VeydriftDependencies.requireResearch(Technology.Plasma, 4, 8, 10, 5, 0, 0, 0, 0);
     }
 
     function _assertBuildingCost(
