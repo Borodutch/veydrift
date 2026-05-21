@@ -45,6 +45,10 @@ bun run test:contracts
 
 `VeydriftGame` is an upgradeable MVP contract with one paid home planet per wallet,
 player-owned colonies, lazy resource settlement, and non-combat transport fleets.
+Gameplay state is public onchain state. Contracts, public events, and ordinary
+indexers must be enough to reconstruct canonical state; the backend is read-side
+convenience infrastructure, not hidden authority. See
+`../../docs/public-onchain-state-architecture.md`.
 
 `VeydriftSettlement` is the compact Base Sepolia first-planet settlement contract used for the
 initial wallet-connect MVP while `VeydriftGame` continues to grow. It supports one settlement per
@@ -297,8 +301,13 @@ The proxy owner must be the broadcasting account for upgrades.
 
 This ticket intentionally leaves these systems for later work:
 
-- Combat, attacks, espionage reports, debris fields, moons, alliances, and markets
+- Combat, attacks, debris fields, moons, alliances, and markets
 - NFTs or transferable planet ownership
-- Commit-reveal or private-orderflow protections for future hidden fleet intent
+
+Espionage reports, hidden fleet intent, commit-reveal protections, private
+orderflow, and other hidden-state mechanics are out of scope permanently for the
+Veydrift product direction. Fleet and combat systems should use the public
+counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
+VEY-KANEO-133.
 
 The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, one active construction or production slot per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.

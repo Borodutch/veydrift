@@ -15,4 +15,4 @@ if (missingPaths.length > 0) {
   process.exit(1);
 }
 
-console.log("Circuit workspace placeholders are present.");
+console.log("Retired circuit workspace placeholders are present.");
