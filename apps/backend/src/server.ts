@@ -2,6 +2,7 @@ import { generateSystem } from "@veydrift/universe";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import { assertAddress, type ChainReader, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
+import { PrivateStateStore } from "./privateState";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -46,6 +47,7 @@ export type ServerDependencies = {
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
   indexer?: SettlementIndexer;
+  privateStateStore?: PrivateStateStore;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -58,6 +60,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const indexer =
     dependencies.indexer ??
     (chainReader ? new SettlementIndexer(chainReader, loaded.config.indexFromBlock) : undefined);
+  const privateStateStore = dependencies.privateStateStore ?? new PrivateStateStore(process.env.VEYDRIFT_PRIVATE_STATE_SECRET);
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -101,6 +104,44 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           headers: corsHeaders
         }
       );
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/private\/wallet\/[^/]+\/planets\/[^/]+$/)) {
+      const parts = url.pathname.split("/");
+      const wallet = decodeURIComponent(parts[3] ?? "");
+      const planetId = decodeURIComponent(parts[5] ?? "");
+      const auth = request.headers.get("authorization") ?? "";
+      if (auth !== "Bearer " + wallet.toLowerCase()) {
+        return Response.json({ error: "unauthorized" }, { headers: corsHeaders, status: 401 });
+      }
+
+      try {
+        assertAddress(wallet);
+        return Response.json(privateStateStore.authorizedPlanetState(wallet, planetId), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 404);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/private\/wallet\/[^/]+\/planets\/[^/]+\/snapshot$/)) {
+      const parts = url.pathname.split("/");
+      const wallet = decodeURIComponent(parts[3] ?? "");
+      const planetId = decodeURIComponent(parts[5] ?? "");
+      const auth = request.headers.get("authorization") ?? "";
+      if (auth !== "Bearer " + wallet.toLowerCase()) {
+        return Response.json({ error: "unauthorized" }, { headers: corsHeaders, status: 401 });
+      }
+
+      try {
+        assertAddress(wallet);
+        return Response.json(privateStateStore.exportSnapshot(wallet, planetId), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 404);
+      }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/settlement$/)) {
