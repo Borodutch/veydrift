@@ -899,15 +899,6 @@
       "512": "/assets/game/sizes/512/style-pass/generated/research/energy.webp"
     }
   },
-  "/assets/game/style-pass/generated/research/espionage.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/style-pass/generated/research/espionage.webp",
-      "256": "/assets/game/sizes/256/style-pass/generated/research/espionage.webp",
-      "512": "/assets/game/sizes/512/style-pass/generated/research/espionage.webp"
-    }
-  },
   "/assets/game/style-pass/generated/research/graviton.webp": {
     "width": 1024,
     "height": 1024,
@@ -1068,15 +1059,6 @@
       "64": "/assets/game/sizes/64/style-pass/generated/ships/destroyer.webp",
       "256": "/assets/game/sizes/256/style-pass/generated/ships/destroyer.webp",
       "512": "/assets/game/sizes/512/style-pass/generated/ships/destroyer.webp"
-    }
-  },
-  "/assets/game/style-pass/generated/ships/espionage-probe.webp": {
-    "width": 1024,
-    "height": 1024,
-    "variants": {
-      "64": "/assets/game/sizes/64/style-pass/generated/ships/espionage-probe.webp",
-      "256": "/assets/game/sizes/256/style-pass/generated/ships/espionage-probe.webp",
-      "512": "/assets/game/sizes/512/style-pass/generated/ships/espionage-probe.webp"
     }
   },
   "/assets/game/style-pass/generated/ships/heavy-fighter.webp": {

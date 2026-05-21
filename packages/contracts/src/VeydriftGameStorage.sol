@@ -147,7 +147,7 @@ abstract contract VeydriftGameStorage {
         uint32 heavyFighter;
         uint32 cruiser;
         uint32 battleship;
-        uint32 espionageProbe;
+        uint32 removedShipSlot;
         uint32 bomber;
         uint32 destroyer;
         uint32 deathstar;

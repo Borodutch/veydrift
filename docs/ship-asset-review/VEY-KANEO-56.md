@@ -29,7 +29,7 @@ Please approve, reject, or edit the proposed mapping below before any ship asset
 | 06 | Heavy Fighter | `heavy-fighter.webp` | Concept sheet row 2, column 2 | Heavier fighter silhouette; crop should keep the long rear fins visible. |
 | 07 | Cruiser | `cruiser.webp` | Concept sheet row 2, column 3 | Long capital-ship profile; use consistent side padding so it does not look smaller than combat peers. |
 | 08 | Battleship | `battleship.webp` | Concept sheet row 2, column 4 | Heavy capital hull; crop should keep bow and engine glow inside frame. |
-| 09 | Espionage Probe | `espionage-probe.webp` | Concept sheet row 3, column 1 | Small spherical probe; should stay centered and visibly smaller than ships. |
+| 09 | Removed spy probe slot | Removed | Removed from Veydrift scope after VEY-KANEO-111. | No probe asset is shipped or referenced by the playable catalog. |
 | 10 | Bomber | `bomber.webp` | Concept sheet row 3, column 2 | Wide bomber silhouette; crop needs enough vertical room for wing span. |
 | 11 | Solar Satellite | `solar-satellite.webp` | Concept sheet row 3, column 3 | Satellite panels should remain fully visible and not be mistaken for a combat ship. |
 | 12 | Destroyer | `destroyer.webp` | Concept sheet row 3, column 4 | Long narrow destroyer hull; needs consistent length scaling against Cruiser and Battleship. |

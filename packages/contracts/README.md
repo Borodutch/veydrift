@@ -194,7 +194,7 @@ Ships:
 | 5 | HeavyFighter |
 | 6 | Cruiser |
 | 7 | Battleship |
-| 8 | EspionageProbe |
+| 8 | RemovedShipSlot |
 | 9 | Bomber |
 | 10 | SolarSatellite |
 | 11 | Destroyer |
@@ -211,7 +211,7 @@ Technologies:
 | 1 | Laser |
 | 2 | Ion |
 | 3 | CombustionDrive |
-| 4 | Espionage |
+| 4 | RemovedTechnology |
 | 5 | Computer |
 | 6 | Weapons |
 | 7 | Shielding |
@@ -309,15 +309,16 @@ The proxy owner must be the broadcasting account for upgrades.
 
 This ticket intentionally leaves these systems for later work:
 
-- Combat, attacks, debris fields, moons, alliances, and markets
+- Combat, attacks, debris fields, alliances, and markets
 - NFTs or transferable planet ownership
 
-Espionage reports, hidden fleet intent, commit-reveal protections, private
-orderflow, and other hidden-state mechanics are out of scope permanently for the
-Veydrift product direction. Fleet and combat systems should use the public
+Veydrift uses public blockchain state as the source of truth. Espionage reports,
+hidden fleet intent, commit-reveal protections, private orderflow, and other
+hidden-state mechanics are out of scope permanently for the product direction.
+There is no private state, spy report flow, probe unit, or research path for
+revealing information. Fleet and combat systems should use the public
 counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
-VEY-KANEO-133. Fleet missions are public contract state so attacker risk comes
-from visible commitment, recall limits, return exposure, and future ACS/intercept
-rules.
+VEY-KANEO-133: visible commitment, recall limits, return exposure, and future
+ACS/intercept rules.
 
 The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, one active construction or production slot per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.

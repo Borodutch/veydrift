@@ -436,7 +436,6 @@ const technologyIdByKey: Partial<Record<string, number>> = {
   laser: 1,
   ion: 2,
   combustionDrive: 3,
-  espionage: 4,
   computer: 5,
   weapons: 6,
   shielding: 7,

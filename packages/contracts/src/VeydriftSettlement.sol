@@ -134,9 +134,9 @@ contract VeydriftSettlement {
         );
         uint256 startIndex = uint256(entropy) % TOTAL_COORDINATES;
 
-        for (uint32 probe = 0; probe < TOTAL_COORDINATES; probe++) {
+        for (uint32 attempt = 0; attempt < TOTAL_COORDINATES; attempt++) {
             (uint16 galaxy, uint16 system, uint8 position) =
-                _coordinatesFromIndex((startIndex + probe) % TOTAL_COORDINATES);
+                _coordinatesFromIndex((startIndex + attempt) % TOTAL_COORDINATES);
             bytes32 key = coordinateKey(galaxy, system, position);
 
             if (coordinateOwner[key] == address(0)) {

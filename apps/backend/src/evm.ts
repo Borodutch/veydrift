@@ -666,7 +666,7 @@ export class VeydriftGameReader implements ChainReader {
         shipyardLevel: 0,
         naniteLevel: 0,
         technologyLevels: {},
-        ships: Array.from({ length: shipCount }, (_, id) => ({
+        ships: supportedShipIds.map((id) => ({
           id,
           count: 0,
           cost: zeroResources()
@@ -794,7 +794,7 @@ export class VeydriftGameReader implements ChainReader {
         resources: null,
         researchLabLevel: 0,
         technologyLevels: {},
-        technologies: Array.from({ length: technologyCount }, (_, id) => ({
+        technologies: supportedTechnologyIds.map((id) => ({
           id,
           level: 0,
           cost: zeroResources()
@@ -995,7 +995,7 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readTechnologyLevels(wallet: Address): Promise<Record<string, number>> {
     const entries = await Promise.all(
-      Array.from({ length: technologyCount }, async (_, id) => [
+      supportedTechnologyIds.map(async (id) => [
         id.toString(),
         Number(await this.readUintCall("0xe512884c", [encodeAddress(wallet), encodeUint(BigInt(id))]))
       ] as const)
@@ -1006,7 +1006,7 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readShipRows(planetId: bigint): Promise<ShipyardState["ships"]> {
     return Promise.all(
-      Array.from({ length: shipCount }, async (_, id) => {
+      supportedShipIds.map(async (id) => {
         const [count, cost] = await Promise.all([
           this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
           this.readResources("0xc4222030", BigInt(id))
@@ -1098,7 +1098,7 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readTechnologyRows(wallet: Address): Promise<ResearchState["technologies"]> {
     return Promise.all(
-      Array.from({ length: technologyCount }, async (_, id) => {
+      supportedTechnologyIds.map(async (id) => {
         const [level, cost] = await Promise.all([
           this.readUintCall("0xe512884c", [encodeAddress(wallet), encodeUint(BigInt(id))]),
           this.readResourcesCall("0x6e984888", [encodeAddress(wallet), encodeUint(BigInt(id))])
@@ -1431,8 +1431,8 @@ function missionStatusLabel(value: bigint): string {
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
 const buildingCount = 16;
 const defenseCount = 10;
-const shipCount = 17;
-const technologyCount = 16;
+const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16];
+const supportedTechnologyIds = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const riftBuildingId = 15;
 const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
 const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [

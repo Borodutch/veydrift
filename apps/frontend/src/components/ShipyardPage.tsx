@@ -29,7 +29,7 @@ interface ShipyardPageProps {
 const groupLabels = {
   civil: "Civil and economy",
   combat: "Combat ships",
-  special: "Probes, satellites, specials",
+  special: "Satellites and specials",
 } as const;
 
 export function ShipyardPage({
@@ -399,7 +399,6 @@ const technologyIdByKey: Partial<Record<string, number>> = {
   laser: 1,
   ion: 2,
   combustionDrive: 3,
-  espionage: 4,
   computer: 5,
   weapons: 6,
   shielding: 7,
