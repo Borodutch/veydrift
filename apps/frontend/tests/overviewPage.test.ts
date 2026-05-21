@@ -3,6 +3,7 @@ import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
 } from "../src/overviewHeroImage";
+import { queueProgressBarState } from "../src/overviewData";
 import type { Planet } from "../src/types";
 
 const homePlanet: Planet = {
@@ -55,5 +56,37 @@ describe("overview planet hero image", () => {
       { image: homePlanet.image, planetKey: "1:42:7" },
       "1:42:8"
     )).toBeUndefined();
+  });
+});
+
+describe("overview queue progress display", () => {
+  test("renders ready queues as complete even when the source payload was indeterminate", () => {
+    expect(queueProgressBarState({
+      indeterminate: true,
+      remaining: "Ready",
+    })).toEqual({
+      indeterminate: false,
+      progress: 1,
+    });
+  });
+
+  test("keeps pending unknown-duration queues indeterminate", () => {
+    expect(queueProgressBarState({
+      indeterminate: true,
+      remaining: "Pending",
+    })).toEqual({
+      indeterminate: true,
+      progress: 0,
+    });
+  });
+
+  test("clamps determinate queue progress", () => {
+    expect(queueProgressBarState({
+      progress: 1.25,
+      remaining: "12s",
+    })).toEqual({
+      indeterminate: false,
+      progress: 1,
+    });
   });
 });

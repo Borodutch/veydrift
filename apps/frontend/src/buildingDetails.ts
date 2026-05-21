@@ -21,12 +21,6 @@ const resourceLabels: Record<keyof Resources, string> = {
   deuterium: "Deuterium",
 };
 
-const buildingEnergyConsumption: Partial<Record<BuildingKey, number>> = {
-  metalMine: 10,
-  crystalMine: 12,
-  deuteriumSynthesizer: 20,
-};
-
 export type BuildingUpgradeStatus = {
   cost: Resources;
   disabled: boolean;
@@ -232,13 +226,12 @@ export function buildingEnergyDetail(
     };
   }
 
-  const perLevel = buildingEnergyConsumption[key];
-  if (!perLevel) {
+  const current = energyRequiredForBuildingLevel(key, buildings[key]);
+  const next = energyRequiredForBuildingLevel(key, buildings[key] + 1);
+  if (current === undefined || next === undefined) {
     return { kind: "none" };
   }
 
-  const current = buildings[key] * perLevel;
-  const next = (buildings[key] + 1) * perLevel;
   return {
     kind: "requires",
     current,
@@ -291,8 +284,20 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
 }
 
 function energyRequiredForBuildingLevel(key: BuildingKey, level: number): number | undefined {
-  const perLevel = buildingEnergyConsumption[key];
-  return perLevel === undefined ? undefined : perLevel * level;
+  if (key === "metalMine" || key === "crystalMine") {
+    return scaledLevelValue(10, level);
+  }
+
+  if (key === "deuteriumSynthesizer") {
+    return scaledLevelValue(20, level);
+  }
+
+  return undefined;
+}
+
+function scaledLevelValue(base: number, level: number): number {
+  if (level === 0) return 0;
+  return Math.floor((base * level * (11 ** level)) / (10 ** level));
 }
 
 function productionResourceForBuilding(key: BuildingKey): keyof Resources {

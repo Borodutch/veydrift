@@ -241,7 +241,7 @@ export const buildingCatalog: Array<{
   {
     key: "roboticsFactory",
     label: "Robotics Factory",
-    baseCost: { metal: 400, crystal: 120, deuterium: 0 },
+    baseCost: { metal: 400, crystal: 120, deuterium: 200 },
     asset: "/assets/game/style-pass/generated/buildings/robotics-factory-mid.webp",
   },
   {
@@ -298,8 +298,8 @@ export const shipCatalog: Array<{
     group: "civil",
     baseCost: { metal: 2_000, crystal: 2_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
     ],
     asset: shipAssetByKey.smallCargo,
   },
@@ -322,8 +322,9 @@ export const shipCatalog: Array<{
     group: "civil",
     baseCost: { metal: 10_000, crystal: 6_000, deuterium: 2_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 6 },
+      { kind: "technology", key: "shielding", label: "Shielding", level: 2 },
     ],
     asset: shipAssetByKey.recycler,
   },
@@ -334,8 +335,8 @@ export const shipCatalog: Array<{
     group: "civil",
     baseCost: { metal: 10_000, crystal: 20_000, deuterium: 10_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 3 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 3 },
     ],
     asset: shipAssetByKey.colonyShip,
   },
@@ -346,7 +347,7 @@ export const shipCatalog: Array<{
     group: "civil",
     baseCost: { metal: 6_000, crystal: 6_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 6 },
     ],
     asset: shipAssetByKey.largeCargo,
@@ -358,8 +359,9 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 6_000, crystal: 4_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 3 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 2 },
+      { kind: "technology", key: "armor", label: "Armor", level: 2 },
     ],
     asset: shipAssetByKey.heavyFighter,
   },
@@ -370,8 +372,9 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 20_000, crystal: 7_000, deuterium: 2_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 4 },
+      { kind: "technology", key: "ion", label: "Ion", level: 2 },
     ],
     asset: shipAssetByKey.cruiser,
   },
@@ -382,7 +385,7 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 45_000, crystal: 15_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 7 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 4 },
     ],
     asset: shipAssetByKey.battleship,
@@ -394,7 +397,8 @@ export const shipCatalog: Array<{
     group: "special",
     baseCost: { metal: 0, crystal: 1_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 3 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 3 },
       { kind: "technology", key: "espionage", label: "Espionage", level: 2 },
     ],
     asset: shipAssetByKey.espionageProbe,
@@ -406,8 +410,9 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 50_000, crystal: 25_000, deuterium: 15_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 8 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 6 },
+      { kind: "technology", key: "plasma", label: "Plasma", level: 5 },
     ],
     asset: shipAssetByKey.bomber,
   },
@@ -429,8 +434,9 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 60_000, crystal: 50_000, deuterium: 15_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 9 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 6 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
     ],
     asset: shipAssetByKey.destroyer,
   },
@@ -441,7 +447,9 @@ export const shipCatalog: Array<{
     group: "special",
     baseCost: { metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 12 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 7 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 6 },
       { kind: "technology", key: "graviton", label: "Graviton", level: 1 },
     ],
     asset: shipAssetByKey.deathstar,
@@ -453,8 +461,10 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 30_000, crystal: 40_000, deuterium: 15_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 8 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 5 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
+      { kind: "technology", key: "laser", label: "Laser", level: 12 },
     ],
     asset: shipAssetByKey.battlecruiser,
   },
@@ -465,9 +475,10 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 85_000, crystal: 55_000, deuterium: 20_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 10 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 7 },
       { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 6 },
+      { kind: "technology", key: "shielding", label: "Shielding", level: 6 },
     ],
     asset: shipAssetByKey.reaper,
   },
@@ -478,7 +489,7 @@ export const shipCatalog: Array<{
     group: "special",
     baseCost: { metal: 8_000, crystal: 15_000, deuterium: 8_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
     ],
     asset: shipAssetByKey.pathfinder,
@@ -879,29 +890,19 @@ export function productionCapacityPerHour(
   profile: PlanetProductionProfile = PLANET,
 ): Resources {
   return {
-    metal: scaleByBps(
-      buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
-      profile.metalMultiplierBps,
-    ),
-    crystal: scaleByBps(
-      buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
-      profile.crystalMultiplierBps,
-    ),
-    deuterium: scaleByBps(
-      buildings.deuteriumSynthesizer * 10
-        + buildings.deuteriumSynthesizer * buildings.deuteriumSynthesizer * 3,
-      profile.deuteriumMultiplierBps,
-    ),
+    metal: scaledLevelValue(30, buildings.metalMine),
+    crystal: scaledLevelValue(20, buildings.crystalMine),
+    deuterium: scaleByBps(scaledLevelValue(10, buildings.deuteriumSynthesizer), profile.deuteriumMultiplierBps),
   };
 }
 
 export function energyBalance(buildings: Record<BuildingKey, number>): EnergyBalance {
   const required = (
-    buildings.metalMine * 10
-    + buildings.crystalMine * 12
-    + buildings.deuteriumSynthesizer * 20
+    scaledLevelValue(10, buildings.metalMine)
+    + scaledLevelValue(10, buildings.crystalMine)
+    + scaledLevelValue(20, buildings.deuteriumSynthesizer)
   );
-  const produced = buildings.solarPlant * 30;
+  const produced = scaledLevelValue(20, buildings.solarPlant);
 
   return {
     produced,
@@ -914,9 +915,9 @@ export function energyBalance(buildings: Record<BuildingKey, number>): EnergyBal
 
 export function storageCaps(buildings: Record<BuildingKey, number>): Resources {
   return {
-    metal: 10_000 + buildings.metalStorage * 10_000,
-    crystal: 10_000 + buildings.crystalStorage * 10_000,
-    deuterium: 10_000 + buildings.deuteriumTank * 10_000,
+    metal: storageCap(buildings.metalStorage),
+    crystal: storageCap(buildings.crystalStorage),
+    deuterium: storageCap(buildings.deuteriumTank),
   };
 }
 
@@ -929,7 +930,7 @@ export function buildingCost(
     throw new Error(`Unknown building: ${key}`);
   }
 
-  return scaleByLevel(entry.baseCost, buildings[key]);
+  return scaleBuildingCost(entry.baseCost, key, buildings[key]);
 }
 
 export function buildingEffectMetrics(
@@ -1135,7 +1136,16 @@ export function buildingDurationEstimate(
   buildings: Record<BuildingKey, number>,
   cost: Resources,
 ): number {
-  return buildingDurationSeconds(buildings.roboticsFactory, cost);
+  return buildingDurationSeconds(buildings.roboticsFactory, 0, cost);
+}
+
+export function shipDurationEstimate(
+  shipyardLevel: number,
+  naniteLevel: number,
+  cost: Resources,
+  quantity = 1,
+): number {
+  return shipDurationSeconds(shipyardLevel, naniteLevel, cost, quantity);
 }
 
 export function canAfford(resources: Resources, cost: Resources): boolean {
@@ -1191,7 +1201,46 @@ export function planetSummary() {
 }
 
 function scaleByLevel(cost: Resources, currentLevel: number): Resources {
-  return multiply(cost, 2 ** currentLevel);
+  return {
+    metal: scaleByFactor(cost.metal, currentLevel, 2, 1),
+    crystal: scaleByFactor(cost.crystal, currentLevel, 2, 1),
+    deuterium: scaleByFactor(cost.deuterium, currentLevel, 2, 1),
+  };
+}
+
+function scaleBuildingCost(cost: Resources, key: BuildingKey, currentLevel: number): Resources {
+  const [numerator, denominator] = buildingCostFactor(key);
+
+  return {
+    metal: scaleByFactor(cost.metal, currentLevel, numerator, denominator),
+    crystal: scaleByFactor(cost.crystal, currentLevel, numerator, denominator),
+    deuterium: scaleByFactor(cost.deuterium, currentLevel, numerator, denominator),
+  };
+}
+
+function buildingCostFactor(key: BuildingKey): [number, number] {
+  if (
+    key === "metalMine"
+    || key === "deuteriumSynthesizer"
+    || key === "solarPlant"
+  ) {
+    return [15, 10];
+  }
+
+  if (key === "crystalMine") {
+    return [16, 10];
+  }
+
+  return [2, 1];
+}
+
+function scaledLevelValue(base: number, level: number): number {
+  if (level === 0) return 0;
+  return Math.floor((base * level * (11 ** level)) / (10 ** level));
+}
+
+function scaleByFactor(value: number, exponent: number, numerator: number, denominator: number): number {
+  return Math.floor((value * (numerator ** exponent)) / (denominator ** exponent));
 }
 
 function productionResourceForBuilding(key: BuildingKey): keyof Resources {
@@ -1218,17 +1267,59 @@ function storageResourceForBuilding(key: BuildingKey): keyof Resources {
   return "deuterium";
 }
 
-const BUILDING_DURATION_COST_DIVISOR = 100;
+const STORAGE_CAPS = [
+  10_000,
+  20_000,
+  40_000,
+  75_000,
+  140_000,
+  255_000,
+  470_000,
+  865_000,
+  1_590_000,
+  2_920_000,
+  5_355_000,
+  9_820_000,
+  18_005_000,
+  33_005_000,
+  60_510_000,
+  110_925_000,
+  203_350_000,
+  372_785_000,
+  683_385_000,
+  1_252_785_000,
+  2_296_600_000,
+  4_210_115_000,
+  7_717_970_000,
+  14_148_545_000,
+  25_937_050_000,
+  47_547_690_000,
+  87_164_210_000,
+  159_789_040_000,
+  292_924_545_000,
+  536_987_950_000,
+  984_403_885_000,
+];
 
-function buildingDurationSeconds(roboticsLevel: number, cost: Resources): number {
-  // Veydrift uses a faster MVP base duration than OGame, while preserving the Robotics Factory level + 1 divisor.
+function storageCap(level: number): number {
+  return STORAGE_CAPS[level] ?? STORAGE_CAPS[STORAGE_CAPS.length - 1]!;
+}
+
+function buildingDurationSeconds(roboticsLevel: number, naniteLevel: number, cost: Resources): number {
   const roboticsDivisor = roboticsLevel + 1;
-  const raw = Math.floor((cost.metal + cost.crystal) / (BUILDING_DURATION_COST_DIVISOR * roboticsDivisor));
+  const naniteDivisor = 2 ** naniteLevel;
+  const raw = Math.floor(((cost.metal + cost.crystal) * 3_600) / (2_500 * roboticsDivisor * naniteDivisor));
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 
 function researchDurationSeconds(researchLabLevel: number, cost: Resources): number {
   const raw = Math.floor((cost.metal + cost.crystal + cost.deuterium) / (120 * (researchLabLevel + 1)));
+  return Math.max(MIN_QUEUE_SECONDS, raw);
+}
+
+function shipDurationSeconds(shipyardLevel: number, naniteLevel: number, cost: Resources, quantity: number): number {
+  const denominator = 2500 * (shipyardLevel + 1) * (2 ** naniteLevel);
+  const raw = Math.ceil(((cost.metal + cost.crystal) * Math.max(1, Math.floor(quantity)) * 3_600) / denominator);
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 

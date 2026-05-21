@@ -5,6 +5,7 @@ import {
   buildingQueueLabel,
   buildingQueuePreview,
   displayPlanetStats,
+  queueProgressBarState,
   type ChainLoadStatus,
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
@@ -331,6 +332,8 @@ function QueueItemDisplay({
   color?: string;
   thumbnailSrc?: string | undefined;
 }) {
+  const progressBar = queueProgressBarState({ indeterminate, progress, remaining });
+
   return (
     <div className={thumbnailSrc ? "flex min-w-0 items-center gap-3" : undefined}>
       {thumbnailSrc ? (
@@ -350,12 +353,12 @@ function QueueItemDisplay({
           <p className="shrink-0 text-[10px] text-slate-400">{remaining}</p>
         </div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-          {indeterminate ? (
+          {progressBar.indeterminate ? (
             <div className={`h-full w-2/3 rounded-full ${color} animate-pulse`} />
           ) : (
             <div
               className={`h-full rounded-full ${color} transition-[width]`}
-              style={{ width: `${(progress ?? 0) * 100}%` }}
+              style={{ width: `${progressBar.progress * 100}%` }}
             />
           )}
         </div>
