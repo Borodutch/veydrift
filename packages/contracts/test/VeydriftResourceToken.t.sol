@@ -6,6 +6,10 @@ import {
     OwnableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Deploy} from "../script/Deploy.s.sol";
+import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
+import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {Resource} from "../src/libraries/VeydriftTypes.sol";
 import {
     VeydriftCrystal,
     VeydriftDeuterium,
@@ -80,6 +84,20 @@ contract VeydriftResourceTokenTest is Test {
         assertEq(deuterium.balanceOf(game), INITIAL_SUPPLY - amount);
     }
 
+    function testPlayersCannotDirectlyDrainGameHeldReserveTokens() public {
+        vm.prank(player);
+        (bool success,) = address(metal)
+            .call(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("transferFrom(address,address,uint256)")), game, player, 1
+                )
+            );
+
+        assertFalse(success);
+        assertEq(metal.balanceOf(game), INITIAL_SUPPLY);
+        assertEq(metal.balanceOf(player), 0);
+    }
+
     function testInitializerCannotBeReused() public {
         vm.expectRevert();
         metal.initialize(admin, game);
@@ -116,6 +134,58 @@ contract VeydriftResourceTokenTest is Test {
         assertEq(metal.balanceOf(game), INITIAL_SUPPLY);
     }
 
+    function testFullDeployScriptWiresGameAndResourceTokenReserves() public {
+        address deployer = _setDeployEnv();
+
+        (address gameAddress, address metalToken, address crystalToken, address deuteriumToken) =
+            new Deploy().run();
+
+        VeydriftGame deployedGame = VeydriftGame(gameAddress);
+        VeydriftGame.Resources memory available = deployedGame.resourceReserveAvailable();
+
+        assertEq(deployedGame.owner(), deployer);
+        assertEq(deployedGame.resourceToken(Resource.Metal), metalToken);
+        assertEq(deployedGame.resourceToken(Resource.Crystal), crystalToken);
+        assertEq(deployedGame.resourceToken(Resource.Deuterium), deuteriumToken);
+        assertEq(VeydriftMetal(metalToken).owner(), deployer);
+        assertEq(VeydriftCrystal(crystalToken).owner(), deployer);
+        assertEq(VeydriftDeuterium(deuteriumToken).owner(), deployer);
+        assertEq(VeydriftMetal(metalToken).balanceOf(gameAddress), INITIAL_SUPPLY);
+        assertEq(VeydriftCrystal(crystalToken).balanceOf(gameAddress), INITIAL_SUPPLY);
+        assertEq(VeydriftDeuterium(deuteriumToken).balanceOf(gameAddress), INITIAL_SUPPLY);
+        assertEq(available.metal, INITIAL_SUPPLY);
+        assertEq(available.crystal, INITIAL_SUPPLY);
+        assertEq(available.deuterium, INITIAL_SUPPLY);
+
+        vm.deal(player, 1 ether);
+        vm.prank(player);
+        deployedGame.startPlanet{value: 0.05 ether}();
+        VeydriftGame.Resources memory required = deployedGame.resourceReserveRequirement();
+        available = deployedGame.resourceReserveAvailable();
+        assertEq(required.metal, 500);
+        assertEq(required.crystal, 500);
+        assertEq(required.deuterium, 0);
+        assertEq(available.metal, INITIAL_SUPPLY - 500);
+        assertEq(available.crystal, INITIAL_SUPPLY - 500);
+        assertEq(available.deuterium, INITIAL_SUPPLY);
+    }
+
+    function testResourceTokenDeployScriptMintsInitialSupplyToExistingGame() public {
+        address deployer = _setDeployEnv();
+        VeydriftGame existingGame = new VeydriftGame(deployer);
+        vm.setEnv("VEYDRIFT_GAME_CONTRACT_ADDRESS", vm.toString(address(existingGame)));
+
+        (address metalToken, address crystalToken, address deuteriumToken) =
+            new DeployResourceTokens().run();
+
+        assertEq(VeydriftMetal(metalToken).owner(), deployer);
+        assertEq(VeydriftCrystal(crystalToken).owner(), deployer);
+        assertEq(VeydriftDeuterium(deuteriumToken).owner(), deployer);
+        assertEq(VeydriftMetal(metalToken).balanceOf(address(existingGame)), INITIAL_SUPPLY);
+        assertEq(VeydriftCrystal(crystalToken).balanceOf(address(existingGame)), INITIAL_SUPPLY);
+        assertEq(VeydriftDeuterium(deuteriumToken).balanceOf(address(existingGame)), INITIAL_SUPPLY);
+    }
+
     function _assertResourceToken(
         VeydriftResourceToken token,
         string memory expectedName,
@@ -134,5 +204,12 @@ contract VeydriftResourceTokenTest is Test {
         returns (address)
     {
         return address(new ERC1967Proxy(implementation, initializer));
+    }
+
+    function _setDeployEnv() internal returns (address deployer) {
+        uint256 deployerPrivateKey = 0xA11CE;
+        deployer = vm.addr(deployerPrivateKey);
+        vm.setEnv("PRIVATE_KEY", vm.toString(deployerPrivateKey));
+        vm.setEnv("ADMIN_ADDRESS", vm.toString(deployer));
     }
 }

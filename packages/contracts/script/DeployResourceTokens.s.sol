@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Script} from "forge-std/Script.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {VeydriftCrystal, VeydriftDeuterium, VeydriftMetal} from "../src/VeydriftResourceToken.sol";
+import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
 
-contract DeployResourceTokens is Script {
-    event ResourceTokenProxyDeployed(
-        string resource, address indexed proxy, address indexed implementation
-    );
-
+contract DeployResourceTokens is ResourceTokenDeployment {
     event VeydriftResourceTokensDeployed(
         address indexed game,
         address indexed metalToken,
@@ -26,46 +20,8 @@ contract DeployResourceTokens is Script {
         address gameAddress = vm.envAddress("VEYDRIFT_GAME_CONTRACT_ADDRESS");
 
         vm.startBroadcast(privateKey);
-        metalToken = _deployMetal(admin, gameAddress);
-        crystalToken = _deployCrystal(admin, gameAddress);
-        deuteriumToken = _deployDeuterium(admin, gameAddress);
+        (metalToken, crystalToken, deuteriumToken) = _deployResourceTokens(admin, gameAddress);
         emit VeydriftResourceTokensDeployed(gameAddress, metalToken, crystalToken, deuteriumToken);
         vm.stopBroadcast();
-    }
-
-    function _deployMetal(address admin, address initialHolder) private returns (address token) {
-        VeydriftMetal implementation = new VeydriftMetal();
-        token = address(
-            new ERC1967Proxy(
-                address(implementation),
-                abi.encodeCall(VeydriftMetal.initialize, (admin, initialHolder))
-            )
-        );
-        emit ResourceTokenProxyDeployed("metal", token, address(implementation));
-    }
-
-    function _deployCrystal(address admin, address initialHolder) private returns (address token) {
-        VeydriftCrystal implementation = new VeydriftCrystal();
-        token = address(
-            new ERC1967Proxy(
-                address(implementation),
-                abi.encodeCall(VeydriftCrystal.initialize, (admin, initialHolder))
-            )
-        );
-        emit ResourceTokenProxyDeployed("crystal", token, address(implementation));
-    }
-
-    function _deployDeuterium(address admin, address initialHolder)
-        private
-        returns (address token)
-    {
-        VeydriftDeuterium implementation = new VeydriftDeuterium();
-        token = address(
-            new ERC1967Proxy(
-                address(implementation),
-                abi.encodeCall(VeydriftDeuterium.initialize, (admin, initialHolder))
-            )
-        );
-        emit ResourceTokenProxyDeployed("deuterium", token, address(implementation));
     }
 }
