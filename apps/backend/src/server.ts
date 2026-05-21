@@ -29,6 +29,7 @@ type HealthPayload = {
 };
 
 type RuntimeConfig = {
+  allianceContractAddress: string | null;
   apiUrl: string;
   chainId: number;
   contractAddress: string | null;
@@ -252,6 +253,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         return Response.json(await ready.getResearchState(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/alliance$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const ready = requireChainReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        assertAddress(wallet);
+        return Response.json(await ready.getAllianceState(wallet), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -534,6 +550,7 @@ function getRuntimeConfig(): RuntimeConfig {
     process.env.VEYDRIFT_CONTRACT_ADDRESS ??
     null;
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
+  const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
     deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,
@@ -541,6 +558,7 @@ function getRuntimeConfig(): RuntimeConfig {
   };
 
   return {
+    allianceContractAddress,
     apiUrl,
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
     contractAddress,

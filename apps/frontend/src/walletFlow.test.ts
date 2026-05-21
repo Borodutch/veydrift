@@ -29,6 +29,9 @@ import {
   sendFinishResearchTransaction,
   sendCreateColonyTransaction,
   sendLaunchFleetMissionTransaction,
+  sendAllianceInviteTransaction,
+  sendCreateAllianceTransaction,
+  sendOpenDefenseIntentTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
@@ -756,6 +759,50 @@ describe("walletFlow", () => {
         ]
       }
     ]);
+  });
+
+  test("submits alliance foundation transactions", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0xalliance${requests.length}`;
+    });
+
+    await expect(
+      sendCreateAllianceTransaction(provider, account, contract, "VDFT", "Veydrift Union", "ipfs://union")
+    ).resolves.toBe("0xalliance1");
+    await expect(
+      sendAllianceInviteTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+    ).resolves.toBe("0xalliance2");
+    await expect(
+      sendOpenDefenseIntentTransaction(provider, account, contract, "7", "42")
+    ).resolves.toBe("0xalliance3");
+
+    expect(requests[0]).toMatchObject({
+      method: "eth_sendTransaction",
+      params: [{ from: account, to: contract }]
+    });
+    expect((requests[0] as { params: Array<{ data: string }> }).params[0]?.data.startsWith("0x944cde0e")).toBe(true);
+    expect(requests[1]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: `0x9e6d6830${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}`
+        }
+      ]
+    });
+    expect(requests[2]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x56f919e7", [7, 42])
+        }
+      ]
+    });
   });
 
   test("fetches dynamic wallet state without browser cache", async () => {

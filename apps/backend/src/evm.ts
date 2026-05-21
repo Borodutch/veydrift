@@ -220,6 +220,30 @@ export type RiftState = {
   pendingWithdrawals: PendingWithdrawal[];
 };
 
+export type AllianceState = {
+  wallet: Address;
+  allianceAvailable: boolean;
+  unavailableReason?: string;
+  membership: {
+    allianceId: string;
+    role: "none" | "member" | "officer" | "leader";
+    joinedAt: string;
+  };
+  profile: {
+    active: boolean;
+    tag: string;
+    name: string;
+    metadataURI: string;
+    founder: Address;
+    createdAt: string;
+    memberCount: number;
+  } | null;
+  defenseCoordination: {
+    acsDefendSupported: boolean;
+    interceptSupported: boolean;
+  };
+};
+
 export type SettledPlanetEvent = PlanetState & {
   eventName: "PlanetStarted" | "ColonyCreated";
   transactionHash: string;
@@ -237,6 +261,7 @@ export interface ChainReader {
   getShipyardState(wallet: Address): Promise<ShipyardState>;
   getResearchState(wallet: Address): Promise<ResearchState>;
   getRiftState(wallet: Address): Promise<RiftState>;
+  getAllianceState(wallet: Address): Promise<AllianceState>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   rpcMetrics?(): RpcMetrics;
@@ -370,6 +395,7 @@ export class HttpJsonRpcTransport {
 export class VeydriftGameReader implements ChainReader {
   private readonly transport: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>;
   private readonly gameContractAddress: Address;
+  private readonly allianceContractAddress: Address | undefined;
   private readonly moonContractAddress: Address | undefined;
   private readonly chainId: number;
   private readonly indexFromBlock: bigint;
@@ -388,6 +414,7 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     this.transport = transport ?? new HttpJsonRpcTransport(config.rpcUrl);
+    this.allianceContractAddress = config.allianceContractAddress;
     this.gameContractAddress = config.gameContractAddress;
     this.moonContractAddress = config.moonContractAddress;
     this.chainId = config.chainId;
@@ -895,6 +922,57 @@ export class VeydriftGameReader implements ChainReader {
       requirements,
       resources,
       pendingWithdrawals
+    };
+  }
+
+  async getAllianceState(wallet: Address): Promise<AllianceState> {
+    assertAddress(wallet);
+    const unavailable = (reason: string): AllianceState => ({
+      wallet,
+      allianceAvailable: false,
+      unavailableReason: reason,
+      membership: { allianceId: "0", role: "none", joinedAt: "0" },
+      profile: null,
+      defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+    });
+
+    if (!this.allianceContractAddress) {
+      return unavailable("Alliance contract is not configured for this deployment yet.");
+    }
+
+    const membershipWords = splitWords(
+      await this.callContract(this.allianceContractAddress, "0xad642b52", [encodeAddress(wallet)])
+    );
+    const allianceId = decodeUintWord(wordAt(membershipWords, 0));
+    const role = allianceRoleName(Number(decodeUintWord(wordAt(membershipWords, 1))));
+    const joinedAt = decodeUintWord(wordAt(membershipWords, 2)).toString();
+    if (allianceId === 0n) {
+      return {
+        wallet,
+        allianceAvailable: true,
+        membership: { allianceId: "0", role, joinedAt },
+        profile: null,
+        defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+      };
+    }
+
+    const profileWords = splitWords(
+      await this.callContract(this.allianceContractAddress, "0x79c76adf", [encodeUint(allianceId)])
+    );
+    return {
+      wallet,
+      allianceAvailable: true,
+      membership: { allianceId: allianceId.toString(), role, joinedAt },
+      profile: {
+        active: decodeBoolWord(wordAt(profileWords, 0)),
+        tag: decodeString(profileWords, 1),
+        name: decodeString(profileWords, 2),
+        metadataURI: decodeString(profileWords, 3),
+        founder: decodeAddressWord(wordAt(profileWords, 4)),
+        createdAt: decodeUintWord(wordAt(profileWords, 5)).toString(),
+        memberCount: Number(decodeUintWord(wordAt(profileWords, 6)))
+      },
+      defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
     };
   }
 
@@ -1700,6 +1778,31 @@ function decodeBoolWord(word: string): boolean {
 
 function decodeAddressWord(word: string): Address {
   return `0x${word.slice(-40)}` as Address;
+}
+
+function decodeString(words: string[], headIndex: number): string {
+  const offset = Number(decodeUintWord(wordAt(words, headIndex))) / 32;
+  const length = Number(decodeUintWord(wordAt(words, offset)));
+  let hex = "";
+  for (let index = offset + 1; hex.length < length * 2; index += 1) {
+    hex += wordAt(words, index);
+  }
+  return new TextDecoder().decode(hexToBytes(hex.slice(0, length * 2)));
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function allianceRoleName(role: number): AllianceState["membership"]["role"] {
+  if (role === 1) return "member";
+  if (role === 2) return "officer";
+  if (role === 3) return "leader";
+  return "none";
 }
 
 function decodeResources(words: string[]): Resources {
