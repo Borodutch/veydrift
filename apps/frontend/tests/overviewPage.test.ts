@@ -3,7 +3,7 @@ import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
 } from "../src/overviewHeroImage";
-import { queueProgressBarState } from "../src/overviewData";
+import { queueProgressBarState, queueProgressFillState } from "../src/overviewData";
 import type { Planet } from "../src/types";
 
 const homePlanet: Planet = {
@@ -86,6 +86,51 @@ describe("overview queue progress display", () => {
       remaining: "12s",
     })).toEqual({
       indeterminate: false,
+      progress: 1,
+    });
+  });
+
+  test("derives a live fill animation from the canonical queue timeline", () => {
+    expect(queueProgressFillState({
+      now: 1_700_000_500_000,
+      progress: 0.5,
+      readyAt: 1_700_001_000_000,
+      remaining: "8m 20s",
+      startedAt: 1_700_000_000_000,
+    })).toEqual({
+      animated: true,
+      durationMs: 1_000_000,
+      elapsedMs: 500_000,
+      progress: 0.5,
+    });
+  });
+
+  test("starts animating immediately at the beginning of a live queue", () => {
+    expect(queueProgressFillState({
+      now: 1_700_000_000_000,
+      progress: 0,
+      readyAt: 1_700_001_000_000,
+      remaining: "16m 40s",
+      startedAt: 1_700_000_000_000,
+    })).toEqual({
+      animated: true,
+      durationMs: 1_000_000,
+      elapsedMs: 0,
+      progress: 0,
+    });
+  });
+
+  test("renders ready live queues as complete without continuing animation", () => {
+    expect(queueProgressFillState({
+      now: 1_700_001_000_000,
+      progress: 1,
+      readyAt: 1_700_001_000_000,
+      remaining: "Ready",
+      startedAt: 1_700_000_000_000,
+    })).toEqual({
+      animated: false,
+      durationMs: 0,
+      elapsedMs: 0,
       progress: 1,
     });
   });
