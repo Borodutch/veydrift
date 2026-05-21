@@ -62,6 +62,10 @@ export type ShipyardState = {
   productionAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
+  fleetSlots: {
+    active: number;
+    limit: number;
+  };
   shipyardLevel: number;
   naniteLevel: number;
   technologyLevels: Record<string, number>;
@@ -578,6 +582,7 @@ export class VeydriftGameReader implements ChainReader {
         unavailableReason:
           "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
         resources: null,
+        fleetSlots: { active: 0, limit: 1 },
         shipyardLevel: 0,
         naniteLevel: 0,
         technologyLevels: {},
@@ -592,6 +597,7 @@ export class VeydriftGameReader implements ChainReader {
         homePlanetId: null,
         productionAvailable: true,
         resources: null,
+        fleetSlots: { active: 0, limit: 1 },
         shipyardLevel: 0,
         naniteLevel: 0,
         technologyLevels: {},
@@ -605,13 +611,14 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, shipyardLevel, naniteLevel, queue, technologyLevels, ships] = await Promise.all([
+    const [resources, shipyardLevel, naniteLevel, queue, technologyLevels, ships, activeFleetMissions] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readTechnologyLevels(wallet),
-      this.readShipRows(planetId)
+      this.readShipRows(planetId),
+      this.readUintCall("0x423f9f10", [encodeAddress(wallet)])
     ]);
 
     return {
@@ -619,6 +626,10 @@ export class VeydriftGameReader implements ChainReader {
       homePlanetId: settlement.homePlanetId,
       productionAvailable: true,
       resources,
+      fleetSlots: {
+        active: Number(activeFleetMissions),
+        limit: 1 + (technologyLevels["5"] ?? 0)
+      },
       shipyardLevel: Number(shipyardLevel),
       naniteLevel: Number(naniteLevel),
       technologyLevels,

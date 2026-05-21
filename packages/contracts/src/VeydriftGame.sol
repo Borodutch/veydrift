@@ -237,6 +237,18 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function launchFleetMissionWithSpeed(
+        uint256,
+        uint256,
+        FleetMissionType,
+        MissionShips calldata,
+        Resources calldata,
+        uint256,
+        uint16
+    ) external returns (uint256) {
+        _delegateToGameplayModule();
+    }
+
     function recallFleetMission(uint256) external {
         _delegateToGameplayModule();
     }
@@ -395,6 +407,17 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function missionTravelSeconds(uint256, uint256, uint16) public returns (uint256) {
+        _delegateToGameplayModule();
+    }
+
+    function missionFuelCost(uint256, uint256, MissionShips calldata, uint16)
+        public
+        returns (uint128)
+    {
+        _delegateToGameplayModule();
+    }
+
     function transportFuelCost(
         uint256,
         uint256,
@@ -406,6 +429,10 @@ contract VeydriftGame is VeydriftResourceReserves {
             uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
         if (ships == 0) return 0;
         return _toUint128(ships);
+    }
+
+    function fleetSlotLimit(address player) external view returns (uint256) {
+        return 1 + _technologyLevels[player][Technology.Computer];
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {

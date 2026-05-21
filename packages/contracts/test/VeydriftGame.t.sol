@@ -947,6 +947,53 @@ contract VeydriftGameTest is Test {
         assertGt(game.planet(originPlanetId).resources.metal, 0);
     }
 
+    function testMissionAccountingUsesSpeedFuelCargoAndLocksShips() public {
+        address defender = address(0xDEF);
+        vm.deal(defender, 1 ether);
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(defender);
+        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setShipCount(originPlanetId, Ship.LightFighter, 1);
+        _setResources(originPlanetId, 1_000, 1_000, 1_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.lightFighter = 1;
+        uint256 fullSpeedTravel = game.missionTravelSeconds(originPlanetId, targetPlanetId, 10_000);
+        uint256 halfSpeedTravel = game.missionTravelSeconds(originPlanetId, targetPlanetId, 5_000);
+        uint128 fullSpeedFuel = game.missionFuelCost(originPlanetId, targetPlanetId, ships, 10_000);
+        uint128 halfSpeedFuel = game.missionFuelCost(originPlanetId, targetPlanetId, ships, 5_000);
+
+        assertGt(halfSpeedTravel, fullSpeedTravel);
+        assertLt(halfSpeedFuel, fullSpeedFuel);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMissionWithSpeed(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 50, crystal: 0, deuterium: 0}),
+            0,
+            5_000
+        );
+
+        (
+            ,,,,,,
+            uint64 arrivalAt,
+            uint64 returnAt,
+            uint128 fuelCost,
+            VeydriftGameStorage.Resources memory cargo,
+        ) = game.fleetMission(missionId);
+        assertEq(fuelCost, halfSpeedFuel);
+        assertEq(arrivalAt, block.timestamp + halfSpeedTravel);
+        assertEq(returnAt, arrivalAt + halfSpeedTravel);
+        assertEq(cargo.metal, 50);
+        assertEq(game.shipCount(originPlanetId, Ship.LightFighter), 0);
+        assertEq(game.planet(originPlanetId).resources.metal, 950);
+        assertEq(game.planet(originPlanetId).resources.deuterium, 1_000 - halfSpeedFuel);
+    }
+
     function testGenericFleetMissionRejectsInvalidTargetCapacityShipsAndTiming() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
@@ -992,6 +1039,74 @@ contract VeydriftGameTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 VeydriftGameStorage.InsufficientShips.selector, Ship.SmallCargo, 1, 2
+            )
+        );
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+    }
+
+    function testMissionLaunchRejectsFuelSpeedAndInFlightCommitments() public {
+        address defender = address(0xDEF);
+        vm.deal(defender, 1 ether);
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(defender);
+        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 0);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.InvalidMissionSpeed.selector, 0));
+        game.launchFleetMissionWithSpeed(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0,
+            0
+        );
+
+        uint128 fuelCost = game.missionFuelCost(originPlanetId, targetPlanetId, ships, 10_000);
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientResources.selector, 10_000, 10_000, 0
+            )
+        );
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        _setResources(originPlanetId, 10_000, 10_000, fuelCost);
+        vm.prank(player);
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientShips.selector, Ship.SmallCargo, 0, 1
             )
         );
         game.launchFleetMission(

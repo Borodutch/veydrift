@@ -9,7 +9,9 @@ import {
 } from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
 import {
+  estimateGalaxyMissionPreview,
   formatGalaxyHeatLabel,
+  formatMissionPreview,
   formatGalaxyOccupancySource,
   formatGalaxyOccupancySummary
 } from "../src/components/GalaxyView";
@@ -130,6 +132,37 @@ describe("tester universe display data", () => {
     expect(formatGalaxyHeatLabel({ min: 46, max: 74 })).toBe("Scorching Molten");
     expect(formatGalaxyHeatLabel({ min: -28, max: 68 })).toBe("Lush Temperate");
     expect(formatGalaxyHeatLabel({ min: -80, max: 0 })).toBe("Frozen Ice");
+  });
+
+  test("galaxy mission preview shows slots, fuel timing, and blocked reasons", () => {
+    const preview = estimateGalaxyMissionPreview({
+      homeCoords: { galaxy: 1, system: 10, position: 5 },
+      now: Date.UTC(2026, 4, 21, 17, 0, 0),
+      planner: {
+        fleetSlots: { active: 1, limit: 3 },
+        resources: { deuterium: 250 },
+        ships: [{ id: 0, count: 2 }],
+      },
+      target: { galaxy: 1, system: 20, position: 7 },
+    });
+
+    expect(preview).toMatchObject({
+      blockedReason: undefined,
+      cargoCapacity: 5_000,
+      fleetSlots: { active: 1, limit: 3 },
+      fuelCost: 1,
+    });
+    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 1 D / Cargo 5,000");
+
+    expect(estimateGalaxyMissionPreview({
+      homeCoords: { galaxy: 1, system: 10, position: 5 },
+      planner: {
+        fleetSlots: { active: 3, limit: 3 },
+        resources: { deuterium: 250 },
+        ships: [{ id: 0, count: 2 }],
+      },
+      target: { galaxy: 1, system: 20, position: 7 },
+    })?.blockedReason).toBe("No fleet slots open");
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {

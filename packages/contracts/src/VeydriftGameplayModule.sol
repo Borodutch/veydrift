@@ -76,10 +76,62 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         Resources calldata cargo,
         uint256 randomnessRequestId
     ) external returns (uint256 missionId) {
+        return _launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            missionType,
+            ships,
+            cargo,
+            randomnessRequestId,
+            DEFAULT_MISSION_SPEED_BPS
+        );
+    }
+
+    function launchFleetMissionWithSpeed(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        FleetMissionType missionType,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint256 randomnessRequestId,
+        uint16 speedBps
+    ) external returns (uint256 missionId) {
+        return _launchFleetMission(
+            originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId, speedBps
+        );
+    }
+
+    function missionTravelSeconds(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        uint16 speedBps
+    ) external view returns (uint256) {
+        return _missionTravelSeconds(originPlanetId, destinationPlanetId, speedBps);
+    }
+
+    function missionFuelCost(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        MissionShips calldata ships,
+        uint16 speedBps
+    ) external view returns (uint128) {
+        return _missionFuelCost(originPlanetId, destinationPlanetId, ships, speedBps);
+    }
+
+    function _launchFleetMission(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        FleetMissionType missionType,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint256 randomnessRequestId,
+        uint16 speedBps
+    ) private returns (uint256 missionId) {
         _requirePlanetOwner(originPlanetId);
         if (originPlanetId == targetPlanetId) revert SamePlanet();
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
         _validateMissionType(missionType);
+        _validateMissionSpeed(speedBps);
 
         uint256 fleetSlots = 1 + _technologyLevels[msg.sender][Technology.Computer];
         if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
@@ -103,7 +155,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
 
         _settleResources(originPlanetId);
-        uint128 fuelCost = _toUint128(shipTotal);
+        uint128 fuelCost = _missionFuelCost(originPlanetId, targetPlanetId, ships, speedBps);
         Resources memory debit = Resources({
             metal: cargo.metal,
             crystal: cargo.crystal,
@@ -114,12 +166,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _debitMissionShips(originPlanetId, ships);
 
         uint64 departureAt = _currentTimestamp();
-        uint64 arrivalAt = (uint256(departureAt)
-                + _transportTravelSeconds(originPlanetId, targetPlanetId))
-        .toUint64();
-        uint64 returnAt = (uint256(arrivalAt)
-                + _transportTravelSeconds(originPlanetId, targetPlanetId))
-        .toUint64();
+        uint256 travelSeconds = _missionTravelSeconds(originPlanetId, targetPlanetId, speedBps);
+        uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
+        uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
@@ -281,7 +330,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         view
         returns (uint256)
     {
-        return _transportTravelSeconds(originPlanetId, destinationPlanetId);
+        return _missionTravelSeconds(originPlanetId, destinationPlanetId, DEFAULT_MISSION_SPEED_BPS);
     }
 
     function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
@@ -574,23 +623,25 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             * VeydriftCatalog.shipCargoCapacity(Ship.ColonyShip);
     }
 
-    function _transportTravelSeconds(uint256 originPlanetId, uint256 destinationPlanetId)
-        private
-        view
-        returns (uint256)
-    {
-        Planet storage origin = _planets[originPlanetId];
-        Planet storage destination = _planets[destinationPlanetId];
-        if (origin.owner == address(0) || destination.owner == address(0)) revert NoPlanet();
-        uint256 distance = _absDiff(origin.galaxy, destination.galaxy) * MAX_SYSTEM * MAX_POSITION
-            + _absDiff(origin.system, destination.system) * MAX_POSITION
-            + _absDiff(origin.position, destination.position);
-        return MIN_FLEET_TRAVEL_SECONDS + distance;
+    function _missionTravelSeconds(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        uint16 speedBps
+    ) private view returns (uint256) {
+        _validateMissionSpeed(speedBps);
+        uint256 distance = _planetDistance(originPlanetId, destinationPlanetId);
+        return MIN_FLEET_TRAVEL_SECONDS + ((distance * BPS + speedBps - 1) / speedBps);
     }
 
     function _validateMissionType(FleetMissionType missionType) private pure {
         if (uint8(missionType) > uint8(FleetMissionType.MissileAttack)) {
             revert InvalidMissionType(missionType);
+        }
+    }
+
+    function _validateMissionSpeed(uint16 speedBps) private pure {
+        if (speedBps < MIN_MISSION_SPEED_BPS || speedBps > BPS) {
+            revert InvalidMissionSpeed(speedBps);
         }
     }
 
@@ -645,11 +696,24 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _missionCargoCapacity(MissionShips memory ships) private pure returns (uint256) {
-        return uint256(ships.smallCargo) * VeydriftCatalog.shipCargoCapacity(Ship.SmallCargo)
-            + uint256(ships.recycler) * VeydriftCatalog.shipCargoCapacity(Ship.Recycler)
-            + uint256(ships.colonyShip) * VeydriftCatalog.shipCargoCapacity(Ship.ColonyShip)
-            + uint256(ships.largeCargo) * VeydriftCatalog.shipCargoCapacity(Ship.LargeCargo)
-            + uint256(ships.pathfinder) * VeydriftCatalog.shipCargoCapacity(Ship.Pathfinder);
+        return uint256(ships.smallCargo) * 5_000 + uint256(ships.largeCargo) * 25_000
+            + uint256(ships.recycler) * 20_000 + uint256(ships.colonyShip) * 7_500
+            + uint256(ships.pathfinder) * 12_000 + uint256(ships.lightFighter) * 50;
+    }
+
+    function _missionFuelCost(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        MissionShips memory ships,
+        uint16 speedBps
+    ) private view returns (uint128) {
+        _validateMissionSpeed(speedBps);
+        uint256 fuelUnits = _missionShipTotal(ships);
+        if (fuelUnits == 0) return 0;
+
+        uint256 distance = _planetDistance(originPlanetId, destinationPlanetId);
+        uint256 scaledFuel = (fuelUnits * _max(distance, 1) * speedBps) / (uint256(BPS) * 1_000);
+        return _toUint128(_max(scaledFuel, _missionShipTotal(ships)));
     }
 
     function _missionShipTotal(MissionShips memory ships) private pure returns (uint256) {
@@ -724,8 +788,29 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
     }
 
-    function _absDiff(uint256 a, uint256 b) private pure returns (uint256) {
-        return a > b ? a - b : b - a;
+    function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)
+        private
+        view
+        returns (uint256)
+    {
+        Planet storage origin = _planets[originPlanetId];
+        Planet storage destination = _planets[destinationPlanetId];
+        if (origin.owner == address(0) || destination.owner == address(0)) revert NoPlanet();
+        uint256 galaxyDistance = origin.galaxy > destination.galaxy
+            ? uint256(origin.galaxy - destination.galaxy)
+            : uint256(destination.galaxy - origin.galaxy);
+        uint256 systemDistance = origin.system > destination.system
+            ? uint256(origin.system - destination.system)
+            : uint256(destination.system - origin.system);
+        uint256 positionDistance = origin.position > destination.position
+            ? uint256(origin.position - destination.position)
+            : uint256(destination.position - origin.position);
+        return galaxyDistance * uint256(MAX_SYSTEM) * uint256(MAX_POSITION) + systemDistance
+            * uint256(MAX_POSITION) + positionDistance;
+    }
+
+    function _max(uint256 a, uint256 b) private pure returns (uint256) {
+        return a > b ? a : b;
     }
 
     function _currentTimestamp() private view returns (uint64) {

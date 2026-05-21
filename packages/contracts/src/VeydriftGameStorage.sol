@@ -21,6 +21,8 @@ abstract contract VeydriftGameStorage {
     uint16 public constant BPS = 10_000;
     uint32 public constant MIN_QUEUE_SECONDS = 60;
     uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
+    uint16 public constant MIN_MISSION_SPEED_BPS = 1_000;
+    uint16 public constant DEFAULT_MISSION_SPEED_BPS = BPS;
     uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
     uint16 public constant MAX_GALAXY = 9;
     uint16 public constant MAX_SYSTEM = 499;
@@ -225,6 +227,7 @@ abstract contract VeydriftGameStorage {
     error FleetAlreadyReturning();
     error FleetAlreadyArrived();
     error InvalidMissionType(FleetMissionType missionType);
+    error InvalidMissionSpeed(uint256 speedBps);
     error FleetSlotLimitReached(uint256 limit);
     error FleetMissionNotResolved(uint64 returnAt);
     error RiftStabilizerRequired(uint256 planetId);

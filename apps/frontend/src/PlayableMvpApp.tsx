@@ -643,7 +643,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, []);
 
   useEffect(() => {
-    if (page === "shipyard") {
+    if (page === "shipyard" || page === "galaxy") {
       refreshShipyardState();
     }
   }, [page, refreshShipyardState]);
@@ -1141,6 +1141,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           galaxy={galaxyNav.galaxy}
           homeCoords={homeCoords}
           homePlanet={homePlanetIdentity}
+          missionPlanner={{
+            fleetSlots: shipyardState?.fleetSlots,
+            now,
+            resources: onChainResources,
+            ships: shipyardState?.ships,
+          }}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
