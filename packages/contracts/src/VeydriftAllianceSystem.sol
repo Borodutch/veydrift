@@ -1,0 +1,498 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
+
+interface IVeydriftAllianceGame {
+    function homePlanetOf(address player) external view returns (uint256);
+    function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
+    function fleetMission(uint256 missionId)
+        external
+        view
+        returns (
+            VeydriftGameStorage.FleetMissionStatus status,
+            VeydriftGameStorage.FleetMissionType missionType,
+            address owner,
+            uint256 originPlanetId,
+            uint256 targetPlanetId,
+            uint64 departureAt,
+            uint64 arrivalAt,
+            uint64 returnAt,
+            uint128 fuelCost,
+            VeydriftGameStorage.Resources memory cargo,
+            uint256 randomnessRequestId
+        );
+}
+
+/// @notice Canonical alliance and diplomacy authority for public-state combat rules.
+contract VeydriftAllianceSystem {
+    enum AllianceRole {
+        None,
+        Member,
+        Officer,
+        Leader
+    }
+
+    enum DiplomacyStatus {
+        None,
+        Ally,
+        NonAggressionPact,
+        War
+    }
+
+    struct Alliance {
+        bool active;
+        string tag;
+        string name;
+        string metadataURI;
+        address founder;
+        uint64 createdAt;
+        uint32 memberCount;
+    }
+
+    struct Membership {
+        uint256 allianceId;
+        AllianceRole role;
+        uint64 joinedAt;
+    }
+
+    struct Invite {
+        bool active;
+        uint256 allianceId;
+        address inviter;
+        uint64 invitedAt;
+    }
+
+    struct DefenseIntent {
+        bool active;
+        uint256 allianceId;
+        uint256 defenderPlanetId;
+        uint256 hostileMissionId;
+        address coordinator;
+        uint64 openedAt;
+        uint64 joinCutoffAt;
+    }
+
+    IVeydriftAllianceGame public immutable game;
+    uint256 public nextAllianceId = 1;
+    uint256 public nextDefenseIntentId = 1;
+
+    mapping(uint256 allianceId => Alliance alliance) internal _alliances;
+    mapping(address player => Membership membership) internal _memberships;
+    mapping(uint256 allianceId => address[] members) internal _memberLists;
+    mapping(uint256 allianceId => mapping(address player => uint256 indexPlusOne)) internal
+        _memberIndexes;
+    mapping(address player => mapping(uint256 allianceId => Invite invite)) internal _invites;
+    mapping(uint256 allianceId => mapping(uint256 otherAllianceId => DiplomacyStatus status))
+        internal _diplomacy;
+    mapping(uint256 intentId => DefenseIntent intent) internal _defenseIntents;
+
+    error AllianceInactive(uint256 allianceId);
+    error AlreadyInAlliance(address player, uint256 allianceId);
+    error EmptyAllianceMetadata();
+    error InvalidAlliance(uint256 allianceId);
+    error InvalidInvite(address player, uint256 allianceId);
+    error InvalidRole(AllianceRole role);
+    error NoAlliance(address player);
+    error NoPlanet(address player);
+    error NotAllianceMember(address player, uint256 allianceId);
+    error NotAuthorized(address player, uint256 allianceId);
+    error NotPlanetOwner(uint256 planetId, address player);
+    error SelfDiplomacy(uint256 allianceId);
+
+    event AllianceCreated(
+        uint256 indexed allianceId, address indexed founder, string tag, string name
+    );
+    event AllianceMetadataUpdated(
+        uint256 indexed allianceId, string tag, string name, string metadataURI
+    );
+    event AllianceInviteCreated(
+        uint256 indexed allianceId, address indexed inviter, address indexed player
+    );
+    event AllianceInviteCancelled(uint256 indexed allianceId, address indexed player);
+    event AllianceJoined(uint256 indexed allianceId, address indexed player, AllianceRole role);
+    event AllianceLeft(uint256 indexed allianceId, address indexed player);
+    event AllianceRoleUpdated(
+        uint256 indexed allianceId, address indexed player, AllianceRole role
+    );
+    event AllianceDiplomacyUpdated(
+        uint256 indexed allianceId, uint256 indexed otherAllianceId, DiplomacyStatus status
+    );
+    event AllianceDefenseIntentOpened(
+        uint256 indexed intentId,
+        uint256 indexed allianceId,
+        uint256 indexed defenderPlanetId,
+        uint256 hostileMissionId,
+        address coordinator,
+        uint64 joinCutoffAt
+    );
+
+    constructor(IVeydriftAllianceGame gameContract) {
+        game = gameContract;
+    }
+
+    function createAlliance(string calldata tag, string calldata name, string calldata metadataURI)
+        external
+        returns (uint256 allianceId)
+    {
+        _requireSettledPlayer(msg.sender);
+        if (_memberships[msg.sender].allianceId != 0) {
+            revert AlreadyInAlliance(msg.sender, _memberships[msg.sender].allianceId);
+        }
+        _requireMetadata(tag, name);
+
+        allianceId = nextAllianceId++;
+        _alliances[allianceId] = Alliance({
+            active: true,
+            tag: tag,
+            name: name,
+            metadataURI: metadataURI,
+            founder: msg.sender,
+            createdAt: _now(),
+            memberCount: 0
+        });
+        _addMember(allianceId, msg.sender, AllianceRole.Leader);
+
+        emit AllianceCreated(allianceId, msg.sender, tag, name);
+    }
+
+    function updateAllianceMetadata(
+        uint256 allianceId,
+        string calldata tag,
+        string calldata name,
+        string calldata metadataURI
+    ) external {
+        _requireOfficer(allianceId, msg.sender);
+        _requireMetadata(tag, name);
+
+        Alliance storage target = _requireAlliance(allianceId);
+        target.tag = tag;
+        target.name = name;
+        target.metadataURI = metadataURI;
+
+        emit AllianceMetadataUpdated(allianceId, tag, name, metadataURI);
+    }
+
+    function inviteMember(uint256 allianceId, address player) external {
+        _requireOfficer(allianceId, msg.sender);
+        _requireSettledPlayer(player);
+        if (_memberships[player].allianceId != 0) {
+            revert AlreadyInAlliance(player, _memberships[player].allianceId);
+        }
+
+        _invites[player][allianceId] =
+            Invite({active: true, allianceId: allianceId, inviter: msg.sender, invitedAt: _now()});
+        emit AllianceInviteCreated(allianceId, msg.sender, player);
+    }
+
+    function cancelInvite(uint256 allianceId, address player) external {
+        _requireOfficer(allianceId, msg.sender);
+        delete _invites[player][allianceId];
+        emit AllianceInviteCancelled(allianceId, player);
+    }
+
+    function acceptInvite(uint256 allianceId) external {
+        _requireAlliance(allianceId);
+        Invite memory invite = _invites[msg.sender][allianceId];
+        if (!invite.active) revert InvalidInvite(msg.sender, allianceId);
+        if (_memberships[msg.sender].allianceId != 0) {
+            revert AlreadyInAlliance(msg.sender, _memberships[msg.sender].allianceId);
+        }
+
+        delete _invites[msg.sender][allianceId];
+        _addMember(allianceId, msg.sender, AllianceRole.Member);
+    }
+
+    function kickMember(uint256 allianceId, address player) external {
+        _requireOfficer(allianceId, msg.sender);
+        Membership memory kicked = _memberships[player];
+        if (kicked.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
+        if (kicked.role == AllianceRole.Leader) revert NotAuthorized(msg.sender, allianceId);
+
+        _removeMember(allianceId, player);
+    }
+
+    function leaveAlliance() external {
+        Membership memory membership = _memberships[msg.sender];
+        if (membership.allianceId == 0) revert NoAlliance(msg.sender);
+        if (
+            membership.role == AllianceRole.Leader
+                && _alliances[membership.allianceId].memberCount > 1
+        ) {
+            revert NotAuthorized(msg.sender, membership.allianceId);
+        }
+
+        _removeMember(membership.allianceId, msg.sender);
+    }
+
+    function setMemberRole(uint256 allianceId, address player, AllianceRole role) external {
+        _requireLeader(allianceId, msg.sender);
+        if (role == AllianceRole.None) revert InvalidRole(role);
+        Membership storage membership = _memberships[player];
+        if (membership.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
+
+        membership.role = role;
+        emit AllianceRoleUpdated(allianceId, player, role);
+    }
+
+    function setDiplomacy(uint256 allianceId, uint256 otherAllianceId, DiplomacyStatus status)
+        external
+    {
+        _requireOfficer(allianceId, msg.sender);
+        _requireAlliance(otherAllianceId);
+        if (allianceId == otherAllianceId) revert SelfDiplomacy(allianceId);
+
+        _diplomacy[allianceId][otherAllianceId] = status;
+        _diplomacy[otherAllianceId][allianceId] = status;
+        emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, status);
+    }
+
+    function openDefenseIntent(uint256 defenderPlanetId, uint256 hostileMissionId)
+        external
+        returns (uint256 intentId)
+    {
+        VeydriftGameStorage.Planet memory target = game.planet(defenderPlanetId);
+        if (target.owner == address(0)) revert InvalidAlliance(defenderPlanetId);
+        if (target.owner != msg.sender) revert NotPlanetOwner(defenderPlanetId, msg.sender);
+
+        Membership memory membership = _memberships[msg.sender];
+        if (membership.allianceId == 0) revert NoAlliance(msg.sender);
+
+        (
+            VeydriftGameStorage.FleetMissionStatus status,
+            VeydriftGameStorage.FleetMissionType missionType,
+            address attacker,,
+            uint256 targetPlanetId,,
+            uint64 arrivalAt,,,,
+        ) = game.fleetMission(hostileMissionId);
+        if (
+            status != VeydriftGameStorage.FleetMissionStatus.Outbound
+                || targetPlanetId != defenderPlanetId || !_isHostileMission(missionType)
+                || attacker == address(0)
+                || !VeydriftAntiRaidPrimitives.canJoinAcsDefense(block.timestamp, arrivalAt)
+        ) {
+            revert InvalidAlliance(hostileMissionId);
+        }
+
+        intentId = nextDefenseIntentId++;
+        uint64 joinCutoffAt =
+            uint64(arrivalAt - VeydriftAntiRaidPrimitives.ACS_DEFEND_JOIN_CUTOFF_SECONDS);
+        _defenseIntents[intentId] = DefenseIntent({
+            active: true,
+            allianceId: membership.allianceId,
+            defenderPlanetId: defenderPlanetId,
+            hostileMissionId: hostileMissionId,
+            coordinator: msg.sender,
+            openedAt: _now(),
+            joinCutoffAt: joinCutoffAt
+        });
+
+        emit AllianceDefenseIntentOpened(
+            intentId,
+            membership.allianceId,
+            defenderPlanetId,
+            hostileMissionId,
+            msg.sender,
+            joinCutoffAt
+        );
+    }
+
+    function allianceProfile(uint256 allianceId) external view returns (Alliance memory) {
+        return _alliances[allianceId];
+    }
+
+    function allianceOf(address player) external view returns (Membership memory) {
+        return _memberships[player];
+    }
+
+    function allianceMemberAt(uint256 allianceId, uint256 index) external view returns (address) {
+        return _memberLists[allianceId][index];
+    }
+
+    function allianceMembers(uint256 allianceId) external view returns (address[] memory) {
+        return _memberLists[allianceId];
+    }
+
+    function allianceInvite(address player, uint256 allianceId)
+        external
+        view
+        returns (Invite memory)
+    {
+        return _invites[player][allianceId];
+    }
+
+    function diplomacyStatus(uint256 allianceId, uint256 otherAllianceId)
+        external
+        view
+        returns (DiplomacyStatus)
+    {
+        return _diplomacy[allianceId][otherAllianceId];
+    }
+
+    function defenseIntent(uint256 intentId) external view returns (DefenseIntent memory) {
+        return _defenseIntents[intentId];
+    }
+
+    function attackLimitAllianceContext(address attacker, address defender)
+        external
+        view
+        returns (
+            uint256 attackerAllianceId,
+            uint256 defenderAllianceId,
+            bool sameAlliance,
+            bool atWar,
+            bool bashingWarException,
+            bool scoreProtectionException
+        )
+    {
+        attackerAllianceId = _memberships[attacker].allianceId;
+        defenderAllianceId = _memberships[defender].allianceId;
+        sameAlliance = attackerAllianceId != 0 && attackerAllianceId == defenderAllianceId;
+        atWar = _relationship(attackerAllianceId, defenderAllianceId) == DiplomacyStatus.War;
+        bashingWarException = atWar;
+        scoreProtectionException = sameAlliance || atWar;
+    }
+
+    function canCoordinateDefense(
+        address viewer,
+        uint256 defenderPlanetId,
+        uint256 hostileMissionId
+    ) external view returns (bool) {
+        VeydriftGameStorage.Planet memory target = game.planet(defenderPlanetId);
+        Membership memory targetMembership = _memberships[target.owner];
+        Membership memory viewerMembership = _memberships[viewer];
+        if (
+            target.owner == address(0) || targetMembership.allianceId == 0
+                || targetMembership.allianceId != viewerMembership.allianceId
+        ) {
+            return false;
+        }
+
+        (
+            VeydriftGameStorage.FleetMissionStatus status,
+            VeydriftGameStorage.FleetMissionType missionType,,,
+            uint256 targetPlanetId,,
+            uint64 arrivalAt,,,,
+        ) = game.fleetMission(hostileMissionId);
+
+        return status == VeydriftGameStorage.FleetMissionStatus.Outbound
+            && targetPlanetId == defenderPlanetId && _isHostileMission(missionType)
+            && VeydriftAntiRaidPrimitives.canJoinAcsDefense(block.timestamp, arrivalAt);
+    }
+
+    function hostileMissionVisibilityContext(address viewer, uint256 missionId)
+        external
+        view
+        returns (
+            uint256 defenderAllianceId,
+            bool viewerInDefenderAlliance,
+            bool publicRevealWindow,
+            bool canSeeForDefense
+        )
+    {
+        (
+            VeydriftGameStorage.FleetMissionStatus status,
+            VeydriftGameStorage.FleetMissionType missionType,,,
+            uint256 targetPlanetId,,
+            uint64 arrivalAt,,,,
+        ) = game.fleetMission(missionId);
+        if (
+            status != VeydriftGameStorage.FleetMissionStatus.Outbound
+                || !_isHostileMission(missionType)
+        ) {
+            return (0, false, false, false);
+        }
+
+        VeydriftGameStorage.Planet memory target = game.planet(targetPlanetId);
+        defenderAllianceId = _memberships[target.owner].allianceId;
+        viewerInDefenderAlliance =
+            defenderAllianceId != 0 && defenderAllianceId == _memberships[viewer].allianceId;
+        publicRevealWindow =
+            VeydriftAntiRaidPrimitives.shouldRevealHostileMission(block.timestamp, arrivalAt);
+        canSeeForDefense = viewerInDefenderAlliance || publicRevealWindow;
+    }
+
+    function _addMember(uint256 allianceId, address player, AllianceRole role) private {
+        _memberships[player] = Membership({allianceId: allianceId, role: role, joinedAt: _now()});
+        _memberIndexes[allianceId][player] = _memberLists[allianceId].length + 1;
+        _memberLists[allianceId].push(player);
+        _alliances[allianceId].memberCount += 1;
+        emit AllianceJoined(allianceId, player, role);
+    }
+
+    function _removeMember(uint256 allianceId, address player) private {
+        uint256 indexPlusOne = _memberIndexes[allianceId][player];
+        if (indexPlusOne == 0) revert NotAllianceMember(player, allianceId);
+
+        uint256 index = indexPlusOne - 1;
+        address[] storage members = _memberLists[allianceId];
+        address last = members[members.length - 1];
+        members[index] = last;
+        _memberIndexes[allianceId][last] = index + 1;
+        members.pop();
+
+        delete _memberIndexes[allianceId][player];
+        delete _memberships[player];
+        _alliances[allianceId].memberCount -= 1;
+        emit AllianceLeft(allianceId, player);
+    }
+
+    function _requireAlliance(uint256 allianceId) private view returns (Alliance storage alliance) {
+        alliance = _alliances[allianceId];
+        if (!alliance.active) revert AllianceInactive(allianceId);
+    }
+
+    function _requireOfficer(uint256 allianceId, address player) private view {
+        _requireAlliance(allianceId);
+        Membership memory membership = _memberships[player];
+        if (
+            membership.allianceId != allianceId
+                || (membership.role != AllianceRole.Officer
+                    && membership.role != AllianceRole.Leader)
+        ) {
+            revert NotAuthorized(player, allianceId);
+        }
+    }
+
+    function _requireLeader(uint256 allianceId, address player) private view {
+        _requireAlliance(allianceId);
+        Membership memory membership = _memberships[player];
+        if (membership.allianceId != allianceId || membership.role != AllianceRole.Leader) {
+            revert NotAuthorized(player, allianceId);
+        }
+    }
+
+    function _requireSettledPlayer(address player) private view {
+        if (game.homePlanetOf(player) == 0) revert NoPlanet(player);
+    }
+
+    function _requireMetadata(string calldata tag, string calldata name) private pure {
+        if (bytes(tag).length == 0 || bytes(name).length == 0) revert EmptyAllianceMetadata();
+    }
+
+    function _relationship(uint256 allianceId, uint256 otherAllianceId)
+        private
+        view
+        returns (DiplomacyStatus)
+    {
+        if (allianceId == 0 || otherAllianceId == 0 || allianceId == otherAllianceId) {
+            return DiplomacyStatus.None;
+        }
+        return _diplomacy[allianceId][otherAllianceId];
+    }
+
+    function _isHostileMission(VeydriftGameStorage.FleetMissionType missionType)
+        private
+        pure
+        returns (bool)
+    {
+        return missionType == VeydriftGameStorage.FleetMissionType.Attack
+            || missionType == VeydriftGameStorage.FleetMissionType.Intercept
+            || missionType == VeydriftGameStorage.FleetMissionType.MissileAttack;
+    }
+
+    function _now() private view returns (uint64) {
+        return uint64(block.timestamp);
+    }
+}

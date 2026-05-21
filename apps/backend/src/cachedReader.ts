@@ -1,5 +1,6 @@
 import type {
   Address,
+  AllianceState,
   ChainReader,
   DefenseState,
   FleetMissionVisibility,
@@ -70,6 +71,10 @@ export class CachedChainReader implements ChainReader {
 
   getRiftState(wallet: Address): Promise<RiftState> {
     return this.cached(`rift:${wallet.toLowerCase()}`, () => this.inner.getRiftState(wallet));
+  }
+
+  getAllianceState(wallet: Address): Promise<AllianceState> {
+    return this.cached(`alliance:${wallet.toLowerCase()}`, () => this.inner.getAllianceState(wallet));
   }
 
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {

@@ -129,6 +129,19 @@ Fleet missions:
 - `fleetMission(missionId)` is public and exposes owner, origin, target, timing, cargo, fuel, and status for every mission. `FleetMissionCargo` and `FleetMissionShips` expose the launch manifest so hostile inbound and returning fleets are indexable from contract truth.
 - The recall deadline is `arrivalAt - FLEET_RECALL_CUTOFF_SECONDS`. `recallFleetMission(missionId)` must be called by that deadline, spends an additional `FLEET_RECALL_COST_BPS` share of the launch fuel from the origin planet, and keeps the recalled fleet publicly visible until it lands. Original launch fuel remains spent.
 
+Alliances:
+
+- `VeydriftAllianceSystem` is a standalone canonical alliance authority linked to
+  `VeydriftGame` for settled-player, planet-owner, and hostile-mission context.
+- Players with a settled planet can create alliances with public tag/name/metadata,
+  invite members, accept invites, promote officers/leaders, kick members, and leave.
+- Diplomacy state covers ally, non-aggression, and war flags. Attack-limit tickets
+  can query `attackLimitAllianceContext(attacker, defender)` for same-alliance,
+  war, bashing, and score-protection exceptions.
+- ACS foundations are exposed through `openDefenseIntent(...)`,
+  `canCoordinateDefense(...)`, and `hostileMissionVisibilityContext(...)` so later
+  grouped defense/intercept work can join against the same public-state cutoff rules.
+
 Indexer-facing events:
 
 - `FirstPlanetSettled(player, planetId, galaxy, system, position, coordinateKey, planetSeed)`
@@ -309,7 +322,7 @@ The proxy owner must be the broadcasting account for upgrades.
 
 This ticket intentionally leaves these systems for later work:
 
-- Combat, attacks, debris fields, alliances, and markets
+- Full combat resolution, debris fields, grouped ACS battle math, and markets
 - NFTs or transferable planet ownership
 
 Veydrift uses public blockchain state as the source of truth. Espionage reports,

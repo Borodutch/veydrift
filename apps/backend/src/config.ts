@@ -1,6 +1,7 @@
 export type DeploymentMode = "local" | "test" | "staging" | "production";
 
 export type BackendConfig = {
+  allianceContractAddress?: `0x${string}`;
   chainId: number;
   deploymentMode: DeploymentMode;
   gameContractAddress?: `0x${string}`;
@@ -31,6 +32,7 @@ export type ConfigResult = {
 };
 
 export type SafeConfigSummary = {
+  allianceContractConfigured: boolean;
   chainId: number;
   deploymentMode: DeploymentMode;
   gameContractConfigured: boolean;
@@ -64,6 +66,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const gameContractAddress = parseAddress(
     env.VEYDRIFT_GAME_CONTRACT_ADDRESS ?? env.VEYDRIFT_CONTRACT_ADDRESS,
     env.VEYDRIFT_GAME_CONTRACT_ADDRESS ? "VEYDRIFT_GAME_CONTRACT_ADDRESS" : "VEYDRIFT_CONTRACT_ADDRESS",
+    problems
+  );
+  const allianceContractAddress = parseAddress(
+    env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS,
+    "VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS",
     problems
   );
   const settlementContractAddress = parseAddress(
@@ -110,6 +117,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 
   return {
     config: {
+      ...(allianceContractAddress ? { allianceContractAddress } : {}),
       chainId,
       deploymentMode,
       ...(gameContractAddress ? { gameContractAddress } : {}),
@@ -128,6 +136,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 
 export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
   return {
+    allianceContractConfigured: Boolean(config.allianceContractAddress),
     chainId: config.chainId,
     deploymentMode: config.deploymentMode,
     gameContractConfigured: Boolean(config.gameContractAddress),
