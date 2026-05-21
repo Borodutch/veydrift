@@ -121,6 +121,10 @@ export type ChainShipyardState = {
   productionAvailable?: boolean;
   unavailableReason?: string;
   resources: OnChainResources | null;
+  fleetSlots?: {
+    active: number;
+    limit: number;
+  };
   shipyardLevel: number;
   naniteLevel: number;
   technologyLevels: Record<string, number>;
