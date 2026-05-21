@@ -479,6 +479,18 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
+    function protectedResources(uint256) external returns (Resources memory) {
+        _delegateToGameplayModule();
+    }
+
+    function raidableResources(uint256) external returns (Resources memory) {
+        _delegateToGameplayModule();
+    }
+
+    function maxRaidLoot(uint256, uint256) external returns (Resources memory) {
+        _delegateToGameplayModule();
+    }
+
     function buildingUpgradeCost(uint256 planetId, Building building)
         public
         view
