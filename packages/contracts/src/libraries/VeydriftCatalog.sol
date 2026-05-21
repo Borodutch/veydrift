@@ -133,6 +133,29 @@ library VeydriftCatalog {
         return type(uint32).max;
     }
 
+    function shipRepairableInSpaceDock(Ship ship) public pure returns (bool) {
+        return ship != Ship.SolarSatellite;
+    }
+
+    function spaceDockUpgradeCost(uint16 currentLevel)
+        public
+        pure
+        returns (uint128, uint128, uint128)
+    {
+        return (_scaleByFactor(200, currentLevel, 5, 1), 0, _scaleByFactor(50, currentLevel, 5, 1));
+    }
+
+    function shipStructuralValue(Ship ship) public pure returns (uint256) {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = shipCost(ship);
+        return uint256(metal) + crystal + deuterium;
+    }
+
+    function spaceDockRepairBps(uint16 spaceDockLevel) public pure returns (uint16) {
+        if (spaceDockLevel == 0) return 0;
+        uint16 bps = 2_000 + (spaceDockLevel * 100);
+        return bps > 5_000 ? 5_000 : bps;
+    }
+
     function researchBaseCost(Technology technology)
         public
         pure
