@@ -193,8 +193,8 @@ contract VeydriftGameTest is Test {
         assertFalse(game.activeBuildingConstruction(planetId).active);
         VeydriftGame.Resources memory nextCost =
             game.buildingUpgradeCost(planetId, Building.MetalMine);
-        assertEq(nextCost.metal, 120);
-        assertEq(nextCost.crystal, 30);
+        assertEq(nextCost.metal, 90);
+        assertEq(nextCost.crystal, 22);
         assertEq(nextCost.deuterium, 0);
     }
 

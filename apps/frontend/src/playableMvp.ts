@@ -201,36 +201,41 @@ export const buildingCatalog: Array<{
   key: BuildingKey;
   label: string;
   baseCost: Resources;
+  costGrowth?: number;
   asset: string;
 }> = [
   {
     key: "metalMine",
     label: "Metal Mine",
     baseCost: { metal: 60, crystal: 15, deuterium: 0 },
+    costGrowth: 1.5,
     asset: "/assets/game/style-pass/generated/buildings/metal-mine-mid.webp",
   },
   {
     key: "crystalMine",
     label: "Crystal Mine",
     baseCost: { metal: 48, crystal: 24, deuterium: 0 },
+    costGrowth: 1.6,
     asset: "/assets/game/style-pass/generated/buildings/crystal-mine-mid.webp",
   },
   {
     key: "deuteriumSynthesizer",
     label: "Deuterium Synth",
     baseCost: { metal: 225, crystal: 75, deuterium: 0 },
+    costGrowth: 1.5,
     asset: "/assets/game/style-pass/generated/buildings/deuterium-synthesizer-mid.webp",
   },
   {
     key: "solarPlant",
     label: "Solar Plant",
     baseCost: { metal: 75, crystal: 30, deuterium: 0 },
+    costGrowth: 1.5,
     asset: "/assets/game/style-pass/generated/buildings/solar-plant-mid.webp",
   },
   {
     key: "roboticsFactory",
     label: "Robotics Factory",
-    baseCost: { metal: 400, crystal: 120, deuterium: 0 },
+    baseCost: { metal: 400, crystal: 120, deuterium: 200 },
     asset: "/assets/game/style-pass/generated/buildings/robotics-factory-mid.webp",
   },
   {
@@ -764,9 +769,9 @@ const MIN_QUEUE_SECONDS = 60;
 const PLANET = {
   fields: 206,
   temperature: -12,
-  metalMultiplierBps: 9_772,
-  crystalMultiplierBps: 10_218,
-  deuteriumMultiplierBps: 10_596,
+  metalMultiplierBps: 10_000,
+  crystalMultiplierBps: 10_000,
+  deuteriumMultiplierBps: 13_040,
 };
 
 export function createInitialPlayableState(now = Date.now()): PlayableState {
@@ -857,16 +862,15 @@ export function productionCapacityPerHour(
 ): Resources {
   return {
     metal: scaleByBps(
-      buildings.metalMine * 20 + buildings.metalMine * buildings.metalMine * 5,
+      ogameLevelGrowth(30, buildings.metalMine),
       profile.metalMultiplierBps,
     ),
     crystal: scaleByBps(
-      buildings.crystalMine * 15 + buildings.crystalMine * buildings.crystalMine * 4,
+      ogameLevelGrowth(20, buildings.crystalMine),
       profile.crystalMultiplierBps,
     ),
     deuterium: scaleByBps(
-      buildings.deuteriumSynthesizer * 10
-        + buildings.deuteriumSynthesizer * buildings.deuteriumSynthesizer * 3,
+      ogameLevelGrowth(10, buildings.deuteriumSynthesizer),
       profile.deuteriumMultiplierBps,
     ),
   };
@@ -874,11 +878,11 @@ export function productionCapacityPerHour(
 
 export function energyBalance(buildings: Record<BuildingKey, number>): EnergyBalance {
   const required = (
-    buildings.metalMine * 10
-    + buildings.crystalMine * 12
-    + buildings.deuteriumSynthesizer * 20
+    ogameLevelGrowth(10, buildings.metalMine)
+    + ogameLevelGrowth(10, buildings.crystalMine)
+    + ogameLevelGrowth(20, buildings.deuteriumSynthesizer)
   );
-  const produced = buildings.solarPlant * 30;
+  const produced = ogameLevelGrowth(20, buildings.solarPlant);
 
   return {
     produced,
@@ -891,9 +895,9 @@ export function energyBalance(buildings: Record<BuildingKey, number>): EnergyBal
 
 export function storageCaps(buildings: Record<BuildingKey, number>): Resources {
   return {
-    metal: 10_000 + buildings.metalStorage * 10_000,
-    crystal: 10_000 + buildings.crystalStorage * 10_000,
-    deuterium: 10_000 + buildings.deuteriumTank * 10_000,
+    metal: storageCapacity(buildings.metalStorage),
+    crystal: storageCapacity(buildings.crystalStorage),
+    deuterium: storageCapacity(buildings.deuteriumTank),
   };
 }
 
@@ -906,7 +910,7 @@ export function buildingCost(
     throw new Error(`Unknown building: ${key}`);
   }
 
-  return scaleByLevel(entry.baseCost, buildings[key]);
+  return scaleByLevel(entry.baseCost, buildings[key], entry.costGrowth ?? 2);
 }
 
 export function buildingEffectMetrics(
@@ -1000,7 +1004,7 @@ export function researchCost(
     throw new Error(`Unknown research: ${key}`);
   }
 
-  return scaleByLevel(entry.baseCost, research[key]);
+  return scaleByLevel(entry.baseCost, research[key], 2);
 }
 
 export function researchRequirementsFor(key: ResearchKey): ResearchRequirement[] {
@@ -1155,8 +1159,8 @@ export function planetSummary() {
   return PLANET;
 }
 
-function scaleByLevel(cost: Resources, currentLevel: number): Resources {
-  return multiply(cost, 2 ** currentLevel);
+function scaleByLevel(cost: Resources, currentLevel: number, growth: number): Resources {
+  return multiply(cost, growth ** currentLevel);
 }
 
 function productionResourceForBuilding(key: BuildingKey): keyof Resources {
@@ -1183,18 +1187,22 @@ function storageResourceForBuilding(key: BuildingKey): keyof Resources {
   return "deuterium";
 }
 
-const BUILDING_DURATION_COST_DIVISOR = 100;
-
 function buildingDurationSeconds(roboticsLevel: number, cost: Resources): number {
-  // Veydrift uses a faster MVP base duration than OGame, while preserving the Robotics Factory level + 1 divisor.
-  const roboticsDivisor = roboticsLevel + 1;
-  const raw = Math.floor((cost.metal + cost.crystal) / (BUILDING_DURATION_COST_DIVISOR * roboticsDivisor));
+  const raw = Math.floor(((cost.metal + cost.crystal) * 3_600) / (2_500 * (roboticsLevel + 1)));
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 
 function researchDurationSeconds(researchLabLevel: number, cost: Resources): number {
-  const raw = Math.floor((cost.metal + cost.crystal + cost.deuterium) / (120 * (researchLabLevel + 1)));
+  const raw = Math.floor(((cost.metal + cost.crystal) * 3_600) / (1_000 * (researchLabLevel + 1)));
   return Math.max(MIN_QUEUE_SECONDS, raw);
+}
+
+function ogameLevelGrowth(coefficient: number, level: number): number {
+  return Math.floor(coefficient * level * 1.1 ** level);
+}
+
+function storageCapacity(level: number): number {
+  return 5_000 * Math.floor(2.5 * Math.E ** ((20 / 33) * level));
 }
 
 function scaleByBps(value: number, multiplierBps: number): number {
@@ -1211,8 +1219,8 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
 
 function multiply(resources: Resources, quantity: number): Resources {
   return {
-    metal: resources.metal * quantity,
-    crystal: resources.crystal * quantity,
-    deuterium: resources.deuterium * quantity,
+    metal: Math.floor(resources.metal * quantity),
+    crystal: Math.floor(resources.crystal * quantity),
+    deuterium: Math.floor(resources.deuterium * quantity),
   };
 }

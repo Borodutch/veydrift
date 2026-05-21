@@ -5,7 +5,8 @@ import { createInitialPlayableState, progress } from "./playableMvp";
 describe("chainState", () => {
   test("derives stable building queue progress from readyAt and upgrade duration", () => {
     const readyAtSeconds = 1_700_000_060;
-    const halfway = (readyAtSeconds - 30) * 1_000;
+    const durationSeconds = 108;
+    const halfway = readyAtSeconds * 1_000 - (durationSeconds * 1_000) / 2;
     const state = infrastructurePlayableState({
       wallet: "0x1111111111111111111111111111111111111111",
       homePlanetId: "7",
@@ -29,13 +30,15 @@ describe("chainState", () => {
       key: "metalMine",
       label: "Metal Mine",
       readyAt: readyAtSeconds * 1_000,
-      startedAt: (readyAtSeconds - 60) * 1_000,
+      startedAt: (readyAtSeconds - durationSeconds) * 1_000,
     });
     expect(progress(state.queue, halfway)).toBe(0.5);
   });
 
   test("derives building queue progress from the queues endpoint payload", () => {
     const readyAtSeconds = 1_700_000_060;
+    const durationSeconds = 151;
+    const quarter = readyAtSeconds * 1_000 - durationSeconds * 750;
     const state = createInitialPlayableState();
     const queue = buildingQueueItemForDisplay({
       active: true,
@@ -44,16 +47,16 @@ describe("chainState", () => {
       targetLevel: 1,
       readyAt: readyAtSeconds.toString(),
       cost: { metal: "75", crystal: "30", deuterium: "0" },
-    }, state.buildings, (readyAtSeconds - 45) * 1_000);
+    }, state.buildings, quarter);
 
     expect(queue).toMatchObject({
       kind: "building",
       key: "solarPlant",
       label: "Solar Plant",
       readyAt: readyAtSeconds * 1_000,
-      startedAt: (readyAtSeconds - 60) * 1_000,
+      startedAt: (readyAtSeconds - durationSeconds) * 1_000,
     });
-    expect(progress(queue, (readyAtSeconds - 45) * 1_000)).toBe(0.25);
+    expect(progress(queue, quarter)).toBe(0.25);
   });
 
   test("adapts contract energy shortage factor for display", () => {
@@ -95,6 +98,7 @@ describe("chainState", () => {
 
   test("keeps ready building queues complete when startedAt is missing", () => {
     const readyAtSeconds = 1_700_000_060;
+    const durationSeconds = 108;
     const state = createInitialPlayableState();
     const queue = buildingQueueItemForDisplay({
       active: true,
@@ -109,7 +113,7 @@ describe("chainState", () => {
       kind: "building",
       key: "metalMine",
       readyAt: readyAtSeconds * 1_000,
-      startedAt: (readyAtSeconds - 60) * 1_000,
+      startedAt: (readyAtSeconds - durationSeconds) * 1_000,
     });
     expect(progress(queue, (readyAtSeconds + 5) * 1_000)).toBe(1);
   });

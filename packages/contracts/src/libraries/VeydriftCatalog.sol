@@ -12,7 +12,7 @@ library VeydriftCatalog {
         if (building == Building.CrystalMine) return (48, 24, 0);
         if (building == Building.DeuteriumSynthesizer) return (225, 75, 0);
         if (building == Building.SolarPlant) return (75, 30, 0);
-        if (building == Building.RoboticsFactory) return (400, 120, 0);
+        if (building == Building.RoboticsFactory) return (400, 120, 200);
         if (building == Building.Shipyard) return (400, 200, 100);
         if (building == Building.ResearchLab) return (200, 400, 200);
         if (building == Building.MetalStorage) return (1_000, 0, 0);
@@ -25,6 +25,20 @@ library VeydriftCatalog {
         if (building == Building.MissileSilo) return (20_000, 20_000, 1_000);
         if (building == Building.InterdimensionalRiftStabilizer) return (8_000, 8_000, 4_000);
         revert InvalidId();
+    }
+
+    function buildingUpgradeCost(Building building, uint16 currentLevel)
+        public
+        pure
+        returns (uint128, uint128, uint128)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = buildingBaseCost(building);
+        (uint256 numerator, uint256 denominator) = _buildingGrowthFactor(building);
+        return (
+            _scaleByLevel(metal, numerator, denominator, currentLevel),
+            _scaleByLevel(crystal, numerator, denominator, currentLevel),
+            _scaleByLevel(deuterium, numerator, denominator, currentLevel)
+        );
     }
 
     function defenseCost(Defense defense) public pure returns (uint128, uint128, uint128) {
@@ -107,5 +121,32 @@ library VeydriftCatalog {
         }
         if (technology == Technology.Graviton) return (0, 0, 0);
         revert InvalidId();
+    }
+
+    function _buildingGrowthFactor(Building building)
+        private
+        pure
+        returns (uint256 numerator, uint256 denominator)
+    {
+        if (building == Building.CrystalMine) return (8, 5);
+        if (building == Building.FusionReactor) return (9, 5);
+        if (
+            building == Building.MetalMine || building == Building.DeuteriumSynthesizer
+                || building == Building.SolarPlant
+        ) {
+            return (3, 2);
+        }
+        return (2, 1);
+    }
+
+    function _scaleByLevel(
+        uint128 baseCost,
+        uint256 numerator,
+        uint256 denominator,
+        uint16 currentLevel
+    ) private pure returns (uint128) {
+        return uint128(
+            (uint256(baseCost) * (numerator ** currentLevel)) / (denominator ** currentLevel)
+        );
     }
 }

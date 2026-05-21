@@ -738,9 +738,8 @@ contract VeydriftGame {
         returns (Resources memory)
     {
         (uint128 metal, uint128 crystal, uint128 deuterium) =
-            VeydriftCatalog.buildingBaseCost(building);
-        return
-            _scaleByLevel(Resources(metal, crystal, deuterium), _buildingLevels[planetId][building]);
+            VeydriftCatalog.buildingUpgradeCost(building, _buildingLevels[planetId][building]);
+        return Resources(metal, crystal, deuterium);
     }
 
     function defenseCost(Defense defense) public pure returns (Resources memory) {
@@ -1071,19 +1070,6 @@ contract VeydriftGame {
             metal: a.metal + b.metal,
             crystal: a.crystal + b.crystal,
             deuterium: a.deuterium + b.deuterium
-        });
-    }
-
-    function _scaleByLevel(Resources memory baseCost, uint16 currentLevel)
-        private
-        pure
-        returns (Resources memory)
-    {
-        uint256 multiplier = 2 ** currentLevel;
-        return Resources({
-            metal: _toUint128(uint256(baseCost.metal) * multiplier),
-            crystal: _toUint128(uint256(baseCost.crystal) * multiplier),
-            deuterium: _toUint128(uint256(baseCost.deuterium) * multiplier)
         });
     }
 

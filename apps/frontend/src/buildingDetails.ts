@@ -21,9 +21,9 @@ const resourceLabels: Record<keyof Resources, string> = {
   deuterium: "Deuterium",
 };
 
-const buildingEnergyConsumption: Partial<Record<BuildingKey, number>> = {
+const buildingEnergyCoefficient: Partial<Record<BuildingKey, number>> = {
   metalMine: 10,
-  crystalMine: 12,
+  crystalMine: 10,
   deuteriumSynthesizer: 20,
 };
 
@@ -230,19 +230,23 @@ export function buildingEnergyDetail(
     };
   }
 
-  const perLevel = buildingEnergyConsumption[key];
-  if (!perLevel) {
+  const coefficient = buildingEnergyCoefficient[key];
+  if (!coefficient) {
     return { kind: "none" };
   }
 
-  const current = buildings[key] * perLevel;
-  const next = (buildings[key] + 1) * perLevel;
+  const current = ogameLevelGrowth(coefficient, buildings[key]);
+  const next = ogameLevelGrowth(coefficient, buildings[key] + 1);
   return {
     kind: "requires",
     current,
     next,
     delta: next - current,
   };
+}
+
+function ogameLevelGrowth(coefficient: number, level: number): number {
+  return Math.floor(coefficient * level * 1.1 ** level);
 }
 
 export function formatNumber(value: number): string {
@@ -289,8 +293,8 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
 }
 
 function energyRequiredForBuildingLevel(key: BuildingKey, level: number): number | undefined {
-  const perLevel = buildingEnergyConsumption[key];
-  return perLevel === undefined ? undefined : perLevel * level;
+  const coefficient = buildingEnergyCoefficient[key];
+  return coefficient === undefined ? undefined : ogameLevelGrowth(coefficient, level);
 }
 
 function productionResourceForBuilding(key: BuildingKey): keyof Resources {

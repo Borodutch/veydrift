@@ -94,8 +94,8 @@ describe("playable MVP contract display helpers", () => {
 
     expect(firstMine).toEqual({ metal: 60, crystal: 15, deuterium: 0 });
     expect(buildingCost(upgradedBuildings, "metalMine")).toEqual({
-      metal: 120,
-      crystal: 30,
+      metal: 90,
+      crystal: 22,
       deuterium: 0,
     });
   });
@@ -231,21 +231,21 @@ describe("playable MVP contract display helpers", () => {
       roboticsFactory: 4,
     };
 
-    expect(buildingDurationEstimate(state.buildings, cost)).toBe(60);
+    expect(buildingDurationEstimate(state.buildings, cost)).toBe(1_440);
     expect(buildingDurationEstimate(upgradedRobotics, { metal: 100_000, crystal: 50_000, deuterium: 0 }))
-      .toBe(300);
+      .toBe(43_200);
 
     const advancedMine = {
       ...state.buildings,
       metalMine: 8,
     };
-    expect(buildingDurationEstimate(state.buildings, buildingCost(state.buildings, "metalMine"))).toBe(60);
-    expect(buildingDurationEstimate(state.buildings, buildingCost(advancedMine, "metalMine"))).toBe(192);
+    expect(buildingDurationEstimate(state.buildings, buildingCost(state.buildings, "metalMine"))).toBe(108);
+    expect(buildingDurationEstimate(state.buildings, buildingCost(advancedMine, "metalMine"))).toBe(2_766);
 
     const largeCost = { metal: 120_000, crystal: 0, deuterium: 0 };
-    expect(buildingDurationEstimate(state.buildings, largeCost)).toBe(1_200);
-    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 1 }, largeCost)).toBe(600);
-    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 2 }, largeCost)).toBe(400);
+    expect(buildingDurationEstimate(state.buildings, largeCost)).toBe(172_800);
+    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 1 }, largeCost)).toBe(86_400);
+    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 2 }, largeCost)).toBe(57_600);
   });
 
   test("estimates research duration with the OGame-style lab level plus one denominator", () => {
@@ -254,9 +254,9 @@ describe("playable MVP contract display helpers", () => {
     const labOne = { ...state.buildings, researchLab: 1 };
     const labTwo = { ...state.buildings, researchLab: 2 };
 
-    expect(researchDurationEstimate(state.buildings, cost)).toBe(200);
-    expect(researchDurationEstimate(labOne, cost)).toBe(100);
-    expect(researchDurationEstimate(labTwo, cost)).toBe(66);
+    expect(researchDurationEstimate(state.buildings, cost)).toBe(86_400);
+    expect(researchDurationEstimate(labOne, cost)).toBe(43_200);
+    expect(researchDurationEstimate(labTwo, cost)).toBe(28_800);
   });
 
   test("exposes building effect metrics from the same production and storage formulas", () => {
@@ -282,7 +282,7 @@ describe("playable MVP contract display helpers", () => {
     if (storageEffect.kind === "storage") {
       expect(storageEffect.resource).toBe("metal");
       expect(storageEffect.currentCapacity).toBe(storageCaps(buildings).metal);
-      expect(storageEffect.deltaCapacity).toBe(10_000);
+      expect(storageEffect.deltaCapacity).toBe(20_000);
     }
   });
 
@@ -303,11 +303,11 @@ describe("playable MVP contract display helpers", () => {
     const capacity = productionCapacityPerHour(buildings, profile);
     const effect = buildingEffectMetrics(buildings, "metalMine", profile);
 
-    expect(production.metal).toBe(30);
-    expect(capacity.metal).toBe(30);
+    expect(production.metal).toBe(39);
+    expect(capacity.metal).toBe(39);
     expect(effect.kind).toBe("production");
     if (effect.kind === "production") {
-      expect(effect.currentPerHour).toBe(30);
+      expect(effect.currentPerHour).toBe(39);
       expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 2 }, profile).metal);
       expect(effect.deltaPerHour).toBeGreaterThan(0);
     }
@@ -375,12 +375,12 @@ describe("playable MVP contract display helpers", () => {
 
     expect(energyBalance({ ...state.buildings, metalMine: 1 })).toMatchObject({
       produced: 0,
-      required: 10,
+      required: 11,
       scaleBps: 0,
     });
     expect(energyEffect.kind).toBe("energy");
     if (energyEffect.kind === "energy") {
-      expect(energyEffect.deltaProduced).toBe(30);
+      expect(energyEffect.deltaProduced).toBe(22);
     }
 
     expect(shipyardEffect.kind).toBe("shipyard");
