@@ -20,6 +20,7 @@ contract VeydriftSpaceDockSystem {
     uint64 public constant WRECKAGE_TTL = 3 days;
     uint256 public constant MIN_WRECKAGE_VALUE = 150_000;
     uint16 public constant BPS = 10_000;
+    uint8 private constant SHIP_COUNT = uint8(Ship.Crawler) + 1;
 
     struct WreckageField {
         bool active;
@@ -107,6 +108,7 @@ contract VeydriftSpaceDockSystem {
         _requirePlanet(planetId);
         uint16 spaceDockLevel = _spaceDockLevel(planetId);
         if (spaceDockLevel == 0) revert NoSpaceDock(planetId);
+        _clearExpiredWreckage(planetId);
 
         uint256 destroyedValue = VeydriftCatalog.shipStructuralValue(ship) * destroyed;
         if (destroyedValue < MIN_WRECKAGE_VALUE) revert WreckageTooSmall(destroyedValue);
@@ -149,6 +151,7 @@ contract VeydriftSpaceDockSystem {
     }
 
     function repairableShipCount(uint256 planetId, Ship ship) external view returns (uint32) {
+        if (!_hasFreshWreckage(planetId)) return 0;
         return _repairableShips[planetId][ship];
     }
 
@@ -176,9 +179,26 @@ contract VeydriftSpaceDockSystem {
 
     function _requireFreshWreckage(uint256 planetId) private view {
         WreckageField memory field = wreckageFields[planetId];
-        if (!field.active || field.expiresAt < _currentTimestamp()) {
-            revert WreckageExpired(field.expiresAt);
+        if (!_hasFreshWreckage(field)) revert WreckageExpired(field.expiresAt);
+    }
+
+    function _clearExpiredWreckage(uint256 planetId) private {
+        WreckageField memory field = wreckageFields[planetId];
+        if (_hasFreshWreckage(field)) return;
+        if (!field.active) return;
+
+        delete wreckageFields[planetId];
+        for (uint8 i = 0; i < SHIP_COUNT; i++) {
+            delete _repairableShips[planetId][Ship(i)];
         }
+    }
+
+    function _hasFreshWreckage(uint256 planetId) private view returns (bool) {
+        return _hasFreshWreckage(wreckageFields[planetId]);
+    }
+
+    function _hasFreshWreckage(WreckageField memory field) private view returns (bool) {
+        return field.active && field.expiresAt >= _currentTimestamp();
     }
 
     function _spaceDockLevel(uint256 planetId) private view returns (uint16) {
