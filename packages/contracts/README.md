@@ -111,22 +111,23 @@ Colonies:
 - `isCoordinateAvailable(galaxy, system, position)` and `coordinateKey(...)` are exposed for frontends/indexers.
 - New colonies start with `500 metal`, `500 crystal`, and `0 deuterium`; production and storage then follow normal planet settlement rules.
 
-Transport fleets:
+Fleet missions:
 
-- `dispatchTransport(originPlanetId, destinationPlanetId, smallCargo, recycler, colonyShip, cargo)` moves ships/resources only between planets owned by the caller.
-- Departure settles both planets, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
-- `transportCargoCapacity(...)`, `shipCargoCapacity(shipId)`, `transportFuelCost(...)`, and `transportTravelSeconds(...)` are view helpers for UI previews.
-- Arrivals are lazy: call `settleFleetArrival(fleetId)` after `fleet(fleetId).arrivesAt` to settle the destination, credit cargo, and land the ships.
-- `recallFleet(fleetId)` can be called before arrival; recalled fleets return to the origin with their ships and cargo. Fuel remains spent.
+- `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, intercept, and missile attack mission types.
+- Departure settles involved planets, enforces fleet slots, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
+- `shipCargoCapacity(shipId)`, `transportFuelCost(...)`, and `transportTravelSeconds(...)` remain view helpers for UI previews while transport uses the generic mission path.
+- Arrivals are lazy: call `resolveFleetMission(missionId)` after `fleetMission(missionId).arrivalAt` to settle the target and resolve the mission.
+- Missions that return must later call `completeFleetMissionReturn(missionId)` after `fleetMission(missionId).returnAt` to land surviving ships and cargo.
+- `recallFleetMission(missionId)` can be called before arrival; recalled fleets return to the origin with their ships and cargo. Fuel remains spent.
 
 Indexer-facing events:
 
 - `FirstPlanetSettled(player, planetId, galaxy, system, position, coordinateKey, planetSeed)`
 - `ColonyCreated(player, originPlanetId, colonyPlanetId, galaxy, system, position, fields, temperature)`
-- `FleetDispatched(fleetId, player, originPlanetId, destinationPlanetId, arrivesAt, smallCargo, recycler, colonyShip, metal, crystal, deuterium, fuelCost)`
-- `FleetRecalled(fleetId, player, originPlanetId, destinationPlanetId, arrivesAt)`
-- `FleetArrived(fleetId, player, destinationPlanetId, returning)`
-- `ResourcesTransferred(fleetId, originPlanetId, destinationPlanetId, metal, crystal, deuterium)`
+- `FleetMissionLaunched(missionId, player, missionType, originPlanetId, targetPlanetId, arrivalAt, returnAt, cargo, fuelCost, randomnessRequestId)`
+- `FleetMissionRecalled(missionId, player, returnAt)`
+- `FleetMissionResolved(missionId, player, missionType, returnAt)`
+- `FleetMissionReturned(missionId, player, originPlanetId)`
 
 `coordinateKey(galaxy, system, position)` and `planetSeed(galaxy, system, position)` are exposed
 for frontend/backend mapping. `planetSeed` is coordinate-only and domain-separated so the same

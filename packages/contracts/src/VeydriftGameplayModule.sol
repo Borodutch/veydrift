@@ -68,124 +68,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return _createColony(originPlanetId, galaxy, system, position);
     }
 
-    function dispatchTransport(
-        uint256 originPlanetId,
-        uint256 destinationPlanetId,
-        uint32 smallCargo,
-        uint32 recycler,
-        uint32 colonyShip,
-        Resources calldata cargo
-    ) external returns (uint256) {
-        _requirePlanetOwner(originPlanetId);
-        _requireOwnedDestination(destinationPlanetId);
-        if (originPlanetId == destinationPlanetId) revert SamePlanet();
-
-        uint32 shipTotal = smallCargo + recycler + colonyShip;
-        if (shipTotal == 0) revert InvalidQuantity();
-        _requireShips(originPlanetId, Ship.SmallCargo, smallCargo);
-        _requireShips(originPlanetId, Ship.Recycler, recycler);
-        _requireShips(originPlanetId, Ship.ColonyShip, colonyShip);
-
-        uint256 cargoTotal =
-            uint256(cargo.metal) + uint256(cargo.crystal) + uint256(cargo.deuterium);
-        uint256 capacity = _transportCargoCapacity(smallCargo, recycler, colonyShip);
-        if (cargoTotal > capacity) revert CargoCapacityExceeded(capacity, cargoTotal);
-
-        _settleResources(originPlanetId);
-        _settleResources(destinationPlanetId);
-
-        uint128 fuelCost = _transportFuelCost(smallCargo, recycler, colonyShip);
-        Resources memory debit = Resources({
-            metal: cargo.metal,
-            crystal: cargo.crystal,
-            deuterium: _toUint128(uint256(cargo.deuterium) + fuelCost)
-        });
-        _spend(originPlanetId, debit);
-        _increaseInternalResources(cargo);
-        _decreaseShips(originPlanetId, smallCargo, recycler, colonyShip);
-
-        uint256 fleetId = nextFleetId++;
-        uint64 arrivesAt = (uint256(_currentTimestamp())
-                + _transportTravelSeconds(originPlanetId, destinationPlanetId))
-        .toUint64();
-        _fleets[fleetId] = Fleet({
-            active: true,
-            returning: false,
-            owner: msg.sender,
-            originPlanetId: originPlanetId,
-            destinationPlanetId: destinationPlanetId,
-            dispatchedAt: _currentTimestamp(),
-            arrivesAt: arrivesAt,
-            fuelCost: fuelCost,
-            cargo: cargo,
-            smallCargo: smallCargo,
-            recycler: recycler,
-            colonyShip: colonyShip
-        });
-        emit FleetDispatched(
-            fleetId,
-            msg.sender,
-            originPlanetId,
-            destinationPlanetId,
-            arrivesAt,
-            smallCargo,
-            recycler,
-            colonyShip,
-            cargo.metal,
-            cargo.crystal,
-            cargo.deuterium,
-            fuelCost
-        );
-        return fleetId;
-    }
-
-    function recallFleet(uint256 fleetId) external {
-        Fleet storage storedFleet = _fleets[fleetId];
-        if (!storedFleet.active) revert FleetInactive();
-        if (storedFleet.owner != msg.sender) revert FleetNotOwner();
-        if (storedFleet.returning) revert FleetAlreadyReturning();
-        if (_currentTimestamp() >= storedFleet.arrivesAt) revert FleetAlreadyArrived();
-
-        uint64 remaining = storedFleet.arrivesAt - _currentTimestamp();
-        storedFleet.returning = true;
-        storedFleet.arrivesAt = uint64(_currentTimestamp() + remaining);
-        emit FleetRecalled(
-            fleetId,
-            msg.sender,
-            storedFleet.originPlanetId,
-            storedFleet.destinationPlanetId,
-            storedFleet.arrivesAt
-        );
-    }
-
-    function settleFleetArrival(uint256 fleetId) external {
-        Fleet memory storedFleet = _fleets[fleetId];
-        if (!storedFleet.active) revert FleetInactive();
-        if (storedFleet.owner != msg.sender) revert FleetNotOwner();
-        if (_currentTimestamp() < storedFleet.arrivesAt) {
-            revert FleetNotArrived(storedFleet.arrivesAt);
-        }
-
-        delete _fleets[fleetId];
-        uint256 planetId =
-            storedFleet.returning ? storedFleet.originPlanetId : storedFleet.destinationPlanetId;
-        _planets[planetId].resources = _add(_planets[planetId].resources, storedFleet.cargo);
-        _shipCounts[planetId][Ship.SmallCargo] += storedFleet.smallCargo;
-        _shipCounts[planetId][Ship.Recycler] += storedFleet.recycler;
-        _shipCounts[planetId][Ship.ColonyShip] += storedFleet.colonyShip;
-        emit FleetArrived(fleetId, msg.sender, planetId, storedFleet.returning);
-        if (!storedFleet.returning) {
-            emit ResourcesTransferred(
-                fleetId,
-                storedFleet.originPlanetId,
-                storedFleet.destinationPlanetId,
-                storedFleet.cargo.metal,
-                storedFleet.cargo.crystal,
-                storedFleet.cargo.deuterium
-            );
-        }
-    }
-
     function launchFleetMission(
         uint256 originPlanetId,
         uint256 targetPlanetId,
@@ -706,23 +588,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return MIN_FLEET_TRAVEL_SECONDS + distance;
     }
 
-    function _transportFuelCost(uint32 smallCargo, uint32 recycler, uint32 colonyShip)
-        private
-        pure
-        returns (uint128)
-    {
-        uint256 ships = uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
-        return ships == 0 ? 0 : _toUint128(ships);
-    }
-
-    function _decreaseShips(uint256 planetId, uint32 smallCargo, uint32 recycler, uint32 colonyShip)
-        private
-    {
-        _shipCounts[planetId][Ship.SmallCargo] -= smallCargo;
-        _shipCounts[planetId][Ship.Recycler] -= recycler;
-        _shipCounts[planetId][Ship.ColonyShip] -= colonyShip;
-    }
-
     function _validateMissionType(FleetMissionType missionType) private pure {
         if (uint8(missionType) > uint8(FleetMissionType.MissileAttack)) {
             revert InvalidMissionType(missionType);
@@ -739,58 +604,44 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (mission.owner != msg.sender) revert FleetNotOwner();
     }
 
-    function _requireMissionShips(uint256 planetId, MissionShips calldata ships) private view {
-        _requireShips(planetId, Ship.SmallCargo, ships.smallCargo);
-        _requireShips(planetId, Ship.LightFighter, ships.lightFighter);
-        _requireShips(planetId, Ship.Recycler, ships.recycler);
-        _requireShips(planetId, Ship.ColonyShip, ships.colonyShip);
-        _requireShips(planetId, Ship.LargeCargo, ships.largeCargo);
-        _requireShips(planetId, Ship.HeavyFighter, ships.heavyFighter);
-        _requireShips(planetId, Ship.Cruiser, ships.cruiser);
-        _requireShips(planetId, Ship.Battleship, ships.battleship);
-        _requireShips(planetId, Ship.EspionageProbe, ships.espionageProbe);
-        _requireShips(planetId, Ship.Bomber, ships.bomber);
-        _requireShips(planetId, Ship.Destroyer, ships.destroyer);
-        _requireShips(planetId, Ship.Deathstar, ships.deathstar);
-        _requireShips(planetId, Ship.Battlecruiser, ships.battlecruiser);
-        _requireShips(planetId, Ship.Reaper, ships.reaper);
-        _requireShips(planetId, Ship.Pathfinder, ships.pathfinder);
+    function _requireMissionShips(uint256 planetId, MissionShips memory ships) private view {
+        if (ships.espionageProbe != 0) revert InvalidQuantity();
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            if (ship != Ship.EspionageProbe && ship != Ship.SolarSatellite) {
+                uint32 quantity = _missionShipQuantity(ships, ship);
+                if (quantity != 0) _requireShips(planetId, ship, quantity);
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
-    function _debitMissionShips(uint256 planetId, MissionShips calldata ships) private {
-        _shipCounts[planetId][Ship.SmallCargo] -= ships.smallCargo;
-        _shipCounts[planetId][Ship.LightFighter] -= ships.lightFighter;
-        _shipCounts[planetId][Ship.Recycler] -= ships.recycler;
-        _shipCounts[planetId][Ship.ColonyShip] -= ships.colonyShip;
-        _shipCounts[planetId][Ship.LargeCargo] -= ships.largeCargo;
-        _shipCounts[planetId][Ship.HeavyFighter] -= ships.heavyFighter;
-        _shipCounts[planetId][Ship.Cruiser] -= ships.cruiser;
-        _shipCounts[planetId][Ship.Battleship] -= ships.battleship;
-        _shipCounts[planetId][Ship.EspionageProbe] -= ships.espionageProbe;
-        _shipCounts[planetId][Ship.Bomber] -= ships.bomber;
-        _shipCounts[planetId][Ship.Destroyer] -= ships.destroyer;
-        _shipCounts[planetId][Ship.Deathstar] -= ships.deathstar;
-        _shipCounts[planetId][Ship.Battlecruiser] -= ships.battlecruiser;
-        _shipCounts[planetId][Ship.Reaper] -= ships.reaper;
-        _shipCounts[planetId][Ship.Pathfinder] -= ships.pathfinder;
+    function _debitMissionShips(uint256 planetId, MissionShips memory ships) private {
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            if (ship != Ship.EspionageProbe && ship != Ship.SolarSatellite) {
+                uint32 quantity = _missionShipQuantity(ships, ship);
+                if (quantity != 0) _shipCounts[planetId][ship] -= quantity;
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
-        _shipCounts[planetId][Ship.SmallCargo] += ships.smallCargo;
-        _shipCounts[planetId][Ship.LightFighter] += ships.lightFighter;
-        _shipCounts[planetId][Ship.Recycler] += ships.recycler;
-        _shipCounts[planetId][Ship.ColonyShip] += ships.colonyShip;
-        _shipCounts[planetId][Ship.LargeCargo] += ships.largeCargo;
-        _shipCounts[planetId][Ship.HeavyFighter] += ships.heavyFighter;
-        _shipCounts[planetId][Ship.Cruiser] += ships.cruiser;
-        _shipCounts[planetId][Ship.Battleship] += ships.battleship;
-        _shipCounts[planetId][Ship.EspionageProbe] += ships.espionageProbe;
-        _shipCounts[planetId][Ship.Bomber] += ships.bomber;
-        _shipCounts[planetId][Ship.Destroyer] += ships.destroyer;
-        _shipCounts[planetId][Ship.Deathstar] += ships.deathstar;
-        _shipCounts[planetId][Ship.Battlecruiser] += ships.battlecruiser;
-        _shipCounts[planetId][Ship.Reaper] += ships.reaper;
-        _shipCounts[planetId][Ship.Pathfinder] += ships.pathfinder;
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            if (ship != Ship.EspionageProbe && ship != Ship.SolarSatellite) {
+                uint32 quantity = _missionShipQuantity(ships, ship);
+                if (quantity != 0) _shipCounts[planetId][ship] += quantity;
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function _missionCargoCapacity(MissionShips memory ships) private pure returns (uint256) {
@@ -804,8 +655,30 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _missionShipTotal(MissionShips memory ships) private pure returns (uint256) {
         return uint256(ships.smallCargo) + ships.lightFighter + ships.recycler + ships.colonyShip
             + ships.largeCargo + ships.heavyFighter + ships.cruiser + ships.battleship
-            + ships.espionageProbe + ships.bomber + ships.destroyer + ships.deathstar
-            + ships.battlecruiser + ships.reaper + ships.pathfinder;
+            + ships.bomber + ships.destroyer + ships.deathstar + ships.battlecruiser + ships.reaper
+            + ships.pathfinder;
+    }
+
+    function _missionShipQuantity(MissionShips memory ships, Ship ship)
+        private
+        pure
+        returns (uint32)
+    {
+        if (ship == Ship.SmallCargo) return ships.smallCargo;
+        if (ship == Ship.LightFighter) return ships.lightFighter;
+        if (ship == Ship.Recycler) return ships.recycler;
+        if (ship == Ship.ColonyShip) return ships.colonyShip;
+        if (ship == Ship.LargeCargo) return ships.largeCargo;
+        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
+        if (ship == Ship.Cruiser) return ships.cruiser;
+        if (ship == Ship.Battleship) return ships.battleship;
+        if (ship == Ship.Bomber) return ships.bomber;
+        if (ship == Ship.Destroyer) return ships.destroyer;
+        if (ship == Ship.Deathstar) return ships.deathstar;
+        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
+        if (ship == Ship.Reaper) return ships.reaper;
+        if (ship == Ship.Pathfinder) return ships.pathfinder;
+        return 0;
     }
 
     function _raidResources(uint256 targetPlanetId, uint256 capacity)
