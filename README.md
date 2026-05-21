@@ -85,10 +85,18 @@ VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
 VEYDRIFT_INDEX_FROM_BLOCK=0
 ALCHEMY_BASE_SEPOLIA_API_KEY=...
+# Optional explicit websocket overrides; otherwise the Alchemy key derives the Base Sepolia WS URL.
+VEYDRIFT_WS_RPC_URL=
+ALCHEMY_BASE_SEPOLIA_WS_URL=
 ```
 
 The backend accepts `ALCHEMY_BASE_SEPOLIA_API_KEY`,
 `ALCHEMY_BASE_SEPOLIA_RPC_URL`, `BASE_SEPOLIA_RPC_URL`, or `VEYDRIFT_RPC_URL`.
+For websocket chain sync it accepts `VEYDRIFT_WS_RPC_URL` or
+`ALCHEMY_BASE_SEPOLIA_WS_URL`, and falls back to
+`wss://base-sepolia.g.alchemy.com/v2/<key>` when only
+`ALCHEMY_BASE_SEPOLIA_API_KEY` is set. HTTP RPC remains the startup snapshot and
+request/response fallback.
 `VEYDRIFT_GAME_CONTRACT_ADDRESS` or the legacy `VEYDRIFT_CONTRACT_ADDRESS` must
 point at the deployed `VeydriftGame` proxy for game-state APIs and runtime
 Shipyard transactions.
@@ -99,8 +107,10 @@ contract.
 `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
 proxies deployed for the game.
 Health/debug responses only report safe configuration metadata and never echo
-RPC URLs or API keys. Ownership remains canonical onchain; the in-memory index
-can be rebuilt from settlement events with `POST /index/rebuild`.
+RPC URLs or API keys. Ownership remains canonical onchain; the websocket chain
+sync keeps the in-memory event index warm, `GET /chain/events` streams backend
+chain-event notifications to the frontend, and `POST /index/rebuild` remains the
+manual HTTP fallback for rebuilding settlement events.
 
 ### Frontend
 

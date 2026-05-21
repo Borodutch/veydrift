@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { BackendConfig } from "./config";
+import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
   Address,
   ChainReader,
@@ -29,6 +29,7 @@ const configuredTestConfig: BackendConfig = {
   },
   rpcSource: "custom-url",
   rpcUrl: "https://example.invalid/rpc",
+  wsRpcSource: "missing",
   settlementContractAddress: "0x1111111111111111111111111111111111111111",
   gameContractAddress: "0x3333333333333333333333333333333333333333"
 };
@@ -446,13 +447,17 @@ describe("Veydrift backend", () => {
           metal: false
         },
         rpcSource: "missing",
+        wsRpcSource: "missing",
+        hasWsRpcUrl: false,
         resourceTokenAddressesConfigured: false,
         settlementContractConfigured: false,
         moonContractConfigured: false,
         gameContractConfigured: false
       },
       configured: false,
+      chainSync: null,
       indexer: null,
+      rpc: null,
       ok: true,
       service: "veydrift-backend"
     });
@@ -604,6 +609,8 @@ describe("Veydrift backend", () => {
       chain: {
         hasRpcUrl: true,
         rpcSource: "alchemy-key",
+        wsRpcSource: "missing",
+        hasWsRpcUrl: false,
         resourceTokenAddressesConfigured: true,
         settlementContractConfigured: true,
         gameContractConfigured: true
@@ -718,6 +725,62 @@ describe("Veydrift backend", () => {
       active: true,
       kind: "building"
     });
+  });
+
+  test("batches infrastructure building level and cost RPC reads", async () => {
+    const individualSelectors: string[] = [];
+    const batchSelectors: string[] = [];
+    const reader = new VeydriftGameReader(configuredTestConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const [call] = params as [{ data: string; to: string }];
+        const selector = call.data.slice(0, 10);
+        individualSelectors.push(selector);
+        if (selector === "0x0ff79fa5") return abiWords(7n) as T;
+        if (selector === "0x181c1bc4") {
+          return abiWords(
+            BigInt(player),
+            2n,
+            44n,
+            9n,
+            211n,
+            1n,
+            9_788n,
+            10_233n,
+            10_584n,
+            1_700_000_000n,
+            5_000n,
+            4_900n,
+            4_800n
+          ) as T;
+        }
+        if (selector === "0x0adbf924" || selector === "0x9ec5e0d5" || selector === "0x6db0ecd7") {
+          return abiWords(5_000n, 4_900n, 4_800n) as T;
+        }
+        if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;
+        if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+
+        throw new Error(`Unexpected individual call ${selector}`);
+      },
+      async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+        return requests.map((request) => {
+          const [call] = request.params as [{ data: string; to: string }];
+          const selector = call.data.slice(0, 10);
+          batchSelectors.push(selector);
+          if (selector === "0xd9b24865") return abiWords(1n);
+          if (selector === "0x291ee1b5") return abiWords(120n, 30n, 0n);
+          throw new Error(`Unexpected batch call ${selector}`);
+        }) as T[];
+      }
+    });
+
+    const state = await reader.getInfrastructureState(player);
+
+    expect(state.buildings).toHaveLength(16);
+    expect(batchSelectors).toHaveLength(32);
+    expect(batchSelectors.filter((selector) => selector === "0xd9b24865")).toHaveLength(16);
+    expect(batchSelectors.filter((selector) => selector === "0x291ee1b5")).toHaveLength(16);
+    expect(individualSelectors).not.toContain("0xd9b24865");
+    expect(individualSelectors).not.toContain("0x291ee1b5");
   });
 
   test("answers moon state from a mocked chain reader", async () => {

@@ -207,7 +207,14 @@ export interface ChainReader {
   getResearchState(wallet: Address): Promise<ResearchState>;
   getRiftState(wallet: Address): Promise<RiftState>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
+  rpcMetrics?(): RpcMetrics;
 }
+
+export type RpcMetrics = {
+  batchRequests: number;
+  callsByMethod: Record<string, number>;
+  httpRequests: number;
+};
 
 type JsonRpcResponse<T> = {
   result?: T;
@@ -217,21 +224,29 @@ type JsonRpcResponse<T> = {
   };
 };
 
-type RpcLog = {
+export type RpcLog = {
   blockNumber: string;
   transactionHash: string;
   topics: string[];
   data: string;
 };
 
-type RpcBlock = {
+export type RpcBlock = {
   timestamp: string;
 };
 
 export class HttpJsonRpcTransport {
+  private readonly metrics: RpcMetrics = {
+    batchRequests: 0,
+    callsByMethod: {},
+    httpRequests: 0
+  };
+
   constructor(private readonly rpcUrl: string) {}
 
   async request<T>(method: string, params: unknown[]): Promise<T> {
+    this.countRpc(method);
+    this.metrics.httpRequests += 1;
     const response = await fetch(this.rpcUrl, {
       method: "POST",
       headers: {
@@ -260,10 +275,68 @@ export class HttpJsonRpcTransport {
 
     return body.result;
   }
+
+  async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+    if (requests.length === 0) {
+      return [];
+    }
+
+    for (const request of requests) {
+      this.countRpc(request.method);
+    }
+    this.metrics.batchRequests += 1;
+    this.metrics.httpRequests += 1;
+
+    const response = await fetch(this.rpcUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(requests.map((request, index) => ({
+        jsonrpc: "2.0",
+        id: index + 1,
+        method: request.method,
+        params: request.params
+      })))
+    });
+
+    if (!response.ok) {
+      throw new Error(`RPC HTTP ${response.status}`);
+    }
+
+    const bodies = (await response.json()) as Array<JsonRpcResponse<T> & { id?: number }>;
+    const byId = new Map(bodies.map((body) => [body.id, body]));
+
+    return requests.map((_, index) => {
+      const body = byId.get(index + 1);
+      if (!body) {
+        throw new Error("RPC batch response missing item.");
+      }
+      if (body.error) {
+        throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
+      }
+      if (body.result === undefined) {
+        throw new Error("RPC response missing result.");
+      }
+      return body.result;
+    });
+  }
+
+  snapshot(): RpcMetrics {
+    return {
+      batchRequests: this.metrics.batchRequests,
+      callsByMethod: { ...this.metrics.callsByMethod },
+      httpRequests: this.metrics.httpRequests
+    };
+  }
+
+  private countRpc(method: string): void {
+    this.metrics.callsByMethod[method] = (this.metrics.callsByMethod[method] ?? 0) + 1;
+  }
 }
 
 export class VeydriftGameReader implements ChainReader {
-  private readonly transport: Pick<HttpJsonRpcTransport, "request">;
+  private readonly transport: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>;
   private readonly gameContractAddress: Address;
   private readonly moonContractAddress: Address | undefined;
   private readonly chainId: number;
@@ -271,7 +344,10 @@ export class VeydriftGameReader implements ChainReader {
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
 
-  constructor(config: BackendConfig, transport?: Pick<HttpJsonRpcTransport, "request">) {
+  constructor(
+    config: BackendConfig,
+    transport?: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>
+  ) {
     if (!config.rpcUrl) {
       throw new Error("RPC URL is required.");
     }
@@ -286,6 +362,14 @@ export class VeydriftGameReader implements ChainReader {
     this.indexFromBlock = config.indexFromBlock;
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
+  }
+
+  rpcMetrics(): RpcMetrics {
+    return this.transport.snapshot?.() ?? {
+      batchRequests: 0,
+      callsByMethod: {},
+      httpRequests: 0
+    };
   }
 
   async getWalletSettlement(wallet: Address): Promise<WalletSettlement> {
@@ -884,20 +968,31 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readBuildingRows(planetId: bigint): Promise<InfrastructureState["buildings"]> {
-    return Promise.all(
-      Array.from({ length: buildingCount }, async (_, id) => {
-        const [level, cost] = await Promise.all([
-          this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(BigInt(id))]),
-          this.readResourcesCall("0x291ee1b5", [encodeUint(planetId), encodeUint(BigInt(id))])
-        ]);
+    const calls = Array.from({ length: buildingCount }, (_, id) => ([
+      {
+        selector: "0xd9b24865",
+        args: [encodeUint(planetId), encodeUint(BigInt(id))]
+      },
+      {
+        selector: "0x291ee1b5",
+        args: [encodeUint(planetId), encodeUint(BigInt(id))]
+      }
+    ])).flat();
+    const results = await this.batchCallContract(this.gameContractAddress, calls);
 
-        return {
-          id,
-          level: Number(level),
-          cost
-        };
-      })
-    );
+    return Array.from({ length: buildingCount }, (_, id) => {
+      const levelResult = results[id * 2];
+      const costResult = results[id * 2 + 1];
+      if (!levelResult || !costResult) {
+        throw new Error("RPC batch response missing building row.");
+      }
+
+      return {
+        id,
+        level: Number(decodeUintWord(wordAt(splitWords(levelResult), 0))),
+        cost: decodeResources(splitWords(costResult))
+      };
+    });
   }
 
   private async readMoon(planetId: bigint): Promise<NonNullable<MoonState["moon"]>> {
@@ -1140,6 +1235,26 @@ export class VeydriftGameReader implements ChainReader {
       "latest"
     ]);
   }
+
+  private async batchCallContract(
+    contractAddress: Address,
+    calls: Array<{ selector: string; args: string[] }>
+  ): Promise<string[]> {
+    if (!this.transport.requestBatch) {
+      return Promise.all(calls.map((call) => this.callContract(contractAddress, call.selector, call.args)));
+    }
+
+    return this.transport.requestBatch<string>(calls.map((call) => ({
+      method: "eth_call",
+      params: [
+        {
+          to: contractAddress,
+          data: `${call.selector}${call.args.join("")}`
+        },
+        "latest"
+      ]
+    })));
+  }
 }
 
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
@@ -1245,7 +1360,12 @@ export function riftRequirements(
   ];
 }
 
-function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
+export function isSettledPlanetLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === planetStartedTopic || topic === colonyCreatedTopic;
+}
+
+export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
   const eventName = topicAt(log.topics, 0) === planetStartedTopic ? "PlanetStarted" : "ColonyCreated";
   const player = decodeAddressWord(topicAt(log.topics, 1));
   const planetId = decodeUint(topicAt(log.topics, eventName === "PlanetStarted" ? 2 : 3));
