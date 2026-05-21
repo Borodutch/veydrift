@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {Building, Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
 
 contract MockResourceToken {
@@ -178,6 +179,7 @@ contract VeydriftGameTest is Test {
         assertEq(construction.cost.metal, 60);
         assertEq(construction.cost.crystal, 15);
         assertEq(construction.cost.deuterium, 0);
+        assertEq(construction.readyAt, block.timestamp + 108);
 
         vm.prank(player);
         vm.expectRevert(
@@ -193,9 +195,50 @@ contract VeydriftGameTest is Test {
         assertFalse(game.activeBuildingConstruction(planetId).active);
         VeydriftGame.Resources memory nextCost =
             game.buildingUpgradeCost(planetId, Building.MetalMine);
-        assertEq(nextCost.metal, 120);
-        assertEq(nextCost.crystal, 30);
+        assertEq(nextCost.metal, 90);
+        assertEq(nextCost.crystal, 22);
         assertEq(nextCost.deuterium, 0);
+    }
+
+    function testOGameBuildingEconomyFormulas() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        _build(player, planetId, Building.MetalMine);
+        _build(player, planetId, Building.SolarPlant);
+
+        VeydriftGame.Resources memory metalMineLevelTwo =
+            game.buildingUpgradeCost(planetId, Building.MetalMine);
+        VeydriftGame.Resources memory crystalMineLevelOne =
+            game.buildingUpgradeCost(planetId, Building.CrystalMine);
+        VeydriftGame.Resources memory fusionLevelOne =
+            game.buildingUpgradeCost(planetId, Building.FusionReactor);
+        VeydriftGame.Resources memory roboticsLevelOne =
+            game.buildingUpgradeCost(planetId, Building.RoboticsFactory);
+        (uint256 metalPerHour,,) = game.productionPerHour(planetId);
+        (uint256 producedEnergy, uint256 requiredEnergy, uint256 scaleBps) =
+            game.energyBalance(planetId);
+        (uint128 metalCap,,) = game.storageCaps(planetId);
+
+        assertEq(metalMineLevelTwo.metal, 90);
+        assertEq(metalMineLevelTwo.crystal, 22);
+        assertEq(crystalMineLevelOne.metal, 48);
+        assertEq(crystalMineLevelOne.crystal, 24);
+        assertEq(fusionLevelOne.metal, 900);
+        assertEq(fusionLevelOne.crystal, 360);
+        assertEq(fusionLevelOne.deuterium, 180);
+        assertEq(roboticsLevelOne.metal, 400);
+        assertEq(roboticsLevelOne.crystal, 120);
+        assertEq(roboticsLevelOne.deuterium, 200);
+        assertEq(metalPerHour, 33);
+        assertEq(producedEnergy, 22);
+        assertEq(requiredEnergy, 11);
+        assertEq(scaleBps, 10_000);
+        assertEq(metalCap, 10_000);
+
+        (uint128 levelThreeStorage,,) = VeydriftFormulas.storageCaps(3, 0, 0);
+        assertEq(levelThreeStorage, 75_000);
+        assertEq(VeydriftFormulas.buildingDuration(2, 1, 10_000, 5_000, 60), 3_600);
     }
 
     function testBuildingUpgradeSpendsInternalResources() public {
