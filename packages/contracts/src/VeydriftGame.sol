@@ -153,7 +153,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
     }
 
-    function startShipProduction(uint256, Ship, uint32) external pure {
+    function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external view {
+        _validateShipProduction(planetId, ship, quantity);
         revert UnsupportedGameplayModule();
     }
 
@@ -202,7 +203,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         emit ResearchCompleted(msg.sender, queue.technology, queue.targetLevel);
     }
 
-    function createColonyAtNextSlot(uint256, uint256) external pure returns (uint256) {
+    function createColonyAtNextSlot(uint256 originPlanetId, uint256)
+        external
+        view
+        returns (uint256)
+    {
+        _validateColonyCreation(originPlanetId);
         revert UnsupportedGameplayModule();
     }
 
@@ -560,6 +566,47 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
         if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
             revert MissingDependency("RESEARCH_LAB_2");
+        }
+    }
+
+    function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
+        _requirePlanetOwner(planetId);
+        if (quantity == 0) revert InvalidQuantity();
+        if (shipQueues[planetId].active) revert QueueActive();
+
+        VeydriftDependencies.requireShip(
+            ship,
+            _buildingLevels[planetId][Building.Shipyard],
+            _technologyLevels[msg.sender][Technology.Espionage],
+            _technologyLevels[msg.sender][Technology.CombustionDrive],
+            _technologyLevels[msg.sender][Technology.ImpulseDrive],
+            _technologyLevels[msg.sender][Technology.HyperspaceDrive],
+            _technologyLevels[msg.sender][Technology.Hyperspace],
+            _technologyLevels[msg.sender][Technology.Graviton],
+            _technologyLevels[msg.sender][Technology.Laser],
+            _technologyLevels[msg.sender][Technology.Ion],
+            _technologyLevels[msg.sender][Technology.Shielding],
+            _technologyLevels[msg.sender][Technology.Armor],
+            _technologyLevels[msg.sender][Technology.Plasma]
+        );
+
+        _requireAffordable(planetId, _multiply(shipCost(ship), quantity));
+    }
+
+    function _validateColonyCreation(uint256 originPlanetId) private view {
+        _requirePlanetOwner(originPlanetId);
+        if (planetCountOf[msg.sender] >= maxPlanets(msg.sender)) {
+            revert PlanetLimitReached(maxPlanets(msg.sender));
+        }
+    }
+
+    function _requireAffordable(uint256 planetId, Resources memory cost) private view {
+        Resources memory available = _planets[planetId].resources;
+        if (
+            available.metal < cost.metal || available.crystal < cost.crystal
+                || available.deuterium < cost.deuterium
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
         }
     }
 
