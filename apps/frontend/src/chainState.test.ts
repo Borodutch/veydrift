@@ -92,4 +92,25 @@ describe("chainState", () => {
     });
     expect(progress(queue, halfway)).toBe(0.5);
   });
+
+  test("keeps ready building queues complete when startedAt is missing", () => {
+    const readyAtSeconds = 1_700_000_060;
+    const state = createInitialPlayableState();
+    const queue = buildingQueueItemForDisplay({
+      active: true,
+      kind: "building",
+      itemId: 0,
+      targetLevel: 1,
+      readyAt: readyAtSeconds.toString(),
+      cost: { metal: "60", crystal: "15", deuterium: "0" },
+    }, state.buildings, (readyAtSeconds + 5) * 1_000);
+
+    expect(queue).toMatchObject({
+      kind: "building",
+      key: "metalMine",
+      readyAt: readyAtSeconds * 1_000,
+      startedAt: (readyAtSeconds - 60) * 1_000,
+    });
+    expect(progress(queue, (readyAtSeconds + 5) * 1_000)).toBe(1);
+  });
 });
