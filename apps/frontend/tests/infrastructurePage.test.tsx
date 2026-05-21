@@ -80,7 +80,7 @@ describe("Infrastructure page display helpers", () => {
     expect(text).not.toContain("Energy output");
   });
 
-  test("omits redundant delta wording from energy comparison rows", () => {
+  test("shows required energy upgrade deltas without redundant wording", () => {
     const state = createInitialPlayableState(1_000);
     const mineBuildings = {
       ...state.buildings,
@@ -101,6 +101,7 @@ describe("Infrastructure page display helpers", () => {
     const mineRows = detailEffectRows(mineEffect, buildingEnergyDetail(mineBuildings, "metalMine"));
 
     expect(mineRows).toContainEqual({
+      delta: "(+13)",
       label: "Energy required",
       next: "24 required",
       tone: "warning",
@@ -127,6 +128,7 @@ describe("Infrastructure page display helpers", () => {
       value: "0 Metal/h",
     });
     expect(rows).toContainEqual({
+      delta: "(+11)",
       label: "Energy required",
       next: "11 required",
       tone: "warning",
