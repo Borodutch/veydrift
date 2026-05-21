@@ -132,7 +132,6 @@ describe("playable MVP contract display helpers", () => {
       [5, "heavyFighter", "Heavy Fighter"],
       [6, "cruiser", "Cruiser"],
       [7, "battleship", "Battleship"],
-      [8, "espionageProbe", "Espionage Probe"],
       [9, "bomber", "Bomber"],
       [10, "solarSatellite", "Solar Satellite"],
       [11, "destroyer", "Destroyer"],
@@ -257,7 +256,6 @@ describe("playable MVP contract display helpers", () => {
       "combustionDrive",
       "impulseDrive",
       "hyperspaceDrive",
-      "espionage",
       "computer",
       "astrophysics",
       "intergalacticResearchNetwork",
@@ -286,6 +284,10 @@ describe("playable MVP contract display helpers", () => {
     expect(researchRequirementsFor("graviton")).toEqual([
       { type: "building", key: "researchLab", level: 12 },
       { type: "energy", produced: 300_000 },
+    ]);
+    expect(researchRequirementsFor("astrophysics")).toEqual([
+      { type: "building", key: "researchLab", level: 3 },
+      { type: "research", key: "impulseDrive", level: 3 },
     ]);
   });
 

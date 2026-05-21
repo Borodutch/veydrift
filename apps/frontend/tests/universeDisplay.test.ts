@@ -134,7 +134,7 @@ describe("tester universe display data", () => {
 
   test("visible MVP catalog uses scoped gameplay assets", () => {
     expect(buildingCatalog.every((building) => building.asset.includes("/assets/game/style-pass/generated/buildings/"))).toBe(true);
-    expect(shipCatalog).toHaveLength(17);
+    expect(shipCatalog).toHaveLength(16);
     expect(shipCatalog.every((ship) => ship.asset.includes("/assets/game/style-pass/generated/ships/"))).toBe(true);
     expect(shipCatalog.some((ship) => ship.asset.includes("/assets/game/ships/"))).toBe(false);
     expect(shipCatalog.find((ship) => ship.key === "smallCargo")?.asset).toBe(

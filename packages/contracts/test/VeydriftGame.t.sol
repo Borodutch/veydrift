@@ -558,9 +558,9 @@ contract VeydriftGameTest is Test {
                 VeydriftDependencies.MissingDependency.selector, CRAWLER_TECH_REQUIREMENT
             )
         );
-        VeydriftDependencies.requireShip(Ship.Crawler, 5, 0, 3, 0, 0, 0, 0, 0, 3, 0, 0, 3, 0);
+        VeydriftDependencies.requireShip(Ship.Crawler, 5, 3, 0, 0, 0, 0, 0, 3, 0, 0, 3, 0);
 
-        VeydriftDependencies.requireShip(Ship.Crawler, 5, 0, 4, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0);
+        VeydriftDependencies.requireShip(Ship.Crawler, 5, 4, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0);
     }
 
     function testBuildingDependencyCatalogRequiresVanillaUnlocks() public {
@@ -587,9 +587,9 @@ contract VeydriftGameTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, RESEARCH_LAB_12)
         );
-        VeydriftDependencies.requireResearch(Technology.Graviton, 11, 0, 0, 0, 0, 0, 0, 0, 0);
+        VeydriftDependencies.requireResearch(Technology.Graviton, 11, 0, 0, 0, 0, 0, 0, 0);
 
-        VeydriftDependencies.requireResearch(Technology.Graviton, 12, 0, 0, 0, 0, 0, 0, 0, 0);
+        VeydriftDependencies.requireResearch(Technology.Graviton, 12, 0, 0, 0, 0, 0, 0, 0);
     }
 
     function testBuildingUpgradeRejectsInsufficientResources() public {

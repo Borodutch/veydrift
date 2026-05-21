@@ -52,7 +52,7 @@ Out of scope for the current first-planet MVP:
 | Battleship | implemented | Dependency tightened to Shipyard 7 + Hyperspace Drive 4. |
 | Colony Ship | implemented | Dependency tightened to Shipyard 4 + Impulse 3. |
 | Recycler | implemented | Dependency tightened to Shipyard 4 + Combustion 6 + Shielding 2. |
-| Espionage Probe | implemented | Dependency tightened to Shipyard 3 + Combustion 3 + Espionage 2. |
+| Espionage Probe | removed / unsupported | Removed from Veydrift scope in VEY-KANEO-111. The reserved contract slot has no catalog cost, no UI entry, and cannot be built. |
 | Bomber | implemented | Dependency tightened to Shipyard 8 + Impulse 6 + Plasma 5. |
 | Solar Satellite | implemented | Shipyard 1. |
 | Destroyer | implemented | Dependency tightened to Shipyard 9 + Hyperspace Drive 6 + Hyperspace 5. |
@@ -89,9 +89,9 @@ Out of scope for the current first-planet MVP:
 | Combustion Drive | implemented | Dependency tightened to Research Lab 1 + Energy 1. |
 | Impulse Drive | implemented | Dependency Research Lab 2 + Energy 1. |
 | Hyperspace Drive | implemented | Dependency Research Lab 7 + Hyperspace 3. |
-| Espionage Technology | implemented | Dependency Research Lab 3. |
+| Espionage Technology | removed / unsupported | Removed from Veydrift scope in VEY-KANEO-111. The reserved contract slot has no research cost, no UI entry, and cannot be researched. |
 | Computer Technology | implemented | Dependency Research Lab 1. |
-| Astrophysics | implemented | Dependency Research Lab 3 + Espionage 4 + Impulse 3. |
+| Astrophysics | implemented | Dependency Research Lab 3 + Impulse 3. Veydrift intentionally omits the old espionage dependency. |
 | Intergalactic Research Network | implemented | Dependency Research Lab 10 + Computer 8 + Hyperspace 8. |
 | Graviton Technology | implemented | Dependency Research Lab 12; energy cost behavior remains a production/research module follow-up. |
 | Weapons Technology | implemented | Dependency Research Lab 4. |

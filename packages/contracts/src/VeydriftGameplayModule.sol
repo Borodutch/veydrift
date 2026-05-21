@@ -292,7 +292,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         VeydriftDependencies.requireShip(
             ship,
             _buildingLevels[planetId][Building.Shipyard],
-            _technologyLevels[player][Technology.Espionage],
             _technologyLevels[player][Technology.CombustionDrive],
             _technologyLevels[player][Technology.ImpulseDrive],
             _technologyLevels[player][Technology.HyperspaceDrive],
@@ -605,10 +604,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _requireMissionShips(uint256 planetId, MissionShips memory ships) private view {
-        if (ships.espionageProbe != 0) revert InvalidQuantity();
+        if (ships.removedShipSlot != 0) revert InvalidQuantity();
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.EspionageProbe && ship != Ship.SolarSatellite) {
+            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _requireShips(planetId, ship, quantity);
             }
@@ -621,7 +620,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _debitMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.EspionageProbe && ship != Ship.SolarSatellite) {
+            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _shipCounts[planetId][ship] -= quantity;
             }
@@ -634,7 +633,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.EspionageProbe && ship != Ship.SolarSatellite) {
+            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _shipCounts[planetId][ship] += quantity;
             }
