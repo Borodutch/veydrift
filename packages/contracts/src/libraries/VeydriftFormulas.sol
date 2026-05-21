@@ -11,6 +11,7 @@ library VeydriftFormulas {
     error LevelTooHigh();
 
     uint256 private constant BUILDING_DURATION_COST_DIVISOR = 100;
+    uint256 private constant UNIT_DURATION_COST_DIVISOR = 2_500;
 
     function planetMultipliers(int16 temperature, uint16 fields)
         public
@@ -96,16 +97,16 @@ library VeydriftFormulas {
 
     function unitDuration(
         uint256 shipyardLevel,
+        uint256 naniteLevel,
         uint128 metalCost,
         uint128 crystalCost,
-        uint128 deuteriumCost,
         uint32 quantity,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
-        uint256 raw =
-            (uint256(metalCost) + uint256(crystalCost) + uint256(deuteriumCost))
-                / (200 * (shipyardLevel + 1));
-        raw += quantity * 10;
+        if (naniteLevel > 50) revert LevelTooHigh();
+        uint256 naniteDivisor = 2 ** naniteLevel;
+        uint256 raw = ((uint256(metalCost) + uint256(crystalCost)) * uint256(quantity) * 1 hours)
+            / (UNIT_DURATION_COST_DIVISOR * (shipyardLevel + 1) * naniteDivisor);
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
 

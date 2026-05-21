@@ -95,10 +95,12 @@ export type BuildingRequirement = {
   level: number;
 };
 
+export type UnlockBuildingKey = BuildingKey | "missileSilo";
+
 export type UnlockRequirement = {
   label: string;
   kind: "building" | "technology";
-  key?: BuildingKey | ResearchKey;
+  key?: UnlockBuildingKey | ResearchKey;
   level: number;
 };
 
@@ -482,7 +484,7 @@ export const defenseCatalog: Array<{
     id: 0,
     label: "Rocket Launcher",
     group: "kinetic",
-    baseCost: { metal: 200, crystal: 0, deuterium: 0 },
+    baseCost: { metal: 2_000, crystal: 0, deuterium: 0 },
     requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
     asset: defenseAssetByKey.rocketLauncher,
   },
@@ -493,8 +495,9 @@ export const defenseCatalog: Array<{
     group: "energy",
     baseCost: { metal: 1_500, crystal: 500, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "laser", label: "Laser", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
+      { kind: "technology", key: "energy", label: "Energy", level: 1 },
+      { kind: "technology", key: "laser", label: "Laser", level: 3 },
     ],
     asset: defenseAssetByKey.lightLaser,
   },
@@ -505,8 +508,9 @@ export const defenseCatalog: Array<{
     group: "energy",
     baseCost: { metal: 6_000, crystal: 2_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "laser", label: "Laser", level: 3 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
+      { kind: "technology", key: "energy", label: "Energy", level: 3 },
+      { kind: "technology", key: "laser", label: "Laser", level: 6 },
     ],
     asset: defenseAssetByKey.heavyLaser,
   },
@@ -529,8 +533,9 @@ export const defenseCatalog: Array<{
     group: "kinetic",
     baseCost: { metal: 20_000, crystal: 15_000, deuterium: 2_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "laser", label: "Laser", level: 6 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 6 },
+      { kind: "technology", key: "energy", label: "Energy", level: 6 },
+      { kind: "technology", key: "weapons", label: "Weapons", level: 3 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 1 },
     ],
     asset: defenseAssetByKey.gaussCannon,
@@ -540,9 +545,9 @@ export const defenseCatalog: Array<{
     id: 5,
     label: "Ion Cannon",
     group: "energy",
-    baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
+    baseCost: { metal: 5_000, crystal: 3_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
       { kind: "technology", key: "ion", label: "Ion", level: 4 },
     ],
     asset: defenseAssetByKey.ionCannon,
@@ -554,7 +559,7 @@ export const defenseCatalog: Array<{
     group: "energy",
     baseCost: { metal: 50_000, crystal: 50_000, deuterium: 30_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 8 },
       { kind: "technology", key: "plasma", label: "Plasma", level: 7 },
     ],
     asset: defenseAssetByKey.plasmaTurret,
@@ -566,7 +571,7 @@ export const defenseCatalog: Array<{
     group: "shield",
     baseCost: { metal: 50_000, crystal: 50_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 6 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 6 },
     ],
     asset: defenseAssetByKey.largeShieldDome,
@@ -577,7 +582,10 @@ export const defenseCatalog: Array<{
     label: "Anti-Ballistic Missile",
     group: "missile",
     baseCost: { metal: 8_000, crystal: 0, deuterium: 2_000 },
-    requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "missileSilo", label: "Missile Silo", level: 2 },
+    ],
     asset: defenseAssetByKey.antiBallisticMissile,
   },
   {
@@ -586,7 +594,11 @@ export const defenseCatalog: Array<{
     label: "Interplanetary Missile",
     group: "missile",
     baseCost: { metal: 12_500, crystal: 2_500, deuterium: 10_000 },
-    requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
+    requirements: [
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "missileSilo", label: "Missile Silo", level: 4 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 1 },
+    ],
     asset: defenseAssetByKey.interplanetaryMissile,
   },
 ];
@@ -1041,13 +1053,13 @@ export function unmetResearchRequirement(
 export function missingUnlockRequirements(
   requirements: UnlockRequirement[],
   levels: {
-    buildings?: Partial<Record<BuildingKey, number>> | undefined;
+    buildings?: Partial<Record<UnlockBuildingKey, number>> | undefined;
     research?: Partial<Record<ResearchKey, number>> | undefined;
   },
 ): string[] {
   const missing = uniqueUnlockRequirements(requirements).flatMap((requirement) => {
     const actual = requirement.kind === "building"
-      ? levels.buildings?.[requirement.key as BuildingKey] ?? 0
+      ? levels.buildings?.[requirement.key as UnlockBuildingKey] ?? 0
       : levels.research?.[requirement.key as ResearchKey] ?? 0;
 
     return actual >= requirement.level

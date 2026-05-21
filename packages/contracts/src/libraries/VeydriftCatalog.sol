@@ -28,17 +28,31 @@ library VeydriftCatalog {
     }
 
     function defenseCost(Defense defense) public pure returns (uint128, uint128, uint128) {
-        if (defense == Defense.RocketLauncher) return (200, 0, 0);
+        if (defense == Defense.RocketLauncher) return (2_000, 0, 0);
         if (defense == Defense.LightLaser) return (1_500, 500, 0);
         if (defense == Defense.HeavyLaser) return (6_000, 2_000, 0);
         if (defense == Defense.SmallShieldDome) return (10_000, 10_000, 0);
         if (defense == Defense.GaussCannon) return (20_000, 15_000, 2_000);
-        if (defense == Defense.IonCannon) return (2_000, 6_000, 0);
+        if (defense == Defense.IonCannon) return (5_000, 3_000, 0);
         if (defense == Defense.PlasmaTurret) return (50_000, 50_000, 30_000);
         if (defense == Defense.LargeShieldDome) return (50_000, 50_000, 0);
         if (defense == Defense.AntiBallisticMissile) return (8_000, 0, 2_000);
         if (defense == Defense.InterplanetaryMissile) return (12_500, 2_500, 10_000);
         revert InvalidId();
+    }
+
+    function missileSiloCapacity(uint16 missileSiloLevel) public pure returns (uint32) {
+        return uint32(missileSiloLevel) * 10;
+    }
+
+    function missileSlots(Defense defense) public pure returns (uint8) {
+        if (defense == Defense.AntiBallisticMissile) return 1;
+        if (defense == Defense.InterplanetaryMissile) return 2;
+        return 0;
+    }
+
+    function isShieldDome(Defense defense) public pure returns (bool) {
+        return defense == Defense.SmallShieldDome || defense == Defense.LargeShieldDome;
     }
 
     function shipCost(Ship ship) public pure returns (uint128, uint128, uint128) {

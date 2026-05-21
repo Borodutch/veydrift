@@ -40,34 +40,77 @@ library VeydriftDependencies {
     function requireDefense(
         Defense defense,
         uint16 shipyardLevel,
+        uint16 missileSiloLevel,
+        uint16 energyLevel,
         uint16 laserLevel,
         uint16 ionLevel,
+        uint16 weaponsLevel,
         uint16 shieldingLevel,
+        uint16 impulseDriveLevel,
         uint16 plasmaLevel
     ) public pure {
         if (shipyardLevel == 0) {
             revert MissingDependency("SHIPYARD");
         }
-        if (defense == Defense.LightLaser && laserLevel < 1) {
-            revert MissingDependency("LASER_1");
+        if (defense == Defense.LightLaser && shipyardLevel < 2) {
+            revert MissingDependency("SHIPYARD_2");
         }
-        if (defense == Defense.HeavyLaser && laserLevel < 3) {
+        if (defense == Defense.LightLaser && energyLevel < 1) {
+            revert MissingDependency("ENERGY_1");
+        }
+        if (defense == Defense.LightLaser && laserLevel < 3) {
             revert MissingDependency("LASER_3");
+        }
+        if (defense == Defense.HeavyLaser && shipyardLevel < 4) {
+            revert MissingDependency("SHIPYARD_4");
+        }
+        if (defense == Defense.HeavyLaser && energyLevel < 3) {
+            revert MissingDependency("ENERGY_3");
+        }
+        if (defense == Defense.HeavyLaser && laserLevel < 6) {
+            revert MissingDependency("LASER_6");
         }
         if (defense == Defense.SmallShieldDome && shieldingLevel < 2) {
             revert MissingDependency("SHIELDING_2");
         }
-        if (defense == Defense.GaussCannon && (laserLevel < 6 || shieldingLevel < 1)) {
-            revert MissingDependency("LASER_6_SHIELDING_1");
+        if (defense == Defense.GaussCannon && shipyardLevel < 6) {
+            revert MissingDependency("SHIPYARD_6");
+        }
+        if (defense == Defense.GaussCannon && energyLevel < 6) {
+            revert MissingDependency("ENERGY_6");
+        }
+        if (defense == Defense.GaussCannon && weaponsLevel < 3) {
+            revert MissingDependency("WEAPONS_3");
+        }
+        if (defense == Defense.GaussCannon && shieldingLevel < 1) {
+            revert MissingDependency("SHIELDING_1");
+        }
+        if (defense == Defense.IonCannon && shipyardLevel < 4) {
+            revert MissingDependency("SHIPYARD_4");
         }
         if (defense == Defense.IonCannon && ionLevel < 4) {
             revert MissingDependency("ION_4");
         }
+        if (defense == Defense.PlasmaTurret && shipyardLevel < 8) {
+            revert MissingDependency("SHIPYARD_8");
+        }
         if (defense == Defense.PlasmaTurret && plasmaLevel < 7) {
             revert MissingDependency("PLASMA_7");
         }
+        if (defense == Defense.LargeShieldDome && shipyardLevel < 6) {
+            revert MissingDependency("SHIPYARD_6");
+        }
         if (defense == Defense.LargeShieldDome && shieldingLevel < 6) {
             revert MissingDependency("SHIELDING_6");
+        }
+        if (defense == Defense.AntiBallisticMissile && missileSiloLevel < 2) {
+            revert MissingDependency("MISSILE_SILO_2");
+        }
+        if (defense == Defense.InterplanetaryMissile && missileSiloLevel < 4) {
+            revert MissingDependency("MISSILE_SILO_4");
+        }
+        if (defense == Defense.InterplanetaryMissile && impulseDriveLevel < 1) {
+            revert MissingDependency("IMPULSE_1");
         }
     }
 
