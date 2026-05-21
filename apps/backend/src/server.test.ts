@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
   Address,
+  AllianceState,
   ChainReader,
   DefenseState,
   InfrastructureState,
@@ -431,6 +432,31 @@ class MockChainReader implements ChainReader {
     };
   }
 
+  async getAllianceState(wallet: Address): Promise<AllianceState> {
+    return {
+      wallet,
+      allianceAvailable: true,
+      membership: {
+        allianceId: "1",
+        role: "leader",
+        joinedAt: "1770000000"
+      },
+      profile: {
+        active: true,
+        tag: "VDFT",
+        name: "Veydrift Union",
+        metadataURI: "ipfs://union",
+        founder: wallet,
+        createdAt: "1770000000",
+        memberCount: 1
+      },
+      defenseCoordination: {
+        acsDefendSupported: true,
+        interceptSupported: true
+      }
+    };
+  }
+
   async getHighscoreForWallet(wallet: Address): Promise<HighscoreEntry> {
     return calculateHighscore({
       wallet,
@@ -478,6 +504,7 @@ describe("Veydrift backend", () => {
     await expect(response.json()).resolves.toEqual({
       chain: {
         chainId: 84532,
+        allianceContractConfigured: false,
         deploymentMode: "local",
         hasRpcUrl: false,
         indexFromBlock: "0",
@@ -509,6 +536,7 @@ describe("Veydrift backend", () => {
 
     await expect(response.json()).resolves.toEqual({
       apiUrl: "https://api-test.veydrift.com",
+      allianceContractAddress: null,
       chainId: 84532,
       contractAddress: null,
       gameContractAddress: null,
@@ -530,6 +558,7 @@ describe("Veydrift backend", () => {
     const previousGameOverrideAddress = process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS;
     const previousSettlementAddress = process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS;
     const previousMoonAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS;
+    const previousAllianceAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS;
     const previousMetalTokenAddress = process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
     const previousCrystalTokenAddress = process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS;
     const previousDeuteriumTokenAddress = process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS;
@@ -537,6 +566,7 @@ describe("Veydrift backend", () => {
     process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS = "0x4444444444444444444444444444444444444444";
     process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS = "0x1111111111111111111111111111111111111111";
     process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS = "0x2222222222222222222222222222222222222222";
+    process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS = "0x9999999999999999999999999999999999999999";
     process.env.VEYDRIFT_METAL_TOKEN_ADDRESS = "0x5555555555555555555555555555555555555555";
     process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS = "0x6666666666666666666666666666666666666666";
     process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS = "0x7777777777777777777777777777777777777777";
@@ -547,6 +577,7 @@ describe("Veydrift backend", () => {
       await expect(response.json()).resolves.toMatchObject({
         contractAddress: "0x1111111111111111111111111111111111111111",
         gameContractAddress: "0x4444444444444444444444444444444444444444",
+        allianceContractAddress: "0x9999999999999999999999999999999999999999",
         moonContractAddress: "0x2222222222222222222222222222222222222222",
         resourceTokenAddresses: {
           crystal: "0x6666666666666666666666666666666666666666",
@@ -560,6 +591,11 @@ describe("Veydrift backend", () => {
         delete process.env.VEYDRIFT_CONTRACT_ADDRESS;
       } else {
         process.env.VEYDRIFT_CONTRACT_ADDRESS = previousGameAddress;
+      }
+      if (previousAllianceAddress === undefined) {
+        delete process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS = previousAllianceAddress;
       }
 
       if (previousGameOverrideAddress === undefined) {
@@ -611,6 +647,7 @@ describe("Veydrift backend", () => {
         service: {
           name: "Veydrift",
           runtime: {
+            allianceContractAddress: null,
             apiUrl: "https://api-test.veydrift.com",
             chainId: 84532,
             contractAddress: null,
@@ -910,6 +947,32 @@ describe("Veydrift backend", () => {
     expect(body.pendingWithdrawals[0]).toMatchObject({
       resource: "metal",
       ready: false
+    });
+  });
+
+  test("answers alliance state from a mocked chain reader", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader()
+    })(new Request(`http://localhost/wallet/${player}/alliance`));
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.wallet).toBe(player);
+    expect(body.allianceAvailable).toBe(true);
+    expect(body.membership).toEqual({
+      allianceId: "1",
+      role: "leader",
+      joinedAt: "1770000000"
+    });
+    expect(body.profile).toMatchObject({
+      tag: "VDFT",
+      name: "Veydrift Union",
+      memberCount: 1
+    });
+    expect(body.defenseCoordination).toEqual({
+      acsDefendSupported: true,
+      interceptSupported: true
     });
   });
 
