@@ -93,6 +93,31 @@ describe("chainState", () => {
     expect(progress(queue, halfway)).toBe(0.5);
   });
 
+  test("uses Nanite Factory level when estimating active building queue progress without startedAt", () => {
+    const readyAtSeconds = 1_700_003_600;
+    const state = createInitialPlayableState();
+    const queue = buildingQueueItemForDisplay({
+      active: true,
+      kind: "building",
+      itemId: 7,
+      targetLevel: 1,
+      readyAt: readyAtSeconds.toString(),
+      cost: { metal: "10000", crystal: "5000", deuterium: "0" },
+    }, {
+      ...state.buildings,
+      roboticsFactory: 2,
+      naniteFactory: 1,
+    }, (readyAtSeconds - 1_800) * 1_000);
+
+    expect(queue).toMatchObject({
+      kind: "building",
+      key: "metalStorage",
+      readyAt: readyAtSeconds * 1_000,
+      startedAt: (readyAtSeconds - 3_600) * 1_000,
+    });
+    expect(progress(queue, (readyAtSeconds - 1_800) * 1_000)).toBe(0.5);
+  });
+
   test("keeps ready building queues complete when startedAt is missing", () => {
     const readyAtSeconds = 1_700_000_060;
     const state = createInitialPlayableState();
