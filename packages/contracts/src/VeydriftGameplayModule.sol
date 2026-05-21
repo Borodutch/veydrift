@@ -8,13 +8,17 @@ import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
-import {Building, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
     using SafeCast for uint256;
 
-    constructor() VeydriftResourceReserves(address(0)) {}
+    address private immutable _combatModule;
+
+    constructor(address combatModule) VeydriftResourceReserves(address(0)) {
+        _combatModule = combatModule;
+    }
 
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
         _validateShipProduction(planetId, ship, quantity);
@@ -224,9 +228,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
         } else if (mission.missionType == FleetMissionType.Attack) {
-            mission.cargo =
-                _raidResources(mission.targetPlanetId, _missionCargoCapacity(mission.ships));
-            mission.status = FleetMissionStatus.Returning;
+            _delegateToCombatModule();
         } else {
             mission.status = FleetMissionStatus.Returning;
         }
@@ -550,6 +552,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return Resources(metal, crystal, deuterium);
     }
 
+    function _defenseCost(Defense defense) private pure returns (Resources memory) {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.defenseCost(defense);
+        return Resources(metal, crystal, deuterium);
+    }
+
     function _multiply(Resources memory resources, uint32 quantity)
         private
         pure
@@ -739,34 +746,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return 0;
     }
 
-    function _raidResources(uint256 targetPlanetId, uint256 capacity)
-        private
-        returns (Resources memory raided)
-    {
-        Resources storage target = _planets[targetPlanetId].resources;
-        uint128 metal = _toUint128(
-            VeydriftAntiRaidPrimitives.raidableResource(
-                target.metal, capacity, 0, VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS
-            )
-        );
-        capacity -= metal;
-        uint128 crystal = _toUint128(
-            VeydriftAntiRaidPrimitives.raidableResource(
-                target.crystal, capacity, 0, VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS
-            )
-        );
-        capacity -= crystal;
-        uint128 deuterium = _toUint128(
-            VeydriftAntiRaidPrimitives.raidableResource(
-                target.deuterium, capacity, 0, VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS
-            )
-        );
-        target.metal -= metal;
-        target.crystal -= crystal;
-        target.deuterium -= deuterium;
-        return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
-    }
-
     function _coordinateKey(uint16 galaxy, uint16 system, uint8 position)
         private
         view
@@ -796,6 +775,18 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function _absDiff(uint256 a, uint256 b) private pure returns (uint256) {
         return a > b ? a - b : b - a;
+    }
+
+    function _delegateToCombatModule() private {
+        address module = _combatModule;
+        (bool ok, bytes memory result) = module.delegatecall(msg.data);
+        if (ok) return;
+        if (result.length != 0) {
+            assembly ("memory-safe") {
+                revert(add(result, 0x20), mload(result))
+            }
+        }
+        revert UnsupportedGameplayModule();
     }
 
     function _missionTravelDistance(uint256 originPlanetId, uint256 destinationPlanetId)

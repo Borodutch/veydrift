@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftSpaceDockSystem} from "../src/VeydriftSpaceDockSystem.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
@@ -26,7 +27,7 @@ contract VeydriftSpaceDockSystemTest is Test {
     VeydriftSpaceDockSystem internal spaceDock;
 
     function setUp() public {
-        game = new VeydriftGame(admin);
+        game = new VeydriftGame(admin, address(new VeydriftCombatModule()));
         spaceDock = new VeydriftSpaceDockSystem(address(game), admin);
         _fundGameReserves();
         vm.deal(player, 1 ether);

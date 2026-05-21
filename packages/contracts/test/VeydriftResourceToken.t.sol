@@ -8,6 +8,7 @@ import {
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
+import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {Resource} from "../src/libraries/VeydriftTypes.sol";
 import {
@@ -178,7 +179,7 @@ contract VeydriftResourceTokenTest is Test {
 
     function testResourceTokenDeployScriptMintsInitialSupplyToExistingGame() public {
         address deployer = _setDeployEnv();
-        VeydriftGame existingGame = new VeydriftGame(deployer);
+        VeydriftGame existingGame = new VeydriftGame(deployer, address(new VeydriftCombatModule()));
         vm.setEnv("VEYDRIFT_GAME_CONTRACT_ADDRESS", vm.toString(address(existingGame)));
 
         (address metalToken, address crystalToken, address deuteriumToken) =
