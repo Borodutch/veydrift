@@ -126,15 +126,19 @@ Fleet missions:
 - `shipCargoCapacity(shipId)`, `transportFuelCost(...)`, and `transportTravelSeconds(...)` remain view helpers for UI previews while transport uses the generic mission path.
 - Arrivals are lazy: call `resolveFleetMission(missionId)` after `fleetMission(missionId).arrivalAt` to settle the target and resolve the mission.
 - Missions that return must later call `completeFleetMissionReturn(missionId)` after `fleetMission(missionId).returnAt` to land surviving ships and cargo.
-- `recallFleetMission(missionId)` can be called before arrival; recalled fleets return to the origin with their ships and cargo. Fuel remains spent.
+- `fleetMission(missionId)` is public and exposes owner, origin, target, timing, cargo, fuel, and status for every mission. `FleetMissionCargo` and `FleetMissionShips` expose the launch manifest so hostile inbound and returning fleets are indexable from contract truth.
+- The recall deadline is `arrivalAt - FLEET_RECALL_CUTOFF_SECONDS`. `recallFleetMission(missionId)` must be called by that deadline, spends an additional `FLEET_RECALL_COST_BPS` share of the launch fuel from the origin planet, and keeps the recalled fleet publicly visible until it lands. Original launch fuel remains spent.
 
 Indexer-facing events:
 
 - `FirstPlanetSettled(player, planetId, galaxy, system, position, coordinateKey, planetSeed)`
 - `ColonyCreated(player, originPlanetId, colonyPlanetId, galaxy, system, position, fields, temperature)`
-- `FleetMissionLaunched(missionId, player, missionType, originPlanetId, targetPlanetId, arrivalAt, returnAt, cargo, fuelCost, randomnessRequestId)`
-- `FleetMissionRecalled(missionId, player, returnAt)`
+- `FleetMissionLaunched(missionId, player, missionType, originPlanetId, targetPlanetId, arrivalAt, returnAt, randomnessRequestId)`
+- `FleetMissionCargo(missionId, metal, crystal, deuterium, fuelCost)`
+- `FleetMissionShips(missionId, smallCargo, lightFighter, recycler, colonyShip, largeCargo, heavyFighter, cruiser, battleship, bomber, destroyer, deathstar, battlecruiser, reaper, pathfinder)`
+- `FleetMissionRecalled(missionId, player, returnAt, recallCost)`
 - `FleetMissionResolved(missionId, player, missionType, returnAt)`
+- `FleetMissionReturnExposed(missionId, player, status, originPlanetId, targetPlanetId, returnAt, metal, crystal, deuterium)`
 - `FleetMissionReturned(missionId, player, originPlanetId)`
 
 `coordinateKey(galaxy, system, position)` and `planetSeed(galaxy, system, position)` are exposed
@@ -312,6 +316,8 @@ Espionage reports, hidden fleet intent, commit-reveal protections, private
 orderflow, and other hidden-state mechanics are out of scope permanently for the
 Veydrift product direction. Fleet and combat systems should use the public
 counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
-VEY-KANEO-133.
+VEY-KANEO-133. Fleet missions are public contract state so attacker risk comes
+from visible commitment, recall limits, return exposure, and future ACS/intercept
+rules.
 
 The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, one active construction or production slot per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.

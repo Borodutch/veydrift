@@ -90,6 +90,31 @@ export type PlayerQueuesResponse = {
   research: QueueStateResponse | null;
 };
 
+export type FleetMissionSummary = {
+  missionId: string;
+  status: string;
+  missionType: string;
+  owner: string;
+  originPlanetId: string;
+  targetPlanetId: string;
+  arrivalAt: string;
+  returnAt: string;
+  fuelCost: string;
+  recallCost: string | null;
+  cargo: OnChainResources;
+  ships: Record<string, string>;
+  transactionHash: string;
+  blockNumber: string;
+};
+
+export type FleetMissionVisibilityResponse = {
+  wallet: string;
+  homePlanetId: string | null;
+  incoming: FleetMissionSummary[];
+  outgoing: FleetMissionSummary[];
+  returning: FleetMissionSummary[];
+};
+
 export type ChainShipyardState = {
   wallet: string;
   homePlanetId: string | null;
@@ -1177,6 +1202,10 @@ export async function fetchWalletSettlement(apiUrl: string, wallet: string): Pro
 
 export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise<PlayerQueuesResponse> {
   return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, "queues", "Queues");
+}
+
+export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string): Promise<FleetMissionVisibilityResponse> {
+  return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, "fleet-visibility", "Fleet visibility");
 }
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string): Promise<ChainInfrastructureState> {
