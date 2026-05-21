@@ -63,6 +63,10 @@ contract VeydriftOGameFormulaConformanceTest is Test {
     }
 
     function testVanillaOGameDurations() public pure {
+        assertEq(VeydriftFormulas.buildingDuration(0, 0, 60, 15, MIN_QUEUE_SECONDS), 108);
+        assertEq(VeydriftFormulas.buildingDuration(0, 0, 75, 30, MIN_QUEUE_SECONDS), 151);
+        assertEq(VeydriftFormulas.buildingDuration(0, 0, 225, 75, MIN_QUEUE_SECONDS), 432);
+        assertEq(VeydriftFormulas.buildingDuration(0, 0, 400, 120, MIN_QUEUE_SECONDS), 748);
         assertEq(VeydriftFormulas.buildingDuration(0, 0, 6_000, 0, MIN_QUEUE_SECONDS), 8_640);
         assertEq(VeydriftFormulas.buildingDuration(1, 0, 6_000, 0, MIN_QUEUE_SECONDS), 4_320);
         assertEq(VeydriftFormulas.buildingDuration(1, 2, 6_000, 0, MIN_QUEUE_SECONDS), 1_080);

@@ -403,6 +403,44 @@ contract VeydriftGameTest is Test {
         assertEq(nextCost.deuterium, 0);
     }
 
+    function testBuildingConstructionDurationsMatchClassicOGameFormula() public {
+        _assertStartedBuildingDuration(address(0xB001), Building.MetalMine, 60, 15, 0, 108);
+        _assertStartedBuildingDuration(address(0xB002), Building.SolarPlant, 75, 30, 0, 151);
+        _assertStartedBuildingDuration(
+            address(0xB003), Building.DeuteriumSynthesizer, 225, 75, 0, 432
+        );
+        _assertStartedBuildingDuration(
+            address(0xB004), Building.RoboticsFactory, 400, 120, 200, 748
+        );
+    }
+
+    function testBuildingCompletionRejectsBeforeDisplayedReadyAt() public {
+        address account = address(0xB005);
+        vm.deal(account, 1 ether);
+        vm.prank(account);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(account);
+        game.startBuildingUpgrade(planetId, Building.DeuteriumSynthesizer);
+        VeydriftGameStorage.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        assertEq(construction.readyAt, block.timestamp + 432);
+
+        vm.warp(construction.readyAt - 1);
+        vm.prank(account);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.ConstructionNotReady.selector, construction.readyAt
+            )
+        );
+        game.finishBuildingUpgrade(planetId);
+
+        vm.warp(construction.readyAt);
+        vm.prank(account);
+        game.finishBuildingUpgrade(planetId);
+        assertEq(game.buildingLevel(planetId, Building.DeuteriumSynthesizer), 1);
+    }
+
     function testOGameBuildingEconomyFormulas() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
@@ -1052,6 +1090,31 @@ contract VeydriftGameTest is Test {
 
     function _build(address account, uint256 planetId, Building building) internal {
         _build(game, account, planetId, building);
+    }
+
+    function _assertStartedBuildingDuration(
+        address account,
+        Building building,
+        uint128 metalCost,
+        uint128 crystalCost,
+        uint128 deuteriumCost,
+        uint64 expectedDuration
+    ) internal {
+        vm.deal(account, 1 ether);
+        vm.prank(account);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setResources(planetId, metalCost, crystalCost, deuteriumCost);
+
+        uint256 startedAt = block.timestamp;
+        vm.prank(account);
+        game.startBuildingUpgrade(planetId, building);
+
+        VeydriftGameStorage.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        assertEq(construction.readyAt, startedAt + expectedDuration);
+        assertEq(construction.cost.metal, metalCost);
+        assertEq(construction.cost.crystal, crystalCost);
+        assertEq(construction.cost.deuterium, deuteriumCost);
     }
 
     function _build(VeydriftGame targetGame, address account, uint256 planetId, Building building)

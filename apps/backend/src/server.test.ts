@@ -1001,6 +1001,83 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("preserves contract Deuterium Synthesizer readyAt duration for live queue display", async () => {
+    const startedAt = 1_700_000_000n;
+    const readyAt = startedAt + 432n;
+    const reader = new VeydriftGameReader(configuredTestConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_getLogs") {
+          return [
+            {
+              blockNumber: "0x2a",
+              transactionHash: "0xdef",
+              topics: [],
+              data: abiWords(1n, readyAt, 225n, 75n, 0n)
+            }
+          ] as T;
+        }
+
+        if (method === "eth_getBlockByNumber") {
+          return { timestamp: `0x${startedAt.toString(16)}` } as T;
+        }
+
+        const [call] = params as [{ data: string; to: string }];
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x0ff79fa5")) {
+          return abiWords(7n) as T;
+        }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x181c1bc4")) {
+          return abiWords(
+            BigInt(player),
+            2n,
+            44n,
+            9n,
+            211n,
+            1n,
+            9_788n,
+            10_233n,
+            10_584n,
+            1_700_000_000n,
+            5_000n,
+            4_900n,
+            4_800n
+          ) as T;
+        }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0xb8e835ab")) {
+          return abiWords(1n, 2n, 1n, readyAt, 225n, 75n, 0n) as T;
+        }
+        if (
+          call.to === configuredTestConfig.gameContractAddress
+          && (
+            call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0xb6f4b7b7")
+            || call.data.startsWith("0x2b98afc7")
+          )
+        ) {
+          return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        }
+
+        throw new Error(`Unexpected ${method} ${call.to} ${call.data.slice(0, 10)}`);
+      }
+    });
+
+    const queues = await reader.getPlayerQueues(player);
+
+    expect(queues.building).toMatchObject({
+      active: true,
+      kind: "building",
+      itemId: 2,
+      targetLevel: 1,
+      readyAt: readyAt.toString(),
+      startedAt: startedAt.toString(),
+      cost: {
+        metal: "225",
+        crystal: "75",
+        deuterium: "0"
+      }
+    });
+    expect(Number(queues.building?.readyAt) - Number(queues.building?.startedAt)).toBe(432);
+  });
+
   test("rebuilds the cache and marks occupied system coordinates", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
