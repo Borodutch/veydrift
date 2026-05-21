@@ -11,6 +11,7 @@ import { ResearchPage, type ResearchActionState } from "./components/ResearchPag
 import { ShipyardPage } from "./components/ShipyardPage";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
+import { RankingsPage } from "./components/RankingsPage";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
@@ -1346,6 +1347,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onRequestWithdrawal={handleRequestRiftWithdrawal}
           riftState={riftState}
         />
+      );
+    }
+
+    if (page === "rankings") {
+      return (
+        <RankingsPage apiBaseUrl={apiBaseUrl} />
       );
     }
 
