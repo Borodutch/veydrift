@@ -1,6 +1,7 @@
 import type {
   Address,
   ChainReader,
+  DebrisFieldEvent,
   DefenseState,
   InfrastructureState,
   MoonState,
@@ -69,6 +70,10 @@ export class CachedChainReader implements ChainReader {
 
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {
     return this.inner.listSettledPlanetEvents(fromBlock, toBlock);
+  }
+
+  listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]> {
+    return this.inner.listDebrisFieldEvents(fromBlock, toBlock);
   }
 
   rpcMetrics(): RpcMetrics {

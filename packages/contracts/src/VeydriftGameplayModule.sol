@@ -10,6 +10,10 @@ import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
+interface IVeydriftCombatSpaceDock {
+    function recordCombatWreckage(uint256 planetId, Ship ship, uint32 destroyed) external;
+}
+
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
     using SafeCast for uint256;
@@ -91,6 +95,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
         uint256 shipTotal = _missionShipTotal(ships);
         if (shipTotal == 0) revert InvalidQuantity();
+        if (missionType == FleetMissionType.Harvest) {
+            if (ships.recycler == 0) revert InvalidQuantity();
+            DebrisField storage field = _debrisFields[targetPlanetId];
+            if (field.metal == 0 && field.crystal == 0) revert DebrisFieldEmpty();
+        }
         _requireMissionShips(originPlanetId, ships);
 
         uint256 cargoTotal =
@@ -185,8 +194,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
         } else if (mission.missionType == FleetMissionType.Attack) {
+            _resolveAttack(mission);
             mission.cargo =
                 _raidResources(mission.targetPlanetId, _missionCargoCapacity(mission.ships));
+            mission.status = FleetMissionStatus.Returning;
+        } else if (mission.missionType == FleetMissionType.Harvest) {
+            _harvestDebris(mission);
             mission.status = FleetMissionStatus.Returning;
         } else {
             mission.status = FleetMissionStatus.Returning;
@@ -710,6 +723,80 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
     }
 
+    function _resolveAttack(FleetMission storage mission) private {
+        uint256 attackValue = _missionShipTotal(mission.ships)
+            * VeydriftCatalog.shipStructuralValue(Ship.LightFighter);
+        if (attackValue == 0) return;
+
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder) && attackValue != 0;) {
+            Ship ship = Ship(i);
+            if (ship != Ship.EspionageProbe && ship != Ship.SolarSatellite) {
+                uint32 available = _shipCounts[mission.targetPlanetId][ship];
+                if (available != 0) {
+                    uint256 shipValue = VeydriftCatalog.shipStructuralValue(ship);
+                    uint32 destroyed = _toUint32(_min(available, attackValue / shipValue));
+                    if (destroyed != 0) {
+                        _shipCounts[mission.targetPlanetId][ship] = available - destroyed;
+                        attackValue -= uint256(destroyed) * shipValue;
+                        _recordDestroyedShips(mission.targetPlanetId, ship, destroyed);
+                    }
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _recordDestroyedShips(uint256 planetId, Ship ship, uint32 destroyed) private {
+        (uint128 shipMetal, uint128 shipCrystal,) = VeydriftCatalog.shipCost(ship);
+        Resources memory debris = _reserveLimitedIncrease(
+            Resources({
+                metal: _toUint128((uint256(shipMetal) * destroyed * 3_000) / BPS),
+                crystal: _toUint128((uint256(shipCrystal) * destroyed * 3_000) / BPS),
+                deuterium: 0
+            })
+        );
+        if (debris.metal != 0 || debris.crystal != 0) {
+            DebrisField storage field = _debrisFields[planetId];
+            field.metal += debris.metal;
+            field.crystal += debris.crystal;
+            _increaseInternalResources(debris);
+            _emitDebrisFieldUpdated(planetId);
+        }
+
+        if (_spaceDockSystem != address(0)) {
+            try IVeydriftCombatSpaceDock(_spaceDockSystem)
+                .recordCombatWreckage(planetId, ship, destroyed) {}
+                catch {}
+        }
+    }
+
+    function _harvestDebris(FleetMission storage mission) private {
+        DebrisField storage field = _debrisFields[mission.targetPlanetId];
+        uint256 capacity = _missionCargoCapacity(mission.ships);
+        uint256 cargoTotal =
+            uint256(mission.cargo.metal) + mission.cargo.crystal + mission.cargo.deuterium;
+        if (capacity <= cargoTotal || (field.metal == 0 && field.crystal == 0)) return;
+
+        capacity -= cargoTotal;
+        uint128 metal = _toUint128(_min(field.metal, capacity));
+        field.metal -= metal;
+        capacity -= metal;
+
+        uint128 crystal = _toUint128(_min(field.crystal, capacity));
+        field.crystal -= crystal;
+
+        mission.cargo.metal += metal;
+        mission.cargo.crystal += crystal;
+        _emitDebrisFieldUpdated(mission.targetPlanetId);
+    }
+
+    function _emitDebrisFieldUpdated(uint256 planetId) private {
+        DebrisField storage field = _debrisFields[planetId];
+        emit DebrisFieldUpdated(planetId, field.metal, field.crystal);
+    }
+
     function _coordinateKey(uint16 galaxy, uint16 system, uint8 position)
         private
         view
@@ -739,6 +826,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function _absDiff(uint256 a, uint256 b) private pure returns (uint256) {
         return a > b ? a - b : b - a;
+    }
+
+    function _toUint32(uint256 value) private pure returns (uint32) {
+        if (value > type(uint32).max) revert LevelTooHigh();
+        return value.toUint32();
     }
 
     function _missionTravelDistance(uint256 originPlanetId, uint256 destinationPlanetId)

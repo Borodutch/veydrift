@@ -3,6 +3,7 @@ import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
   Address,
   ChainReader,
+  DebrisFieldEvent,
   DefenseState,
   InfrastructureState,
   MoonState,
@@ -424,6 +425,21 @@ class MockChainReader implements ChainReader {
         eventName: "PlanetStarted",
         transactionHash: "0xabc",
         blockNumber: "123"
+      }
+    ];
+  }
+
+  async listDebrisFieldEvents(): Promise<DebrisFieldEvent[]> {
+    return [
+      {
+        eventName: "DebrisFieldUpdated",
+        transactionHash: "0xdef",
+        blockNumber: "124",
+        planetId: planet.planetId,
+        resources: {
+          metal: "27000",
+          crystal: "9000"
+        }
       }
     ];
   }
@@ -1156,6 +1172,7 @@ describe("Veydrift backend", () => {
       })
     );
     await expect(rebuild.json()).resolves.toMatchObject({
+      indexedDebrisFields: 1,
       indexedPlanets: 1,
       fromBlock: "100"
     });
@@ -1169,6 +1186,10 @@ describe("Veydrift backend", () => {
       occupiedBy: {
         planetId: "7",
         owner: player
+      },
+      debrisField: {
+        metal: "27000",
+        crystal: "9000"
       }
     });
     expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");

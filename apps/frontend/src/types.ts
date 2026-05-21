@@ -10,6 +10,7 @@ export interface Planet {
   ownerId: string | null;
   alliance: string | null;
   occupiedBy: OccupiedPlanet | null;
+  debrisField: DebrisField | null;
   resources: Resources;
   temperature: { min: number; max: number };
   diameter: number;
@@ -21,6 +22,11 @@ export interface Planet {
 export interface OccupiedPlanet {
   planetId: string;
   owner: string;
+}
+
+export interface DebrisField {
+  metal: number;
+  crystal: number;
 }
 
 export interface Resources {

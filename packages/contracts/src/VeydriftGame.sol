@@ -213,6 +213,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _moonSystem = nextMoonSystem;
     }
 
+    function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
+        _spaceDockSystem = nextSpaceDockSystem;
+    }
+
     function spendMoonResources(uint256 planetId, Resources calldata cost) external {
         if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
         _settleResources(planetId);
@@ -297,6 +301,10 @@ contract VeydriftGame is VeydriftResourceReserves {
             mission.cargo,
             mission.randomnessRequestId
         );
+    }
+
+    function debrisField(uint256 planetId) external view returns (DebrisField memory) {
+        return _debrisFields[planetId];
     }
 
     function activeBuildingConstruction(uint256 planetId)

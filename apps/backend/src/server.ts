@@ -3,7 +3,7 @@ import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import { assertAddress, type ChainReader, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
-import { SettlementIndexer } from "./indexer";
+import { SettlementIndexer, type IndexedDebrisFieldEvent } from "./indexer";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -289,6 +289,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           planet
         ])
       );
+      const debris = new Map(
+        (indexer?.debrisFieldsInSystem(galaxy, system) ?? []).map((field) => [
+          field.position,
+          field
+        ])
+      );
 
       return Response.json(
         {
@@ -302,7 +308,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             system
           ).map((planet) => ({
             ...planet,
-            occupiedBy: occupiedPlanetRef(occupied.get(planet.position))
+            occupiedBy: occupiedPlanetRef(occupied.get(planet.position)),
+            debrisField: debrisFieldRef(debris.get(planet.position))
           }))
         },
         {
@@ -332,6 +339,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   planet
                 ])
               );
+              const debris = new Map(
+                (indexer?.debrisFieldsInSystem(galaxy, system) ?? []).map((field) => [
+                  field.position,
+                  field
+                ])
+              );
               const snapshot = systemSnapshot(
                 loaded.config.chainId,
                 universeContractAddress(loaded.config),
@@ -350,7 +363,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   system
                 ).map((planet) => ({
                   ...planet,
-                  occupiedBy: occupiedPlanetRef(occupied.get(planet.position))
+                  occupiedBy: occupiedPlanetRef(occupied.get(planet.position)),
+                  debrisField: debrisFieldRef(debris.get(planet.position))
                 }))
               };
             })
@@ -446,6 +460,10 @@ function includeOccupiedPlanets(
 
 function occupiedPlanetRef(planet: SettledPlanetEvent | undefined): { planetId: string; owner: string } | null {
   return planet ? { planetId: planet.planetId, owner: planet.owner } : null;
+}
+
+function debrisFieldRef(field: IndexedDebrisFieldEvent | undefined): { metal: string; crystal: string } | null {
+  return field ? field.resources : null;
 }
 
 function getRuntimeConfig(): RuntimeConfig {

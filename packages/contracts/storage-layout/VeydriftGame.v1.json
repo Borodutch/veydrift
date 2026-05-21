@@ -143,6 +143,18 @@
       "offset": 0,
       "slot": "25",
       "type": "mapping(address => uint256)"
+    },
+    {
+      "label": "_debrisFields",
+      "offset": 0,
+      "slot": "26",
+      "type": "mapping(uint256 => struct DebrisField)"
+    },
+    {
+      "label": "_spaceDockSystem",
+      "offset": 0,
+      "slot": "27",
+      "type": "address"
     }
   ],
   "structs": {
@@ -176,6 +188,20 @@
         "offset": 0,
         "slot": "1",
         "type": "Resources"
+      }
+    ],
+    "DebrisField": [
+      {
+        "label": "metal",
+        "offset": 0,
+        "slot": "0",
+        "type": "uint128"
+      },
+      {
+        "label": "crystal",
+        "offset": 16,
+        "slot": "0",
+        "type": "uint128"
       }
     ],
     "DefenseQueue": [

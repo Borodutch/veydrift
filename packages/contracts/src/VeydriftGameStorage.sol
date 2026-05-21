@@ -158,6 +158,11 @@ abstract contract VeydriftGameStorage {
         uint256 randomnessRequestId;
     }
 
+    struct DebrisField {
+        uint128 metal;
+        uint128 crystal;
+    }
+
     struct ResourceWithdrawal {
         bool active;
         uint256 planetId;
@@ -194,6 +199,8 @@ abstract contract VeydriftGameStorage {
     mapping(uint256 fleetId => Fleet fleet) internal _fleets;
     mapping(uint256 missionId => FleetMission mission) internal _fleetMissions;
     mapping(address player => uint256 count) public activeFleetMissionCount;
+    mapping(uint256 planetId => DebrisField field) internal _debrisFields;
+    address internal _spaceDockSystem;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -227,6 +234,7 @@ abstract contract VeydriftGameStorage {
     error InvalidMissionType(FleetMissionType missionType);
     error FleetSlotLimitReached(uint256 limit);
     error FleetMissionNotResolved(uint64 returnAt);
+    error DebrisFieldEmpty();
     error RiftStabilizerRequired(uint256 planetId);
     error ResourceTokenNotConfigured(Resource resource);
     error WithdrawalActive(Resource resource);
@@ -371,6 +379,7 @@ abstract contract VeydriftGameStorage {
     event FleetMissionReturned(
         uint256 indexed missionId, address indexed owner, uint256 indexed planetId
     );
+    event DebrisFieldUpdated(uint256 indexed planetId, uint128 metal, uint128 crystal);
     event ResourceTokenUpdated(
         Resource indexed resource, address indexed oldToken, address indexed newToken
     );

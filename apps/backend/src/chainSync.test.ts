@@ -6,6 +6,7 @@ import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222";
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
+const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 
 const config: BackendConfig = {
   chainId: 84532,
@@ -52,7 +53,10 @@ describe("ChainSyncService", () => {
   test("subscribes to logs and new heads, then applies settlement logs to the indexer", () => {
     MockWebSocket.instances = [];
     const indexer = new SettlementIndexer(
-      { async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; } },
+      {
+        async listDebrisFieldEvents() { return []; },
+        async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
+      },
       100n
     );
     const service = new ChainSyncService(config, indexer, { WebSocketCtor: MockWebSocket });
@@ -104,6 +108,33 @@ describe("ChainSyncService", () => {
         owner: player,
         planetId: "7",
         position: 9
+      })
+    ]);
+
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x7d",
+          transactionHash: "0xdef",
+          topics: [
+            debrisFieldUpdatedTopic,
+            `0x${(7n).toString(16).padStart(64, "0")}`
+          ],
+          data: abiWords(27_000n, 9_000n)
+        }
+      }
+    });
+
+    expect(indexer.debrisFieldsInSystem(2, 44)).toEqual([
+      expect.objectContaining({
+        planetId: "7",
+        position: 9,
+        resources: {
+          metal: "27000",
+          crystal: "9000"
+        }
       })
     ]);
 

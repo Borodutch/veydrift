@@ -196,6 +196,17 @@ export type SettledPlanetEvent = PlanetState & {
   blockNumber: string;
 };
 
+export type DebrisFieldEvent = {
+  eventName: "DebrisFieldUpdated";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  resources: {
+    metal: string;
+    crystal: string;
+  };
+};
+
 export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
@@ -207,6 +218,7 @@ export interface ChainReader {
   getResearchState(wallet: Address): Promise<ResearchState>;
   getRiftState(wallet: Address): Promise<RiftState>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
+  listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -827,6 +839,19 @@ export class VeydriftGameReader implements ChainReader {
     return logs.map((log) => decodeSettledPlanetLog(log));
   }
 
+  async listDebrisFieldEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<DebrisFieldEvent[]> {
+    const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+      {
+        address: this.gameContractAddress,
+        fromBlock: toQuantity(fromBlock),
+        toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+        topics: [[debrisFieldUpdatedTopic]]
+      }
+    ]);
+
+    return logs.map((log) => decodeDebrisFieldLog(log));
+  }
+
   private async getGameSettlement(wallet: Address): Promise<WalletSettlement> {
     const homePlanetId = decodeUint(await this.call("0x0ff79fa5", [encodeAddress(wallet)]));
     const planet = homePlanetId === 0n ? null : await this.getPlanet(homePlanetId);
@@ -1277,6 +1302,7 @@ const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "ke
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
+const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 
 export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
@@ -1365,6 +1391,10 @@ export function isSettledPlanetLog(log: RpcLog): boolean {
   return topic === planetStartedTopic || topic === colonyCreatedTopic;
 }
 
+export function isDebrisFieldLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === debrisFieldUpdatedTopic;
+}
+
 export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
   const eventName = topicAt(log.topics, 0) === planetStartedTopic ? "PlanetStarted" : "ColonyCreated";
   const player = decodeAddressWord(topicAt(log.topics, 1));
@@ -1391,6 +1421,22 @@ export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
       metal: "0",
       crystal: "0",
       deuterium: "0"
+    }
+  };
+}
+
+export function decodeDebrisFieldLog(log: RpcLog): DebrisFieldEvent {
+  const planetId = decodeUint(topicAt(log.topics, 1));
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "DebrisFieldUpdated",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: planetId.toString(),
+    resources: {
+      metal: decodeUintWord(wordAt(words, 0)).toString(),
+      crystal: decodeUintWord(wordAt(words, 1)).toString()
     }
   };
 }
