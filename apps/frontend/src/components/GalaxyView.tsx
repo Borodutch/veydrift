@@ -168,6 +168,7 @@ export function GalaxyView({
   const positions = Array.from({ length: POSITION_COUNT }, (_, i) => i + 1);
   const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
   const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
+  const debrisCount = planets.filter((planet) => planet.debrisField).length;
   const emptyCount = POSITION_COUNT - planets.length;
   const occupiedSummary = formatGalaxyOccupancySummary(occupiedCount);
 
@@ -220,6 +221,12 @@ export function GalaxyView({
             <span>{emptyCount} empty</span>
             <span className="text-slate-700">/</span>
             <span>{occupiedSummary}</span>
+            {debrisCount > 0 ? (
+              <>
+                <span className="text-slate-700">/</span>
+                <span>{debrisCount} debris</span>
+              </>
+            ) : null}
           </div>
           <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
             {formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem))}
@@ -498,6 +505,9 @@ function GalaxySlot({
     : planet.ownerId
       ? shortAddress(planet.ownerId)
       : "Unclaimed";
+  const debrisLabel = planet.debrisField
+    ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
+    : null;
   const missionPreview = estimateGalaxyMissionPreview({
     homeCoords: missionHomeCoords,
     planner: missionPlanner,
@@ -556,6 +566,12 @@ function GalaxySlot({
               <>
                 <span className="text-slate-700">/</span>
                 <span>Moon</span>
+              </>
+            ) : null}
+            {debrisLabel ? (
+              <>
+                <span className="text-slate-700">/</span>
+                <span className="text-amber-200">{debrisLabel}</span>
               </>
             ) : null}
           </div>
@@ -640,6 +656,12 @@ function formatMissionClock(timestamp: number): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(timestamp));
+}
+
+function formatCompactResource(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toString();
 }
 
 function SlotNumber({ position, muted = false }: { position: number; muted?: boolean }) {

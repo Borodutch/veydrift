@@ -2,6 +2,7 @@ import type {
   Address,
   AllianceState,
   ChainReader,
+  DebrisFieldEvent,
   DefenseState,
   FleetMissionVisibility,
   InfrastructureState,
@@ -84,6 +85,10 @@ export class CachedChainReader implements ChainReader {
 
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {
     return this.inner.listSettledPlanetEvents(fromBlock, toBlock);
+  }
+
+  listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]> {
+    return this.inner.listDebrisFieldEvents(fromBlock, toBlock);
   }
 
   rpcMetrics(): RpcMetrics {

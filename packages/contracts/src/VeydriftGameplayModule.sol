@@ -55,6 +55,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
     }
 
+    function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
+        _spaceDockSystem = nextSpaceDockSystem;
+    }
+
     function launchFleetMission(
         uint256 originPlanetId,
         uint256 targetPlanetId,
@@ -89,6 +93,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
         uint256 shipTotal = _missionShipTotal(ships);
         if (shipTotal == 0) revert InvalidQuantity();
+        if (missionType == FleetMissionType.Harvest) {
+            if (ships.recycler == 0) revert InvalidQuantity();
+            DebrisField storage field = _debrisFields[targetPlanetId];
+            if (field.metal == 0 && field.crystal == 0) revert DebrisFieldEmpty();
+        }
         _requireMissionShips(originPlanetId, ships);
 
         uint256 cargoTotal =
@@ -221,7 +230,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             mission.status = FleetMissionStatus.Resolved;
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
-        } else if (mission.missionType == FleetMissionType.Attack) {
+        } else if (
+            mission.missionType == FleetMissionType.Attack
+                || mission.missionType == FleetMissionType.Harvest
+        ) {
             _delegateToCombatModule();
         } else {
             mission.status = FleetMissionStatus.Returning;
@@ -335,6 +347,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
     }
 
+    function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
+        return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
+    }
+
     function protectedResources(uint256 planetId) external view returns (Resources memory) {
         return _protectedResources(planetId);
     }
@@ -353,6 +369,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return _selectRaidLoot(
             _unprotectedResources(_planets[planetId].resources, protected), cargoCapacity
         );
+    }
+
+    function debrisField(uint256 planetId) external view returns (uint128 metal, uint128 crystal) {
+        DebrisField storage field = _debrisFields[planetId];
+        return (field.metal, field.crystal);
     }
 
     function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
@@ -457,7 +478,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (
             available.metal < cost.metal || available.crystal < cost.crystal
                 || available.deuterium < cost.deuterium
-        ) revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        }
         available.metal -= cost.metal;
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;

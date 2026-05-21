@@ -1,6 +1,8 @@
 import type { BackendConfig } from "./config";
 import {
+  decodeDebrisFieldLog,
   decodeSettledPlanetLog,
+  isDebrisFieldLog,
   isSettledPlanetLog,
   type RpcLog
 } from "./evm";
@@ -72,7 +74,7 @@ export class ChainSyncService {
 
   constructor(
     private readonly config: BackendConfig,
-    private readonly indexer: Pick<SettlementIndexer, "applyEvent"> | undefined,
+    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent"> | undefined,
     private readonly options: {
       reconnectBaseMs?: number;
       WebSocketCtor?: WebSocketConstructor;
@@ -279,6 +281,12 @@ export class ChainSyncService {
         this.indexer?.applyEvent(decodeSettledPlanetLog(result));
       } catch (error) {
         this.lastError = error instanceof Error ? error.message : "Failed to index settlement log.";
+      }
+    } else if (isDebrisFieldLog(result)) {
+      try {
+        this.indexer?.applyDebrisEvent(decodeDebrisFieldLog(result));
+      } catch (error) {
+        this.lastError = error instanceof Error ? error.message : "Failed to index debris field log.";
       }
     }
 

@@ -6,6 +6,10 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
+interface IVeydriftCombatSpaceDock {
+    function recordCombatWreckage(uint256 planetId, Ship ship, uint32 destroyed) external;
+}
+
 /// @notice Delegatecall target for public-state fleet attack battle resolution.
 contract VeydriftCombatModule is VeydriftResourceReserves {
     struct BattleStats {
@@ -63,6 +67,12 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
+        if (mission.missionType == FleetMissionType.Harvest) {
+            _harvestDebris(mission);
+            mission.status = FleetMissionStatus.Returning;
+            return;
+        }
+
         BattleSettlement memory settlement = _runBattle(missionId, mission);
         uint256 capacity = _missionCargoCapacity(mission.ships);
 
@@ -82,8 +92,16 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
         }
 
-        Resources memory debris =
-            _battleDebris(settlement.attackerLosses, settlement.defenderLosses);
+        Resources memory debris = _reserveLimitedIncrease(
+            _battleDebris(settlement.attackerLosses, settlement.defenderLosses)
+        );
+        if (debris.metal != 0 || debris.crystal != 0) {
+            DebrisField storage field = _debrisFields[mission.targetPlanetId];
+            field.metal += debris.metal;
+            field.crystal += debris.crystal;
+            _increaseInternalResources(debris);
+            _emitDebrisFieldUpdated(mission.targetPlanetId);
+        }
         emit AttackBattleResolved(
             missionId,
             mission.owner,
@@ -266,6 +284,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             if (lost != 0) {
                 _shipCounts[planetId][ship] = count - lost;
                 losses = _add(losses, _multiply(_shipCost(ship), lost));
+                _recordCombatWreckage(planetId, ship, lost);
             }
             unchecked {
                 ++i;
@@ -285,6 +304,40 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 ++i;
             }
         }
+    }
+
+    function _recordCombatWreckage(uint256 planetId, Ship ship, uint32 destroyed) private {
+        address spaceDockSystem = _spaceDockSystem;
+        if (spaceDockSystem == address(0)) return;
+
+        try IVeydriftCombatSpaceDock(spaceDockSystem)
+            .recordCombatWreckage(planetId, ship, destroyed) {}
+            catch {}
+    }
+
+    function _emitDebrisFieldUpdated(uint256 planetId) private {
+        DebrisField storage field = _debrisFields[planetId];
+        emit DebrisFieldUpdated(planetId, field.metal, field.crystal);
+    }
+
+    function _harvestDebris(FleetMission storage mission) private {
+        DebrisField storage field = _debrisFields[mission.targetPlanetId];
+        uint256 capacity = _missionCargoCapacity(mission.ships);
+        uint256 cargoTotal =
+            uint256(mission.cargo.metal) + mission.cargo.crystal + mission.cargo.deuterium;
+        if (capacity <= cargoTotal || (field.metal == 0 && field.crystal == 0)) return;
+
+        capacity -= cargoTotal;
+        uint128 metal = _toUint128(_min(field.metal, capacity));
+        field.metal -= metal;
+        capacity -= metal;
+
+        uint128 crystal = _toUint128(_min(field.crystal, capacity));
+        field.crystal -= crystal;
+
+        mission.cargo.metal += metal;
+        mission.cargo.crystal += crystal;
+        _emitDebrisFieldUpdated(mission.targetPlanetId);
     }
 
     function _setMissionShipQuantity(MissionShips storage ships, Ship ship, uint32 quantity)

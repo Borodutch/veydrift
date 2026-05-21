@@ -1,5 +1,5 @@
 import { isPlanetSlotPopulated, parsePlanetSlot } from "@veydrift/universe";
-import type { OccupiedPlanet, Planet, PlanetType, Resources } from "../types";
+import type { DebrisField, OccupiedPlanet, Planet, PlanetType, Resources } from "../types";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
   "scorching-molten": "/assets/game/style-pass/generated/planets/scorching-molten.webp",
@@ -89,6 +89,10 @@ type ApiPlanet = {
   deuteriumMultiplierBps?: number;
   archetype?: PlanetType;
   occupiedBy?: OccupiedPlanet | null;
+  debrisField?: {
+    metal: string | number;
+    crystal: string | number;
+  } | null;
 };
 
 export type SettlementPlanetIdentity = {
@@ -227,11 +231,26 @@ function planetFromApi(planet: ApiPlanet): Planet {
     ownerId: occupiedBy?.owner ?? null,
     alliance: null,
     occupiedBy,
+    debrisField: debrisFieldFromApi(planet.debrisField),
     resources: resourcesFromMultipliers(planet),
     temperature: { min: temperature - 20, max: temperature + 20 },
     diameter: Math.max(5_000, fields * 72),
     fields,
     hasMoon: false,
+  };
+}
+
+function debrisFieldFromApi(debrisField: ApiPlanet["debrisField"]): DebrisField | null {
+  if (!debrisField) return null;
+  const metal = Number(debrisField.metal);
+  const crystal = Number(debrisField.crystal);
+  if ((!Number.isFinite(metal) || metal <= 0) && (!Number.isFinite(crystal) || crystal <= 0)) {
+    return null;
+  }
+
+  return {
+    metal: Number.isFinite(metal) ? metal : 0,
+    crystal: Number.isFinite(crystal) ? crystal : 0,
   };
 }
 
@@ -279,6 +298,7 @@ function planetFromCoordinates(galaxy: number, system: number, position: number)
     ownerId: null,
     alliance: null,
     occupiedBy: null,
+    debrisField: null,
     resources: generateResources(type),
     temperature,
     diameter,

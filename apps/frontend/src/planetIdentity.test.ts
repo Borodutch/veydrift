@@ -89,6 +89,30 @@ describe("planet identity", () => {
     });
   });
 
+  test("preserves API debris fields on galaxy planets", () => {
+    const [systemPlanet] = planetsFromSystemResponse({
+      galaxy: 6,
+      system: 407,
+      planets: [
+        {
+          key: "6:407:15",
+          galaxy: 6,
+          system: 407,
+          position: 15,
+          debrisField: {
+            metal: "27000",
+            crystal: "9000",
+          },
+        },
+      ],
+    });
+
+    expect(systemPlanet?.debrisField).toEqual({
+      metal: 27_000,
+      crystal: 9_000,
+    });
+  });
+
   test("uses canonical home coordinates for shell chrome instead of stale settlement props", () => {
     const home = planetFromSettlementPlanet({
       ...settlementPlanet,

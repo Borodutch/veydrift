@@ -3,8 +3,8 @@ pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
-import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
@@ -218,6 +218,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _moonSystem = nextMoonSystem;
     }
 
+    function setSpaceDockSystem(address) external {
+        _delegateToGameplayModule();
+    }
+
     function spendMoonResources(uint256 planetId, Resources calldata cost) external {
         if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
         _settleResources(planetId);
@@ -316,6 +320,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
+    function debrisField(uint256) external returns (uint128, uint128) {
+        _delegateToGameplayModule();
+    }
+
     function activeBuildingConstruction(uint256 planetId)
         external
         view
@@ -405,6 +413,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint256 ships =
             uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
         return _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
+    }
+
+    function fleetSlotLimit(uint16) external returns (uint256) {
+        _delegateToGameplayModule();
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
