@@ -115,6 +115,10 @@ Fleet missions:
 
 - `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, intercept, and missile attack mission types.
 - Departure settles involved planets, enforces fleet slots, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
+- Public-state anti-raid primitives are centralized in `VeydriftAntiRaidPrimitives`: fleet slots,
+  travel/fuel, recall timing, hostile mission visibility, ACS cutoff, bashing/cooldown limits,
+  score protection, loot/protected-storage caps, and defender recovery constants. Frontend/backend
+  code may preview these values, but enforcement must remain contract-side.
 - `shipCargoCapacity(shipId)`, `transportFuelCost(...)`, and `transportTravelSeconds(...)` remain view helpers for UI previews while transport uses the generic mission path.
 - Arrivals are lazy: call `resolveFleetMission(missionId)` after `fleetMission(missionId).arrivalAt` to settle the target and resolve the mission.
 - Missions that return must later call `completeFleetMissionReturn(missionId)` after `fleetMission(missionId).returnAt` to land surviving ships and cargo.
