@@ -254,6 +254,10 @@ class MockChainReader implements ChainReader {
       homePlanetId: planet.planetId,
       productionAvailable: true,
       resources: planet.resources,
+      fleetSlots: {
+        active: 1,
+        limit: 2
+      },
       shipyardLevel: 1,
       naniteLevel: 0,
       technologyLevels: {

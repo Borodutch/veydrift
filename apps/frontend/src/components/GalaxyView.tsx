@@ -21,6 +21,39 @@ import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
+const MISSION_SPEED_BPS = 10_000;
+const MIN_FLEET_TRAVEL_SECONDS = 300;
+const SMALL_CARGO_CAPACITY = 5_000;
+const SMALL_CARGO_SHIP_ID = 0;
+
+type MissionResources = {
+  metal?: number;
+  crystal?: number;
+  deuterium?: number;
+};
+
+export type GalaxyMissionPlanner = {
+  fleetSlots?: {
+    active: number;
+    limit: number;
+  } | undefined;
+  resources?: MissionResources | undefined;
+  ships?: Array<{ id: number; count: number }> | undefined;
+  now?: number | undefined;
+};
+
+export type GalaxyMissionPreview = {
+  blockedReason?: string | undefined;
+  cargoCapacity: number;
+  fleetSlots: {
+    active: number;
+    limit: number;
+  };
+  fuelCost: number;
+  arrivalAt: number;
+  returnAt: number;
+};
+
 export type GalaxyActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
@@ -36,6 +69,7 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
+  missionPlanner?: GalaxyMissionPlanner | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
@@ -51,6 +85,7 @@ export function GalaxyView({
   homeCoords,
   homePlanetId,
   homePlanet,
+  missionPlanner,
   shipyardState = null,
   onAction,
   onSelectPlanet,
@@ -218,6 +253,8 @@ export function GalaxyView({
                   galaxy={galaxy}
                   isHome={isHome}
                   key={pos}
+                  missionPlanner={missionPlanner}
+                  missionHomeCoords={homeCoords}
                   account={account}
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
@@ -316,6 +353,64 @@ export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): strin
   return formatPlanetType(planetTypeFromTemperature(orbitalTemperature));
 }
 
+export function estimateGalaxyMissionPreview({
+  homeCoords,
+  now = Date.now(),
+  planner,
+  target,
+}: {
+  homeCoords: Coordinates | undefined;
+  now?: number;
+  planner: GalaxyMissionPlanner | undefined;
+  target: Coordinates;
+}): GalaxyMissionPreview | undefined {
+  if (!homeCoords || !planner) return undefined;
+  const fleetSlots = planner.fleetSlots ?? { active: 0, limit: 1 };
+  const smallCargoCount = planner.ships?.find((ship) => ship.id === SMALL_CARGO_SHIP_ID)?.count ?? 0;
+  const travelSeconds = galaxyMissionTravelSeconds(homeCoords, target);
+  const fuelCost = galaxyMissionFuelCost(homeCoords, target, 1);
+  const arrivalAt = now + travelSeconds * 1_000;
+  const returnAt = arrivalAt + travelSeconds * 1_000;
+  let blockedReason: string | undefined;
+
+  if (sameCoordinateValues(homeCoords, target)) {
+    blockedReason = "Origin planet";
+  } else if (fleetSlots.active >= fleetSlots.limit) {
+    blockedReason = "No fleet slots open";
+  } else if (smallCargoCount < 1) {
+    blockedReason = "No Small Cargo available";
+  } else if ((planner.resources?.deuterium ?? 0) < fuelCost) {
+    blockedReason = `Need ${fuelCost.toLocaleString()} deuterium`;
+  }
+
+  return {
+    blockedReason,
+    cargoCapacity: SMALL_CARGO_CAPACITY,
+    fleetSlots,
+    fuelCost,
+    arrivalAt,
+    returnAt,
+  };
+}
+
+export function galaxyMissionTravelSeconds(origin: Coordinates, target: Coordinates): number {
+  const distance = galaxyMissionDistance(origin, target);
+  return MIN_FLEET_TRAVEL_SECONDS + Math.ceil((distance * 10_000) / MISSION_SPEED_BPS);
+}
+
+export function galaxyMissionFuelCost(origin: Coordinates, target: Coordinates, shipCount: number): number {
+  if (shipCount <= 0) return 0;
+  const distance = Math.max(galaxyMissionDistance(origin, target), 1);
+  const scaledFuel = Math.floor((shipCount * distance * MISSION_SPEED_BPS) / (10_000 * 1_000));
+  return Math.max(scaledFuel, shipCount);
+}
+
+function galaxyMissionDistance(origin: Coordinates, target: Coordinates): number {
+  return Math.abs(origin.galaxy - target.galaxy) * SYSTEM_COUNT * POSITION_COUNT
+    + Math.abs(origin.system - target.system) * POSITION_COUNT
+    + Math.abs(origin.position - target.position);
+}
+
 function GalaxySlot({
   account,
   actionState,
@@ -323,6 +418,8 @@ function GalaxySlot({
   system,
   position,
   planet,
+  missionPlanner,
+  missionHomeCoords,
   homeCoords,
   homePlanetId,
   isHome,
@@ -336,6 +433,8 @@ function GalaxySlot({
   system: number;
   position: number;
   planet: Planet | undefined;
+  missionPlanner: GalaxyMissionPlanner | undefined;
+  missionHomeCoords: Coordinates | undefined;
   homeCoords: Coordinates | undefined;
   homePlanetId: string | null | undefined;
   isHome: boolean;
@@ -399,6 +498,11 @@ function GalaxySlot({
     : planet.ownerId
       ? shortAddress(planet.ownerId)
       : "Unclaimed";
+  const missionPreview = estimateGalaxyMissionPreview({
+    homeCoords: missionHomeCoords,
+    planner: missionPlanner,
+    target: { galaxy, system, position },
+  });
 
   return (
     <div
@@ -455,6 +559,11 @@ function GalaxySlot({
               </>
             ) : null}
           </div>
+          {missionPreview ? (
+            <div className={`mt-1 text-xs ${missionPreview.blockedReason ? "text-amber-200/80" : "text-cyan-100/80"}`}>
+              {formatMissionPreview(missionPreview)}
+            </div>
+          ) : null}
         </div>
       </button>
 
@@ -519,6 +628,20 @@ function ActionButtons({
   );
 }
 
+export function formatMissionPreview(preview: GalaxyMissionPreview): string {
+  const slotLabel = `Fleet ${preview.fleetSlots.active}/${preview.fleetSlots.limit}`;
+  if (preview.blockedReason) return `${slotLabel} / ${preview.blockedReason}`;
+
+  return `${slotLabel} / Fuel ${preview.fuelCost.toLocaleString()} D / Cargo ${preview.cargoCapacity.toLocaleString()} / Arrives ${formatMissionClock(preview.arrivalAt)} / Returns ${formatMissionClock(preview.returnAt)}`;
+}
+
+function formatMissionClock(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
 function SlotNumber({ position, muted = false }: { position: number; muted?: boolean }) {
   return (
     <div className={`flex h-9 w-9 items-center justify-center rounded border font-mono text-sm sm:h-10 sm:w-10 ${
@@ -538,6 +661,12 @@ function sameCoordinates(homeCoords: Coordinates | undefined, planet: Planet): b
       && homeCoords.system === planet.system
       && homeCoords.position === planet.position
   );
+}
+
+function sameCoordinateValues(left: Coordinates, right: Coordinates): boolean {
+  return left.galaxy === right.galaxy
+    && left.system === right.system
+    && left.position === right.position;
 }
 
 function withHomePlanet(

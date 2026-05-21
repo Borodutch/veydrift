@@ -1227,6 +1227,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           homeCoords={homeCoords}
           homePlanetId={onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
+          missionPlanner={{
+            fleetSlots: shipyardState?.fleetSlots,
+            now,
+            resources: onChainResources,
+            ships: shipyardState?.ships,
+          }}
           shipyardState={shipyardState}
           onAction={handleGalaxyAction}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
