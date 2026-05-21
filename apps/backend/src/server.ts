@@ -31,6 +31,7 @@ type RuntimeConfig = {
   contractAddress: string | null;
   gameContractAddress: string | null;
   graphqlUrl: string;
+  moonContractAddress: string | null;
   network: string;
   resourceTokenAddresses: {
     crystal: string | null;
@@ -140,6 +141,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         return Response.json(await ready.getInfrastructureState(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/moon$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const ready = requireChainReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        assertAddress(wallet);
+        return Response.json(await ready.getMoonState(wallet), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -409,6 +425,7 @@ function getRuntimeConfig(): RuntimeConfig {
     process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS ??
     process.env.VEYDRIFT_CONTRACT_ADDRESS ??
     null;
+  const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
     deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,
@@ -421,6 +438,7 @@ function getRuntimeConfig(): RuntimeConfig {
     contractAddress,
     gameContractAddress,
     graphqlUrl,
+    moonContractAddress,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
     resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"

@@ -5,6 +5,7 @@ import type {
   ChainReader,
   DefenseState,
   InfrastructureState,
+  MoonState,
   PlanetState,
   PlayerQueues,
   ResearchState,
@@ -166,6 +167,71 @@ class MockChainReader implements ChainReader {
           metal: "60",
           crystal: "15",
           deuterium: "0"
+        }
+      }
+    };
+  }
+
+  async getMoonState(wallet: Address): Promise<MoonState> {
+    return {
+      wallet,
+      homePlanetId: planet.planetId,
+      moonAvailable: true,
+      moon: {
+        exists: true,
+        planetId: planet.planetId,
+        owner: wallet,
+        fields: 4,
+        diameterKm: 7120,
+        createdAt: "1770000100",
+        jumpGateReadyAt: "1770007200"
+      },
+      sensorPhalanxRange: "3",
+      buildings: [
+        {
+          id: 0,
+          key: "lunarBase",
+          label: "Lunar Base",
+          level: 1,
+          cost: {
+            metal: "40000",
+            crystal: "80000",
+            deuterium: "40000"
+          }
+        },
+        {
+          id: 1,
+          key: "sensorPhalanx",
+          label: "Sensor Phalanx",
+          level: 2,
+          cost: {
+            metal: "80000",
+            crystal: "160000",
+            deuterium: "80000"
+          }
+        },
+        {
+          id: 2,
+          key: "jumpGate",
+          label: "Jump Gate",
+          level: 1,
+          cost: {
+            metal: "4000000",
+            crystal: "8000000",
+            deuterium: "4000000"
+          }
+        }
+      ],
+      queue: {
+        active: true,
+        kind: "moon-building",
+        itemId: 1,
+        targetLevel: 3,
+        readyAt: "1770000900",
+        cost: {
+          metal: "80000",
+          crystal: "160000",
+          deuterium: "80000"
         }
       }
     };
@@ -382,6 +448,7 @@ describe("Veydrift backend", () => {
         rpcSource: "missing",
         resourceTokenAddressesConfigured: false,
         settlementContractConfigured: false,
+        moonContractConfigured: false,
         gameContractConfigured: false
       },
       configured: false,
@@ -401,6 +468,7 @@ describe("Veydrift backend", () => {
       contractAddress: null,
       gameContractAddress: null,
       graphqlUrl: "https://api-test.veydrift.com/graphql",
+      moonContractAddress: null,
       network: "Base Sepolia",
       resourceTokenAddresses: {
         crystal: null,
@@ -416,12 +484,14 @@ describe("Veydrift backend", () => {
     const previousGameAddress = process.env.VEYDRIFT_CONTRACT_ADDRESS;
     const previousGameOverrideAddress = process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS;
     const previousSettlementAddress = process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS;
+    const previousMoonAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS;
     const previousMetalTokenAddress = process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
     const previousCrystalTokenAddress = process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS;
     const previousDeuteriumTokenAddress = process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS;
     process.env.VEYDRIFT_CONTRACT_ADDRESS = "0x3333333333333333333333333333333333333333";
     process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS = "0x4444444444444444444444444444444444444444";
     process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS = "0x1111111111111111111111111111111111111111";
+    process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS = "0x2222222222222222222222222222222222222222";
     process.env.VEYDRIFT_METAL_TOKEN_ADDRESS = "0x5555555555555555555555555555555555555555";
     process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS = "0x6666666666666666666666666666666666666666";
     process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS = "0x7777777777777777777777777777777777777777";
@@ -432,6 +502,7 @@ describe("Veydrift backend", () => {
       await expect(response.json()).resolves.toMatchObject({
         contractAddress: "0x1111111111111111111111111111111111111111",
         gameContractAddress: "0x4444444444444444444444444444444444444444",
+        moonContractAddress: "0x2222222222222222222222222222222222222222",
         resourceTokenAddresses: {
           crystal: "0x6666666666666666666666666666666666666666",
           deuterium: "0x7777777777777777777777777777777777777777",
@@ -456,6 +527,11 @@ describe("Veydrift backend", () => {
         delete process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS;
       } else {
         process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS = previousSettlementAddress;
+      }
+      if (previousMoonAddress === undefined) {
+        delete process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS = previousMoonAddress;
       }
       if (previousMetalTokenAddress === undefined) {
         delete process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
@@ -495,6 +571,7 @@ describe("Veydrift backend", () => {
             contractAddress: null,
             gameContractAddress: null,
             graphqlUrl: "https://api-test.veydrift.com/graphql",
+            moonContractAddress: null,
             network: "Base Sepolia",
             resourceTokenAddresses: {
               crystal: null,
@@ -640,6 +717,40 @@ describe("Veydrift backend", () => {
     expect(body.queue).toMatchObject({
       active: true,
       kind: "building"
+    });
+  });
+
+  test("answers moon state from a mocked chain reader", async () => {
+    const handler = createRequestHandler({ chainReader: new MockChainReader(), config: configuredTestConfig });
+    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.wallet).toBe(player);
+    expect(body.homePlanetId).toBe("7");
+    expect(body.moon).toMatchObject({
+      exists: true,
+      fields: 4,
+      diameterKm: 7120,
+      jumpGateReadyAt: "1770007200"
+    });
+    expect(body.sensorPhalanxRange).toBe("3");
+    expect(body.buildings).toContainEqual({
+      id: 1,
+      key: "sensorPhalanx",
+      label: "Sensor Phalanx",
+      level: 2,
+      cost: {
+        metal: "80000",
+        crystal: "160000",
+        deuterium: "80000"
+      }
+    });
+    expect(body.queue).toMatchObject({
+      active: true,
+      kind: "moon-building",
+      itemId: 1,
+      targetLevel: 3
     });
   });
 

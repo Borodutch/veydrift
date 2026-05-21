@@ -107,6 +107,31 @@ export type InfrastructureState = {
   queue: QueueState | null;
 };
 
+export type MoonState = {
+  wallet: Address;
+  homePlanetId: string | null;
+  moonAvailable: boolean;
+  unavailableReason?: string;
+  moon: {
+    exists: boolean;
+    planetId: string;
+    owner: Address;
+    fields: number;
+    diameterKm: number;
+    createdAt: string;
+    jumpGateReadyAt: string;
+  } | null;
+  sensorPhalanxRange: string | null;
+  buildings: Array<{
+    id: number;
+    key: string;
+    label: string;
+    level: number;
+    cost: Resources;
+  }>;
+  queue: QueueState | null;
+};
+
 export type ResearchState = {
   wallet: Address;
   homePlanetId: string | null;
@@ -176,6 +201,7 @@ export interface ChainReader {
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address): Promise<PlayerQueues>;
   getInfrastructureState(wallet: Address): Promise<InfrastructureState>;
+  getMoonState(wallet: Address): Promise<MoonState>;
   getDefenseState(wallet: Address): Promise<DefenseState>;
   getShipyardState(wallet: Address): Promise<ShipyardState>;
   getResearchState(wallet: Address): Promise<ResearchState>;
@@ -239,6 +265,7 @@ export class HttpJsonRpcTransport {
 export class VeydriftGameReader implements ChainReader {
   private readonly transport: Pick<HttpJsonRpcTransport, "request">;
   private readonly gameContractAddress: Address;
+  private readonly moonContractAddress: Address | undefined;
   private readonly chainId: number;
   private readonly indexFromBlock: bigint;
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
@@ -254,6 +281,7 @@ export class VeydriftGameReader implements ChainReader {
 
     this.transport = transport ?? new HttpJsonRpcTransport(config.rpcUrl);
     this.gameContractAddress = config.gameContractAddress;
+    this.moonContractAddress = config.moonContractAddress;
     this.chainId = config.chainId;
     this.indexFromBlock = config.indexFromBlock;
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
@@ -390,6 +418,64 @@ export class VeydriftGameReader implements ChainReader {
       buildings,
       queue
     };
+  }
+
+  async getMoonState(wallet: Address): Promise<MoonState> {
+    let settlement: WalletSettlement;
+    try {
+      settlement = await this.getGameSettlement(wallet);
+    } catch (error) {
+      if (!isRpcRevert(error) || !this.settlementContractAddress) {
+        throw error;
+      }
+
+      return emptyMoonState(
+        wallet,
+        null,
+        "The deployed contract only supports first-planet settlement. Moon systems are not available on this deployment yet."
+      );
+    }
+
+    if (!settlement.homePlanetId) {
+      return emptyMoonState(wallet, null, "Settle a home planet before using moon systems.");
+    }
+
+    const planetId = BigInt(settlement.homePlanetId);
+    try {
+      const moon = await this.readMoon(planetId);
+      if (!moon.exists) {
+        return {
+          ...emptyMoonState(wallet, settlement.homePlanetId, "No moon exists for this home planet yet."),
+          moonAvailable: true
+        };
+      }
+
+      const [buildings, queue, sensorPhalanxRange] = await Promise.all([
+        this.readMoonBuildingRows(planetId),
+        this.readMoonQueue(planetId),
+        this.readMoonUintCall("0x6ec64128", [encodeUint(planetId)])
+      ]);
+
+      return {
+        wallet,
+        homePlanetId: settlement.homePlanetId,
+        moonAvailable: true,
+        moon,
+        sensorPhalanxRange: sensorPhalanxRange.toString(),
+        buildings,
+        queue
+      };
+    } catch (error) {
+      if (isRpcRevert(error)) {
+        return emptyMoonState(
+          wallet,
+          settlement.homePlanetId,
+          "This deployment does not expose Veydrift moon systems yet."
+        );
+      }
+
+      throw error;
+    }
   }
 
   async getShipyardState(wallet: Address): Promise<ShipyardState> {
@@ -691,6 +777,19 @@ export class VeydriftGameReader implements ChainReader {
     return queue;
   }
 
+  private async readMoonQueue(planetId: bigint): Promise<QueueState> {
+    const words = splitWords(await this.moonCall("0x2216f950", [encodeUint(planetId)]));
+    const active = decodeBoolWord(wordAt(words, 0));
+    return {
+      active,
+      kind: active ? "moon-building" : null,
+      ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
+      targetLevel: Number(decodeUintWord(wordAt(words, 2))),
+      readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
+      cost: decodeResources(words.slice(4, 7))
+    };
+  }
+
   private async readBuildingStartedAt(planetId: bigint, queue: QueueState): Promise<string | null> {
     if (!queue.active || queue.itemId === undefined || queue.targetLevel === undefined || !queue.readyAt) {
       return null;
@@ -794,6 +893,36 @@ export class VeydriftGameReader implements ChainReader {
 
         return {
           id,
+          level: Number(level),
+          cost
+        };
+      })
+    );
+  }
+
+  private async readMoon(planetId: bigint): Promise<NonNullable<MoonState["moon"]>> {
+    const words = splitWords(await this.moonCall("0xce028855", [encodeUint(planetId)]));
+    return {
+      exists: decodeBoolWord(wordAt(words, 0)),
+      planetId: decodeUintWord(wordAt(words, 1)).toString(),
+      owner: decodeAddressWord(wordAt(words, 2)),
+      fields: Number(decodeUintWord(wordAt(words, 3))),
+      diameterKm: Number(decodeUintWord(wordAt(words, 4))),
+      createdAt: decodeUintWord(wordAt(words, 5)).toString(),
+      jumpGateReadyAt: decodeUintWord(wordAt(words, 6)).toString()
+    };
+  }
+
+  private async readMoonBuildingRows(planetId: bigint): Promise<MoonState["buildings"]> {
+    return Promise.all(
+      moonBuildingCatalog.map(async (building) => {
+        const [level, cost] = await Promise.all([
+          this.readMoonUintCall("0x4e6a984f", [encodeUint(planetId), encodeUint(BigInt(building.id))]),
+          this.readMoonResourcesCall("0xa9114d32", [encodeUint(planetId), encodeUint(BigInt(building.id))])
+        ]);
+
+        return {
+          ...building,
           level: Number(level),
           cost
         };
@@ -974,12 +1103,24 @@ export class VeydriftGameReader implements ChainReader {
     return decodeResources(splitWords(await this.call(selector, args)));
   }
 
+  private async readMoonResourcesCall(selector: string, args: string[]): Promise<Resources> {
+    return decodeResources(splitWords(await this.moonCall(selector, args)));
+  }
+
   private async readUintCall(selector: string, args: string[]): Promise<bigint> {
     return decodeUintWord(wordAt(splitWords(await this.call(selector, args)), 0));
   }
 
+  private async readMoonUintCall(selector: string, args: string[]): Promise<bigint> {
+    return decodeUintWord(wordAt(splitWords(await this.moonCall(selector, args)), 0));
+  }
+
   private async call(selector: string, args: string[]): Promise<string> {
     return this.callContract(this.gameContractAddress, selector, args);
+  }
+
+  private async moonCall(selector: string, args: string[]): Promise<string> {
+    return this.callContract(this.moonContractAddress ?? this.gameContractAddress, selector, args);
   }
 
   private async compactCall(selector: string, args: string[]): Promise<string> {
@@ -1013,6 +1154,11 @@ const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "reso
   { key: "crystal", label: "Crystal", resourceId: 1 },
   { key: "deuterium", label: "Deuterium", resourceId: 2 }
 ];
+const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "key" | "label">> = [
+  { id: 0, key: "lunarBase", label: "Lunar Base" },
+  { id: 1, key: "sensorPhalanx", label: "Sensor Phalanx" },
+  { id: 2, key: "jumpGate", label: "Jump Gate" }
+];
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
@@ -1041,6 +1187,23 @@ function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailabl
       lockedBalance: "0"
     })),
     pendingWithdrawals: []
+  };
+}
+
+function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailableReason: string): MoonState {
+  return {
+    wallet,
+    homePlanetId,
+    moonAvailable: false,
+    unavailableReason,
+    moon: null,
+    sensorPhalanxRange: null,
+    buildings: moonBuildingCatalog.map((building) => ({
+      ...building,
+      level: 0,
+      cost: zeroResources()
+    })),
+    queue: null
   };
 }
 
