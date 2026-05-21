@@ -421,13 +421,7 @@ contract VeydriftGame {
 
     function settlePlanet(uint256 planetId) public {
         _requirePlanetOwner(planetId);
-        Planet storage planetRef = _planets[planetId];
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
+        _settleResources(planetId);
     }
 
     function collectResources(uint256 planetId) external {
@@ -438,12 +432,41 @@ contract VeydriftGame {
         _requirePlanetOwner(planetId);
     }
 
-    function startBuildingUpgrade(uint256, Building) external pure {
-        revert UnsupportedGameplayModule();
+    function startBuildingUpgrade(uint256 planetId, Building building) external {
+        _requirePlanetOwner(planetId);
+        if (buildingConstructions[planetId].active) revert ConstructionActive();
+
+        uint16 currentLevel = _buildingLevels[planetId][building];
+        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
+        if (_usedFields(planetId) >= _planets[planetId].fields) revert FieldCapacityReached();
+
+        _requireBuildingDependencies(planetId, building);
+        settlePlanet(planetId);
+
+        Resources memory cost = buildingUpgradeCost(planetId, building);
+        _spend(planetId, cost);
+
+        uint64 readyAt =
+            (uint256(_currentTimestamp()) + _buildingDuration(planetId, cost)).toUint64();
+        uint16 targetLevel = currentLevel + 1;
+        buildingConstructions[planetId] = BuildingConstruction({
+            active: true, building: building, targetLevel: targetLevel, readyAt: readyAt, cost: cost
+        });
+
+        emit BuildingStarted(
+            planetId, building, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
+        );
     }
 
-    function finishBuildingUpgrade(uint256) external pure {
-        revert UnsupportedGameplayModule();
+    function finishBuildingUpgrade(uint256 planetId) external {
+        _requirePlanetOwner(planetId);
+        BuildingConstruction memory construction = buildingConstructions[planetId];
+        if (!construction.active) revert ConstructionInactive();
+        if (_currentTimestamp() < construction.readyAt) {
+            revert ConstructionNotReady(construction.readyAt);
+        }
+
+        _settleResources(planetId);
     }
 
     function startDefenseProduction(uint256, Defense, uint32) external pure {
@@ -645,7 +668,22 @@ contract VeydriftGame {
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
-        return _planets[planetId].resources;
+        Planet storage planetRef = _planets[planetId];
+        if (planetRef.owner == address(0)) revert NoPlanet();
+
+        resources = planetRef.resources;
+        uint256 elapsed = uint256(_currentTimestamp()) - planetRef.lastSettledAt;
+        if (elapsed == 0) return resources;
+
+        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
+            productionPerHour(planetId);
+        Resources memory produced = Resources({
+            metal: _toUint128((metalPerHour * elapsed) / 1 hours),
+            crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
+            deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
+        });
+        (, Resources memory added) = _cappedResourceIncrease(planetId, resources, produced);
+        resources = _add(resources, _reserveLimitedIncrease(added));
     }
 
     function productionPerHour(uint256 planetId)
@@ -844,6 +882,169 @@ contract VeydriftGame {
         if (planetRef.owner != msg.sender) revert NotPlanetOwner();
     }
 
+    function _requireBuildingDependencies(uint256 planetId, Building building) private view {
+        uint16 roboticsFactoryLevel = _buildingLevels[planetId][Building.RoboticsFactory];
+        uint16 researchLabLevel = _buildingLevels[planetId][Building.ResearchLab];
+
+        if (building == Building.Shipyard && roboticsFactoryLevel < 2) {
+            revert MissingDependency("ROBOTICS_FACTORY_2");
+        }
+        if (building == Building.ResearchLab && roboticsFactoryLevel < 1) {
+            revert MissingDependency("ROBOTICS_FACTORY_1");
+        }
+        if (building == Building.NaniteFactory && roboticsFactoryLevel < 10) {
+            revert MissingDependency("ROBOTICS_FACTORY_10");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 4) {
+            revert MissingDependency("ROBOTICS_FACTORY_4");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
+            revert MissingDependency("RESEARCH_LAB_2");
+        }
+    }
+
+    function _settleResources(uint256 planetId) private {
+        uint64 currentTime = _currentTimestamp();
+        BuildingConstruction memory construction = buildingConstructions[planetId];
+        if (construction.active && currentTime >= construction.readyAt) {
+            _settleResourcesUntil(planetId, construction.readyAt);
+            _completeBuilding(planetId, construction);
+            _settleResourcesUntil(planetId, currentTime);
+            return;
+        }
+
+        _settleResourcesUntil(planetId, currentTime);
+    }
+
+    function _settleResourcesUntil(uint256 planetId, uint64 settledAt) private {
+        Planet storage planetRef = _planets[planetId];
+        if (settledAt > planetRef.lastSettledAt) {
+            uint256 elapsed = uint256(settledAt) - planetRef.lastSettledAt;
+            (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
+                productionPerHour(planetId);
+            Resources memory produced = Resources({
+                metal: _toUint128((metalPerHour * elapsed) / 1 hours),
+                crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
+                deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
+            });
+            (Resources memory capped, Resources memory added) =
+                _cappedResourceIncrease(planetId, planetRef.resources, produced);
+            added = _reserveLimitedIncrease(added);
+            _increaseInternalResources(added);
+            planetRef.resources = _add(planetRef.resources, added);
+            if (
+                planetRef.resources.metal > capped.metal
+                    || planetRef.resources.crystal > capped.crystal
+                    || planetRef.resources.deuterium > capped.deuterium
+            ) {
+                planetRef.resources = capped;
+            }
+            planetRef.lastSettledAt = settledAt;
+        }
+
+        emit PlanetSettled(
+            planetId,
+            planetRef.resources.metal,
+            planetRef.resources.crystal,
+            planetRef.resources.deuterium
+        );
+    }
+
+    function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {
+        delete buildingConstructions[planetId];
+        _buildingLevels[planetId][construction.building] = construction.targetLevel;
+        emit BuildingCompleted(planetId, construction.building, construction.targetLevel);
+    }
+
+    function _buildingDuration(uint256 planetId, Resources memory cost)
+        private
+        view
+        returns (uint256)
+    {
+        return VeydriftFormulas.buildingDuration(
+            _buildingLevels[planetId][Building.RoboticsFactory],
+            cost.metal,
+            cost.crystal,
+            MIN_QUEUE_SECONDS
+        );
+    }
+
+    function _usedFields(uint256 planetId) private view returns (uint256 used) {
+        for (uint8 i = 0; i <= MAX_BUILDING_ID; i++) {
+            used += _buildingLevels[planetId][Building(i)];
+        }
+    }
+
+    function _spend(uint256 planetId, Resources memory cost) private {
+        Resources storage available = _planets[planetId].resources;
+        if (
+            available.metal < cost.metal || available.crystal < cost.crystal
+                || available.deuterium < cost.deuterium
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        }
+
+        available.metal -= cost.metal;
+        available.crystal -= cost.crystal;
+        available.deuterium -= cost.deuterium;
+        _decreaseInternalResources(cost);
+    }
+
+    function _cappedResourceIncrease(
+        uint256 planetId,
+        Resources memory currentResources,
+        Resources memory produced
+    ) private view returns (Resources memory capped, Resources memory added) {
+        capped = _addWithCaps(planetId, currentResources, produced);
+        added = Resources({
+            metal: capped.metal - currentResources.metal,
+            crystal: capped.crystal - currentResources.crystal,
+            deuterium: capped.deuterium - currentResources.deuterium
+        });
+    }
+
+    function _addWithCaps(uint256 planetId, Resources memory resources, Resources memory addition)
+        private
+        view
+        returns (Resources memory)
+    {
+        (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = storageCaps(planetId);
+        return Resources({
+            metal: _addWithCap(resources.metal, addition.metal, metalCap),
+            crystal: _addWithCap(resources.crystal, addition.crystal, crystalCap),
+            deuterium: _addWithCap(resources.deuterium, addition.deuterium, deuteriumCap)
+        });
+    }
+
+    function _addWithCap(uint128 current, uint128 addition, uint128 cap)
+        private
+        pure
+        returns (uint128)
+    {
+        uint256 total = uint256(current) + addition;
+        uint256 effectiveCap = current > cap ? current : cap;
+        return _toUint128(total > effectiveCap ? effectiveCap : total);
+    }
+
+    function _reserveLimitedIncrease(Resources memory amount)
+        private
+        view
+        returns (Resources memory)
+    {
+        Resources memory required = resourceReserveRequirement();
+        return Resources({
+            metal: _toUint128(
+                _min(amount.metal, _availableReserve(Resource.Metal, required.metal))
+            ),
+            crystal: _toUint128(
+                _min(amount.crystal, _availableReserve(Resource.Crystal, required.crystal))
+            ),
+            deuterium: _toUint128(
+                _min(amount.deuterium, _availableReserve(Resource.Deuterium, required.deuterium))
+            )
+        });
+    }
+
     function _transferReserveIn(Resource resource, uint128 amount) private {
         if (amount == 0) return;
         IERC20ReserveToken token = _requireReserveResource(resource);
@@ -855,6 +1056,14 @@ contract VeydriftGame {
     function _increaseInternalResources(Resources memory amount) private {
         _requireReserveCapacity(amount);
         _totalInternalResources = _add(_totalInternalResources, amount);
+    }
+
+    function _decreaseInternalResources(Resources memory amount) private {
+        _totalInternalResources = Resources({
+            metal: _totalInternalResources.metal - amount.metal,
+            crystal: _totalInternalResources.crystal - amount.crystal,
+            deuterium: _totalInternalResources.deuterium - amount.deuterium
+        });
     }
 
     function _add(Resources memory a, Resources memory b) private pure returns (Resources memory) {
@@ -950,6 +1159,10 @@ contract VeydriftGame {
     function _toUint128(uint256 value) private pure returns (uint128) {
         if (value > type(uint128).max) revert LevelTooHigh();
         return value.toUint128();
+    }
+
+    function _min(uint256 a, uint256 b) private pure returns (uint256) {
+        return a < b ? a : b;
     }
 
     function _currentTimestamp() private view returns (uint64) {
