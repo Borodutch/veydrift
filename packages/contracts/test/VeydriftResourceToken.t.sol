@@ -11,6 +11,7 @@ import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
+import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {Resource} from "../src/libraries/VeydriftTypes.sol";
 import {
     VeydriftCrystal,
@@ -180,9 +181,11 @@ contract VeydriftResourceTokenTest is Test {
 
     function testResourceTokenDeployScriptMintsInitialSupplyToExistingGame() public {
         address deployer = _setDeployEnv();
-        VeydriftGame existingGame = new VeydriftGame(
-            deployer, address(new VeydriftGameplayModule(address(new VeydriftCombatModule())))
-        );
+        VeydriftCombatModule combatModule = new VeydriftCombatModule();
+        VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
+        VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
+        VeydriftGame existingGame =
+            new VeydriftGame(deployer, address(gameplayModule), address(planetManagementModule));
         vm.setEnv("VEYDRIFT_GAME_CONTRACT_ADDRESS", vm.toString(address(existingGame)));
 
         (address metalToken, address crystalToken, address deuteriumToken) =

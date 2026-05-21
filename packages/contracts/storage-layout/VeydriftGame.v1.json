@@ -145,15 +145,21 @@
       "type": "mapping(address => uint256)"
     },
     {
-      "label": "_debrisFields",
+      "label": "planetNames",
       "offset": 0,
       "slot": "26",
+      "type": "mapping(uint256 => string)"
+    },
+    {
+      "label": "_debrisFields",
+      "offset": 0,
+      "slot": "27",
       "type": "mapping(uint256 => struct DebrisField)"
     },
     {
       "label": "_spaceDockSystem",
       "offset": 0,
-      "slot": "27",
+      "slot": "28",
       "type": "address"
     }
   ],

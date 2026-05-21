@@ -67,6 +67,7 @@ import {
   fetchShipyardState,
   fetchResearchState,
   fetchRiftState,
+  fetchWalletPlanets,
   fetchFleetMissionVisibility,
   fetchAllianceState,
   sendFinishDefenseProductionTransaction,
@@ -80,9 +81,11 @@ import {
   sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
+  sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
   sendLaunchFleetMissionTransaction,
   sendDepositResourceTransaction,
+  sendRenamePlanetTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
@@ -102,6 +105,7 @@ import {
   type Eip1193Provider,
   type FleetMissionVisibilityResponse,
   type PendingWithdrawal,
+  type ManagedPlanetResponse,
   type PlanetSummary,
   type RiftResourceState,
   type PlayerQueuesResponse,
@@ -123,6 +127,7 @@ type ShipyardActionState =
 type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
 type RiftActionState = ShipyardActionState;
+type PlanetActionState = ShipyardActionState;
 
 export function displayHomeCoordinates(
   homePlanet: Coordinates | undefined,
@@ -142,6 +147,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [page, setPage] = useState<Page>("overview");
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
   const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
+  const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
+  const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
   const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
   const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
@@ -175,6 +182,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [riftError, setRiftError] = useState<string | undefined>();
   const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
+  const [planetAction, setPlanetAction] = useState<PlanetActionState>({ status: "idle" });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -205,6 +213,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     return fallbackHomeCoords;
   }, [fallbackHomeCoords, onChainSettlement?.planet]);
+  const selectedManagedPlanet = useMemo(
+    () => walletPlanets.find((item) => item.planetId === (selectedPlanetId ?? onChainSettlement?.homePlanetId))
+      ?? walletPlanets[0],
+    [onChainSettlement?.homePlanetId, selectedPlanetId, walletPlanets]
+  );
+  const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlement?.homePlanetId ?? undefined;
   const homeCoordinateLabel = useMemo(
     () => displayHomeCoordinates(homePlanetIdentity, homeCoords, planet?.coordinates),
     [
@@ -267,8 +281,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     setMoonError(undefined);
     try {
       const [nextInfrastructure, nextMoon] = await Promise.all([
-        fetchInfrastructureState(apiBaseUrl, account),
-        fetchMoonState(apiBaseUrl, account),
+        fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
+        fetchMoonState(apiBaseUrl, account, activePlanetId),
       ]);
       setInfrastructureChainState(nextInfrastructure);
       setMoonState(nextMoon);
@@ -282,7 +296,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setInfrastructureLoading(false);
       setMoonLoading(false);
     }
-  }, [account, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshDefenseState = useCallback(() => {
     if (!apiBaseUrl || !account) {
@@ -292,7 +306,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setDefenseLoading(true);
     setDefenseError(undefined);
-    fetchDefenseState(apiBaseUrl, account)
+    fetchDefenseState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
         setDefenseState(next);
       })
@@ -304,7 +318,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       .finally(() => {
         setDefenseLoading(false);
       });
-  }, [account, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshAllianceState = useCallback(() => {
     if (!apiBaseUrl || !account) {
@@ -336,7 +350,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setShipyardLoading(true);
     setShipyardError(undefined);
-    fetchShipyardState(apiBaseUrl, account)
+    fetchShipyardState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
         setShipyardState(next);
       })
@@ -348,7 +362,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       .finally(() => {
         setShipyardLoading(false);
       });
-  }, [account, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshResearchState = useCallback(() => {
     if (!apiBaseUrl || !account) {
@@ -358,7 +372,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setResearchLoading(true);
     setResearchError(undefined);
-    fetchResearchState(apiBaseUrl, account)
+    fetchResearchState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
         setResearchState(next);
       })
@@ -370,7 +384,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       .finally(() => {
         setResearchLoading(false);
       });
-  }, [account, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshRiftState = useCallback(() => {
     if (!apiBaseUrl || !account) {
@@ -380,7 +394,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setRiftLoading(true);
     setRiftError(undefined);
-    fetchRiftState(apiBaseUrl, account)
+    fetchRiftState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
         setRiftState(next);
       })
@@ -392,11 +406,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       .finally(() => {
         setRiftLoading(false);
       });
-  }, [account, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshOnChainState = useCallback(async () => {
     if (!apiBaseUrl || !account) {
       setOnChainSettlement(undefined);
+      setWalletPlanets([]);
       setOnChainQueues(undefined);
       setFleetVisibility(undefined);
       setOnChainError(undefined);
@@ -406,12 +421,27 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
     try {
-      const [settlement, queues, visibility] = await Promise.all([
+      const [settlement, planetsResponse, queues, visibility] = await Promise.all([
         fetchWalletSettlement(apiBaseUrl, account),
-        fetchWalletQueues(apiBaseUrl, account),
+        fetchWalletPlanets(apiBaseUrl, account),
+        fetchWalletQueues(apiBaseUrl, account, activePlanetId),
         fetchFleetMissionVisibility(apiBaseUrl, account),
       ]);
-      setOnChainSettlement(settlement);
+      const planets = planetsResponse.planets;
+      const selectedPlanet = planets.find((item) => item.planetId === (activePlanetId ?? settlement.homePlanetId))
+        ?? planets.find((item) => item.isHomePlanet)
+        ?? planets[0];
+      setWalletPlanets(planets);
+      if (!selectedPlanetId && selectedPlanet?.planetId) {
+        setSelectedPlanetId(selectedPlanet.planetId);
+      }
+      setOnChainSettlement(selectedPlanet
+        ? {
+            ...settlement,
+            homePlanetId: selectedPlanet.planetId,
+            planet: selectedPlanet,
+          }
+        : settlement);
       setOnChainQueues(queues);
       setFleetVisibility(visibility);
       setOnChainError(undefined);
@@ -419,11 +449,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainSettlement(undefined);
+      setWalletPlanets([]);
       setOnChainQueues(undefined);
       setFleetVisibility(undefined);
       setOnChainStatus("error");
     }
-  }, [account, apiBaseUrl, isWalletConnected]);
+  }, [account, activePlanetId, apiBaseUrl, isWalletConnected, selectedPlanetId]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation) => {
     if (!apiBaseUrl || !account) {
@@ -441,8 +472,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         async () => {
           const [settlement, queues, infrastructure] = await Promise.all([
             fetchWalletSettlement(apiBaseUrl, account),
-            fetchWalletQueues(apiBaseUrl, account),
-            fetchInfrastructureState(apiBaseUrl, account),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { settlement, queues, infrastructure };
@@ -466,7 +497,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     } finally {
       setInfrastructureLoading(false);
     }
-  }, [account, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
+  }, [account, activePlanetId, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
 
   useEffect(() => {
     if (homeCoords) {
@@ -1246,6 +1277,63 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, gameContract, provider, riftState?.resources, runRiftTransaction]);
 
+  const handleSelectManagedPlanet = useCallback((planetId: string) => {
+    setSelectedPlanetId(planetId);
+    setPlanetAction({ status: "idle" });
+  }, []);
+
+  const handleRenamePlanet = useCallback(() => {
+    if (!provider || !account || !gameContract || !activePlanetId) {
+      setPlanetAction({ status: "error", label: "Wallet, game contract, or planet is unavailable." });
+      return;
+    }
+    const current = selectedManagedPlanet?.name ?? `Planet ${selectedManagedPlanet?.coordinates ?? activePlanetId}`;
+    const name = window.prompt("Planet name", current)?.trim();
+    if (!name) return;
+
+    setPlanetAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    void sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, name)
+      .then(async (txHash) => {
+        setPlanetAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
+        await waitForReceipt(provider, txHash);
+        await refreshOnChainState();
+        setPlanetAction({ status: "success", label: "Planet renamed." });
+      })
+      .catch((error) => {
+        console.error(error);
+        setPlanetAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Rename transaction failed.",
+        });
+      });
+  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, selectedManagedPlanet]);
+
+  const handleAbandonPlanet = useCallback(() => {
+    if (!provider || !account || !gameContract || !activePlanetId || selectedManagedPlanet?.isHomePlanet) {
+      setPlanetAction({ status: "error", label: "Only non-home colonies can be abandoned." });
+      return;
+    }
+    const label = selectedManagedPlanet?.name ?? `Planet ${selectedManagedPlanet?.coordinates ?? activePlanetId}`;
+    if (!window.confirm(`Abandon ${label}? This requires an empty colony with no active queues or fleet missions.`)) return;
+
+    setPlanetAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    void sendAbandonPlanetTransaction(provider, account, gameContract, activePlanetId)
+      .then(async (txHash) => {
+        setPlanetAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
+        await waitForReceipt(provider, txHash);
+        setSelectedPlanetId(undefined);
+        await refreshOnChainState();
+        setPlanetAction({ status: "success", label: "Colony abandoned." });
+      })
+      .catch((error) => {
+        console.error(error);
+        setPlanetAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Abandon transaction failed.",
+        });
+      });
+  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, selectedManagedPlanet]);
+
   const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
     if (!action.enabled) return;
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -1316,6 +1404,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       showCollectResources={isCollectReady}
     />
   );
+
+  const planetSwitcher = walletPlanets.length > 0 ? (
+    <PlanetSwitcher
+      action={planetAction}
+      canTransact={Boolean(provider && account && gameContract)}
+      onAbandon={handleAbandonPlanet}
+      onRename={handleRenamePlanet}
+      onSelect={handleSelectManagedPlanet}
+      planets={walletPlanets}
+      selectedPlanetId={activePlanetId}
+    />
+  ) : null;
 
   const content = (() => {
     if (!walletPlanetHydrated) {
@@ -1522,10 +1622,86 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         />
 
         <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
+          {planetSwitcher}
           {content}
         </main>
       </div>
     </div>
+  );
+}
+
+function PlanetSwitcher({
+  action,
+  canTransact,
+  onAbandon,
+  onRename,
+  onSelect,
+  planets,
+  selectedPlanetId,
+}: {
+  action: PlanetActionState;
+  canTransact: boolean;
+  onAbandon: () => void;
+  onRename: () => void;
+  onSelect: (planetId: string) => void;
+  planets: ManagedPlanetResponse[];
+  selectedPlanetId: string | undefined;
+}) {
+  const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
+  if (!selectedPlanet) return null;
+
+  return (
+    <section className="mb-3 rounded border border-white/10 bg-[#101827]/80 p-2.5 shadow-lg shadow-black/10">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <select
+            className="h-9 min-w-0 rounded border border-white/10 bg-black/30 px-2 text-sm text-white outline-none focus:border-cyan-300/60"
+            onChange={(event) => onSelect(event.currentTarget.value)}
+            value={selectedPlanet.planetId}
+          >
+            {planets.map((planet) => (
+              <option key={planet.planetId} value={planet.planetId}>
+                {planet.name ?? `Planet ${planet.coordinates}`} · {planet.coordinates}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-slate-400">
+            {selectedPlanet.fieldsUsed}/{selectedPlanet.fieldsCapacity} fields
+          </span>
+          {selectedPlanet.moon?.exists && (
+            <span className="rounded border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 text-xs text-cyan-200">
+              Moon
+            </span>
+          )}
+          <span className="text-xs text-slate-500">
+            M{selectedPlanet.keyLevels.metalMine} C{selectedPlanet.keyLevels.crystalMine} D{selectedPlanet.keyLevels.deuteriumSynthesizer}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {action.status !== "idle" && (
+            <span className={`max-w-48 truncate text-xs ${action.status === "error" ? "text-amber-200" : "text-slate-300"}`}>
+              {action.label}
+            </span>
+          )}
+          <button
+            className="h-8 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+            disabled={!canTransact || action.status === "pending"}
+            onClick={onRename}
+            type="button"
+          >
+            Rename
+          </button>
+          <button
+            className="h-8 rounded border border-red-300/20 bg-red-300/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+            disabled={!canTransact || selectedPlanet.isHomePlanet || action.status === "pending"}
+            onClick={onAbandon}
+            type="button"
+          >
+            Abandon
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -7,6 +7,7 @@ import type {
   DebrisFieldEvent,
   DefenseState,
   InfrastructureState,
+  ManagedPlanet,
   MoonState,
   PlanetState,
   PlayerQueues,
@@ -14,7 +15,8 @@ import type {
   RiftState,
   SettledPlanetEvent,
   ShipyardState,
-  WalletSettlement
+  WalletSettlement,
+  WalletPlanets
 } from "./evm";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
@@ -41,6 +43,7 @@ const player = "0x2222222222222222222222222222222222222222" as Address;
 const planet: PlanetState = {
   planetId: "7",
   owner: player,
+  name: "Eos",
   galaxy: 2,
   system: 44,
   position: 9,
@@ -101,6 +104,39 @@ class MockChainReader implements ChainReader {
       hasFirstPlanet: true,
       homePlanetId: planet.planetId,
       planet
+    };
+  }
+
+  async getWalletPlanets(wallet: Address): Promise<WalletPlanets> {
+    const managedPlanet: ManagedPlanet = {
+      ...planet,
+      coordinates: "2:44:9",
+      isHomePlanet: true,
+      fieldsUsed: 3,
+      fieldsCapacity: planet.fields,
+      keyLevels: {
+        metalMine: 1,
+        crystalMine: 1,
+        deuteriumSynthesizer: 0,
+        solarPlant: 1,
+        roboticsFactory: 0,
+        shipyard: 1,
+        researchLab: 1,
+        terraformer: 0
+      },
+      queues: {
+        building: null,
+        defense: null,
+        ship: null
+      },
+      moon: {
+        exists: true
+      }
+    };
+    return {
+      wallet,
+      homePlanetId: planet.planetId,
+      planets: [managedPlanet]
     };
   }
 
@@ -736,6 +772,31 @@ describe("Veydrift backend", () => {
         system: 44,
         position: 9
       }
+    });
+    expect(response.status).toBe(200);
+  });
+
+  test("answers wallet planet management state from a mocked chain reader", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader()
+    })(new Request(`http://localhost/wallet/${player}/planets`));
+
+    await expect(response.json()).resolves.toMatchObject({
+      wallet: player,
+      homePlanetId: "7",
+      planets: [
+        {
+          planetId: "7",
+          name: "Eos",
+          coordinates: "2:44:9",
+          fieldsUsed: 3,
+          fieldsCapacity: 211,
+          moon: {
+            exists: true
+          }
+        }
+      ]
     });
     expect(response.status).toBe(200);
   });

@@ -137,6 +137,7 @@ function settlementSnapshot() {
     planet: {
       planetId: "7",
       owner: wallet,
+      name: null,
       galaxy: 2,
       system: 44,
       position: 9,
