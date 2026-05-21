@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
+import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 
@@ -29,7 +30,8 @@ contract Deploy is ResourceTokenDeployment {
         require(admin == vm.addr(privateKey), "ADMIN_MUST_MATCH_BROADCASTER");
 
         vm.startBroadcast(privateKey);
-        VeydriftGame game = new VeydriftGame(admin);
+        VeydriftCombatModule combatModule = new VeydriftCombatModule();
+        VeydriftGame game = new VeydriftGame(admin, address(combatModule));
         gameAddress = address(game);
         VeydriftMoonSystem moonSystem = new VeydriftMoonSystem(gameAddress);
         moonSystemAddress = address(moonSystem);
