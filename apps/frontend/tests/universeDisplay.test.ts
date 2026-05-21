@@ -8,6 +8,7 @@ import {
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
+import { galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   formatGalaxyHeatLabel,
   formatGalaxyOccupancySource,
@@ -130,6 +131,99 @@ describe("tester universe display data", () => {
     expect(formatGalaxyHeatLabel({ min: 46, max: 74 })).toBe("Scorching Molten");
     expect(formatGalaxyHeatLabel({ min: -28, max: 68 })).toBe("Lush Temperate");
     expect(formatGalaxyHeatLabel({ min: -80, max: 0 })).toBe("Frozen Ice");
+  });
+
+  test("galaxy slot actions expose supported public-state missions without espionage", () => {
+    const enemy = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          galaxy: 2,
+          system: 44,
+          position: 8,
+          occupiedBy: {
+            owner: "0x3333333333333333333333333333333333333333",
+            planetId: "9",
+          },
+        },
+      ],
+    })[0];
+    const own = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          galaxy: 2,
+          system: 44,
+          position: 9,
+          occupiedBy: {
+            owner: "0x1111111111111111111111111111111111111111",
+            planetId: "10",
+          },
+        },
+      ],
+    })[0];
+    const shipyardState = {
+      homePlanetId: "7",
+      productionAvailable: true,
+      resources: null,
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [
+        { id: 0, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 3, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 8, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+      wallet: "0x1111111111111111111111111111111111111111",
+    };
+
+    const enemyActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: enemy,
+      shipyardState,
+    });
+    const ownActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: own,
+      shipyardState,
+    });
+    const originActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      isOrigin: true,
+      planet: own,
+      shipyardState,
+    });
+    const emptyActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: undefined,
+      shipyardState,
+    });
+
+    expect(enemyActions.map((action) => action.label)).toEqual([
+      "Attack",
+      "Harvest",
+      "ACS Defend",
+      "Intercept",
+      "Missile",
+    ]);
+    expect(enemyActions.find((action) => action.kind === "attack")?.enabled).toBe(true);
+    expect(enemyActions.find((action) => action.kind === "harvest")).toMatchObject({
+      enabled: false,
+      reason: "Debris fields are not live on this deployment yet.",
+    });
+    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy"]);
+    expect(originActions).toEqual([]);
+    expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
+    expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
+    expect(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships.espionageProbe).toBe(0);
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {

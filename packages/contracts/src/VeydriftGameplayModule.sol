@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
@@ -85,7 +86,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
         _validateMissionType(missionType);
 
-        uint256 fleetSlots = 1 + _technologyLevels[msg.sender][Technology.Computer];
+        uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
+            _technologyLevels[msg.sender][Technology.Computer]
+        );
         if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
             revert FleetSlotLimitReached(fleetSlots);
         }
@@ -107,7 +110,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
 
         _settleResources(originPlanetId);
-        uint128 fuelCost = _toUint128(shipTotal);
+        uint256 travelDistance = _missionTravelDistance(originPlanetId, targetPlanetId);
+        uint128 fuelCost =
+            _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(shipTotal, travelDistance));
         Resources memory debit = Resources({
             metal: cargo.metal,
             crystal: cargo.crystal,
@@ -118,12 +123,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _debitMissionShips(originPlanetId, ships);
 
         uint64 departureAt = _currentTimestamp();
-        uint64 arrivalAt = (uint256(departureAt)
-                + _transportTravelSeconds(originPlanetId, targetPlanetId))
-        .toUint64();
-        uint64 returnAt = (uint256(arrivalAt)
-                + _transportTravelSeconds(originPlanetId, targetPlanetId))
-        .toUint64();
+        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(travelDistance);
+        uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
+        uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
@@ -151,20 +153,62 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             returnAt,
             randomnessRequestId
         );
+        emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
+        emit FleetMissionShips(
+            missionId,
+            ships.smallCargo,
+            ships.lightFighter,
+            ships.recycler,
+            ships.colonyShip,
+            ships.largeCargo,
+            ships.heavyFighter,
+            ships.cruiser,
+            ships.battleship,
+            ships.bomber,
+            ships.destroyer,
+            ships.deathstar,
+            ships.battlecruiser,
+            ships.reaper,
+            ships.pathfinder
+        );
     }
 
     function recallFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
         _requireActiveMissionOwner(mission);
         if (mission.status == FleetMissionStatus.Returning) revert FleetAlreadyReturning();
+        if (mission.status == FleetMissionStatus.Recalled) revert FleetAlreadyReturning();
+        if (mission.status != FleetMissionStatus.Outbound) {
+            revert FleetMissionNotResolved(mission.returnAt);
+        }
         if (_currentTimestamp() >= mission.arrivalAt) revert FleetAlreadyArrived();
+        uint64 recallDeadline = mission.arrivalAt - FLEET_RECALL_CUTOFF_SECONDS;
+        if (_currentTimestamp() > recallDeadline) revert FleetRecallCutoffPassed(recallDeadline);
 
-        uint64 elapsed = _currentTimestamp() - mission.departureAt;
-        if (elapsed < MIN_QUEUE_SECONDS) elapsed = MIN_QUEUE_SECONDS;
+        _settleResources(mission.originPlanetId);
+        uint128 recallCost = _fleetRecallCost(mission.fuelCost);
+        _spend(mission.originPlanetId, Resources({metal: 0, crystal: 0, deuterium: recallCost}));
+
+        uint64 elapsed = uint64(
+            VeydriftAntiRaidPrimitives.recallReturnSeconds(
+                _currentTimestamp() - mission.departureAt
+            )
+        );
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = uint64(_currentTimestamp() + elapsed);
 
-        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt);
+        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, recallCost);
+        emit FleetMissionReturnExposed(
+            missionId,
+            msg.sender,
+            FleetMissionStatus.Recalled,
+            mission.originPlanetId,
+            mission.targetPlanetId,
+            mission.returnAt,
+            mission.cargo.metal,
+            mission.cargo.crystal,
+            mission.cargo.deuterium
+        );
     }
 
     function resolveFleetMission(uint256 missionId) external {
@@ -190,6 +234,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
 
         emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
+        if (mission.status == FleetMissionStatus.Returning) {
+            emit FleetMissionReturnExposed(
+                missionId,
+                mission.owner,
+                FleetMissionStatus.Returning,
+                mission.originPlanetId,
+                mission.targetPlanetId,
+                mission.returnAt,
+                mission.cargo.metal,
+                mission.cargo.crystal,
+                mission.cargo.deuterium
+            );
+        }
     }
 
     function completeFleetMissionReturn(uint256 missionId) external {
@@ -586,13 +643,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         view
         returns (uint256)
     {
-        Planet storage origin = _planets[originPlanetId];
-        Planet storage destination = _planets[destinationPlanetId];
-        if (origin.owner == address(0) || destination.owner == address(0)) revert NoPlanet();
-        uint256 distance = _absDiff(origin.galaxy, destination.galaxy) * MAX_SYSTEM * MAX_POSITION
-            + _absDiff(origin.system, destination.system) * MAX_POSITION
-            + _absDiff(origin.position, destination.position);
-        return MIN_FLEET_TRAVEL_SECONDS + distance;
+        return VeydriftAntiRaidPrimitives.travelSeconds(
+            _missionTravelDistance(originPlanetId, destinationPlanetId)
+        );
     }
 
     function _validateMissionType(FleetMissionType missionType) private pure {
@@ -657,6 +710,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             + uint256(ships.colonyShip) * VeydriftCatalog.shipCargoCapacity(Ship.ColonyShip)
             + uint256(ships.largeCargo) * VeydriftCatalog.shipCargoCapacity(Ship.LargeCargo)
             + uint256(ships.pathfinder) * VeydriftCatalog.shipCargoCapacity(Ship.Pathfinder);
+    }
+
+    function _fleetRecallCost(uint128 fuelCost) private pure returns (uint128) {
+        if (fuelCost == 0) return 0;
+        uint128 cost = _toUint128((uint256(fuelCost) * FLEET_RECALL_COST_BPS) / BPS);
+        return cost == 0 ? 1 : cost;
     }
 
     function _missionShipTotal(MissionShips memory ships) private pure returns (uint256) {
@@ -729,6 +788,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             }
         }
         revert UnsupportedGameplayModule();
+    }
+
+    function _missionTravelDistance(uint256 originPlanetId, uint256 destinationPlanetId)
+        private
+        view
+        returns (uint256)
+    {
+        Planet storage origin = _planets[originPlanetId];
+        Planet storage destination = _planets[destinationPlanetId];
+        if (origin.owner == address(0) || destination.owner == address(0)) revert NoPlanet();
+        return _absDiff(origin.galaxy, destination.galaxy) * MAX_SYSTEM * MAX_POSITION
+            + _absDiff(origin.system, destination.system) * MAX_POSITION
+            + _absDiff(origin.position, destination.position);
     }
 
     function _currentTimestamp() private view returns (uint64) {

@@ -2,6 +2,12 @@
 
 Source basis: OGame Wiki/Fandom `Dependency Tree`, `Buildings`, `Ships`, `Defense`, and `Formulas` pages, plus the missile silo slot rule documented by OGame wiki mirrors. Veydrift intentionally keeps faster MVP timing in `VeydriftFormulas`, but the catalog IDs, base costs, and unlock gates should not silently diverge from the vanilla/core OGame catalog.
 
+Supersession note: VEY-KANEO-117 makes Veydrift public onchain state final
+product direction, and VEY-KANEO-111 removes espionage from Veydrift scope.
+Espionage-named entries below are historical OGame catalog parity notes or
+legacy IDs only; they are not guidance to implement probe scans, espionage
+reports, hidden enemy-state reveal, or fog-of-war.
+
 ## Scope Decision
 
 Implemented in this task:
@@ -52,7 +58,7 @@ Out of scope for the current first-planet MVP:
 | Battleship | implemented | Dependency tightened to Shipyard 7 + Hyperspace Drive 4. |
 | Colony Ship | implemented | Dependency tightened to Shipyard 4 + Impulse 3. |
 | Recycler | implemented | Dependency tightened to Shipyard 4 + Combustion 6 + Shielding 2. |
-| Espionage Probe | implemented | Dependency tightened to Shipyard 3 + Combustion 3 + Espionage 2. |
+| Espionage Probe | legacy catalog only | Superseded by VEY-KANEO-117 and VEY-KANEO-111; do not implement probe scans, espionage reports, hidden enemy-state reveal, or fog-of-war. |
 | Bomber | implemented | Dependency tightened to Shipyard 8 + Impulse 6 + Plasma 5. |
 | Solar Satellite | implemented | Shipyard 1. |
 | Destroyer | implemented | Dependency tightened to Shipyard 9 + Hyperspace Drive 6 + Hyperspace 5. |
@@ -89,9 +95,9 @@ Out of scope for the current first-planet MVP:
 | Combustion Drive | implemented | Dependency tightened to Research Lab 1 + Energy 1. |
 | Impulse Drive | implemented | Dependency Research Lab 2 + Energy 1. |
 | Hyperspace Drive | implemented | Dependency Research Lab 7 + Hyperspace 3. |
-| Espionage Technology | implemented | Dependency Research Lab 3. |
+| Espionage Technology | legacy catalog only | Superseded by VEY-KANEO-117 and VEY-KANEO-111 for gameplay; any retained ID must not imply scan/report mechanics. |
 | Computer Technology | implemented | Dependency Research Lab 1. |
-| Astrophysics | implemented | Dependency Research Lab 3 + Espionage 4 + Impulse 3. |
+| Astrophysics | implemented | Current dependency includes legacy Espionage 4 + Impulse 3; revisit if VEY-KANEO-111 removes the legacy research gate. |
 | Intergalactic Research Network | implemented | Dependency Research Lab 10 + Computer 8 + Hyperspace 8. |
 | Graviton Technology | implemented | Dependency Research Lab 12; energy cost behavior remains a production/research module follow-up. |
 | Weapons Technology | implemented | Dependency Research Lab 4. |
