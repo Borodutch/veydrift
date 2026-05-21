@@ -39,6 +39,7 @@ interface OverviewPageProps {
   isWalletConnected: boolean;
   onFinishBuilding?: (() => void) | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
+  onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
   onChainError?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
@@ -60,6 +61,7 @@ export function OverviewPage({
   isWalletConnected,
   onFinishBuilding,
   onNavigate,
+  onCounterplay,
   onChainError,
   fleetVisibility,
   onChainSettlement,
@@ -156,7 +158,13 @@ export function OverviewPage({
 
       {isWalletConnected && fleetVisibility && (
         <div className="grid gap-3 lg:grid-cols-3">
-          <MissionPanel label="Incoming" tone="danger" missions={fleetVisibility.incoming} now={now} />
+          <MissionPanel
+            label="Incoming"
+            tone="danger"
+            missions={fleetVisibility.incoming}
+            now={now}
+            onCounterplay={onCounterplay}
+          />
           <MissionPanel label="Returning" tone="warning" missions={fleetVisibility.returning} now={now} />
           <MissionPanel label="Outbound" tone="neutral" missions={fleetVisibility.outgoing} now={now} />
         </div>
@@ -311,11 +319,13 @@ function MissionPanel({
   label,
   missions,
   now,
+  onCounterplay,
   tone,
 }: {
   label: string;
   missions: MissionList;
   now: number;
+  onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
   tone: "danger" | "neutral" | "warning";
 }) {
   const border = tone === "danger"
@@ -345,6 +355,24 @@ function MissionPanel({
               <p className="mt-1 text-[11px] text-slate-400">
                 Arrival {formatDurationUntil(Number(mission.arrivalAt) * 1_000, now)} · Return {formatDurationUntil(Number(mission.returnAt) * 1_000, now)}
               </p>
+              {onCounterplay && mission.status === "Outbound" && mission.missionType === "Attack" ? (
+                <div className="mt-2 grid grid-cols-2 gap-1">
+                  <button
+                    className="rounded border border-cyan-200/20 bg-cyan-300/10 px-2 py-1 text-[11px] font-medium text-cyan-100 hover:bg-cyan-300/15"
+                    onClick={() => onCounterplay(mission.missionId, "acsDefend")}
+                    type="button"
+                  >
+                    ACS defend
+                  </button>
+                  <button
+                    className="rounded border border-amber-200/20 bg-amber-300/10 px-2 py-1 text-[11px] font-medium text-amber-100 hover:bg-amber-300/15"
+                    onClick={() => onCounterplay(mission.missionId, "intercept")}
+                    type="button"
+                  >
+                    Intercept
+                  </button>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>

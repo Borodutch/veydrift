@@ -173,6 +173,18 @@
       "offset": 0,
       "slot": "30",
       "type": "mapping(bytes32 => bool)"
+    },
+    {
+      "label": "_allianceSystem",
+      "offset": 0,
+      "slot": "31",
+      "type": "address"
+    },
+    {
+      "label": "_fleetCounterplayMissions",
+      "offset": 0,
+      "slot": "32",
+      "type": "mapping(uint256 => uint256[])"
     }
   ],
   "structs": {

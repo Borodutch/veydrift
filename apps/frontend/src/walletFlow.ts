@@ -392,7 +392,6 @@ const GAME_SELECTORS = {
   finishResourceWithdrawal: "0xde0f208c",
   launchFleetMission: "0x0c9d601c",
   startBuildingUpgrade: "0x165715e3",
-  collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
   renamePlanet: "0xa74c0906",
@@ -1101,24 +1100,6 @@ export async function sendFinishDefenseProductionTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(GAME_SELECTORS.finishDefenseProduction, [planetId])
-      }
-    ]
-  });
-}
-
-export async function sendCollectShipsTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.collectShips, [planetId])
       }
     ]
   });

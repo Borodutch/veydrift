@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -132,7 +133,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         settlement.seed = _battleSeed(missionId, mission);
         for (uint8 round = 1; round <= BATTLE_MAX_ROUNDS;) {
             BattleStats memory attacker = _attackerBattleStats(mission.ships, mission.owner);
-            BattleStats memory defender = _defenderBattleStats(mission.targetPlanetId);
+            BattleStats memory defender = _defenderBattleStats(missionId, mission.targetPlanetId);
 
             if (attacker.units == 0 || defender.units == 0) break;
 
@@ -145,6 +146,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             settlement.defenderLosses = _add(
                 settlement.defenderLosses,
                 _applyDefenderLosses(
+                    missionId,
                     mission.targetPlanetId,
                     attacker.attack,
                     defender.durability,
@@ -160,7 +162,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
 
         BattleStats memory finalAttacker = _attackerBattleStats(mission.ships, mission.owner);
-        BattleStats memory finalDefender = _defenderBattleStats(mission.targetPlanetId);
+        BattleStats memory finalDefender = _defenderBattleStats(missionId, mission.targetPlanetId);
         if (finalAttacker.units != 0 && finalDefender.units == 0) {
             settlement.outcome = BattleOutcome.AttackerWin;
         } else if (finalAttacker.units == 0 && finalDefender.units != 0) {
@@ -168,6 +170,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         } else {
             settlement.outcome = BattleOutcome.Draw;
         }
+        _returnCounterplayMissions(missionId, mission);
     }
 
     function _attackerBattleStats(MissionShips memory ships, address owner)
@@ -188,7 +191,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
-    function _defenderBattleStats(uint256 planetId)
+    function _defenderBattleStats(uint256 hostileMissionId, uint256 planetId)
         private
         view
         returns (BattleStats memory stats)
@@ -210,6 +213,29 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             uint32 count = _defenseCounts[planetId][defense];
             if (count != 0 && i <= uint8(Defense.LargeShieldDome)) {
                 _addDefenseStats(stats, defense, count, weapons, shielding, armor);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        uint256[] storage counterplayMissionIds = _fleetCounterplayMissions[hostileMissionId];
+        for (uint256 i = 0; i < counterplayMissionIds.length;) {
+            uint256 counterplayMissionId = counterplayMissionIds[i];
+            FleetMission storage counterplay = _fleetMissions[counterplayMissionId];
+            if (_isQualifiedCounterplay(hostileMissionId, counterplay)) {
+                uint16 allyWeapons = _technologyLevels[counterplay.owner][Technology.Weapons];
+                uint16 allyShielding = _technologyLevels[counterplay.owner][Technology.Shielding];
+                uint16 allyArmor = _technologyLevels[counterplay.owner][Technology.Armor];
+                for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
+                    Ship ship = Ship(shipId);
+                    uint32 count = _missionShipQuantity(counterplay.ships, ship);
+                    if (count != 0) {
+                        _addShipStats(stats, ship, count, allyWeapons, allyShielding, allyArmor);
+                    }
+                    unchecked {
+                        ++shipId;
+                    }
+                }
             }
             unchecked {
                 ++i;
@@ -268,6 +294,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     }
 
     function _applyDefenderLosses(
+        uint256 hostileMissionId,
         uint256 planetId,
         uint256 incomingDamage,
         uint256 durability,
@@ -304,6 +331,99 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 ++i;
             }
         }
+        losses = _add(
+            losses,
+            _applyCounterplayLosses(hostileMissionId, incomingDamage, durability, seed, round)
+        );
+    }
+
+    function _applyCounterplayLosses(
+        uint256 hostileMissionId,
+        uint256 incomingDamage,
+        uint256 durability,
+        uint256 seed,
+        uint8 round
+    ) private returns (Resources memory losses) {
+        uint256 lossBps = _lossBps(incomingDamage, durability);
+        if (lossBps == 0) return losses;
+
+        uint256[] storage counterplayMissionIds = _fleetCounterplayMissions[hostileMissionId];
+        for (uint256 i = 0; i < counterplayMissionIds.length;) {
+            uint256 counterplayMissionId = counterplayMissionIds[i];
+            FleetMission storage counterplay = _fleetMissions[counterplayMissionId];
+            if (_isQualifiedCounterplay(hostileMissionId, counterplay)) {
+                for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
+                    Ship ship = Ship(shipId);
+                    uint32 count = _missionShipQuantity(counterplay.ships, ship);
+                    uint32 lost = _lossCount(count, lossBps, seed, round, 4, shipId);
+                    if (lost != 0) {
+                        _setMissionShipQuantity(counterplay.ships, ship, count - lost);
+                        losses = _add(losses, _multiply(_shipCost(ship), lost));
+                    }
+                    unchecked {
+                        ++shipId;
+                    }
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _returnCounterplayMissions(uint256 hostileMissionId, FleetMission storage hostile)
+        private
+    {
+        uint256[] storage counterplayMissionIds = _fleetCounterplayMissions[hostileMissionId];
+        for (uint256 i = 0; i < counterplayMissionIds.length;) {
+            uint256 counterplayMissionId = counterplayMissionIds[i];
+            FleetMission storage counterplay = _fleetMissions[counterplayMissionId];
+            if (_isQualifiedCounterplay(hostileMissionId, counterplay)) {
+                if (_missionShipTotal(counterplay.ships) == 0) {
+                    counterplay.status = FleetMissionStatus.Resolved;
+                    counterplay.returnAt = uint64(block.timestamp);
+                    activeFleetMissionCount[counterplay.owner] -= 1;
+                    _decreaseInternalResources(counterplay.cargo);
+                    counterplay.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+                } else {
+                    counterplay.status = FleetMissionStatus.Returning;
+                    counterplay.returnAt = uint64(
+                        block.timestamp
+                            + VeydriftAntiRaidPrimitives.travelSeconds(
+                                _planetDistance(hostile.targetPlanetId, counterplay.originPlanetId)
+                            )
+                    );
+                    emit FleetMissionReturnExposed(
+                        counterplayMissionId,
+                        counterplay.owner,
+                        FleetMissionStatus.Returning,
+                        counterplay.originPlanetId,
+                        counterplay.targetPlanetId,
+                        counterplay.returnAt,
+                        counterplay.cargo.metal,
+                        counterplay.cargo.crystal,
+                        counterplay.cargo.deuterium
+                    );
+                }
+                emit FleetMissionResolved(
+                    counterplayMissionId, msg.sender, counterplay.missionType, counterplay.returnAt
+                );
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _isQualifiedCounterplay(uint256 hostileMissionId, FleetMission storage counterplay)
+        private
+        view
+        returns (bool)
+    {
+        return counterplay.status == FleetMissionStatus.Outbound
+            && counterplay.arrivalAt <= _fleetMissions[hostileMissionId].arrivalAt
+            && (counterplay.missionType == FleetMissionType.AcsDefend
+                || counterplay.missionType == FleetMissionType.Intercept);
     }
 
     function _recordCombatWreckage(uint256 planetId, Ship ship, uint32 destroyed) private {
@@ -466,6 +586,27 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     function _combatScaled(uint256 value, uint16 technologyLevel) private pure returns (uint256) {
         return (value * (BPS + uint256(technologyLevel) * 1_000)) / BPS;
+    }
+
+    function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)
+        private
+        view
+        returns (uint256)
+    {
+        Planet storage origin = _planets[originPlanetId];
+        Planet storage destination = _planets[destinationPlanetId];
+        if (origin.owner == address(0) || destination.owner == address(0)) revert NoPlanet();
+        uint256 galaxyDistance = origin.galaxy > destination.galaxy
+            ? uint256(origin.galaxy - destination.galaxy)
+            : uint256(destination.galaxy - origin.galaxy);
+        uint256 systemDistance = origin.system > destination.system
+            ? uint256(origin.system - destination.system)
+            : uint256(destination.system - origin.system);
+        uint256 positionDistance = origin.position > destination.position
+            ? uint256(origin.position - destination.position)
+            : uint256(destination.position - origin.position);
+        return galaxyDistance * uint256(MAX_SYSTEM) * uint256(MAX_POSITION) + systemDistance
+            * uint256(MAX_POSITION) + positionDistance;
     }
 
     function _missionCargoCapacity(MissionShips memory ships) private pure returns (uint256) {

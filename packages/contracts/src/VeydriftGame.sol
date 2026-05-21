@@ -81,10 +81,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         _settleResources(planetId);
     }
 
-    function collectShips(uint256 planetId) external view {
-        _requirePlanetOwner(planetId);
-    }
-
     function startBuildingUpgrade(uint256 planetId, Building building) external {
         _requirePlanetOwner(planetId);
         if (buildingConstructions[planetId].active) revert ConstructionActive();
@@ -220,6 +216,10 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function setSpaceDockSystem(address) external {
         _delegateToGameplayModule();
+    }
+
+    function setAllianceSystem(address nextAllianceSystem) external onlyOwner {
+        _allianceSystem = nextAllianceSystem;
     }
 
     function spendMoonResources(uint256 planetId, Resources calldata cost) external {
@@ -403,10 +403,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         return !occupiedCoordinates[coordinateKey(galaxy, system, position)];
     }
 
-    function transportTravelSeconds(uint256, uint256) public returns (uint256) {
-        _delegateToGameplayModule();
-    }
-
     function transportFuelCost(
         uint256,
         uint256,
@@ -417,10 +413,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint256 ships =
             uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
         return _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
-    }
-
-    function fleetSlotLimit(uint16) external returns (uint256) {
-        _delegateToGameplayModule();
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {

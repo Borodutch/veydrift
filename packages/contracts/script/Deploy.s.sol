@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
+import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -12,8 +13,9 @@ import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementMod
 contract Deploy is ResourceTokenDeployment {
     event VeydriftDeployment(
         address indexed game,
+        address indexed allianceSystem,
         address indexed moonSystem,
-        address indexed randomnessEngine,
+        address randomnessEngine,
         address metalToken,
         address crystalToken,
         address deuteriumToken
@@ -23,6 +25,7 @@ contract Deploy is ResourceTokenDeployment {
         external
         returns (
             address gameAddress,
+            address allianceSystemAddress,
             address moonSystemAddress,
             address randomnessEngineAddress,
             address metalToken,
@@ -41,16 +44,21 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftGame game =
             new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
         gameAddress = address(game);
+        VeydriftAllianceSystem allianceSystem =
+            new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        allianceSystemAddress = address(allianceSystem);
         RandomnessEngine randomnessEngine = new RandomnessEngine(admin, admin);
         randomnessEngineAddress = address(randomnessEngine);
         VeydriftMoonSystem moonSystem = new VeydriftMoonSystem(gameAddress, randomnessEngineAddress);
         moonSystemAddress = address(moonSystem);
         (metalToken, crystalToken, deuteriumToken) = _deployResourceTokens(admin, gameAddress);
         game.setResourceTokens(metalToken, crystalToken, deuteriumToken);
+        game.setAllianceSystem(allianceSystemAddress);
         game.setMoonSystem(moonSystemAddress);
         randomnessEngine.setRequesterAuthorization(moonSystemAddress, true);
         emit VeydriftDeployment(
             gameAddress,
+            allianceSystemAddress,
             moonSystemAddress,
             randomnessEngineAddress,
             metalToken,
