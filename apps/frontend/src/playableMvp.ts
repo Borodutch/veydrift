@@ -16,7 +16,8 @@ export type BuildingKey =
   | "researchLab"
   | "metalStorage"
   | "crystalStorage"
-  | "deuteriumTank";
+  | "deuteriumTank"
+  | "interdimensionalRiftStabilizer";
 
 export const buildingContractIds: Record<BuildingKey, number> = {
   metalMine: 0,
@@ -29,6 +30,7 @@ export const buildingContractIds: Record<BuildingKey, number> = {
   metalStorage: 7,
   crystalStorage: 8,
   deuteriumTank: 9,
+  interdimensionalRiftStabilizer: 15,
 };
 
 export type ShipKey =
@@ -92,6 +94,10 @@ export type ResearchRequirement =
 export type BuildingRequirement = {
   type: "building";
   key: BuildingKey;
+  level: number;
+} | {
+  type: "research";
+  key: ResearchKey;
   level: number;
 };
 
@@ -195,6 +201,11 @@ export type BuildingEffectMetrics =
       nextFactor: number;
       unlocked: boolean;
       nextUnlocked: boolean;
+    }
+  | {
+      kind: "riftBridge";
+      unlocked: boolean;
+      nextUnlocked: boolean;
     };
 
 export const buildingCatalog: Array<{
@@ -262,6 +273,12 @@ export const buildingCatalog: Array<{
     label: "Deuterium Tank",
     baseCost: { metal: 1_000, crystal: 1_000, deuterium: 0 },
     asset: "/assets/game/style-pass/generated/buildings/deuterium-tank-mid.webp",
+  },
+  {
+    key: "interdimensionalRiftStabilizer",
+    label: "Interdimensional Rift Stabilizer",
+    baseCost: { metal: 8_000, crystal: 8_000, deuterium: 4_000 },
+    asset: "/assets/game/style-pass/generated/buildings/interdimensional-rift-stabilizer-mid.webp",
   },
 ];
 
@@ -768,6 +785,11 @@ const BASE_RESEARCH_REQUIREMENTS: ResearchRequirement[] = [
 const BUILDING_REQUIREMENTS: Partial<Record<BuildingKey, BuildingRequirement[]>> = {
   researchLab: [{ type: "building", key: "roboticsFactory", level: 1 }],
   shipyard: [{ type: "building", key: "roboticsFactory", level: 2 }],
+  interdimensionalRiftStabilizer: [
+    { type: "building", key: "roboticsFactory", level: 2 },
+    { type: "building", key: "researchLab", level: 1 },
+    { type: "research", key: "energy", level: 2 },
+  ],
 };
 
 const BPS = 10_000;
@@ -794,6 +816,7 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       metalStorage: 0,
       crystalStorage: 0,
       deuteriumTank: 0,
+      interdimensionalRiftStabilizer: 0,
     },
     research: {
       energy: 0,
@@ -983,6 +1006,14 @@ export function buildingEffectMetrics(
     };
   }
 
+  if (key === "interdimensionalRiftStabilizer") {
+    return {
+      kind: "riftBridge",
+      unlocked: buildings.interdimensionalRiftStabilizer > 0,
+      nextUnlocked: nextBuildings.interdimensionalRiftStabilizer > 0,
+    };
+  }
+
   return {
     kind: "researchSpeed",
     currentFactor: buildings.researchLab + 1,
@@ -1018,12 +1049,16 @@ export function buildingRequirementsFor(key: BuildingKey): BuildingRequirement[]
 }
 
 export function unmetBuildingRequirement(
-  state: Pick<PlayableState, "buildings">,
+  state: Pick<PlayableState, "buildings" | "research">,
   key: BuildingKey,
 ): BuildingRequirement | undefined {
-  return buildingRequirementsFor(key).find((requirement) => (
-    state.buildings[requirement.key] < requirement.level
-  ));
+  return buildingRequirementsFor(key).find((requirement) => {
+    if (requirement.type === "building") {
+      return state.buildings[requirement.key] < requirement.level;
+    }
+
+    return state.research[requirement.key] < requirement.level;
+  });
 }
 
 export function unmetResearchRequirement(

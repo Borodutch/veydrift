@@ -12,7 +12,7 @@ library VeydriftDependencies {
         uint16 roboticsFactoryLevel,
         uint16 researchLabLevel,
         uint16 energyLevel,
-        uint16 hyperspaceLevel
+        uint16
     ) public pure {
         if (building == Building.Shipyard && roboticsFactoryLevel < 2) {
             revert MissingDependency("ROBOTICS_FACTORY_2");
@@ -23,17 +23,14 @@ library VeydriftDependencies {
         if (building == Building.NaniteFactory && roboticsFactoryLevel < 10) {
             revert MissingDependency("ROBOTICS_FACTORY_10");
         }
-        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 4) {
-            revert MissingDependency("ROBOTICS_FACTORY_4");
+        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 2) {
+            revert MissingDependency("ROBOTICS_FACTORY_2");
         }
-        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
-            revert MissingDependency("RESEARCH_LAB_2");
+        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 1) {
+            revert MissingDependency("RESEARCH_LAB_1");
         }
-        if (building == Building.InterdimensionalRiftStabilizer && energyLevel < 5) {
-            revert MissingDependency("ENERGY_5");
-        }
-        if (building == Building.InterdimensionalRiftStabilizer && hyperspaceLevel < 1) {
-            revert MissingDependency("HYPERSPACE_1");
+        if (building == Building.InterdimensionalRiftStabilizer && energyLevel < 2) {
+            revert MissingDependency("ENERGY_2");
         }
     }
 

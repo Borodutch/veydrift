@@ -1,4 +1,4 @@
-import type { BuildingKey, PlayableState, Resources } from "./playableMvp";
+import type { BuildingKey, PlayableState, ResearchKey, Resources } from "./playableMvp";
 import {
   buildingCost,
   buildingDurationEstimate,
@@ -205,7 +205,9 @@ export function formatBuildingRequirements(key: BuildingKey): string {
 }
 
 function formatBuildingRequirement(requirement: ReturnType<typeof buildingRequirementsFor>[number]): string {
-  const label = buildingLabel(requirement.key);
+  const label = requirement.type === "building"
+    ? buildingLabel(requirement.key)
+    : researchLabel(requirement.key);
   return `${label} ${requirement.level}`;
 }
 
@@ -331,6 +333,10 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
     return `x${formatNumber(level + 1)} research speed`;
   }
 
+  if (key === "interdimensionalRiftStabilizer") {
+    return level > 0 ? "Rift bridge online" : "Rift bridge locked";
+  }
+
   return `x${formatNumber(level + 1)} construction speed`;
 }
 
@@ -346,6 +352,29 @@ function buildingLabel(key: BuildingKey): string {
     metalStorage: "Metal Storage",
     crystalStorage: "Crystal Storage",
     deuteriumTank: "Deuterium Tank",
+    interdimensionalRiftStabilizer: "Interdimensional Rift Stabilizer",
+  };
+  return labels[key];
+}
+
+function researchLabel(key: ResearchKey): string {
+  const labels: Record<ResearchKey, string> = {
+    energy: "Energy Technology",
+    laser: "Laser",
+    ion: "Ion",
+    combustionDrive: "Combustion Drive",
+    espionage: "Espionage",
+    computer: "Computer",
+    weapons: "Weapons",
+    shielding: "Shielding",
+    armor: "Armor",
+    hyperspace: "Hyperspace",
+    impulseDrive: "Impulse Drive",
+    hyperspaceDrive: "Hyperspace Drive",
+    plasma: "Plasma",
+    astrophysics: "Astrophysics",
+    intergalacticResearchNetwork: "Intergalactic Research Network",
+    graviton: "Graviton Technology",
   };
   return labels[key];
 }
