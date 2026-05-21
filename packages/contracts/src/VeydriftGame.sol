@@ -698,6 +698,7 @@ contract VeydriftGame {
             _buildingLevels[planetId][Building.CrystalMine],
             _buildingLevels[planetId][Building.DeuteriumSynthesizer],
             _buildingLevels[planetId][Building.SolarPlant],
+            _buildingLevels[planetId][Building.FusionReactor],
             planetRef.metalMultiplierBps,
             planetRef.crystalMultiplierBps,
             planetRef.deuteriumMultiplierBps,
@@ -715,6 +716,7 @@ contract VeydriftGame {
             _buildingLevels[planetId][Building.CrystalMine],
             _buildingLevels[planetId][Building.DeuteriumSynthesizer],
             _buildingLevels[planetId][Building.SolarPlant],
+            _buildingLevels[planetId][Building.FusionReactor],
             BPS
         );
     }
@@ -739,8 +741,9 @@ contract VeydriftGame {
     {
         (uint128 metal, uint128 crystal, uint128 deuterium) =
             VeydriftCatalog.buildingBaseCost(building);
-        return
-            _scaleByLevel(Resources(metal, crystal, deuterium), _buildingLevels[planetId][building]);
+        return _scaleByLevel(
+            building, Resources(metal, crystal, deuterium), _buildingLevels[planetId][building]
+        );
     }
 
     function defenseCost(Defense defense) public pure returns (Resources memory) {
@@ -963,6 +966,7 @@ contract VeydriftGame {
     {
         return VeydriftFormulas.buildingDuration(
             _buildingLevels[planetId][Building.RoboticsFactory],
+            _buildingLevels[planetId][Building.NaniteFactory],
             cost.metal,
             cost.crystal,
             MIN_QUEUE_SECONDS
@@ -1079,16 +1083,26 @@ contract VeydriftGame {
         });
     }
 
-    function _scaleByLevel(Resources memory baseCost, uint16 currentLevel)
+    function _scaleByLevel(Building building, Resources memory baseCost, uint16 currentLevel)
         private
         pure
         returns (Resources memory)
     {
-        uint256 multiplier = 2 ** currentLevel;
+        (uint8 numerator, uint8 denominator) = VeydriftCatalog.buildingCostFactor(building);
         return Resources({
-            metal: _toUint128(uint256(baseCost.metal) * multiplier),
-            crystal: _toUint128(uint256(baseCost.crystal) * multiplier),
-            deuterium: _toUint128(uint256(baseCost.deuterium) * multiplier)
+            metal: _toUint128(
+                VeydriftFormulas.scaleByFactor(baseCost.metal, currentLevel, numerator, denominator)
+            ),
+            crystal: _toUint128(
+                VeydriftFormulas.scaleByFactor(
+                    baseCost.crystal, currentLevel, numerator, denominator
+                )
+            ),
+            deuterium: _toUint128(
+                VeydriftFormulas.scaleByFactor(
+                    baseCost.deuterium, currentLevel, numerator, denominator
+                )
+            )
         });
     }
 
