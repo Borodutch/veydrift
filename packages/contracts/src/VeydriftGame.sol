@@ -17,8 +17,9 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     address private immutable _gameplayModule;
 
-    constructor(address admin) VeydriftResourceReserves(admin) {
-        _gameplayModule = address(new VeydriftGameplayModule());
+    constructor(address admin, address combatModule) VeydriftResourceReserves(admin) {
+        if (combatModule.code.length == 0) revert UnsupportedGameplayModule();
+        _gameplayModule = address(new VeydriftGameplayModule(combatModule));
     }
 
     function startPlanet() external payable returns (uint256 planetId) {

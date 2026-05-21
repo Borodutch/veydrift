@@ -27,6 +27,11 @@ abstract contract VeydriftGameStorage {
     uint8 public constant MAX_POSITION = 15;
     bytes32 public constant FIRST_PLANET_DOMAIN = keccak256("veydrift.first-planet.v1");
     bytes32 public constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
+    bytes32 public constant ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
+    uint8 public constant BATTLE_MAX_ROUNDS = 6;
+    uint16 public constant RAID_LOOT_BPS = 5_000;
+    uint16 public constant RAID_PROTECTED_STORAGE_BPS = 1_000;
+    uint16 public constant COMBAT_DEBRIS_BPS = 3_000;
 
     struct Resources {
         uint128 metal;
@@ -123,6 +128,12 @@ abstract contract VeydriftGameStorage {
         Resolved,
         Returned,
         Recalled
+    }
+
+    enum BattleOutcome {
+        Draw,
+        AttackerWin,
+        DefenderWin
     }
 
     struct MissionShips {
@@ -367,6 +378,29 @@ abstract contract VeydriftGameStorage {
         address indexed resolver,
         FleetMissionType indexed missionType,
         uint64 returnAt
+    );
+    event AttackBattleResolved(
+        uint256 indexed missionId,
+        address indexed attacker,
+        uint256 indexed targetPlanetId,
+        BattleOutcome outcome,
+        uint8 rounds,
+        uint256 randomSeed,
+        uint128 lootMetal,
+        uint128 lootCrystal,
+        uint128 lootDeuterium
+    );
+    event CombatLosses(
+        uint256 indexed missionId,
+        uint128 attackerMetal,
+        uint128 attackerCrystal,
+        uint128 attackerDeuterium,
+        uint128 defenderMetal,
+        uint128 defenderCrystal,
+        uint128 defenderDeuterium
+    );
+    event CombatDebrisSignaled(
+        uint256 indexed missionId, uint256 indexed targetPlanetId, uint128 metal, uint128 crystal
     );
     event FleetMissionReturned(
         uint256 indexed missionId, address indexed owner, uint256 indexed planetId
