@@ -1,4 +1,6 @@
 import { generateSystem } from "@veydrift/universe";
+import { CachedChainReader } from "./cachedReader";
+import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import { assertAddress, type ChainReader, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
@@ -42,6 +44,7 @@ type RuntimeConfig = {
 };
 
 export type ServerDependencies = {
+  chainSync?: ChainSyncService;
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
@@ -52,12 +55,26 @@ const defaultUniverseSeed = "veydrift-mainnet-preview";
 
 export function createRequestHandler(dependencies: ServerDependencies = {}): (request: Request) => Promise<Response> {
   const loaded = dependencies.config ? { config: dependencies.config, problems: dependencies.configProblems ?? [] } : loadBackendConfig();
-  const chainReader =
+  const rawChainReader =
     dependencies.chainReader ??
     (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config) : undefined);
+  const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
+  const chainReader = cacheReader ?? rawChainReader;
   const indexer =
     dependencies.indexer ??
     (chainReader ? new SettlementIndexer(chainReader, loaded.config.indexFromBlock) : undefined);
+  const chainSync =
+    dependencies.chainSync ??
+    (loaded.problems.length === 0 ? new ChainSyncService(loaded.config, indexer) : undefined);
+
+  chainSync?.start();
+  if (cacheReader) {
+    chainSync?.addListener((event) => {
+      if (event.kind === "chain-event") {
+        cacheReader.clear();
+      }
+    });
+  }
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -76,7 +93,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           service: "veydrift-backend",
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
-          indexer: indexer?.snapshot() ?? null
+          chainSync: chainSync?.snapshot() ?? null,
+          indexer: indexer?.snapshot() ?? null,
+          rpc: chainReader?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
         {
           headers: corsHeaders
@@ -95,12 +114,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         {
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
+          chainSync: chainSync?.snapshot() ?? null,
           problems: loaded.problems
         },
         {
           headers: corsHeaders
         }
       );
+    }
+
+    if (request.method === "GET" && url.pathname === "/chain/events") {
+      if (!chainSync) {
+        return unavailableResponse(loaded.problems);
+      }
+
+      return new Response(chainSync.eventStream(), {
+        headers: {
+          ...corsHeaders,
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+          "content-type": "text/event-stream; charset=utf-8"
+        }
+      });
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/settlement$/)) {

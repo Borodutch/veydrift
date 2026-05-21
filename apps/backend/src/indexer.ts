@@ -27,6 +27,12 @@ export class SettlementIndexer {
     return [...this.planets.values()].filter((planet) => planet.galaxy === galaxy && planet.system === system);
   }
 
+  applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
+    this.planets.set(event.planetId, event);
+    this.lastRebuiltAt = new Date().toISOString();
+    return this.snapshot();
+  }
+
   async rebuild(): Promise<IndexerSnapshot> {
     const events = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
     this.planets.clear();

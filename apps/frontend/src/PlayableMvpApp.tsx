@@ -128,6 +128,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
   const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
   const [onChainError, setOnChainError] = useState<string | undefined>();
+  const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
   const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
   const [infrastructureError, setInfrastructureError] = useState<string | undefined>();
@@ -416,15 +417,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [account, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
 
   useEffect(() => {
-    if (!isWalletConnected || walletPlanetHydrated) {
-      return;
-    }
-
-    const interval = window.setInterval(() => void refreshOnChainState(), 2_500);
-    return () => window.clearInterval(interval);
-  }, [isWalletConnected, refreshOnChainState, walletPlanetHydrated]);
-
-  useEffect(() => {
     if (homeCoords) {
       setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
     }
@@ -472,15 +464,61 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   useEffect(() => {
     void refreshOnChainState();
-    const interval = window.setInterval(() => void refreshOnChainState(), 30_000);
-    return () => window.clearInterval(interval);
-  }, [refreshOnChainState]);
+    refreshInfrastructureState();
+  }, [refreshInfrastructureState, refreshOnChainState]);
 
   useEffect(() => {
-    refreshInfrastructureState();
-    const interval = window.setInterval(() => void refreshInfrastructureState(), 30_000);
+    if (!apiBaseUrl || !account || typeof window.EventSource === "undefined") {
+      setChainSyncHealthy(false);
+      return;
+    }
+
+    const events = new window.EventSource(`${apiBaseUrl.replace(/\/+$/, "")}/chain/events`);
+    const refreshFromChainEvent = () => {
+      void refreshOnChainState();
+      refreshInfrastructureState();
+      if (page === "shipyard") refreshShipyardState();
+      if (page === "defenses") refreshDefenseState();
+      if (page === "research") refreshResearchState();
+      if (page === "rift") refreshRiftState();
+    };
+    const updateSyncStatus = (event: MessageEvent) => {
+      try {
+        const snapshot = JSON.parse(event.data) as { connected?: boolean; subscribedToLogs?: boolean };
+        setChainSyncHealthy(Boolean(snapshot.connected && snapshot.subscribedToLogs));
+      } catch {
+        setChainSyncHealthy(false);
+      }
+    };
+
+    events.addEventListener("chain-event", refreshFromChainEvent);
+    events.addEventListener("sync-status", updateSyncStatus);
+    events.onerror = () => setChainSyncHealthy(false);
+
+    return () => events.close();
+  }, [
+    account,
+    apiBaseUrl,
+    page,
+    refreshDefenseState,
+    refreshInfrastructureState,
+    refreshOnChainState,
+    refreshResearchState,
+    refreshRiftState,
+    refreshShipyardState,
+  ]);
+
+  useEffect(() => {
+    if (chainSyncHealthy) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshOnChainState();
+      refreshInfrastructureState();
+    }, 120_000);
     return () => window.clearInterval(interval);
-  }, [refreshInfrastructureState]);
+  }, [chainSyncHealthy, refreshInfrastructureState, refreshOnChainState]);
 
   const state = useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState, now), [infrastructureChainState, now]);
   const settledState = state;
