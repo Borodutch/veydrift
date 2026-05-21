@@ -1048,7 +1048,12 @@ contract VeydriftGame {
     function _transferReserveIn(Resource resource, uint128 amount) private {
         if (amount == 0) return;
         IERC20ReserveToken token = _requireReserveResource(resource);
+        uint256 beforeBalance = token.balanceOf(address(this));
         if (!token.transferFrom(msg.sender, address(this), amount)) {
+            revert ResourceTransferFailed(resource, address(token), amount);
+        }
+        uint256 afterBalance = token.balanceOf(address(this));
+        if (afterBalance < beforeBalance || afterBalance - beforeBalance < amount) {
             revert ResourceTransferFailed(resource, address(token), amount);
         }
     }
