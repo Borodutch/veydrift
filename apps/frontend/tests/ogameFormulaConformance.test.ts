@@ -104,6 +104,14 @@ describe("vanilla OGame formula conformance", () => {
   test("uses vanilla building and research durations", () => {
     const state = createInitialPlayableState();
 
+    expect(buildingDurationEstimate(state.buildings, costAt(state.buildings, "metalMine", 0)))
+      .toBe(108);
+    expect(buildingDurationEstimate(state.buildings, costAt(state.buildings, "solarPlant", 0)))
+      .toBe(151);
+    expect(buildingDurationEstimate(state.buildings, costAt(state.buildings, "deuteriumSynthesizer", 0)))
+      .toBe(432);
+    expect(buildingDurationEstimate(state.buildings, costAt(state.buildings, "roboticsFactory", 0)))
+      .toBe(748);
     expect(buildingDurationEstimate(state.buildings, { metal: 6_000, crystal: 0, deuterium: 0 }))
       .toBe(8_640);
     expect(
@@ -112,6 +120,12 @@ describe("vanilla OGame formula conformance", () => {
         { metal: 6_000, crystal: 0, deuterium: 0 },
       ),
     ).toBe(4_320);
+    expect(
+      buildingDurationEstimate(
+        { ...state.buildings, roboticsFactory: 1, naniteFactory: 2 },
+        { metal: 6_000, crystal: 0, deuterium: 0 },
+      ),
+    ).toBe(1_080);
     expect(researchDurationEstimate(state.buildings, { metal: 12_000, crystal: 12_000, deuterium: 50_000 }))
       .toBe(86_400);
     expect(

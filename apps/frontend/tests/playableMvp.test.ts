@@ -327,7 +327,7 @@ describe("playable MVP contract display helpers", () => {
     )).toBe(false);
   });
 
-  test("applies the OGame Robotics Factory divisor to modeled building upgrade duration", () => {
+  test("applies the OGame Robotics and Nanite Factory divisors to modeled building upgrade duration", () => {
     const state = createInitialPlayableState(1_000);
     const cost = buildingCost(state.buildings, "metalStorage");
     const upgradedRobotics = {
@@ -345,6 +345,8 @@ describe("playable MVP contract display helpers", () => {
     expect(buildingDurationEstimate(state.buildings, largeCost)).toBe(172_800);
     expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 1 }, largeCost)).toBe(86_400);
     expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 2 }, largeCost)).toBe(57_600);
+    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 2, naniteFactory: 1 }, largeCost))
+      .toBe(28_800);
   });
 
   test("estimates research duration with the vanilla OGame lab level plus one denominator", () => {
