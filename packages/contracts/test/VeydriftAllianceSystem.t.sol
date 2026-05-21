@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
+import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
@@ -51,7 +52,7 @@ contract VeydriftAllianceSystemTest is Test {
     AllianceMockResourceToken internal deuteriumToken;
 
     function setUp() public {
-        game = new VeydriftGame(admin);
+        game = new VeydriftGame(admin, address(new VeydriftCombatModule()));
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         metalToken = new AllianceMockResourceToken();
         crystalToken = new AllianceMockResourceToken();

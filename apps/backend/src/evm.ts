@@ -1,4 +1,5 @@
 import type { BackendConfig } from "./config";
+import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import type { Coordinates } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
@@ -261,6 +262,7 @@ export interface ChainReader {
   getResearchState(wallet: Address): Promise<ResearchState>;
   getRiftState(wallet: Address): Promise<RiftState>;
   getAllianceState(wallet: Address): Promise<AllianceState>;
+  getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   rpcMetrics?(): RpcMetrics;
 }
@@ -972,6 +974,44 @@ export class VeydriftGameReader implements ChainReader {
       },
       defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
     };
+  }
+
+  async getHighscoreForWallet(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry> {
+    assertAddress(wallet);
+    const settlement = await this.getWalletSettlement(wallet);
+    const candidatePlanetIds = planetIds?.length
+      ? planetIds
+      : settlement.homePlanetId
+        ? [settlement.homePlanetId]
+        : [];
+
+    const planetStates = await Promise.all(
+      candidatePlanetIds.map(async (planetId) => {
+        const planet = await this.getPlanet(BigInt(planetId));
+        return planet?.owner.toLowerCase() === wallet.toLowerCase() ? planet : null;
+      })
+    );
+    const ownedPlanets = planetStates.filter((planet): planet is PlanetState => planet !== null);
+    const planetScores = await Promise.all(
+      ownedPlanets.map(async (planet) => {
+        const planetId = BigInt(planet.planetId);
+        const [buildings, defenses, ships] = await Promise.all([
+          this.readBuildingRows(planetId),
+          this.readDefenseRows(planetId),
+          this.readShipRows(planetId)
+        ]);
+        return { buildings, defenses, ships };
+      })
+    );
+    const technologies = await this.readTechnologyRows(wallet);
+
+    return calculateHighscore({
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      planetCount: ownedPlanets.length,
+      planets: planetScores,
+      technologies
+    });
   }
 
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
