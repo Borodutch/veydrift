@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftCatalog} from "./VeydriftCatalog.sol";
 import {Building, Defense, Ship, Technology} from "./VeydriftTypes.sol";
 
 /// @notice Pure unlock/dependency rules for MVP buildings, units, and research.
@@ -130,25 +131,41 @@ library VeydriftDependencies {
 
     function requireResearch(
         Technology technology,
+        uint16 researchLabLevel,
         uint16 energyLevel,
         uint16 laserLevel,
         uint16 ionLevel,
         uint16 hyperspaceLevel,
         uint16 espionageLevel,
         uint16 impulseDriveLevel,
-        uint16 computerLevel
+        uint16 computerLevel,
+        uint16 shieldingLevel
     ) public pure {
-        if (technology == Technology.Laser && energyLevel < 1) {
+        uint16 requiredLabLevel = VeydriftCatalog.researchLabRequirement(technology);
+        if (researchLabLevel < requiredLabLevel) {
+            if (requiredLabLevel == 1) revert MissingDependency("RESEARCH_LAB_1");
+            if (requiredLabLevel == 2) revert MissingDependency("RESEARCH_LAB_2");
+            if (requiredLabLevel == 3) revert MissingDependency("RESEARCH_LAB_3");
+            if (requiredLabLevel == 4) revert MissingDependency("RESEARCH_LAB_4");
+            if (requiredLabLevel == 6) revert MissingDependency("RESEARCH_LAB_6");
+            if (requiredLabLevel == 7) revert MissingDependency("RESEARCH_LAB_7");
+            if (requiredLabLevel == 10) revert MissingDependency("RESEARCH_LAB_10");
+            revert MissingDependency("RESEARCH_LAB_12");
+        }
+        if (technology == Technology.Laser && energyLevel < 2) {
+            revert MissingDependency("ENERGY_2");
+        }
+        if (technology == Technology.Ion && (energyLevel < 4 || laserLevel < 5)) {
+            revert MissingDependency("ENERGY_4_LASER_5");
+        }
+        if (technology == Technology.CombustionDrive && energyLevel < 1) {
             revert MissingDependency("ENERGY_1");
         }
-        if (technology == Technology.Ion && laserLevel < 2) {
-            revert MissingDependency("LASER_2");
+        if (technology == Technology.Shielding && energyLevel < 3) {
+            revert MissingDependency("ENERGY_3");
         }
-        if (technology == Technology.Shielding && energyLevel < 1) {
-            revert MissingDependency("ENERGY_1");
-        }
-        if (technology == Technology.Hyperspace && energyLevel < 5) {
-            revert MissingDependency("ENERGY_5");
+        if (technology == Technology.Hyperspace && (energyLevel < 5 || shieldingLevel < 5)) {
+            revert MissingDependency("ENERGY_5_SHIELDING_5");
         }
         if (technology == Technology.ImpulseDrive && energyLevel < 1) {
             revert MissingDependency("ENERGY_1");
@@ -169,9 +186,6 @@ library VeydriftDependencies {
                 && (computerLevel < 8 || hyperspaceLevel < 8)
         ) {
             revert MissingDependency("COMPUTER_8_HYPERSPACE_8");
-        }
-        if (technology == Technology.Graviton && energyLevel < 12) {
-            revert MissingDependency("ENERGY_12");
         }
     }
 }

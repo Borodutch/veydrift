@@ -15,6 +15,7 @@ import {
   productionCapacityPerHour,
   productionPerHour,
   researchCatalog,
+  researchCost,
   researchDurationEstimate,
   researchRequirementsFor,
   shipCatalog,
@@ -184,6 +185,30 @@ describe("playable MVP contract display helpers", () => {
     });
   });
 
+  test("reports Graviton produced-energy requirement after the lab unlock", () => {
+    const state = createInitialPlayableState(1_000);
+    const unlockedLab = {
+      ...state,
+      buildings: {
+        ...state.buildings,
+        researchLab: 12,
+        solarPlant: 9_999,
+      },
+    };
+
+    expect(unmetResearchRequirement(unlockedLab, "graviton")).toEqual({
+      type: "energy",
+      produced: 300_000,
+    });
+    expect(unmetResearchRequirement({
+      ...unlockedLab,
+      buildings: {
+        ...unlockedLab.buildings,
+        solarPlant: 10_000,
+      },
+    }, "graviton")).toBeUndefined();
+  });
+
   test("mirrors the contract research catalog and prerequisites", () => {
     expect(researchCatalog.map((item) => item.key)).toEqual([
       "energy",
@@ -205,11 +230,52 @@ describe("playable MVP contract display helpers", () => {
     ]);
     expect(researchCatalog.map((item) => item.asset)).toEqual(researchAssetManifest.map((asset) => asset.src));
     expect(researchRequirementsFor("plasma")).toEqual([
-      { type: "building", key: "researchLab", level: 1 },
+      { type: "building", key: "researchLab", level: 4 },
       { type: "research", key: "energy", level: 8 },
       { type: "research", key: "laser", level: 10 },
       { type: "research", key: "ion", level: 5 },
     ]);
+    expect(researchRequirementsFor("ion")).toEqual([
+      { type: "building", key: "researchLab", level: 4 },
+      { type: "research", key: "energy", level: 4 },
+      { type: "research", key: "laser", level: 5 },
+    ]);
+    expect(researchRequirementsFor("intergalacticResearchNetwork")).toEqual([
+      { type: "building", key: "researchLab", level: 10 },
+      { type: "research", key: "computer", level: 8 },
+      { type: "research", key: "hyperspace", level: 8 },
+    ]);
+    expect(researchRequirementsFor("graviton")).toEqual([
+      { type: "building", key: "researchLab", level: 12 },
+      { type: "energy", produced: 300_000 },
+    ]);
+  });
+
+  test("matches vanilla OGame research cost scaling", () => {
+    const base = createInitialPlayableState(1_000).research;
+
+    expect(researchCost({ ...base, energy: 0 }, "energy")).toEqual({ metal: 0, crystal: 800, deuterium: 400 });
+    expect(researchCost({ ...base, energy: 2 }, "energy")).toEqual({ metal: 0, crystal: 3_200, deuterium: 1_600 });
+    expect(researchCost({ ...base, hyperspaceDrive: 1 }, "hyperspaceDrive")).toEqual({
+      metal: 20_000,
+      crystal: 40_000,
+      deuterium: 12_000,
+    });
+    expect(researchCost({ ...base, astrophysics: 1 }, "astrophysics")).toEqual({
+      metal: 7_000,
+      crystal: 14_000,
+      deuterium: 7_000,
+    });
+    expect(researchCost({ ...base, astrophysics: 2 }, "astrophysics")).toEqual({
+      metal: 12_300,
+      crystal: 24_500,
+      deuterium: 12_300,
+    });
+    expect(researchCost({ ...base, graviton: 3 }, "graviton")).toEqual({
+      metal: 0,
+      crystal: 0,
+      deuterium: 0,
+    });
   });
 
   test("checks affordability against all resource types", () => {
@@ -248,15 +314,16 @@ describe("playable MVP contract display helpers", () => {
     expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 2 }, largeCost)).toBe(400);
   });
 
-  test("estimates research duration with the OGame-style lab level plus one denominator", () => {
+  test("estimates research duration with the vanilla OGame lab level plus one denominator", () => {
     const state = createInitialPlayableState(1_000);
     const cost = { metal: 12_000, crystal: 12_000, deuterium: 0 };
     const labOne = { ...state.buildings, researchLab: 1 };
     const labTwo = { ...state.buildings, researchLab: 2 };
 
-    expect(researchDurationEstimate(state.buildings, cost)).toBe(200);
-    expect(researchDurationEstimate(labOne, cost)).toBe(100);
-    expect(researchDurationEstimate(labTwo, cost)).toBe(66);
+    expect(researchDurationEstimate(state.buildings, cost)).toBe(86_400);
+    expect(researchDurationEstimate(labOne, cost)).toBe(43_200);
+    expect(researchDurationEstimate(labTwo, cost)).toBe(28_800);
+    expect(researchDurationEstimate(labOne, { metal: 0, crystal: 0, deuterium: 300_000 })).toBe(60);
   });
 
   test("exposes building effect metrics from the same production and storage formulas", () => {

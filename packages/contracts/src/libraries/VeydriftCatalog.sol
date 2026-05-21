@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Building, Defense, Ship, Technology} from "./VeydriftTypes.sol";
 
 /// @notice Static MVP catalog data for buildables and research.
 library VeydriftCatalog {
+    using SafeCast for uint256;
+
     error InvalidId();
+    error LevelTooHigh();
 
     function buildingBaseCost(Building building) public pure returns (uint128, uint128, uint128) {
         if (building == Building.MetalMine) return (60, 15, 0);
@@ -107,5 +111,90 @@ library VeydriftCatalog {
         }
         if (technology == Technology.Graviton) return (0, 0, 0);
         revert InvalidId();
+    }
+
+    function researchCost(Technology technology, uint16 currentLevel)
+        public
+        pure
+        returns (uint128, uint128, uint128)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = researchBaseCost(technology);
+        if (technology == Technology.Graviton) return (0, 0, 0);
+        if (technology == Technology.Astrophysics) {
+            return (
+                _scaleAstrophysicsCost(metal, currentLevel),
+                _scaleAstrophysicsCost(crystal, currentLevel),
+                _scaleAstrophysicsCost(deuterium, currentLevel)
+            );
+        }
+        return (
+            _scaleDoubleCost(metal, currentLevel),
+            _scaleDoubleCost(crystal, currentLevel),
+            _scaleDoubleCost(deuterium, currentLevel)
+        );
+    }
+
+    function researchEnergyRequirement(Technology technology, uint16 currentLevel)
+        public
+        pure
+        returns (uint256)
+    {
+        if (technology != Technology.Graviton) return 0;
+        uint256 required = 300_000;
+        for (uint16 i = 0; i < currentLevel; i++) {
+            required *= 3;
+        }
+        return required;
+    }
+
+    function researchLabRequirement(Technology technology) public pure returns (uint16) {
+        if (technology == Technology.Energy) return 1;
+        if (technology == Technology.Laser) return 1;
+        if (technology == Technology.Ion) return 4;
+        if (technology == Technology.CombustionDrive) return 1;
+        if (technology == Technology.Espionage) return 3;
+        if (technology == Technology.Computer) return 1;
+        if (technology == Technology.Weapons) return 4;
+        if (technology == Technology.Shielding) return 6;
+        if (technology == Technology.Armor) return 2;
+        if (technology == Technology.Hyperspace) return 7;
+        if (technology == Technology.ImpulseDrive) return 2;
+        if (technology == Technology.HyperspaceDrive) return 7;
+        if (technology == Technology.Plasma) return 4;
+        if (technology == Technology.Astrophysics) return 3;
+        if (technology == Technology.IntergalacticResearchNetwork) return 10;
+        if (technology == Technology.Graviton) return 12;
+        revert InvalidId();
+    }
+
+    function _scaleDoubleCost(uint128 baseCost, uint16 currentLevel)
+        private
+        pure
+        returns (uint128)
+    {
+        if (currentLevel >= 128) revert LevelTooHigh();
+        return _toUint128(uint256(baseCost) << currentLevel);
+    }
+
+    function _scaleAstrophysicsCost(uint128 baseCost, uint16 currentLevel)
+        private
+        pure
+        returns (uint128)
+    {
+        uint256 numerator = 1;
+        uint256 denominator = 1;
+        for (uint16 i = 0; i < currentLevel; i++) {
+            numerator *= 175;
+            denominator *= 100;
+        }
+
+        uint256 raw = (uint256(baseCost) * numerator + (denominator / 2)) / denominator;
+        uint256 roundedHundreds = (raw + 50) / 100;
+        return _toUint128(roundedHundreds * 100);
+    }
+
+    function _toUint128(uint256 value) private pure returns (uint128) {
+        if (value > type(uint128).max) revert LevelTooHigh();
+        return value.toUint128();
     }
 }

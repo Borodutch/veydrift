@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
@@ -12,7 +13,7 @@ interface IERC20ReserveToken {
 }
 
 /// @notice Deployable Base Sepolia test MVP for first-planet settlement and resource-token wiring.
-/// @dev Advanced gameplay entrypoints stay in the ABI and fail explicitly until they are split into modules.
+/// @dev Advanced gameplay entrypoints stay in the ABI; unsupported modules fail explicitly.
 contract VeydriftGame {
     using SafeCast for int256;
     using SafeCast for uint256;
@@ -126,7 +127,8 @@ contract VeydriftGame {
     mapping(address player => uint256 planetId) public homePlanetOf;
     mapping(uint256 planetId => Planet planet) private _planets;
     mapping(bytes32 coordinateKey => bool occupied) public occupiedCoordinates;
-    mapping(uint256 planetId => mapping(Building building => uint16 level)) private _buildingLevels;
+    mapping(uint256 planetId => mapping(Building building => uint16 level)) internal
+        _buildingLevels;
     mapping(uint256 planetId => BuildingConstruction construction) public buildingConstructions;
     mapping(uint256 planetId => DefenseQueue queue) public defenseQueues;
     mapping(uint256 planetId => ShipQueue queue) public shipQueues;
@@ -138,6 +140,8 @@ contract VeydriftGame {
     Resources private _lockedWithdrawalResources;
     mapping(address player => mapping(Resource resource => ResourceWithdrawal withdrawal)) public
         resourceWithdrawals;
+    mapping(address player => mapping(Technology technology => uint16 level)) internal
+        _technologyLevels;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -485,12 +489,45 @@ contract VeydriftGame {
         revert UnsupportedGameplayModule();
     }
 
-    function startResearch(uint256, Technology) external pure {
-        revert UnsupportedGameplayModule();
+    function startResearch(uint256 planetId, Technology technology) external {
+        _requirePlanetOwner(planetId);
+        if (researchQueues[msg.sender].active) revert QueueActive();
+
+        uint16 currentLevel = _technologyLevels[msg.sender][technology];
+        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
+
+        settlePlanet(planetId);
+        _requireResearchDependencies(planetId, msg.sender, technology, currentLevel);
+
+        Resources memory cost = researchCost(msg.sender, technology);
+        _spend(planetId, cost);
+
+        uint64 readyAt =
+            (uint256(_currentTimestamp()) + _researchDuration(planetId, cost)).toUint64();
+        uint16 targetLevel = currentLevel + 1;
+        researchQueues[msg.sender] = ResearchQueue({
+            active: true,
+            technology: technology,
+            targetLevel: targetLevel,
+            readyAt: readyAt,
+            cost: cost
+        });
+
+        emit ResearchQueued(
+            msg.sender, technology, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
+        );
     }
 
-    function finishResearch() external pure {
-        revert UnsupportedGameplayModule();
+    function finishResearch() external {
+        ResearchQueue memory queue = researchQueues[msg.sender];
+        if (!queue.active) revert QueueInactive();
+        if (_currentTimestamp() < queue.readyAt) {
+            revert QueueNotReady(queue.readyAt);
+        }
+
+        delete researchQueues[msg.sender];
+        _technologyLevels[msg.sender][queue.technology] = queue.targetLevel;
+        emit ResearchCompleted(msg.sender, queue.technology, queue.targetLevel);
     }
 
     function createColonyAtNextSlot(uint256, uint256) external pure returns (uint256) {
@@ -599,8 +636,8 @@ contract VeydriftGame {
         return 0;
     }
 
-    function technologyLevel(address, Technology) external pure returns (uint16) {
-        return 0;
+    function technologyLevel(address player, Technology technology) external view returns (uint16) {
+        return _technologyLevels[player][technology];
     }
 
     function maxPlanets(address) public pure returns (uint256) {
@@ -753,9 +790,13 @@ contract VeydriftGame {
         return Resources(metal, crystal, deuterium);
     }
 
-    function researchCost(address, Technology technology) public pure returns (Resources memory) {
+    function researchCost(address player, Technology technology)
+        public
+        view
+        returns (Resources memory)
+    {
         (uint128 metal, uint128 crystal, uint128 deuterium) =
-            VeydriftCatalog.researchBaseCost(technology);
+            VeydriftCatalog.researchCost(technology, _technologyLevels[player][technology]);
         return Resources(metal, crystal, deuterium);
     }
 
@@ -967,6 +1008,49 @@ contract VeydriftGame {
             cost.crystal,
             MIN_QUEUE_SECONDS
         );
+    }
+
+    function _researchDuration(uint256 planetId, Resources memory cost)
+        private
+        view
+        returns (uint256)
+    {
+        return VeydriftFormulas.researchDuration(
+            _buildingLevels[planetId][Building.ResearchLab],
+            cost.metal,
+            cost.crystal,
+            cost.deuterium,
+            MIN_QUEUE_SECONDS
+        );
+    }
+
+    function _requireResearchDependencies(
+        uint256 planetId,
+        address player,
+        Technology technology,
+        uint16 currentLevel
+    ) private view {
+        VeydriftDependencies.requireResearch(
+            technology,
+            _buildingLevels[planetId][Building.ResearchLab],
+            _technologyLevels[player][Technology.Energy],
+            _technologyLevels[player][Technology.Laser],
+            _technologyLevels[player][Technology.Ion],
+            _technologyLevels[player][Technology.Hyperspace],
+            _technologyLevels[player][Technology.Espionage],
+            _technologyLevels[player][Technology.ImpulseDrive],
+            _technologyLevels[player][Technology.Computer],
+            _technologyLevels[player][Technology.Shielding]
+        );
+
+        uint256 energyRequirement =
+            VeydriftCatalog.researchEnergyRequirement(technology, currentLevel);
+        if (energyRequirement == 0) return;
+
+        (uint256 producedEnergy,,) = energyBalance(planetId);
+        if (producedEnergy < energyRequirement) {
+            revert MissingDependency("GRAVITON_ENERGY");
+        }
     }
 
     function _usedFields(uint256 planetId) private view returns (uint256 used) {

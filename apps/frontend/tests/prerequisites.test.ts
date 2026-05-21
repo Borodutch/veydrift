@@ -20,7 +20,7 @@ describe("OGame-style prerequisite gating", () => {
     expect(unmetResearchRequirement(state, "laser")).toEqual({
       type: "research",
       key: "energy",
-      level: 1,
+      level: 2,
     });
   });
 
