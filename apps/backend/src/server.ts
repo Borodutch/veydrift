@@ -153,6 +153,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/planets$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const ready = requireChainReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        assertAddress(wallet);
+        return Response.json(await ready.getWalletPlanets(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/queues$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       const ready = requireChainReader(chainReader, loaded.problems);
@@ -160,7 +175,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getPlayerQueues(wallet), {
+        return Response.json(await ready.getPlayerQueues(wallet, selectedPlanetId(url)), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -175,7 +190,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getInfrastructureState(wallet), {
+        return Response.json(await ready.getInfrastructureState(wallet, selectedPlanetId(url)), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -190,7 +205,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getMoonState(wallet), {
+        return Response.json(await ready.getMoonState(wallet, selectedPlanetId(url)), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -205,7 +220,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getShipyardState(wallet), {
+        return Response.json(await ready.getShipyardState(wallet, selectedPlanetId(url)), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -220,7 +235,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getDefenseState(wallet), {
+        return Response.json(await ready.getDefenseState(wallet, selectedPlanetId(url)), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -235,7 +250,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getResearchState(wallet), {
+        return Response.json(await ready.getResearchState(wallet, selectedPlanetId(url)), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -250,7 +265,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getRiftState(wallet), {
+        return Response.json(await ready.getRiftState(wallet, selectedPlanetId(url)), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -517,6 +532,19 @@ function errorResponse(error: unknown, status: number): Response {
       status
     }
   );
+}
+
+function selectedPlanetId(url: URL): bigint | undefined {
+  const value = url.searchParams.get("planetId");
+  if (!value) return undefined;
+  if (!/^[0-9]+$/.test(value)) {
+    throw new Error("planetId must be a positive integer.");
+  }
+  const planetId = BigInt(value);
+  if (planetId === 0n) {
+    throw new Error("planetId must be a positive integer.");
+  }
+  return planetId;
 }
 
 function handleUniverseSystemRequest(url: URL): Response {

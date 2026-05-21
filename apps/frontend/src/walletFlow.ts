@@ -57,6 +57,7 @@ export type WalletSettlementResponse = {
   planet: {
     planetId: string;
     owner: string;
+    name: string | null;
     galaxy: number;
     system: number;
     position: number;
@@ -68,6 +69,37 @@ export type WalletSettlementResponse = {
     lastSettledAt: string;
     resources: OnChainResources;
   } | null;
+};
+
+export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet"]> & {
+  coordinates: string;
+  isHomePlanet: boolean;
+  fieldsUsed: number;
+  fieldsCapacity: number;
+  keyLevels: {
+    metalMine: number;
+    crystalMine: number;
+    deuteriumSynthesizer: number;
+    solarPlant: number;
+    roboticsFactory: number;
+    shipyard: number;
+    researchLab: number;
+    terraformer: number;
+  };
+  queues: {
+    building: QueueStateResponse | null;
+    defense: QueueStateResponse | null;
+    ship: QueueStateResponse | null;
+  };
+  moon: {
+    exists: boolean;
+  } | null;
+};
+
+export type WalletPlanetsResponse = {
+  wallet: string;
+  homePlanetId: string | null;
+  planets: ManagedPlanetResponse[];
 };
 
 export type QueueStateResponse = {
@@ -259,6 +291,7 @@ const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const START_PLANET_SELECTOR = "0xf45f1f18";
 const START_PRICE_SELECTOR = "0xf1a9af89";
 const GAME_SELECTORS = {
+  abandonPlanet: "0xfa16dddc",
   collectResources: "0xdb43284d",
   depositResource: "0x25819e15",
   finishDefenseProduction: "0xa5a0d597",
@@ -268,6 +301,7 @@ const GAME_SELECTORS = {
   collectShips: "0xb30a921c",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
+  renamePlanet: "0xa74c0906",
   requestResourceWithdrawal: "0x62a10a46",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
@@ -341,6 +375,13 @@ export function encodeUintCall(selector: string, value: bigint | number | string
 
 export function encodeGameCall(selector: string, values: Array<bigint | number | string>): string {
   return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
+}
+
+export function encodePlanetNameCall(selector: string, planetId: bigint | number | string, name: string): string {
+  const encoded = new TextEncoder().encode(name);
+  const length = encoded.length;
+  const chunks = Array.from(encoded, (byte) => byte.toString(16).padStart(2, "0")).join("").padEnd(Math.ceil(length / 32) * 64, "0");
+  return `${selector}${BigInt(planetId).toString(16).padStart(64, "0")}${(64n).toString(16).padStart(64, "0")}${BigInt(length).toString(16).padStart(64, "0")}${chunks}`;
 }
 
 export function encodeAddressUintCall(selector: string, address: string, value: bigint | number | string): string {
@@ -696,6 +737,43 @@ export async function sendStartBuildingUpgradeTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId])
+      }
+    ]
+  });
+}
+
+export async function sendRenamePlanetTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+  name: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodePlanetNameCall(GAME_SELECTORS.renamePlanet, planetId, name)
+      }
+    ]
+  });
+}
+
+export async function sendAbandonPlanetTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.abandonPlanet, [planetId])
       }
     ]
   });
@@ -1175,32 +1253,36 @@ export async function fetchWalletSettlement(apiUrl: string, wallet: string): Pro
   return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, "settlement", "Settlement");
 }
 
-export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise<PlayerQueuesResponse> {
-  return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, "queues", "Queues");
+export async function fetchWalletPlanets(apiUrl: string, wallet: string): Promise<WalletPlanetsResponse> {
+  return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, "planets", "Planets");
 }
 
-export async function fetchInfrastructureState(apiUrl: string, wallet: string): Promise<ChainInfrastructureState> {
-  return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, "infrastructure", "Infrastructure");
+export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId?: string): Promise<PlayerQueuesResponse> {
+  return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withPlanetId("queues", planetId), "Queues");
 }
 
-export async function fetchMoonState(apiUrl: string, wallet: string): Promise<ChainMoonState> {
-  return fetchWalletJson<ChainMoonState>(apiUrl, wallet, "moon", "Moon");
+export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainInfrastructureState> {
+  return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, withPlanetId("infrastructure", planetId), "Infrastructure");
 }
 
-export async function fetchShipyardState(apiUrl: string, wallet: string): Promise<ChainShipyardState> {
-  return fetchWalletJson<ChainShipyardState>(apiUrl, wallet, "shipyard", "Shipyard");
+export async function fetchMoonState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainMoonState> {
+  return fetchWalletJson<ChainMoonState>(apiUrl, wallet, withPlanetId("moon", planetId), "Moon");
 }
 
-export async function fetchDefenseState(apiUrl: string, wallet: string): Promise<ChainDefenseState> {
-  return fetchWalletJson<ChainDefenseState>(apiUrl, wallet, "defenses", "Defenses");
+export async function fetchShipyardState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainShipyardState> {
+  return fetchWalletJson<ChainShipyardState>(apiUrl, wallet, withPlanetId("shipyard", planetId), "Shipyard");
 }
 
-export async function fetchResearchState(apiUrl: string, wallet: string): Promise<ChainResearchState> {
-  return fetchWalletJson<ChainResearchState>(apiUrl, wallet, "research", "Research");
+export async function fetchDefenseState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainDefenseState> {
+  return fetchWalletJson<ChainDefenseState>(apiUrl, wallet, withPlanetId("defenses", planetId), "Defenses");
 }
 
-export async function fetchRiftState(apiUrl: string, wallet: string): Promise<ChainRiftState> {
-  return fetchWalletJson<ChainRiftState>(apiUrl, wallet, "rift", "Rift");
+export async function fetchResearchState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainResearchState> {
+  return fetchWalletJson<ChainResearchState>(apiUrl, wallet, withPlanetId("research", planetId), "Research");
+}
+
+export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainRiftState> {
+  return fetchWalletJson<ChainRiftState>(apiUrl, wallet, withPlanetId("rift", planetId), "Rift");
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
@@ -1227,4 +1309,8 @@ async function fetchWalletJson<T>(
   });
   if (!response.ok) throw new Error(`${label} API failed: ${response.status}`);
   return response.json() as Promise<T>;
+}
+
+function withPlanetId(path: string, planetId: string | undefined): string {
+  return planetId ? `${path}?planetId=${encodeURIComponent(planetId)}` : path;
 }

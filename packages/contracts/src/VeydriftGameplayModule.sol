@@ -68,6 +68,47 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return _createColony(originPlanetId, galaxy, system, position);
     }
 
+    function renamePlanet(uint256 planetId, string calldata name) external {
+        _requirePlanetOwner(planetId);
+        uint256 length = bytes(name).length;
+        if (length == 0 || length > 32) revert InvalidPlanetName();
+
+        planetNames[planetId] = name;
+        emit PlanetRenamed(msg.sender, planetId, name);
+    }
+
+    function abandonPlanet(uint256 planetId) external {
+        _requirePlanetOwner(planetId);
+        if (homePlanetOf[msg.sender] == planetId) revert CannotAbandonHomePlanet();
+        if (
+            buildingConstructions[planetId].active || defenseQueues[planetId].active
+                || shipQueues[planetId].active
+        ) {
+            revert PlanetHasActiveQueues();
+        }
+        if (activeFleetMissionCount[msg.sender] != 0) revert PlanetHasActiveFleetMissions();
+
+        _settleResources(planetId);
+        Planet memory planetRef = _planets[planetId];
+        if (
+            planetRef.resources.metal != 0 || planetRef.resources.crystal != 0
+                || planetRef.resources.deuterium != 0
+        ) {
+            revert PlanetHasResources();
+        }
+
+        delete _planets[planetId];
+        delete planetNames[planetId];
+        occupiedCoordinates[
+            _coordinateKey(planetRef.galaxy, planetRef.system, planetRef.position)
+        ] = false;
+        planetCountOf[msg.sender] -= 1;
+
+        emit PlanetAbandoned(
+            msg.sender, planetId, planetRef.galaxy, planetRef.system, planetRef.position
+        );
+    }
+
     function launchFleetMission(
         uint256 originPlanetId,
         uint256 targetPlanetId,

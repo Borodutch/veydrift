@@ -226,6 +226,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function renamePlanet(uint256, string calldata) external {
+        _delegateToGameplayModule();
+    }
+
+    function abandonPlanet(uint256) external {
+        _delegateToGameplayModule();
+    }
+
     function launchFleetMission(
         uint256,
         uint256,
