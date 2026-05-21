@@ -61,6 +61,45 @@ body {
   margin: 0;
 }
 
+.playable-starfield {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(21, 30, 48, 0.52), transparent 38rem),
+    #05070f;
+}
+
+.playable-starfield::before,
+.playable-starfield::after {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.playable-starfield::before {
+  opacity: 0.42;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.74) 0 1px, transparent 1.4px),
+    radial-gradient(circle, rgba(128, 241, 255, 0.46) 0 1px, transparent 1.3px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.5) 0 0.8px, transparent 1.2px);
+  background-position:
+    0 0,
+    4.7rem 3.1rem,
+    1.9rem 5.6rem;
+  background-size:
+    7.5rem 7.5rem,
+    10.5rem 10.5rem,
+    13rem 13rem;
+}
+
+.playable-starfield::after {
+  opacity: 0.78;
+  background:
+    linear-gradient(180deg, rgba(5, 7, 15, 0.22), rgba(5, 7, 15, 0.84)),
+    radial-gradient(circle at 50% 42%, transparent 0, transparent 22rem, rgba(5, 7, 15, 0.46) 44rem),
+    radial-gradient(circle at 50% 100%, rgba(9, 17, 30, 0.78), transparent 34rem);
+}
+
 .app-shell {
   display: grid;
   min-height: 100dvh;
