@@ -10,17 +10,16 @@ library VeydriftFormulas {
 
     error LevelTooHigh();
 
-    uint256 private constant WAD = 1e18;
-
-    function planetMultipliers(int16 temperature, uint16)
+    function planetMultipliers(int16 temperature, uint16 fields)
         public
         pure
         returns (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier)
     {
-        metalMultiplier =
-            10_000;
+        fields;
+        int256 deuteriumBps = int256(12_800) - int256(temperature) * 20;
+        metalMultiplier = 10_000;
         crystalMultiplier = 10_000;
-        deuteriumMultiplier = (12_800 - int256(temperature) * 20).toUint256().toUint16();
+        deuteriumMultiplier = deuteriumBps <= 0 ? 0 : deuteriumBps.toUint256().toUint16();
     }
 
     function productionPerHour(
@@ -28,18 +27,23 @@ library VeydriftFormulas {
         uint256 crystalLevel,
         uint256 deuteriumLevel,
         uint256 solarLevel,
+        uint256 fusionLevel,
         uint16 metalMultiplierBps,
         uint16 crystalMultiplierBps,
         uint16 deuteriumMultiplierBps,
         uint16 bps
     ) public pure returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) {
         (, uint256 requiredEnergy, uint256 energyScale) =
-            energyBalance(metalLevel, crystalLevel, deuteriumLevel, solarLevel, bps);
+            energyBalance(metalLevel, crystalLevel, deuteriumLevel, solarLevel, fusionLevel, bps);
 
-        metalPerHour = _scaleByBps(_ogameLevelGrowth(30, metalLevel), metalMultiplierBps, bps);
-        crystalPerHour = _scaleByBps(_ogameLevelGrowth(20, crystalLevel), crystalMultiplierBps, bps);
+        metalPerHour = _scaleByBps(_scaledLevelValue(30, metalLevel), metalMultiplierBps, bps);
+        crystalPerHour = _scaleByBps(_scaledLevelValue(20, crystalLevel), crystalMultiplierBps, bps);
         deuteriumPerHour =
-            _scaleByBps(_ogameLevelGrowth(10, deuteriumLevel), deuteriumMultiplierBps, bps);
+            _scaleByBps(_scaledLevelValue(10, deuteriumLevel), deuteriumMultiplierBps, bps);
+        uint256 fusionDeuteriumPerHour = _scaledLevelValue(10, fusionLevel);
+        deuteriumPerHour = deuteriumPerHour > fusionDeuteriumPerHour
+            ? deuteriumPerHour - fusionDeuteriumPerHour
+            : 0;
 
         if (requiredEnergy != 0) {
             metalPerHour = _scaleByBps(metalPerHour, energyScale, bps);
@@ -53,11 +57,13 @@ library VeydriftFormulas {
         uint256 crystalLevel,
         uint256 deuteriumLevel,
         uint256 solarLevel,
+        uint256 fusionLevel,
         uint16 bps
     ) public pure returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) {
-        requiredEnergy = _ogameLevelGrowth(10, metalLevel) + _ogameLevelGrowth(10, crystalLevel)
-            + _ogameLevelGrowth(20, deuteriumLevel);
-        producedEnergy = _ogameLevelGrowth(20, solarLevel);
+        requiredEnergy = _scaledLevelValue(10, metalLevel) + _scaledLevelValue(10, crystalLevel)
+            + _scaledLevelValue(20, deuteriumLevel);
+        producedEnergy = _scaledLevelValue(20, solarLevel)
+            + _scaledLevelValueWithFactor(30, fusionLevel, 105, 100);
         // OGame-style shortage factor: full production when energy is sufficient,
         // otherwise floor(produced / required) in basis points. Settlement uses
         // the building state for each elapsed segment, so later power upgrades do
@@ -72,34 +78,43 @@ library VeydriftFormulas {
         pure
         returns (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap)
     {
-        metalCap = _storageCapacity(metalStorage);
-        crystalCap = _storageCapacity(crystalStorage);
-        deuteriumCap = _storageCapacity(deuteriumTank);
+        metalCap = _storageCap(metalStorage);
+        crystalCap = _storageCap(crystalStorage);
+        deuteriumCap = _storageCap(deuteriumTank);
     }
 
     function buildingDuration(
         uint256 roboticsLevel,
+        uint256 naniteLevel,
         uint128 metalCost,
         uint128 crystalCost,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
         uint256 raw = ((uint256(metalCost) + uint256(crystalCost)) * 1 hours)
-            / (2_500 * (roboticsLevel + 1));
+            / (2500 * (roboticsLevel + 1) * (2 ** naniteLevel));
         return raw < minQueueSeconds ? minQueueSeconds : raw;
+    }
+
+    function scaleByFactor(uint256 value, uint256 exponent, uint256 numerator, uint256 denominator)
+        public
+        pure
+        returns (uint256)
+    {
+        return (value * (numerator ** exponent)) / (denominator ** exponent);
     }
 
     function unitDuration(
         uint256 shipyardLevel,
+        uint256 naniteLevel,
         uint128 metalCost,
         uint128 crystalCost,
-        uint128 deuteriumCost,
+        uint128,
         uint32 quantity,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
-        uint256 raw =
-            (uint256(metalCost) + uint256(crystalCost) + uint256(deuteriumCost))
-                / (200 * (shipyardLevel + 1));
-        raw += quantity * 10;
+        uint256 denominator = 2500 * (shipyardLevel + 1) * (2 ** naniteLevel);
+        uint256 numerator = (uint256(metalCost) + uint256(crystalCost)) * quantity * 1 hours;
+        uint256 raw = (numerator + denominator - 1) / denominator;
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
 
@@ -111,22 +126,33 @@ library VeydriftFormulas {
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
         uint256 raw = ((uint256(metalCost) + uint256(crystalCost)) * 1 hours)
-            / (1_000 * (labLevel + 1));
+            / (1000 * (labLevel + 1));
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
 
-    function _ogameLevelGrowth(uint256 coefficient, uint256 level) private pure returns (uint256) {
-        if (level == 0) return 0;
-
-        uint256 multiplier = WAD;
-        for (uint256 i = 0; i < level; i++) {
-            multiplier = (multiplier * 110) / 100;
-        }
-
-        return (coefficient * level * multiplier) / WAD;
+    function _scaleByBps(uint256 value, uint256 multiplierBps, uint16 bps)
+        private
+        pure
+        returns (uint256)
+    {
+        return (value * multiplierBps) / bps;
     }
 
-    function _storageCapacity(uint256 level) private pure returns (uint128) {
+    function _scaledLevelValue(uint256 base, uint256 level) private pure returns (uint256) {
+        return _scaledLevelValueWithFactor(base, level, 11, 10);
+    }
+
+    function _scaledLevelValueWithFactor(
+        uint256 base,
+        uint256 level,
+        uint256 numerator,
+        uint256 denominator
+    ) private pure returns (uint256) {
+        if (level == 0) return 0;
+        return scaleByFactor(base * level, level, numerator, denominator);
+    }
+
+    function _storageCap(uint256 level) private pure returns (uint128) {
         if (level == 0) return 10_000;
         if (level == 1) return 20_000;
         if (level == 2) return 40_000;
@@ -178,16 +204,7 @@ library VeydriftFormulas {
         if (level == 48) return 53_818_464_752_040_000;
         if (level == 49) return 98_659_766_131_065_000;
         if (level == 50) return 180_862_636_975_685_000;
-
         revert LevelTooHigh();
-    }
-
-    function _scaleByBps(uint256 value, uint256 multiplierBps, uint16 bps)
-        private
-        pure
-        returns (uint256)
-    {
-        return (value * multiplierBps) / bps;
     }
 
     function _toUint128(uint256 value) private pure returns (uint128) {

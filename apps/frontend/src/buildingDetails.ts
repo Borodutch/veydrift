@@ -1,4 +1,4 @@
-import type { BuildingKey, PlayableState, Resources } from "./playableMvp";
+import type { BuildingKey, PlayableState, ResearchKey, Resources } from "./playableMvp";
 import {
   buildingCost,
   buildingDurationEstimate,
@@ -19,12 +19,6 @@ const resourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
   crystal: "Crystal",
   deuterium: "Deuterium",
-};
-
-const buildingEnergyCoefficient: Partial<Record<BuildingKey, number>> = {
-  metalMine: 10,
-  crystalMine: 10,
-  deuteriumSynthesizer: 20,
 };
 
 export type BuildingUpgradeStatus = {
@@ -211,7 +205,9 @@ export function formatBuildingRequirements(key: BuildingKey): string {
 }
 
 function formatBuildingRequirement(requirement: ReturnType<typeof buildingRequirementsFor>[number]): string {
-  const label = buildingLabel(requirement.key);
+  const label = requirement.type === "building"
+    ? buildingLabel(requirement.key)
+    : researchLabel(requirement.key);
   return `${label} ${requirement.level}`;
 }
 
@@ -230,23 +226,18 @@ export function buildingEnergyDetail(
     };
   }
 
-  const coefficient = buildingEnergyCoefficient[key];
-  if (!coefficient) {
+  const current = energyRequiredForBuildingLevel(key, buildings[key]);
+  const next = energyRequiredForBuildingLevel(key, buildings[key] + 1);
+  if (current === undefined || next === undefined) {
     return { kind: "none" };
   }
 
-  const current = ogameLevelGrowth(coefficient, buildings[key]);
-  const next = ogameLevelGrowth(coefficient, buildings[key] + 1);
   return {
     kind: "requires",
     current,
     next,
     delta: next - current,
   };
-}
-
-function ogameLevelGrowth(coefficient: number, level: number): number {
-  return Math.floor(coefficient * level * 1.1 ** level);
 }
 
 export function formatNumber(value: number): string {
@@ -293,8 +284,20 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
 }
 
 function energyRequiredForBuildingLevel(key: BuildingKey, level: number): number | undefined {
-  const coefficient = buildingEnergyCoefficient[key];
-  return coefficient === undefined ? undefined : ogameLevelGrowth(coefficient, level);
+  if (key === "metalMine" || key === "crystalMine") {
+    return scaledLevelValue(10, level);
+  }
+
+  if (key === "deuteriumSynthesizer") {
+    return scaledLevelValue(20, level);
+  }
+
+  return undefined;
+}
+
+function scaledLevelValue(base: number, level: number): number {
+  if (level === 0) return 0;
+  return Math.floor((base * level * (11 ** level)) / (10 ** level));
 }
 
 function productionResourceForBuilding(key: BuildingKey): keyof Resources {
@@ -330,6 +333,10 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
     return `x${formatNumber(level + 1)} research speed`;
   }
 
+  if (key === "interdimensionalRiftStabilizer") {
+    return level > 0 ? "Rift bridge online" : "Rift bridge locked";
+  }
+
   return `x${formatNumber(level + 1)} construction speed`;
 }
 
@@ -345,6 +352,29 @@ function buildingLabel(key: BuildingKey): string {
     metalStorage: "Metal Storage",
     crystalStorage: "Crystal Storage",
     deuteriumTank: "Deuterium Tank",
+    interdimensionalRiftStabilizer: "Interdimensional Rift Stabilizer",
+  };
+  return labels[key];
+}
+
+function researchLabel(key: ResearchKey): string {
+  const labels: Record<ResearchKey, string> = {
+    energy: "Energy Technology",
+    laser: "Laser",
+    ion: "Ion",
+    combustionDrive: "Combustion Drive",
+    espionage: "Espionage",
+    computer: "Computer",
+    weapons: "Weapons",
+    shielding: "Shielding",
+    armor: "Armor",
+    hyperspace: "Hyperspace",
+    impulseDrive: "Impulse Drive",
+    hyperspaceDrive: "Hyperspace Drive",
+    plasma: "Plasma",
+    astrophysics: "Astrophysics",
+    intergalacticResearchNetwork: "Intergalactic Research Network",
+    graviton: "Graviton Technology",
   };
   return labels[key];
 }

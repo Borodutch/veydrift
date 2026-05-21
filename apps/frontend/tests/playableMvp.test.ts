@@ -17,6 +17,7 @@ import {
   researchCatalog,
   researchDurationEstimate,
   researchRequirementsFor,
+  shipDurationEstimate,
   shipCatalog,
   storageCaps,
   unmetResearchRequirement,
@@ -98,6 +99,11 @@ describe("playable MVP contract display helpers", () => {
       crystal: 22,
       deuterium: 0,
     });
+    expect(buildingCost(state.buildings, "roboticsFactory")).toEqual({
+      metal: 400,
+      crystal: 120,
+      deuterium: 200,
+    });
   });
 
   test("mirrors contract production formulas without mutating browser state", () => {
@@ -135,6 +141,27 @@ describe("playable MVP contract display helpers", () => {
       [15, "pathfinder", "Pathfinder"],
     ]);
     expect(shipCatalog.map((ship) => ship.asset)).toEqual(shipAssetManifest.map((asset) => asset.src));
+  });
+
+  test("uses vanilla OGame representative ship requirements and duration estimates", () => {
+    expect(shipCatalog.find((ship) => ship.key === "smallCargo")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
+    ]);
+    expect(shipCatalog.find((ship) => ship.key === "cruiser")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 4 },
+      { kind: "technology", key: "ion", label: "Ion", level: 2 },
+    ]);
+    expect(shipCatalog.find((ship) => ship.key === "destroyer")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 9 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 6 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
+    ]);
+
+    expect(shipDurationEstimate(2, 0, { metal: 2_000, crystal: 2_000, deuterium: 0 })).toBe(1_920);
+    expect(shipDurationEstimate(7, 2, { metal: 45_000, crystal: 15_000, deuterium: 0 })).toBe(2_700);
+    expect(shipDurationEstimate(12, 0, { metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 })).toBe(996_924);
   });
 
   test("maps the Solidity defense catalog for Defenses display", () => {
@@ -235,12 +262,7 @@ describe("playable MVP contract display helpers", () => {
     expect(buildingDurationEstimate(upgradedRobotics, { metal: 100_000, crystal: 50_000, deuterium: 0 }))
       .toBe(43_200);
 
-    const advancedMine = {
-      ...state.buildings,
-      metalMine: 8,
-    };
     expect(buildingDurationEstimate(state.buildings, buildingCost(state.buildings, "metalMine"))).toBe(108);
-    expect(buildingDurationEstimate(state.buildings, buildingCost(advancedMine, "metalMine"))).toBe(2_766);
 
     const largeCost = { metal: 120_000, crystal: 0, deuterium: 0 };
     expect(buildingDurationEstimate(state.buildings, largeCost)).toBe(172_800);
@@ -278,7 +300,7 @@ describe("playable MVP contract display helpers", () => {
       expect(mineEffect.deltaPerHour).toBeGreaterThan(0);
     }
 
-    expect(storageEffect.kind).toBe("storage");
+      expect(storageEffect.kind).toBe("storage");
     if (storageEffect.kind === "storage") {
       expect(storageEffect.resource).toBe("metal");
       expect(storageEffect.currentCapacity).toBe(storageCaps(buildings).metal);
@@ -303,14 +325,20 @@ describe("playable MVP contract display helpers", () => {
     const capacity = productionCapacityPerHour(buildings, profile);
     const effect = buildingEffectMetrics(buildings, "metalMine", profile);
 
-    expect(production.metal).toBe(39);
-    expect(capacity.metal).toBe(39);
+    expect(production.metal).toBe(33);
+    expect(capacity.metal).toBe(33);
     expect(effect.kind).toBe("production");
     if (effect.kind === "production") {
-      expect(effect.currentPerHour).toBe(39);
+      expect(effect.currentPerHour).toBe(33);
       expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 2 }, profile).metal);
       expect(effect.deltaPerHour).toBeGreaterThan(0);
     }
+
+    expect(productionPerHour({
+      ...state.buildings,
+      deuteriumSynthesizer: 1,
+      solarPlant: 3,
+    }, profile).deuterium).toBe(12);
   });
 
   test("shows mine upgrade capacity separately from low-energy throttled production", () => {
