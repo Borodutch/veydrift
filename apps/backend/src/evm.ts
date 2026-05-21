@@ -1034,7 +1034,7 @@ function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailabl
   };
 }
 
-function riftRequirements(
+export function riftRequirements(
   riftLevel: number | null,
   roboticsLevel: number,
   researchLabLevel: number,
@@ -1053,29 +1053,22 @@ function riftRequirements(
       key: "roboticsFactory",
       label: "Robotics Factory",
       currentLevel: roboticsLevel,
-      requiredLevel: 4
+      requiredLevel: 2
     },
     {
       kind: "building",
       key: "researchLab",
       label: "Research Lab",
       currentLevel: researchLabLevel,
-      requiredLevel: 2
+      requiredLevel: 1
     },
     {
       kind: "technology",
       key: "energy",
       label: "Energy Technology",
       currentLevel: technologyLevels["0"] ?? 0,
-      requiredLevel: 5
-    },
-    {
-      kind: "technology",
-      key: "hyperspace",
-      label: "Hyperspace Technology",
-      currentLevel: technologyLevels["9"] ?? 0,
       requiredLevel: 2
-    }
+    },
   ];
 }
 

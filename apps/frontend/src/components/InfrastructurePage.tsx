@@ -42,6 +42,7 @@ const buildingDescriptions: Record<BuildingKey, string> = {
   metalStorage: "Raises the real metal storage cap for this planet.",
   crystalStorage: "Raises the real crystal storage cap for this planet.",
   deuteriumTank: "Raises the real deuterium storage cap for this planet.",
+  interdimensionalRiftStabilizer: "Stabilizes the planet's Rift bridge so resource transfers can come online once the structure is built.",
 };
 
 interface InfrastructurePageProps {
@@ -670,6 +671,12 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       next: effect.nextUnlocked && !effect.unlocked ? "Unlocks orbital production" : `x${formatNumber(effect.nextFactor)}`,
       value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Not built",
     });
+  } else if (effect.kind === "riftBridge") {
+    rows.push({
+      label: "Rift bridge",
+      next: effect.nextUnlocked && !effect.unlocked ? "Unlocks resource bridge" : "Bridge online",
+      value: effect.unlocked ? "Online" : "Locked",
+    });
   } else {
     const fasterPercent = effect.unlocked
       ? Math.round(((effect.nextFactor / effect.currentFactor) - 1) * 100)
@@ -719,6 +726,10 @@ function compactEffect(effect: BuildingEffectMetrics): string {
 
   if (effect.kind === "shipyard") {
     return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
+  }
+
+  if (effect.kind === "riftBridge") {
+    return effect.unlocked ? "Online" : "Locked";
   }
 
   return `x${formatNumber(effect.currentFactor)}`;

@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {Building, Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
 
 contract MockResourceToken {
@@ -243,6 +244,34 @@ contract VeydriftGameTest is Test {
             abi.encodeWithSelector(VeydriftGame.InsufficientResources.selector, 500, 500, 0)
         );
         game.startBuildingUpgrade(planetId, Building.MetalStorage);
+    }
+
+    function testRiftStabilizerDependencyCatalogMatchesCurrentBuildGate() public {
+        bytes32 roboticsDependency = "ROBOTICS_FACTORY_2";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftDependencies.MissingDependency.selector, roboticsDependency
+            )
+        );
+        VeydriftDependencies.requireBuilding(Building.InterdimensionalRiftStabilizer, 1, 1, 2, 0);
+
+        bytes32 researchLabDependency = "RESEARCH_LAB_1";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftDependencies.MissingDependency.selector, researchLabDependency
+            )
+        );
+        VeydriftDependencies.requireBuilding(Building.InterdimensionalRiftStabilizer, 2, 0, 2, 0);
+
+        bytes32 energyDependency = "ENERGY_2";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftDependencies.MissingDependency.selector, energyDependency
+            )
+        );
+        VeydriftDependencies.requireBuilding(Building.InterdimensionalRiftStabilizer, 2, 1, 1, 0);
+
+        VeydriftDependencies.requireBuilding(Building.InterdimensionalRiftStabilizer, 2, 1, 2, 0);
     }
 
     function testCollectResourcesAccruesProductionAfterInfrastructureUpgrade() public {
