@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
@@ -142,6 +143,16 @@ contract VeydriftGameTest is Test {
         uint128 metal,
         uint128 crystal,
         uint128 deuterium
+    );
+    event InterplanetaryMissileAttack(
+        address indexed attacker,
+        uint256 indexed originPlanetId,
+        uint256 indexed targetPlanetId,
+        Defense primaryTarget,
+        uint32 launched,
+        uint32 intercepted,
+        uint32 hits,
+        uint32 destroyedPrimary
     );
 
     function setUp() public {
@@ -790,6 +801,39 @@ contract VeydriftGameTest is Test {
             abi.encodeWithSelector(VeydriftGameStorage.MissileSiloCapacityExceeded.selector, 41, 40)
         );
         game.startDefenseProduction(planetId, Defense.AntiBallisticMissile, 1);
+    }
+
+    function testInterplanetaryMissileAttackConsumesSilosInterceptionAndDestroysDefense() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 5);
+        _setDefenseCount(targetPlanetId, Defense.AntiBallisticMissile, 2);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 20);
+
+        vm.expectEmit(true, true, true, true, address(game));
+        emit InterplanetaryMissileAttack(
+            player, originPlanetId, targetPlanetId, Defense.LightLaser, 5, 2, 3, 3
+        );
+        vm.prank(player);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 5
+        );
+
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 7);
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 20);
+    }
+
+    function testInterplanetaryMissileAttackRejectsInsufficientInventory() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 2
+        );
     }
 
     function testRiftDepositRequiresContractGates() public {
@@ -1697,7 +1741,9 @@ contract VeydriftGameTest is Test {
     }
 
     function _newGame(address owner) internal returns (VeydriftGame) {
-        return new VeydriftGame(owner, address(new VeydriftCombatModule()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule();
+        VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
+        return new VeydriftGame(owner, address(gameplayModule));
     }
 
     function _fundGameReserves(
