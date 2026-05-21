@@ -32,13 +32,13 @@ describe("OGame-style prerequisite gating", () => {
       buildings: { shipyard: 0 },
       research: {},
     })).toEqual([
-      "Requires Shipyard 1",
-      "Requires Combustion Drive 1",
+      "Requires Shipyard 2",
+      "Requires Combustion Drive 2",
     ]);
 
     expect(missingUnlockRequirements(smallCargo!.requirements, {
-      buildings: { shipyard: 1 },
-      research: { combustionDrive: 1 },
+      buildings: { shipyard: 2 },
+      research: { combustionDrive: 2 },
     })).toEqual([]);
   });
 

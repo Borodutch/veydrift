@@ -63,6 +63,7 @@ export type ShipyardState = {
   unavailableReason?: string;
   resources: Resources | null;
   shipyardLevel: number;
+  naniteLevel: number;
   technologyLevels: Record<string, number>;
   ships: Array<{
     id: number;
@@ -407,6 +408,7 @@ export class VeydriftGameReader implements ChainReader {
           "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
         resources: null,
         shipyardLevel: 0,
+        naniteLevel: 0,
         technologyLevels: {},
         ships: [],
         queue: null
@@ -420,6 +422,7 @@ export class VeydriftGameReader implements ChainReader {
         productionAvailable: true,
         resources: null,
         shipyardLevel: 0,
+        naniteLevel: 0,
         technologyLevels: {},
         ships: Array.from({ length: shipCount }, (_, id) => ({
           id,
@@ -431,9 +434,10 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, shipyardLevel, queue, technologyLevels, ships] = await Promise.all([
+    const [resources, shipyardLevel, naniteLevel, queue, technologyLevels, ships] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readTechnologyLevels(wallet),
       this.readShipRows(planetId)
@@ -445,6 +449,7 @@ export class VeydriftGameReader implements ChainReader {
       productionAvailable: true,
       resources,
       shipyardLevel: Number(shipyardLevel),
+      naniteLevel: Number(naniteLevel),
       technologyLevels,
       ships,
       queue

@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Resources, ShipKey } from "../playableMvp";
-import { canAfford, missingUnlockRequirements, shipCatalog } from "../playableMvp";
+import { canAfford, missingUnlockRequirements, shipCatalog, shipDurationEstimate } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
@@ -111,6 +111,9 @@ export function ShipyardPage({
                 const baseCost = productionAvailable ? toResources(chainShip?.cost) : undefined;
                 const quantity = quantities[ship.key] ?? 1;
                 const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+                const durationSeconds = baseCost
+                  ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
+                  : undefined;
                 const missing = getMissingRequirements(ship, shipyardState);
                 const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
                 const blockedReason = getBlockedReason({
@@ -129,6 +132,7 @@ export function ShipyardPage({
                     blockedReason={blockedReason}
                     cost={totalCost}
                     disabled={disabled}
+                    durationSeconds={durationSeconds}
                     key={ship.key}
                     missing={missing}
                     onBuild={() => onBuild(ship.id, ship.key, quantity)}
@@ -206,6 +210,7 @@ function ShipTile({
   blockedReason,
   cost,
   disabled,
+  durationSeconds,
   missing,
   onBuild,
   onQuantity,
@@ -216,6 +221,7 @@ function ShipTile({
   blockedReason: string | undefined;
   cost: Resources | undefined;
   disabled: boolean;
+  durationSeconds: number | undefined;
   missing: string[];
   onBuild: () => void;
   onQuantity: (quantity: number) => void;
@@ -244,10 +250,11 @@ function ShipTile({
           </span>
         </div>
 
-        <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
+        <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <Stat label="Metal" value={cost ? format(cost.metal) : "-"} />
           <Stat label="Crystal" value={cost ? format(cost.crystal) : "-"} />
           <Stat label="Deut" value={cost ? format(cost.deuterium) : "-"} />
+          <Stat label="Build time" value={durationSeconds === undefined ? "-" : formatDuration(durationSeconds)} />
         </dl>
 
         <div className="mt-3 min-h-10 text-xs leading-5 text-slate-400">
@@ -373,6 +380,18 @@ function formatReady(readyAt: string | null): string {
 
 function format(value: number): string {
   return formatter.format(Math.floor(value));
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 3_600) {
+    return `${Math.ceil(seconds / 60)}m`;
+  }
+
+  if (seconds < 86_400) {
+    return `${Math.floor(seconds / 3_600)}h ${Math.ceil((seconds % 3_600) / 60)}m`;
+  }
+
+  return `${Math.floor(seconds / 86_400)}d ${Math.ceil((seconds % 86_400) / 3_600)}h`;
 }
 
 const technologyIdByKey: Partial<Record<string, number>> = {

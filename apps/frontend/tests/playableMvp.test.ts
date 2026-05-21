@@ -17,6 +17,7 @@ import {
   researchCatalog,
   researchDurationEstimate,
   researchRequirementsFor,
+  shipDurationEstimate,
   shipCatalog,
   storageCaps,
   unmetResearchRequirement,
@@ -140,6 +141,27 @@ describe("playable MVP contract display helpers", () => {
       [15, "pathfinder", "Pathfinder"],
     ]);
     expect(shipCatalog.map((ship) => ship.asset)).toEqual(shipAssetManifest.map((asset) => asset.src));
+  });
+
+  test("uses vanilla OGame representative ship requirements and duration estimates", () => {
+    expect(shipCatalog.find((ship) => ship.key === "smallCargo")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
+    ]);
+    expect(shipCatalog.find((ship) => ship.key === "cruiser")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 4 },
+      { kind: "technology", key: "ion", label: "Ion", level: 2 },
+    ]);
+    expect(shipCatalog.find((ship) => ship.key === "destroyer")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 9 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 6 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
+    ]);
+
+    expect(shipDurationEstimate(2, 0, { metal: 2_000, crystal: 2_000, deuterium: 0 })).toBe(1_920);
+    expect(shipDurationEstimate(7, 2, { metal: 45_000, crystal: 15_000, deuterium: 0 })).toBe(2_700);
+    expect(shipDurationEstimate(12, 0, { metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 })).toBe(996_924);
   });
 
   test("maps the Solidity defense catalog for Defenses display", () => {
