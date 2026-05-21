@@ -14,6 +14,7 @@ import type {
   ShipyardState,
   WalletSettlement
 } from "./evm";
+import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { createRequestHandler } from "./server";
@@ -424,6 +425,31 @@ class MockChainReader implements ChainReader {
         }
       ]
     };
+  }
+
+  async getHighscoreForWallet(wallet: Address): Promise<HighscoreEntry> {
+    return calculateHighscore({
+      wallet,
+      homePlanetId: planet.planetId,
+      planetCount: 1,
+      planets: [
+        {
+          buildings: [
+            { id: 0, level: 1 },
+            { id: 5, level: 1 }
+          ],
+          defenses: [
+            { id: 0, count: 3 }
+          ],
+          ships: [
+            { id: 0, count: 2 }
+          ]
+        }
+      ],
+      technologies: [
+        { id: 0, level: 1 }
+      ]
+    });
   }
 
   async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> {
@@ -1183,6 +1209,36 @@ describe("Veydrift backend", () => {
     });
     expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
     expect(chainReader.rebuildCalls).toBe(1);
+  });
+
+  test("serves highscores derived from indexed canonical state", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.formula.pointsDivisor).toBe("1000");
+    expect(body.rankings.total[0]).toMatchObject({
+      rank: 1,
+      wallet: player,
+      homePlanetId: planet.planetId,
+      planetCount: 1,
+      score: {
+        total: "15",
+        economy: "0",
+        research: "1",
+        fleet: "8",
+        defense: "6"
+      }
+    });
   });
 
   test("serves deterministic systems around a center coordinate", async () => {
