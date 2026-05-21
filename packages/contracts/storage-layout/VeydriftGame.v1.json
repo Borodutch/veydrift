@@ -161,9 +161,35 @@
       "offset": 0,
       "slot": "28",
       "type": "address"
+    },
+    {
+      "label": "_attackWindows",
+      "offset": 0,
+      "slot": "29",
+      "type": "mapping(bytes32 => struct AttackWindow)"
+    },
+    {
+      "label": "_attackProtectionExemptions",
+      "offset": 0,
+      "slot": "30",
+      "type": "mapping(bytes32 => bool)"
     }
   ],
   "structs": {
+    "AttackWindow": [
+      {
+        "label": "windowStartedAt",
+        "offset": 0,
+        "slot": "0",
+        "type": "uint64"
+      },
+      {
+        "label": "count",
+        "offset": 8,
+        "slot": "0",
+        "type": "uint32"
+      }
+    ],
     "BuildingConstruction": [
       {
         "label": "active",

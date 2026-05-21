@@ -278,6 +278,16 @@ export type AllianceState = {
   };
 };
 
+export type AttackBlockReason = "none" | "bashing_limit" | "score_protection";
+
+export type AttackProtectionStatus = {
+  wallet: Address;
+  targetPlanetId: string;
+  allowed: boolean;
+  blockedReason: AttackBlockReason;
+  blockedReasonLabel: string | null;
+};
+
 export type SettledPlanetEvent = PlanetState & {
   eventName: "PlanetStarted" | "ColonyCreated";
   transactionHash: string;
@@ -308,6 +318,7 @@ export interface ChainReader {
   getResearchState(wallet: Address, planetId?: bigint): Promise<ResearchState>;
   getRiftState(wallet: Address, planetId?: bigint): Promise<RiftState>;
   getAllianceState(wallet: Address): Promise<AllianceState>;
+  getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
@@ -1069,6 +1080,20 @@ export class VeydriftGameReader implements ChainReader {
         memberCount: Number(decodeUintWord(wordAt(profileWords, 6)))
       },
       defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+    };
+  }
+
+  async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+    assertAddress(wallet);
+    const words = splitWords(await this.call("0x8a6b2246", [encodeAddress(wallet), encodeUint(targetPlanetId)]));
+    const blockedReason = decodeAttackBlockReason(Number(decodeUintWord(wordAt(words, 0))));
+
+    return {
+      wallet,
+      targetPlanetId: targetPlanetId.toString(),
+      allowed: blockedReason === "none",
+      blockedReason,
+      blockedReasonLabel: attackBlockReasonLabel(blockedReason)
     };
   }
 
@@ -2039,6 +2064,22 @@ function allianceRoleName(role: number): AllianceState["membership"]["role"] {
   if (role === 1) return "member";
   if (role === 2) return "officer";
   if (role === 3) return "leader";
+  return "none";
+}
+
+export function attackBlockReasonLabel(reason: AttackBlockReason): string | null {
+  if (reason === "bashing_limit") {
+    return "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window.";
+  }
+  if (reason === "score_protection") {
+    return "Attack blocked: target is protected by newbie or score-ratio protection.";
+  }
+  return null;
+}
+
+function decodeAttackBlockReason(reason: number): AttackBlockReason {
+  if (reason === 1) return "bashing_limit";
+  if (reason === 2) return "score_protection";
   return "none";
 }
 

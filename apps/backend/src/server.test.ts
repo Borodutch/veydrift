@@ -3,6 +3,7 @@ import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
   Address,
   AllianceState,
+  AttackProtectionStatus,
   ChainReader,
   DebrisFieldEvent,
   DefenseState,
@@ -501,6 +502,16 @@ class MockChainReader implements ChainReader {
         acsDefendSupported: true,
         interceptSupported: true
       }
+    };
+  }
+
+  async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+    return {
+      wallet,
+      targetPlanetId: targetPlanetId.toString(),
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null
     };
   }
 

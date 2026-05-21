@@ -1,6 +1,7 @@
 import type {
   Address,
   AllianceState,
+  AttackProtectionStatus,
   ChainReader,
   DebrisFieldEvent,
   DefenseState,
@@ -81,6 +82,13 @@ export class CachedChainReader implements ChainReader {
 
   getAllianceState(wallet: Address): Promise<AllianceState> {
     return this.cached(`alliance:${wallet.toLowerCase()}`, () => this.inner.getAllianceState(wallet));
+  }
+
+  getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+    return this.cached(
+      `attack-protection:${wallet.toLowerCase()}:${targetPlanetId.toString()}`,
+      () => this.inner.getAttackProtectionStatus(wallet, targetPlanetId)
+    );
   }
 
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {

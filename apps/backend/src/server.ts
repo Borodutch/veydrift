@@ -305,6 +305,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const ready = requireChainReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
+
+      try {
+        assertAddress(wallet);
+        const targetPlanetId = positiveBigIntQuery(url, "targetPlanetId");
+        return Response.json(await ready.getAttackProtectionStatus(wallet, targetPlanetId), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/highscore$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       const ready = requireHighscoreReader(chainReader, loaded.problems);
@@ -711,6 +727,18 @@ function selectedPlanetId(url: URL): bigint | undefined {
     throw new Error("planetId must be a positive integer.");
   }
   return planetId;
+}
+
+function positiveBigIntQuery(url: URL, name: string): bigint {
+  const value = url.searchParams.get(name);
+  if (!value || !/^\d+$/.test(value)) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  const parsed = BigInt(value);
+  if (parsed === 0n) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return parsed;
 }
 
 function handleUniverseSystemRequest(url: URL): Response {
