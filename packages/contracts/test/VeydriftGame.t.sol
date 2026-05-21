@@ -66,6 +66,9 @@ contract VeydriftGameTest is Test {
     bytes32 internal constant MISSILE_SILO_4 = "MISSILE_SILO_4";
     bytes32 internal constant CRAWLER_TECH_REQUIREMENT = "COMBUSTION_4_ARMOR_4_LASER_4";
     bytes32 internal constant RESEARCH_LAB_12 = "RESEARCH_LAB_12";
+    bytes32 internal constant ENERGY_3 = "ENERGY_3";
+    bytes32 internal constant COMPUTER_10 = "COMPUTER_10";
+    bytes32 internal constant ENERGY_12 = "ENERGY_12";
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
@@ -510,9 +513,29 @@ contract VeydriftGameTest is Test {
                 VeydriftDependencies.MissingDependency.selector, CRAWLER_TECH_REQUIREMENT
             )
         );
-        VeydriftDependencies.requireShip(Ship.Crawler, 5, 0, 3, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0);
+        VeydriftDependencies.requireShip(Ship.Crawler, 5, 0, 3, 0, 0, 0, 0, 0, 3, 0, 0, 3, 0);
 
-        VeydriftDependencies.requireShip(Ship.Crawler, 5, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 4, 0);
+        VeydriftDependencies.requireShip(Ship.Crawler, 5, 0, 4, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0);
+    }
+
+    function testBuildingDependencyCatalogRequiresVanillaUnlocks() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, ENERGY_3)
+        );
+        VeydriftDependencies.requireBuilding(Building.FusionReactor, 5, 0, 0, 0, 0, 2, 0, 0);
+        VeydriftDependencies.requireBuilding(Building.FusionReactor, 5, 0, 0, 0, 0, 3, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, COMPUTER_10)
+        );
+        VeydriftDependencies.requireBuilding(Building.NaniteFactory, 0, 10, 0, 0, 0, 0, 9, 0);
+        VeydriftDependencies.requireBuilding(Building.NaniteFactory, 0, 10, 0, 0, 0, 0, 10, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, ENERGY_12)
+        );
+        VeydriftDependencies.requireBuilding(Building.Terraformer, 0, 0, 0, 0, 1, 11, 0, 0);
+        VeydriftDependencies.requireBuilding(Building.Terraformer, 0, 0, 0, 0, 1, 12, 0, 0);
     }
 
     function testResearchDependencyCatalogUsesLabRequirements() public {

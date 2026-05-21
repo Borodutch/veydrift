@@ -542,6 +542,7 @@ export const shipCatalog: Array<{
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
+      { kind: "technology", key: "shielding", label: "Shielding", level: 4 },
     ],
     asset: shipAssetByKey.pathfinder,
   },

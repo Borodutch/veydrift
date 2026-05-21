@@ -42,12 +42,15 @@ library VeydriftDependencies {
         uint16 shipyardLevel,
         uint16 researchLabLevel,
         uint16 naniteFactoryLevel,
-        uint16,
-        uint16,
-        uint16
+        uint16 energyLevel,
+        uint16 computerLevel,
+        uint16 hyperspaceLevel
     ) public pure {
         if (building == Building.FusionReactor && deuteriumSynthesizerLevel < 5) {
             revert MissingDependency("DEUTERIUM_SYNTHESIZER_5");
+        }
+        if (building == Building.FusionReactor && energyLevel < 3) {
+            revert MissingDependency("ENERGY_3");
         }
         if (building == Building.Shipyard && roboticsFactoryLevel < 2) {
             revert MissingDependency("ROBOTICS_FACTORY_2");
@@ -58,8 +61,14 @@ library VeydriftDependencies {
         if (building == Building.NaniteFactory && roboticsFactoryLevel < 10) {
             revert MissingDependency("ROBOTICS_FACTORY_10");
         }
+        if (building == Building.NaniteFactory && computerLevel < 10) {
+            revert MissingDependency("COMPUTER_10");
+        }
         if (building == Building.Terraformer && naniteFactoryLevel < 1) {
             revert MissingDependency("NANITE_FACTORY_1");
+        }
+        if (building == Building.Terraformer && energyLevel < 12) {
+            revert MissingDependency("ENERGY_12");
         }
         if (building == Building.MissileSilo && shipyardLevel < 1) {
             revert MissingDependency("SHIPYARD_1");
@@ -69,6 +78,12 @@ library VeydriftDependencies {
         }
         if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
             revert MissingDependency("RESEARCH_LAB_2");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && energyLevel < 5) {
+            revert MissingDependency("ENERGY_5");
+        }
+        if (building == Building.InterdimensionalRiftStabilizer && hyperspaceLevel < 1) {
+            revert MissingDependency("HYPERSPACE_1");
         }
     }
 
@@ -158,6 +173,7 @@ library VeydriftDependencies {
         uint16 hyperspaceDriveLevel,
         uint16 hyperspaceLevel,
         uint16 gravitonLevel,
+        uint16 energyLevel,
         uint16 laserLevel,
         uint16 ionLevel,
         uint16 shieldingLevel,
@@ -284,11 +300,17 @@ library VeydriftDependencies {
         if (ship == Ship.Reaper && shieldingLevel < 6) {
             revert MissingDependency("SHIELDING_6");
         }
+        if (ship == Ship.Reaper && energyLevel < 5) {
+            revert MissingDependency("ENERGY_5");
+        }
         if (ship == Ship.Pathfinder && shipyardLevel < 5) {
             revert MissingDependency("SHIPYARD_5");
         }
         if (ship == Ship.Pathfinder && hyperspaceDriveLevel < 2) {
             revert MissingDependency("HYPERSPACE_DRIVE_2");
+        }
+        if (ship == Ship.Pathfinder && shieldingLevel < 4) {
+            revert MissingDependency("SHIELDING_4");
         }
         if (ship == Ship.Crawler && shipyardLevel < 5) {
             revert MissingDependency("SHIPYARD_5");
@@ -297,39 +319,6 @@ library VeydriftDependencies {
         {
             revert MissingDependency("COMBUSTION_4_ARMOR_4_LASER_4");
         }
-    }
-
-    function requireShip(
-        Ship ship,
-        uint16 shipyardLevel,
-        uint16,
-        uint16 laserLevel,
-        uint16 ionLevel,
-        uint16 plasmaLevel,
-        uint16 espionageLevel,
-        uint16 combustionDriveLevel,
-        uint16 impulseDriveLevel,
-        uint16 hyperspaceDriveLevel,
-        uint16 hyperspaceLevel,
-        uint16 gravitonLevel,
-        uint16 armorLevel,
-        uint16 shieldingLevel
-    ) public pure {
-        requireShip(
-            ship,
-            shipyardLevel,
-            espionageLevel,
-            combustionDriveLevel,
-            impulseDriveLevel,
-            hyperspaceDriveLevel,
-            hyperspaceLevel,
-            gravitonLevel,
-            laserLevel,
-            ionLevel,
-            shieldingLevel,
-            armorLevel,
-            plasmaLevel
-        );
     }
 
     function requireResearch(

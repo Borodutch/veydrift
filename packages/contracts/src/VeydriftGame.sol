@@ -556,9 +556,9 @@ contract VeydriftGame is VeydriftResourceReserves {
             _buildingLevels[planetId][Building.Shipyard],
             _buildingLevels[planetId][Building.ResearchLab],
             _buildingLevels[planetId][Building.NaniteFactory],
-            0,
-            0,
-            0
+            _technologyLevels[msg.sender][Technology.Energy],
+            _technologyLevels[msg.sender][Technology.Computer],
+            _technologyLevels[msg.sender][Technology.Hyperspace]
         );
     }
 
@@ -576,6 +576,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             _technologyLevels[msg.sender][Technology.HyperspaceDrive],
             _technologyLevels[msg.sender][Technology.Hyperspace],
             _technologyLevels[msg.sender][Technology.Graviton],
+            _technologyLevels[msg.sender][Technology.Energy],
             _technologyLevels[msg.sender][Technology.Laser],
             _technologyLevels[msg.sender][Technology.Ion],
             _technologyLevels[msg.sender][Technology.Shielding],
