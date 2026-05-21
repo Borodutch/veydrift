@@ -161,6 +161,8 @@ export type InfrastructureState = {
   productionPerHour: Resources | null;
   energyBalance: EnergyBalance | null;
   storageCaps: Resources | null;
+  protectedResources: Resources | null;
+  raidableResources: Resources | null;
   buildings: Array<{
     id: number;
     level: number;
@@ -627,6 +629,8 @@ export class VeydriftGameReader implements ChainReader {
         productionPerHour: null,
         energyBalance: null,
         storageCaps: null,
+        protectedResources: null,
+        raidableResources: null,
         buildings: [],
         queue: null
       };
@@ -641,6 +645,8 @@ export class VeydriftGameReader implements ChainReader {
         productionPerHour: null,
         energyBalance: null,
         storageCaps: null,
+        protectedResources: null,
+        raidableResources: null,
         buildings: Array.from({ length: buildingCount }, (_, id) => ({
           id,
           level: 0,
@@ -651,11 +657,22 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, productionPerHour, energyBalance, storageCaps, queue, buildings] = await Promise.all([
+    const [
+      resources,
+      productionPerHour,
+      energyBalance,
+      storageCaps,
+      protectedResources,
+      raidableResources,
+      queue,
+      buildings
+    ] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readResources("0x9ec5e0d5", planetId),
       this.readEnergyBalance(planetId),
       this.readResources("0x6db0ecd7", planetId),
+      this.readOptionalResources("0x222a58f5", planetId),
+      this.readOptionalResources("0x1da1f692", planetId),
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
       this.readBuildingRows(planetId)
     ]);
@@ -668,6 +685,8 @@ export class VeydriftGameReader implements ChainReader {
       productionPerHour,
       energyBalance,
       storageCaps,
+      protectedResources,
+      raidableResources,
       buildings,
       queue
     };
@@ -1533,6 +1552,15 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readResources(selector: string, firstArg: bigint): Promise<Resources> {
     return decodeResources(splitWords(await this.call(selector, [encodeUint(firstArg)])));
+  }
+
+  private async readOptionalResources(selector: string, firstArg: bigint): Promise<Resources | null> {
+    try {
+      return await this.readResources(selector, firstArg);
+    } catch (error) {
+      if (isRpcRevert(error)) return null;
+      throw error;
+    }
   }
 
   private async readEnergyBalance(planetId: bigint): Promise<EnergyBalance> {

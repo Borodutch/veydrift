@@ -195,6 +195,16 @@ class MockChainReader implements ChainReader {
         crystal: "10000",
         deuterium: "10000"
       },
+      protectedResources: {
+        metal: "1000",
+        crystal: "1000",
+        deuterium: "1000"
+      },
+      raidableResources: {
+        metal: "4000",
+        crystal: "3900",
+        deuterium: "3800"
+      },
       buildings: [
         {
           id: 0,
@@ -850,6 +860,16 @@ describe("Veydrift backend", () => {
       required: "100",
       scaleBps: "6000"
     });
+    expect(body.protectedResources).toEqual({
+      metal: "1000",
+      crystal: "1000",
+      deuterium: "1000"
+    });
+    expect(body.raidableResources).toEqual({
+      metal: "4000",
+      crystal: "3900",
+      deuterium: "3800"
+    });
     expect(body.buildings).toContainEqual({
       id: 0,
       level: 1,
@@ -891,7 +911,13 @@ describe("Veydrift backend", () => {
             4_800n
           ) as T;
         }
-        if (selector === "0x0adbf924" || selector === "0x9ec5e0d5" || selector === "0x6db0ecd7") {
+        if (
+          selector === "0x0adbf924"
+          || selector === "0x9ec5e0d5"
+          || selector === "0x6db0ecd7"
+          || selector === "0x222a58f5"
+          || selector === "0x1da1f692"
+        ) {
           return abiWords(5_000n, 4_900n, 4_800n) as T;
         }
         if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;

@@ -1477,6 +1477,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}
+          protectedResources={infrastructureChainState?.protectedResources}
+          raidableResources={infrastructureChainState?.raidableResources}
           settledState={infrastructureState}
           state={state}
         />
