@@ -64,7 +64,7 @@ library VeydriftCatalog {
         if (defense == Defense.HeavyLaser) return (6_000, 2_000, 0);
         if (defense == Defense.SmallShieldDome) return (10_000, 10_000, 0);
         if (defense == Defense.GaussCannon) return (20_000, 15_000, 2_000);
-        if (defense == Defense.IonCannon) return (5_000, 3_000, 0);
+        if (defense == Defense.IonCannon) return (2_000, 6_000, 0);
         if (defense == Defense.PlasmaTurret) return (50_000, 50_000, 30_000);
         if (defense == Defense.LargeShieldDome) return (50_000, 50_000, 0);
         if (defense == Defense.AntiBallisticMissile) return (8_000, 0, 2_000);

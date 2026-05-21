@@ -636,7 +636,7 @@ export const defenseCatalog: Array<{
     id: 5,
     label: "Ion Cannon",
     group: "energy",
-    baseCost: { metal: 5_000, crystal: 3_000, deuterium: 0 },
+    baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
       { kind: "technology", key: "ion", label: "Ion", level: 4 },

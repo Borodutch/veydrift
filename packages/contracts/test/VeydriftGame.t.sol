@@ -205,8 +205,8 @@ contract VeydriftGameTest is Test {
 
         assertEq(game.buildingLevel(planetId, Building.MetalMine), 0);
         assertEq(game.defenseCost(Defense.RocketLauncher).metal, 2_000);
-        assertEq(game.defenseCost(Defense.IonCannon).metal, 5_000);
-        assertEq(game.defenseCost(Defense.IonCannon).crystal, 3_000);
+        assertEq(game.defenseCost(Defense.IonCannon).metal, 2_000);
+        assertEq(game.defenseCost(Defense.IonCannon).crystal, 6_000);
         assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
         assertEq(game.technologyLevel(player, Technology.Energy), 0);

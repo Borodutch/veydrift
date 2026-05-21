@@ -154,6 +154,9 @@ describe("vanilla OGame formula conformance", () => {
       baseCost: { metal: 2_000, crystal: 0, deuterium: 0 },
       requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
     });
+    expect(defenseCatalog.find((defense) => defense.key === "ionCannon")).toMatchObject({
+      baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
+    });
     expect(defenseCatalog.find((defense) => defense.key === "gaussCannon")).toMatchObject({
       baseCost: { metal: 20_000, crystal: 15_000, deuterium: 2_000 },
       requirements: [

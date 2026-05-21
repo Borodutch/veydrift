@@ -185,8 +185,8 @@ describe("playable MVP contract display helpers", () => {
 	      deuterium: 0,
 	    });
 	    expect(defenseCatalog.find((defense) => defense.key === "ionCannon")?.baseCost).toEqual({
-	      metal: 5_000,
-	      crystal: 3_000,
+	      metal: 2_000,
+	      crystal: 6_000,
 	      deuterium: 0,
 	    });
 	    expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));

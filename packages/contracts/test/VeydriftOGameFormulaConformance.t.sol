@@ -101,6 +101,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
 
     function testVanillaOGameDefenseCostsAndRequirements() public {
         _assertDefense(Defense.RocketLauncher, 2_000, 0, 0);
+        _assertDefense(Defense.IonCannon, 2_000, 6_000, 0);
         _assertDefense(Defense.GaussCannon, 20_000, 15_000, 2_000);
         _assertDefense(Defense.PlasmaTurret, 50_000, 50_000, 30_000);
 
