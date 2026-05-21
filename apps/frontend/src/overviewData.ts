@@ -160,3 +160,35 @@ export function buildingQueuePreview(queue: QueueStateResponse | null | undefine
   const kind = queue?.kind === "building" || !queue?.kind ? "Building" : queue.kind;
   return { label: buildingQueueLabel(kind, queue?.targetLevel) };
 }
+
+export function queueProgressBarState({
+  indeterminate,
+  progress,
+  remaining,
+}: {
+  indeterminate?: boolean | undefined;
+  progress?: number | undefined;
+  remaining: string;
+}): {
+  indeterminate: boolean;
+  progress: number;
+} {
+  if (remaining === "Ready") {
+    return {
+      indeterminate: false,
+      progress: 1,
+    };
+  }
+
+  if (indeterminate) {
+    return {
+      indeterminate: true,
+      progress: 0,
+    };
+  }
+
+  return {
+    indeterminate: false,
+    progress: Math.min(1, Math.max(0, progress ?? 0)),
+  };
+}
