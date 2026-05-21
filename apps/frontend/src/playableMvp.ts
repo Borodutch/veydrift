@@ -89,6 +89,10 @@ export type ResearchRequirement =
       type: "research";
       key: ResearchKey;
       level: number;
+    }
+  | {
+      type: "energy";
+      produced: number;
     };
 
 export type BuildingRequirement = {
@@ -646,6 +650,7 @@ export const researchCatalog: Array<{
     label: "Energy Technology",
     lane: "Basic",
     baseCost: { metal: 0, crystal: 800, deuterium: 400 },
+    requirements: [{ type: "building", key: "researchLab", level: 1 }],
     asset: researchAssetByKey.energy,
   },
   {
@@ -654,7 +659,10 @@ export const researchCatalog: Array<{
     label: "Laser Technology",
     lane: "Basic",
     baseCost: { metal: 200, crystal: 100, deuterium: 0 },
-    requirements: [{ type: "research", key: "energy", level: 1 }],
+    requirements: [
+      { type: "building", key: "researchLab", level: 1 },
+      { type: "research", key: "energy", level: 2 },
+    ],
     asset: researchAssetByKey.laser,
   },
   {
@@ -663,7 +671,11 @@ export const researchCatalog: Array<{
     label: "Ion Technology",
     lane: "Basic",
     baseCost: { metal: 1_000, crystal: 300, deuterium: 100 },
-    requirements: [{ type: "research", key: "laser", level: 2 }],
+    requirements: [
+      { type: "building", key: "researchLab", level: 4 },
+      { type: "research", key: "energy", level: 4 },
+      { type: "research", key: "laser", level: 5 },
+    ],
     asset: researchAssetByKey.ion,
   },
   {
@@ -672,7 +684,11 @@ export const researchCatalog: Array<{
     label: "Hyperspace Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 4_000, deuterium: 2_000 },
-    requirements: [{ type: "research", key: "energy", level: 5 }],
+    requirements: [
+      { type: "building", key: "researchLab", level: 7 },
+      { type: "research", key: "energy", level: 5 },
+      { type: "research", key: "shielding", level: 5 },
+    ],
     asset: researchAssetByKey.hyperspace,
   },
   {
@@ -682,6 +698,7 @@ export const researchCatalog: Array<{
     lane: "Advanced",
     baseCost: { metal: 2_000, crystal: 4_000, deuterium: 1_000 },
     requirements: [
+      { type: "building", key: "researchLab", level: 4 },
       { type: "research", key: "energy", level: 8 },
       { type: "research", key: "laser", level: 10 },
       { type: "research", key: "ion", level: 5 },
@@ -694,6 +711,10 @@ export const researchCatalog: Array<{
     label: "Combustion Drive",
     lane: "Drive",
     baseCost: { metal: 400, crystal: 0, deuterium: 600 },
+    requirements: [
+      { type: "building", key: "researchLab", level: 1 },
+      { type: "research", key: "energy", level: 1 },
+    ],
     asset: researchAssetByKey.combustionDrive,
   },
   {
@@ -702,7 +723,10 @@ export const researchCatalog: Array<{
     label: "Impulse Drive",
     lane: "Drive",
     baseCost: { metal: 2_000, crystal: 4_000, deuterium: 600 },
-    requirements: [{ type: "research", key: "energy", level: 1 }],
+    requirements: [
+      { type: "building", key: "researchLab", level: 2 },
+      { type: "research", key: "energy", level: 1 },
+    ],
     asset: researchAssetByKey.impulseDrive,
   },
   {
@@ -711,7 +735,10 @@ export const researchCatalog: Array<{
     label: "Hyperspace Drive",
     lane: "Drive",
     baseCost: { metal: 10_000, crystal: 20_000, deuterium: 6_000 },
-    requirements: [{ type: "research", key: "hyperspace", level: 3 }],
+    requirements: [
+      { type: "building", key: "researchLab", level: 7 },
+      { type: "research", key: "hyperspace", level: 3 },
+    ],
     asset: researchAssetByKey.hyperspaceDrive,
   },
   {
@@ -720,6 +747,7 @@ export const researchCatalog: Array<{
     label: "Espionage Technology",
     lane: "Advanced",
     baseCost: { metal: 200, crystal: 1_000, deuterium: 200 },
+    requirements: [{ type: "building", key: "researchLab", level: 3 }],
     asset: researchAssetByKey.espionage,
   },
   {
@@ -728,6 +756,7 @@ export const researchCatalog: Array<{
     label: "Computer Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 400, deuterium: 600 },
+    requirements: [{ type: "building", key: "researchLab", level: 1 }],
     asset: researchAssetByKey.computer,
   },
   {
@@ -737,6 +766,7 @@ export const researchCatalog: Array<{
     lane: "Advanced",
     baseCost: { metal: 4_000, crystal: 8_000, deuterium: 4_000 },
     requirements: [
+      { type: "building", key: "researchLab", level: 3 },
       { type: "research", key: "espionage", level: 4 },
       { type: "research", key: "impulseDrive", level: 3 },
     ],
@@ -749,6 +779,7 @@ export const researchCatalog: Array<{
     lane: "Advanced",
     baseCost: { metal: 240_000, crystal: 400_000, deuterium: 160_000 },
     requirements: [
+      { type: "building", key: "researchLab", level: 10 },
       { type: "research", key: "computer", level: 8 },
       { type: "research", key: "hyperspace", level: 8 },
     ],
@@ -760,7 +791,10 @@ export const researchCatalog: Array<{
     label: "Graviton Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 0, deuterium: 0 },
-    requirements: [{ type: "research", key: "energy", level: 12 }],
+    requirements: [
+      { type: "building", key: "researchLab", level: 12 },
+      { type: "energy", produced: 300_000 },
+    ],
     asset: researchAssetByKey.graviton,
   },
   {
@@ -769,6 +803,7 @@ export const researchCatalog: Array<{
     label: "Weapons Technology",
     lane: "Combat",
     baseCost: { metal: 800, crystal: 200, deuterium: 0 },
+    requirements: [{ type: "building", key: "researchLab", level: 4 }],
     asset: researchAssetByKey.weapons,
   },
   {
@@ -777,7 +812,10 @@ export const researchCatalog: Array<{
     label: "Shielding Technology",
     lane: "Combat",
     baseCost: { metal: 200, crystal: 600, deuterium: 0 },
-    requirements: [{ type: "research", key: "energy", level: 1 }],
+    requirements: [
+      { type: "building", key: "researchLab", level: 6 },
+      { type: "research", key: "energy", level: 3 },
+    ],
     asset: researchAssetByKey.shielding,
   },
   {
@@ -786,13 +824,12 @@ export const researchCatalog: Array<{
     label: "Armor Technology",
     lane: "Combat",
     baseCost: { metal: 1_000, crystal: 0, deuterium: 0 },
+    requirements: [{ type: "building", key: "researchLab", level: 2 }],
     asset: researchAssetByKey.armor,
   },
 ];
 
-const BASE_RESEARCH_REQUIREMENTS: ResearchRequirement[] = [
-  { type: "building", key: "researchLab", level: 1 },
-];
+const BASE_RESEARCH_REQUIREMENTS: ResearchRequirement[] = [];
 
 const BUILDING_REQUIREMENTS: Partial<Record<BuildingKey, BuildingRequirement[]>> = {
   researchLab: [{ type: "building", key: "roboticsFactory", level: 1 }],
@@ -1044,6 +1081,14 @@ export function researchCost(
     throw new Error(`Unknown research: ${key}`);
   }
 
+  if (key === "astrophysics") {
+    return scaleResearchCost(entry.baseCost, research[key], 1.75);
+  }
+
+  if (key === "graviton") {
+    return { metal: 0, crystal: 0, deuterium: 0 };
+  }
+
   return scaleByLevel(entry.baseCost, research[key]);
 }
 
@@ -1082,6 +1127,10 @@ export function unmetResearchRequirement(
       return state.buildings[requirement.key] < requirement.level;
     }
 
+    if (requirement.type === "energy") {
+      return energyBalance(state.buildings).produced < requirement.produced;
+    }
+
     return state.research[requirement.key] < requirement.level;
   });
 }
@@ -1114,7 +1163,9 @@ function uniqueRequirements<T extends BuildingRequirement | ResearchRequirement>
   requirements: readonly T[],
 ): T[] {
   return uniqueBy(requirements, (requirement) => (
-    `${requirement.type}:${requirement.key}:${requirement.level}`
+    requirement.type === "energy"
+      ? `${requirement.type}:${requirement.produced}`
+      : `${requirement.type}:${requirement.key}:${requirement.level}`
   ));
 }
 
@@ -1213,11 +1264,19 @@ export function planetSummary() {
 }
 
 function scaleByLevel(cost: Resources, currentLevel: number): Resources {
-  return {
-    metal: scaleByFactor(cost.metal, currentLevel, 2, 1),
-    crystal: scaleByFactor(cost.crystal, currentLevel, 2, 1),
-    deuterium: scaleByFactor(cost.deuterium, currentLevel, 2, 1),
-  };
+  return scaleResearchCost(cost, currentLevel, 2);
+}
+
+function scaleResearchCost(cost: Resources, currentLevel: number, factor: 2 | 1.75): Resources {
+  if (factor === 1.75) {
+    return {
+      metal: roundToNearestHundred(cost.metal * (1.75 ** currentLevel)),
+      crystal: roundToNearestHundred(cost.crystal * (1.75 ** currentLevel)),
+      deuterium: roundToNearestHundred(cost.deuterium * (1.75 ** currentLevel)),
+    };
+  }
+
+  return multiply(cost, 2 ** currentLevel);
 }
 
 function scaleBuildingCost(cost: Resources, key: BuildingKey, currentLevel: number): Resources {
@@ -1253,6 +1312,10 @@ function scaledLevelValue(base: number, level: number): number {
 
 function scaleByFactor(value: number, exponent: number, numerator: number, denominator: number): number {
   return Math.floor((value * (numerator ** exponent)) / (denominator ** exponent));
+}
+
+function roundToNearestHundred(value: number): number {
+  return Math.round(value / 100) * 100;
 }
 
 function productionResourceForBuilding(key: BuildingKey): keyof Resources {

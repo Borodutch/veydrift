@@ -591,6 +591,10 @@ function formatRequirement(requirement: ResearchRequirement): string {
     return `${building?.label ?? requirement.key} ${requirement.level}`;
   }
 
+  if (requirement.type === "energy") {
+    return `Energy production ${requirement.produced.toLocaleString()}`;
+  }
+
   const research = researchCatalog.find((item) => item.key === requirement.key);
   return `${research?.label ?? requirement.key} ${requirement.level}`;
 }

@@ -123,8 +123,8 @@ contract VeydriftOGameFormulaConformanceTest is Test {
                 VeydriftDependencies.MissingDependency.selector, DEP_PLASMA_RESEARCH
             )
         );
-        VeydriftDependencies.requireResearch(Technology.Plasma, 8, 10, 4, 0, 0, 0, 0);
-        VeydriftDependencies.requireResearch(Technology.Plasma, 8, 10, 5, 0, 0, 0, 0);
+        VeydriftDependencies.requireResearch(Technology.Plasma, 4, 8, 10, 4, 0, 0, 0, 0, 0);
+        VeydriftDependencies.requireResearch(Technology.Plasma, 4, 8, 10, 5, 0, 0, 0, 0, 0);
     }
 
     function _assertBuildingCost(

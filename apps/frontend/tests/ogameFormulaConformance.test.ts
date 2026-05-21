@@ -151,14 +151,15 @@ describe("vanilla OGame formula conformance", () => {
 
   test("uses vanilla defense costs and requirements", () => {
     expect(defenseCatalog.find((defense) => defense.key === "rocketLauncher")).toMatchObject({
-      baseCost: { metal: 200, crystal: 0, deuterium: 0 },
+      baseCost: { metal: 2_000, crystal: 0, deuterium: 0 },
       requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
     });
     expect(defenseCatalog.find((defense) => defense.key === "gaussCannon")).toMatchObject({
       baseCost: { metal: 20_000, crystal: 15_000, deuterium: 2_000 },
       requirements: [
-        { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-        { kind: "technology", key: "laser", label: "Laser", level: 6 },
+        { kind: "building", key: "shipyard", label: "Shipyard", level: 6 },
+        { kind: "technology", key: "energy", label: "Energy", level: 6 },
+        { kind: "technology", key: "weapons", label: "Weapons", level: 3 },
         { kind: "technology", key: "shielding", label: "Shielding", level: 1 },
       ],
     });
@@ -174,7 +175,7 @@ describe("vanilla OGame formula conformance", () => {
     expect(researchCost({ ...state.research, energy: 3 }, "energy"))
       .toEqual({ metal: 0, crystal: 6_400, deuterium: 3_200 });
     expect(researchRequirementsFor("plasma")).toEqual([
-      { type: "building", key: "researchLab", level: 1 },
+      { type: "building", key: "researchLab", level: 4 },
       { type: "research", key: "energy", level: 8 },
       { type: "research", key: "laser", level: 10 },
       { type: "research", key: "ion", level: 5 },

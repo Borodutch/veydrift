@@ -3,10 +3,24 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
-import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {Building, Defense, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+
+contract VeydriftGameHarness is VeydriftGame {
+    constructor(address initialOwner) VeydriftGame(initialOwner) {}
+
+    function setBuildingLevelForTest(uint256 planetId, Building building, uint16 level) external {
+        _buildingLevels[planetId][building] = level;
+    }
+
+    function setTechnologyLevelForTest(address player, Technology technology, uint16 level)
+        external
+    {
+        _technologyLevels[player][technology] = level;
+    }
+}
 
 contract MockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -64,7 +78,7 @@ contract VeydriftGameTest is Test {
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
-    VeydriftGame internal game;
+    VeydriftGameHarness internal game;
     MockResourceToken internal metalToken;
     MockResourceToken internal crystalToken;
     MockResourceToken internal deuteriumToken;
@@ -80,7 +94,7 @@ contract VeydriftGameTest is Test {
     );
 
     function setUp() public {
-        game = new VeydriftGame(admin);
+        game = new VeydriftGameHarness(admin);
         metalToken = new MockResourceToken();
         crystalToken = new MockResourceToken();
         deuteriumToken = new MockResourceToken();
@@ -218,6 +232,135 @@ contract VeydriftGameTest is Test {
         assertEq(metalCap, 10_000);
         assertEq(crystalCap, 10_000);
         assertEq(deuteriumCap, 10_000);
+    }
+
+    function testVanillaResearchCostsScaleByCurrentLevel() public {
+        VeydriftGameStorage.Resources memory energy = game.researchCost(player, Technology.Energy);
+        assertEq(energy.metal, 0);
+        assertEq(energy.crystal, 800);
+        assertEq(energy.deuterium, 400);
+
+        game.setTechnologyLevelForTest(player, Technology.Energy, 2);
+        energy = game.researchCost(player, Technology.Energy);
+        assertEq(energy.metal, 0);
+        assertEq(energy.crystal, 3_200);
+        assertEq(energy.deuterium, 1_600);
+
+        game.setTechnologyLevelForTest(player, Technology.HyperspaceDrive, 1);
+        VeydriftGameStorage.Resources memory hyperspaceDrive =
+            game.researchCost(player, Technology.HyperspaceDrive);
+        assertEq(hyperspaceDrive.metal, 20_000);
+        assertEq(hyperspaceDrive.crystal, 40_000);
+        assertEq(hyperspaceDrive.deuterium, 12_000);
+
+        game.setTechnologyLevelForTest(player, Technology.Astrophysics, 2);
+        VeydriftGameStorage.Resources memory astrophysics =
+            game.researchCost(player, Technology.Astrophysics);
+        assertEq(astrophysics.metal, 12_300);
+        assertEq(astrophysics.crystal, 24_500);
+        assertEq(astrophysics.deuterium, 12_300);
+
+        game.setTechnologyLevelForTest(player, Technology.IntergalacticResearchNetwork, 1);
+        VeydriftGameStorage.Resources memory irn =
+            game.researchCost(player, Technology.IntergalacticResearchNetwork);
+        assertEq(irn.metal, 480_000);
+        assertEq(irn.crystal, 800_000);
+        assertEq(irn.deuterium, 320_000);
+
+        game.setTechnologyLevelForTest(player, Technology.Graviton, 2);
+        VeydriftGameStorage.Resources memory graviton =
+            game.researchCost(player, Technology.Graviton);
+        assertEq(graviton.metal, 0);
+        assertEq(graviton.crystal, 0);
+        assertEq(graviton.deuterium, 0);
+    }
+
+    function testResearchPrerequisitesUseVanillaOGameRequirements() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        game.setBuildingLevelForTest(planetId, Building.ResearchLab, 1);
+
+        vm.prank(player);
+        bytes32 energyTwoDependency = "ENERGY_2";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.MissingDependency.selector, energyTwoDependency
+            )
+        );
+        game.startResearch(planetId, Technology.Laser);
+
+        game.setTechnologyLevelForTest(player, Technology.Energy, 2);
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Laser);
+
+        VeydriftGameStorage.ResearchQueue memory queue = game.researchQueue(player);
+        assertTrue(queue.active);
+        assertEq(uint8(queue.technology), uint8(Technology.Laser));
+        assertEq(queue.targetLevel, 1);
+        assertEq(queue.cost.metal, 200);
+        assertEq(queue.cost.crystal, 100);
+        assertEq(queue.cost.deuterium, 0);
+        assertEq(queue.readyAt, block.timestamp + 540);
+
+        vm.warp(queue.readyAt);
+        vm.prank(player);
+        game.finishResearch();
+
+        assertEq(game.technologyLevel(player, Technology.Laser), 1);
+        assertFalse(game.researchQueue(player).active);
+    }
+
+    function testAdvancedResearchPrerequisitesCoverRequestedTechnologies() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        game.setBuildingLevelForTest(planetId, Building.ResearchLab, 3);
+        vm.prank(player);
+        bytes32 researchLabFourDependency = "RESEARCH_LAB_4";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.MissingDependency.selector, researchLabFourDependency
+            )
+        );
+        game.startResearch(planetId, Technology.Ion);
+
+        game.setBuildingLevelForTest(planetId, Building.ResearchLab, 7);
+        vm.prank(player);
+        bytes32 hyperspaceDependency = "ENERGY_5_SHIELDING_5";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.MissingDependency.selector, hyperspaceDependency
+            )
+        );
+        game.startResearch(planetId, Technology.Hyperspace);
+
+        game.setTechnologyLevelForTest(player, Technology.Hyperspace, 2);
+        vm.prank(player);
+        bytes32 hyperspaceDriveDependency = "HYPERSPACE_3";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.MissingDependency.selector, hyperspaceDriveDependency
+            )
+        );
+        game.startResearch(planetId, Technology.HyperspaceDrive);
+
+        game.setBuildingLevelForTest(planetId, Building.ResearchLab, 10);
+        vm.prank(player);
+        bytes32 irnDependency = "COMPUTER_8_HYPERSPACE_8";
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.MissingDependency.selector, irnDependency)
+        );
+        game.startResearch(planetId, Technology.IntergalacticResearchNetwork);
+
+        game.setBuildingLevelForTest(planetId, Building.ResearchLab, 12);
+        vm.prank(player);
+        bytes32 gravitonDependency = "GRAVITON_ENERGY";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.MissingDependency.selector, gravitonDependency
+            )
+        );
+        game.startResearch(planetId, Technology.Graviton);
     }
 
     function testBuildingConstructionAndCompletion() public {
@@ -500,10 +643,6 @@ contract VeydriftGameTest is Test {
         game.startShipProduction(1, Ship.SmallCargo, 1);
         vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
         game.finishShipProduction(1);
-        vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
-        game.startResearch(1, Technology.Energy);
-        vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
-        game.finishResearch();
         vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
         game.createColonyAtNextSlot(1, 1);
         vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
