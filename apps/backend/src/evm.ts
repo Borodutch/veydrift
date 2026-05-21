@@ -63,6 +63,7 @@ export type ShipyardState = {
   unavailableReason?: string;
   resources: Resources | null;
   shipyardLevel: number;
+  naniteLevel: number;
   technologyLevels: Record<string, number>;
   ships: Array<{
     id: number;
@@ -79,6 +80,7 @@ export type DefenseState = {
   unavailableReason?: string;
   resources: Resources | null;
   shipyardLevel: number;
+  missileSiloLevel: number;
   technologyLevels: Record<string, number>;
   defenses: Array<{
     id: number;
@@ -407,6 +409,7 @@ export class VeydriftGameReader implements ChainReader {
           "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
         resources: null,
         shipyardLevel: 0,
+        naniteLevel: 0,
         technologyLevels: {},
         ships: [],
         queue: null
@@ -420,6 +423,7 @@ export class VeydriftGameReader implements ChainReader {
         productionAvailable: true,
         resources: null,
         shipyardLevel: 0,
+        naniteLevel: 0,
         technologyLevels: {},
         ships: Array.from({ length: shipCount }, (_, id) => ({
           id,
@@ -431,9 +435,10 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, shipyardLevel, queue, technologyLevels, ships] = await Promise.all([
+    const [resources, shipyardLevel, naniteLevel, queue, technologyLevels, ships] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readTechnologyLevels(wallet),
       this.readShipRows(planetId)
@@ -445,6 +450,7 @@ export class VeydriftGameReader implements ChainReader {
       productionAvailable: true,
       resources,
       shipyardLevel: Number(shipyardLevel),
+      naniteLevel: Number(naniteLevel),
       technologyLevels,
       ships,
       queue
@@ -468,6 +474,7 @@ export class VeydriftGameReader implements ChainReader {
           "The deployed contract only supports first-planet settlement. Defense production is not available on this deployment yet.",
         resources: null,
         shipyardLevel: 0,
+        missileSiloLevel: 0,
         technologyLevels: {},
         defenses: [],
         queue: null
@@ -481,6 +488,7 @@ export class VeydriftGameReader implements ChainReader {
         productionAvailable: true,
         resources: null,
         shipyardLevel: 0,
+        missileSiloLevel: 0,
         technologyLevels: {},
         defenses: Array.from({ length: defenseCount }, (_, id) => ({
           id,
@@ -492,9 +500,10 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, shipyardLevel, queue, technologyLevels, defenses] = await Promise.all([
+    const [resources, shipyardLevel, missileSiloLevel, queue, technologyLevels, defenses] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(14n)]),
       this.readPlanetQueue("0x5758361d", planetId, "defense"),
       this.readTechnologyLevels(wallet),
       this.readDefenseRows(planetId)
@@ -506,6 +515,7 @@ export class VeydriftGameReader implements ChainReader {
       productionAvailable: true,
       resources,
       shipyardLevel: Number(shipyardLevel),
+      missileSiloLevel: Number(missileSiloLevel),
       technologyLevels,
       defenses,
       queue
@@ -1034,7 +1044,7 @@ function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailabl
   };
 }
 
-function riftRequirements(
+export function riftRequirements(
   riftLevel: number | null,
   roboticsLevel: number,
   researchLabLevel: number,
@@ -1053,29 +1063,22 @@ function riftRequirements(
       key: "roboticsFactory",
       label: "Robotics Factory",
       currentLevel: roboticsLevel,
-      requiredLevel: 4
+      requiredLevel: 2
     },
     {
       kind: "building",
       key: "researchLab",
       label: "Research Lab",
       currentLevel: researchLabLevel,
-      requiredLevel: 2
+      requiredLevel: 1
     },
     {
       kind: "technology",
       key: "energy",
       label: "Energy Technology",
       currentLevel: technologyLevels["0"] ?? 0,
-      requiredLevel: 5
-    },
-    {
-      kind: "technology",
-      key: "hyperspace",
-      label: "Hyperspace Technology",
-      currentLevel: technologyLevels["9"] ?? 0,
       requiredLevel: 2
-    }
+    },
   ];
 }
 

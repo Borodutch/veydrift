@@ -1,0 +1,344 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+
+interface IERC20ReserveToken {
+    function balanceOf(address account) external view returns (uint256);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+}
+
+/// @notice Shared storage, ABI structs, events, and owner controls for VeydriftGame modules.
+abstract contract VeydriftGameStorage {
+    uint256 public constant DEFAULT_START_PRICE = 0.05 ether;
+    uint8 public constant MAX_BUILDING_ID = uint8(type(Building).max);
+    uint8 public constant MAX_DEFENSE_ID = uint8(type(Defense).max);
+    uint8 public constant MAX_SHIP_ID = uint8(type(Ship).max);
+    uint8 public constant MAX_TECHNOLOGY_ID = uint8(type(Technology).max);
+    uint8 public constant MAX_RESOURCE_ID = uint8(type(Resource).max);
+    uint16 public constant MAX_LEVEL = 50;
+    uint16 public constant BPS = 10_000;
+    uint32 public constant MIN_QUEUE_SECONDS = 60;
+    uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
+    uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
+    uint16 public constant MAX_GALAXY = 9;
+    uint16 public constant MAX_SYSTEM = 499;
+    uint8 public constant MAX_POSITION = 15;
+    bytes32 public constant FIRST_PLANET_DOMAIN = keccak256("veydrift.first-planet.v1");
+    bytes32 public constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
+
+    struct Resources {
+        uint128 metal;
+        uint128 crystal;
+        uint128 deuterium;
+    }
+
+    struct Planet {
+        address owner;
+        uint16 galaxy;
+        uint16 system;
+        uint8 position;
+        uint16 fields;
+        int16 temperature;
+        uint16 metalMultiplierBps;
+        uint16 crystalMultiplierBps;
+        uint16 deuteriumMultiplierBps;
+        uint64 lastSettledAt;
+        Resources resources;
+    }
+
+    struct FirstPlanet {
+        uint16 galaxy;
+        uint16 system;
+        uint8 position;
+        uint16 fields;
+        int16 temperature;
+        uint64 settledAt;
+        uint64 settledBlock;
+    }
+
+    struct BuildingConstruction {
+        bool active;
+        Building building;
+        uint16 targetLevel;
+        uint64 readyAt;
+        Resources cost;
+    }
+
+    struct DefenseQueue {
+        bool active;
+        Defense defense;
+        uint32 quantity;
+        uint64 readyAt;
+        Resources cost;
+    }
+
+    struct ShipQueue {
+        bool active;
+        Ship ship;
+        uint32 quantity;
+        uint64 readyAt;
+        Resources cost;
+    }
+
+    struct ResearchQueue {
+        bool active;
+        Technology technology;
+        uint16 targetLevel;
+        uint64 readyAt;
+        Resources cost;
+    }
+
+    struct Fleet {
+        bool active;
+        bool returning;
+        address owner;
+        uint256 originPlanetId;
+        uint256 destinationPlanetId;
+        uint64 dispatchedAt;
+        uint64 arrivesAt;
+        uint128 fuelCost;
+        Resources cargo;
+        uint32 smallCargo;
+        uint32 recycler;
+        uint32 colonyShip;
+    }
+
+    struct ResourceWithdrawal {
+        bool active;
+        uint256 planetId;
+        Resource resource;
+        uint128 amount;
+        uint64 unlocksAt;
+    }
+
+    uint256 public startPrice;
+    uint256 public nextPlanetId;
+    address internal _owner;
+
+    mapping(address player => uint256 planetId) public homePlanetOf;
+    mapping(uint256 planetId => Planet planet) internal _planets;
+    mapping(bytes32 coordinateKey => bool occupied) public occupiedCoordinates;
+    mapping(uint256 planetId => mapping(Building building => uint16 level)) internal
+        _buildingLevels;
+    mapping(uint256 planetId => BuildingConstruction construction) public buildingConstructions;
+    mapping(uint256 planetId => DefenseQueue queue) public defenseQueues;
+    mapping(uint256 planetId => ShipQueue queue) public shipQueues;
+    mapping(address player => ResearchQueue queue) public researchQueues;
+    uint256 public nextFleetId;
+    mapping(address player => uint256 count) public planetCountOf;
+    mapping(Resource resource => IERC20ReserveToken token) internal _resourceTokens;
+    Resources internal _totalInternalResources;
+    Resources internal _lockedWithdrawalResources;
+    mapping(address player => mapping(Resource resource => ResourceWithdrawal withdrawal)) public
+        resourceWithdrawals;
+    mapping(uint256 planetId => mapping(Defense defense => uint32 count)) internal _defenseCounts;
+    mapping(address player => mapping(Technology technology => uint16 level)) internal
+        _technologyLevels;
+
+    error AlreadyStarted();
+    error BadStartPayment();
+    error CoordinatesExhausted();
+    error InvalidId();
+    error InvalidQuantity();
+    error NoPlanet();
+    error NotPlanetOwner();
+    error QueueActive();
+    error QueueInactive();
+    error QueueNotReady(uint64 readyAt);
+    error NoFirstPlanet(address player);
+    error ConstructionActive();
+    error ConstructionInactive();
+    error ConstructionNotReady(uint64 readyAt);
+    error InsufficientResources(uint128 metal, uint128 crystal, uint128 deuterium);
+    error MissingDependency(bytes32 dependency);
+    error FieldCapacityReached();
+    error LevelTooHigh();
+    error InvalidCoordinates();
+    error CoordinatesOccupied();
+    error PlanetLimitReached(uint256 limit);
+    error InsufficientShips(Ship ship, uint32 available, uint32 required);
+    error SamePlanet();
+    error CargoCapacityExceeded(uint256 capacity, uint256 cargo);
+    error FleetInactive();
+    error FleetNotOwner();
+    error FleetNotArrived(uint64 arrivesAt);
+    error FleetAlreadyReturning();
+    error FleetAlreadyArrived();
+    error RiftStabilizerRequired(uint256 planetId);
+    error ResourceTokenNotConfigured(Resource resource);
+    error WithdrawalActive(Resource resource);
+    error WithdrawalInactive(Resource resource);
+    error WithdrawalNotReady(uint64 unlocksAt);
+    error TransferFailed();
+    error Unauthorized(address account);
+    error InvalidResource(Resource resource);
+    error ResourceTokenUnset(Resource resource);
+    error ResourceTransferFailed(Resource resource, address token, uint256 amount);
+    error InsufficientResourceReserve(Resource resource, uint256 required, uint256 available);
+    error UnsupportedGameplayModule();
+    error DefenseLimitReached(Defense defense);
+    error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
+
+    event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
+    event PlanetStarted(
+        address indexed player,
+        uint256 indexed planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint16 fields,
+        int16 temperature
+    );
+    event FirstPlanetSettled(
+        address indexed player,
+        uint256 indexed planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        bytes32 coordinateKey,
+        bytes32 planetSeed
+    );
+    event PlanetSettled(
+        uint256 indexed planetId, uint128 metal, uint128 crystal, uint128 deuterium
+    );
+    event BuildingStarted(
+        uint256 indexed planetId,
+        Building indexed building,
+        uint16 targetLevel,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event BuildingCompleted(uint256 indexed planetId, Building indexed building, uint16 level);
+    event DefenseQueued(
+        uint256 indexed planetId,
+        Defense indexed defense,
+        uint32 quantity,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event DefenseCompleted(
+        uint256 indexed planetId, Defense indexed defense, uint32 quantity, uint32 total
+    );
+    event ShipQueued(
+        uint256 indexed planetId,
+        Ship indexed ship,
+        uint32 quantity,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event ShipCompleted(uint256 indexed planetId, Ship indexed ship, uint32 quantity, uint32 total);
+    event ResearchQueued(
+        address indexed player,
+        Technology indexed technology,
+        uint16 targetLevel,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event ResearchCompleted(address indexed player, Technology indexed technology, uint16 level);
+    event ColonyCreated(
+        address indexed player,
+        uint256 indexed originPlanetId,
+        uint256 indexed colonyPlanetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint16 fields,
+        int16 temperature
+    );
+    event FleetDispatched(
+        uint256 indexed fleetId,
+        address indexed player,
+        uint256 indexed originPlanetId,
+        uint256 destinationPlanetId,
+        uint64 arrivesAt,
+        uint32 smallCargo,
+        uint32 recycler,
+        uint32 colonyShip,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium,
+        uint128 fuelCost
+    );
+    event FleetRecalled(
+        uint256 indexed fleetId,
+        address indexed player,
+        uint256 indexed originPlanetId,
+        uint256 destinationPlanetId,
+        uint64 arrivesAt
+    );
+    event FleetArrived(
+        uint256 indexed fleetId,
+        address indexed player,
+        uint256 indexed destinationPlanetId,
+        bool returning
+    );
+    event ResourcesTransferred(
+        uint256 indexed fleetId,
+        uint256 indexed originPlanetId,
+        uint256 indexed destinationPlanetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event ResourceTokenUpdated(
+        Resource indexed resource, address indexed oldToken, address indexed newToken
+    );
+    event ResourceTokensUpdated(address metalToken, address crystalToken, address deuteriumToken);
+    event ResourceReservesDeposited(
+        address indexed depositor, uint128 metal, uint128 crystal, uint128 deuterium
+    );
+    event MarketResourceDeposited(
+        address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
+    );
+    event MarketResourceWithdrawalRequested(
+        address indexed player,
+        uint256 indexed planetId,
+        Resource indexed resource,
+        uint128 amount,
+        uint64 unlocksAt
+    );
+    event MarketResourceWithdrawalFinished(
+        address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
+    );
+    event FeesWithdrawn(address indexed to, uint256 amount);
+
+    constructor(address admin) {
+        _owner = admin;
+        startPrice = DEFAULT_START_PRICE;
+        nextPlanetId = 1;
+        nextFleetId = 1;
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != _owner) {
+            revert Unauthorized(msg.sender);
+        }
+        _;
+    }
+
+    function owner() external view returns (address) {
+        return _owner;
+    }
+
+    function setStartPrice(uint256 nextPrice) external onlyOwner {
+        uint256 oldPrice = startPrice;
+        startPrice = nextPrice;
+        emit StartPriceUpdated(oldPrice, nextPrice);
+    }
+
+    function withdrawFees(address payable to) external onlyOwner {
+        uint256 amount = address(this).balance;
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+        emit FeesWithdrawn(to, amount);
+    }
+}

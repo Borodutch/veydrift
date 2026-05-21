@@ -18,6 +18,7 @@ import {
   researchCost,
   researchDurationEstimate,
   researchRequirementsFor,
+  shipDurationEstimate,
   shipCatalog,
   storageCaps,
   unmetResearchRequirement,
@@ -95,9 +96,14 @@ describe("playable MVP contract display helpers", () => {
 
     expect(firstMine).toEqual({ metal: 60, crystal: 15, deuterium: 0 });
     expect(buildingCost(upgradedBuildings, "metalMine")).toEqual({
-      metal: 120,
-      crystal: 30,
+      metal: 90,
+      crystal: 22,
       deuterium: 0,
+    });
+    expect(buildingCost(state.buildings, "roboticsFactory")).toEqual({
+      metal: 400,
+      crystal: 120,
+      deuterium: 200,
     });
   });
 
@@ -138,6 +144,27 @@ describe("playable MVP contract display helpers", () => {
     expect(shipCatalog.map((ship) => ship.asset)).toEqual(shipAssetManifest.map((asset) => asset.src));
   });
 
+  test("uses vanilla OGame representative ship requirements and duration estimates", () => {
+    expect(shipCatalog.find((ship) => ship.key === "smallCargo")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
+    ]);
+    expect(shipCatalog.find((ship) => ship.key === "cruiser")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 4 },
+      { kind: "technology", key: "ion", label: "Ion", level: 2 },
+    ]);
+    expect(shipCatalog.find((ship) => ship.key === "destroyer")?.requirements).toEqual([
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 9 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 6 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
+    ]);
+
+    expect(shipDurationEstimate(2, 0, { metal: 2_000, crystal: 2_000, deuterium: 0 })).toBe(1_920);
+    expect(shipDurationEstimate(7, 2, { metal: 45_000, crystal: 15_000, deuterium: 0 })).toBe(2_700);
+    expect(shipDurationEstimate(12, 0, { metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 })).toBe(996_924);
+  });
+
   test("maps the Solidity defense catalog for Defenses display", () => {
     expect(defenseCatalog.map((defense) => [defense.id, defense.key, defense.label])).toEqual([
       [0, "rocketLauncher", "Rocket Launcher"],
@@ -150,9 +177,19 @@ describe("playable MVP contract display helpers", () => {
       [7, "largeShieldDome", "Large Shield Dome"],
       [8, "antiBallisticMissile", "Anti-Ballistic Missile"],
       [9, "interplanetaryMissile", "Interplanetary Missile"],
-    ]);
-    expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));
-  });
+	    ]);
+	    expect(defenseCatalog.find((defense) => defense.key === "rocketLauncher")?.baseCost).toEqual({
+	      metal: 2_000,
+	      crystal: 0,
+	      deuterium: 0,
+	    });
+	    expect(defenseCatalog.find((defense) => defense.key === "ionCannon")?.baseCost).toEqual({
+	      metal: 5_000,
+	      crystal: 3_000,
+	      deuterium: 0,
+	    });
+	    expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));
+	  });
 
   test("uses valid deterministic Shipyard, Research, and Defenses asset mappings", () => {
     const allAssets = [...shipAssetManifest, ...researchAssetManifest, ...defenseAssetManifest];
@@ -192,7 +229,7 @@ describe("playable MVP contract display helpers", () => {
       buildings: {
         ...state.buildings,
         researchLab: 12,
-        solarPlant: 9_999,
+        solarPlant: 0,
       },
     };
 
@@ -297,21 +334,16 @@ describe("playable MVP contract display helpers", () => {
       roboticsFactory: 4,
     };
 
-    expect(buildingDurationEstimate(state.buildings, cost)).toBe(60);
+    expect(buildingDurationEstimate(state.buildings, cost)).toBe(1_440);
     expect(buildingDurationEstimate(upgradedRobotics, { metal: 100_000, crystal: 50_000, deuterium: 0 }))
-      .toBe(300);
+      .toBe(43_200);
 
-    const advancedMine = {
-      ...state.buildings,
-      metalMine: 8,
-    };
-    expect(buildingDurationEstimate(state.buildings, buildingCost(state.buildings, "metalMine"))).toBe(60);
-    expect(buildingDurationEstimate(state.buildings, buildingCost(advancedMine, "metalMine"))).toBe(192);
+    expect(buildingDurationEstimate(state.buildings, buildingCost(state.buildings, "metalMine"))).toBe(108);
 
     const largeCost = { metal: 120_000, crystal: 0, deuterium: 0 };
-    expect(buildingDurationEstimate(state.buildings, largeCost)).toBe(1_200);
-    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 1 }, largeCost)).toBe(600);
-    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 2 }, largeCost)).toBe(400);
+    expect(buildingDurationEstimate(state.buildings, largeCost)).toBe(172_800);
+    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 1 }, largeCost)).toBe(86_400);
+    expect(buildingDurationEstimate({ ...state.buildings, roboticsFactory: 2 }, largeCost)).toBe(57_600);
   });
 
   test("estimates research duration with the vanilla OGame lab level plus one denominator", () => {
@@ -345,11 +377,11 @@ describe("playable MVP contract display helpers", () => {
       expect(mineEffect.deltaPerHour).toBeGreaterThan(0);
     }
 
-    expect(storageEffect.kind).toBe("storage");
+      expect(storageEffect.kind).toBe("storage");
     if (storageEffect.kind === "storage") {
       expect(storageEffect.resource).toBe("metal");
       expect(storageEffect.currentCapacity).toBe(storageCaps(buildings).metal);
-      expect(storageEffect.deltaCapacity).toBe(10_000);
+      expect(storageEffect.deltaCapacity).toBe(20_000);
     }
   });
 
@@ -370,14 +402,20 @@ describe("playable MVP contract display helpers", () => {
     const capacity = productionCapacityPerHour(buildings, profile);
     const effect = buildingEffectMetrics(buildings, "metalMine", profile);
 
-    expect(production.metal).toBe(30);
-    expect(capacity.metal).toBe(30);
+    expect(production.metal).toBe(33);
+    expect(capacity.metal).toBe(33);
     expect(effect.kind).toBe("production");
     if (effect.kind === "production") {
-      expect(effect.currentPerHour).toBe(30);
+      expect(effect.currentPerHour).toBe(33);
       expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 2 }, profile).metal);
       expect(effect.deltaPerHour).toBeGreaterThan(0);
     }
+
+    expect(productionPerHour({
+      ...state.buildings,
+      deuteriumSynthesizer: 1,
+      solarPlant: 3,
+    }, profile).deuterium).toBe(12);
   });
 
   test("shows mine upgrade capacity separately from low-energy throttled production", () => {
@@ -442,12 +480,12 @@ describe("playable MVP contract display helpers", () => {
 
     expect(energyBalance({ ...state.buildings, metalMine: 1 })).toMatchObject({
       produced: 0,
-      required: 10,
+      required: 11,
       scaleBps: 0,
     });
     expect(energyEffect.kind).toBe("energy");
     if (energyEffect.kind === "energy") {
-      expect(energyEffect.deltaProduced).toBe(30);
+      expect(energyEffect.deltaProduced).toBe(22);
     }
 
     expect(shipyardEffect.kind).toBe("shipyard");

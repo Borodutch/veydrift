@@ -120,12 +120,14 @@ export function DefensePage({
                 const quantity = quantities[defense.key] ?? 1;
                 const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
                 const missing = getMissingRequirements(defense, defenseState);
+                const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState);
                 const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
                 const blockedReason = getBlockedReason({
                   affordable,
                   canTransact,
                   defenseState,
                   hasPlanet: Boolean(defenseState?.homePlanetId),
+                  limitReason,
                   missing,
                   queueActive: Boolean(queue),
                   resources,
@@ -335,9 +337,34 @@ function getMissingRequirements(
   defenseState?: ChainDefenseState | null | undefined,
 ): string[] {
   return missingUnlockRequirements(defense.requirements, {
-    buildings: { shipyard: defenseState?.shipyardLevel ?? 0 },
+    buildings: {
+      shipyard: defenseState?.shipyardLevel ?? 0,
+      missileSilo: defenseState?.missileSiloLevel ?? 0,
+    },
     research: technologyLevelsByKey(defenseState?.technologyLevels),
   });
+}
+
+function getDefenseLimitReason(
+  key: DefenseKey,
+  quantity: number,
+  defenseState?: ChainDefenseState | null | undefined,
+): string | undefined {
+  if (!defenseState) return undefined;
+
+  const count = defenseCount(defenseState, key);
+  if ((key === "smallShieldDome" || key === "largeShieldDome") && count + quantity > 1) {
+    return "One shield dome of this type per planet";
+  }
+
+  const slotsPerUnit = key === "antiBallisticMissile" ? 1 : key === "interplanetaryMissile" ? 2 : 0;
+  if (slotsPerUnit === 0) return undefined;
+
+  const usedSlots =
+    defenseCount(defenseState, "antiBallisticMissile")
+    + defenseCount(defenseState, "interplanetaryMissile") * 2;
+  const capacity = (defenseState.missileSiloLevel ?? 0) * 10;
+  return usedSlots + slotsPerUnit * quantity > capacity ? "Missile Silo capacity full" : undefined;
 }
 
 function getBlockedReason({
@@ -345,6 +372,7 @@ function getBlockedReason({
   canTransact,
   defenseState,
   hasPlanet,
+  limitReason,
   missing,
   queueActive,
   resources,
@@ -353,6 +381,7 @@ function getBlockedReason({
   canTransact: boolean;
   defenseState?: ChainDefenseState | null | undefined;
   hasPlanet: boolean;
+  limitReason?: string | undefined;
   missing: string[];
   queueActive: boolean;
   resources: Resources | undefined;
@@ -363,9 +392,16 @@ function getBlockedReason({
   if (!hasPlanet) return "No game planet";
   if (queueActive) return "Queue active";
   if (missing.length > 0) return missing[0];
+  if (limitReason) return limitReason;
   if (!resources) return "Resources unavailable";
   if (!affordable) return "Insufficient resources";
   return undefined;
+}
+
+function defenseCount(defenseState: ChainDefenseState, key: DefenseKey): number {
+  const defense = defenseCatalog.find((item) => item.key === key);
+  if (!defense) return 0;
+  return defenseState.defenses.find((item) => item.id === defense.id)?.count ?? 0;
 }
 
 function toResources(resources: ChainDefenseState["resources"] | ChainDefenseState["defenses"][number]["cost"] | null | undefined): Resources | undefined {

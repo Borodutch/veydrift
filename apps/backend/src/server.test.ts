@@ -13,7 +13,7 @@ import type {
   ShipyardState,
   WalletSettlement
 } from "./evm";
-import { VeydriftGameReader } from "./evm";
+import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { createRequestHandler } from "./server";
 
@@ -51,6 +51,41 @@ const planet: PlanetState = {
     deuterium: "4800"
   }
 };
+
+describe("Rift requirement projection", () => {
+  test("matches the current Interdimensional Rift Stabilizer build dependencies", () => {
+    expect(riftRequirements(0, 0, 0, {})).toEqual([
+      {
+        kind: "building",
+        key: "interdimensionalRiftStabilizer",
+        label: "Interdimensional Rift Stabilizer",
+        currentLevel: 0,
+        requiredLevel: 1
+      },
+      {
+        kind: "building",
+        key: "roboticsFactory",
+        label: "Robotics Factory",
+        currentLevel: 0,
+        requiredLevel: 2
+      },
+      {
+        kind: "building",
+        key: "researchLab",
+        label: "Research Lab",
+        currentLevel: 0,
+        requiredLevel: 1
+      },
+      {
+        kind: "technology",
+        key: "energy",
+        label: "Energy Technology",
+        currentLevel: 0,
+        requiredLevel: 2
+      }
+    ]);
+  });
+});
 
 class MockChainReader implements ChainReader {
   rebuildCalls = 0;
@@ -143,6 +178,7 @@ class MockChainReader implements ChainReader {
       productionAvailable: true,
       resources: planet.resources,
       shipyardLevel: 1,
+      naniteLevel: 0,
       technologyLevels: {
         "3": 1
       },
@@ -188,6 +224,7 @@ class MockChainReader implements ChainReader {
       productionAvailable: true,
       resources: planet.resources,
       shipyardLevel: 1,
+      missileSiloLevel: 2,
       technologyLevels: {
         "1": 1
       },
@@ -196,7 +233,7 @@ class MockChainReader implements ChainReader {
           id: 0,
           count: 3,
           cost: {
-            metal: "200",
+            metal: "2000",
             crystal: "0",
             deuterium: "0"
           }
@@ -215,12 +252,12 @@ class MockChainReader implements ChainReader {
         active: true,
         itemId: 0,
         kind: "defense",
-        quantity: 2,
-        readyAt: "1770000060",
-        cost: {
-          metal: "400",
-          crystal: "0",
-          deuterium: "0"
+          quantity: 2,
+          readyAt: "1770000060",
+          cost: {
+            metal: "4000",
+            crystal: "0",
+            deuterium: "0"
         }
       }
     };
@@ -556,6 +593,7 @@ describe("Veydrift backend", () => {
     expect(body.homePlanetId).toBe("7");
     expect(body.resources.metal).toBe("5000");
     expect(body.shipyardLevel).toBe(1);
+    expect(body.missileSiloLevel).toBe(2);
     expect(body.technologyLevels["1"]).toBe(1);
     expect(body.queue).toMatchObject({
       active: true,
@@ -567,7 +605,7 @@ describe("Veydrift backend", () => {
       id: 0,
       count: 3,
       cost: {
-        metal: "200",
+        metal: "2000",
         crystal: "0",
         deuterium: "0"
       }

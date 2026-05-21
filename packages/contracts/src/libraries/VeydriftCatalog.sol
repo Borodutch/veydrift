@@ -16,7 +16,7 @@ library VeydriftCatalog {
         if (building == Building.CrystalMine) return (48, 24, 0);
         if (building == Building.DeuteriumSynthesizer) return (225, 75, 0);
         if (building == Building.SolarPlant) return (75, 30, 0);
-        if (building == Building.RoboticsFactory) return (400, 120, 0);
+        if (building == Building.RoboticsFactory) return (400, 120, 200);
         if (building == Building.Shipyard) return (400, 200, 100);
         if (building == Building.ResearchLab) return (200, 400, 200);
         if (building == Building.MetalStorage) return (1_000, 0, 0);
@@ -31,18 +31,59 @@ library VeydriftCatalog {
         revert InvalidId();
     }
 
+    function buildingCostFactor(Building building)
+        public
+        pure
+        returns (uint8 numerator, uint8 denominator)
+    {
+        if (building == Building.MetalMine) return (15, 10);
+        if (building == Building.CrystalMine) return (16, 10);
+        if (building == Building.DeuteriumSynthesizer) return (15, 10);
+        if (building == Building.SolarPlant) return (15, 10);
+        if (building == Building.FusionReactor) return (18, 10);
+        return (2, 1);
+    }
+
+    function buildingUpgradeCost(Building building, uint16 currentLevel)
+        public
+        pure
+        returns (uint128, uint128, uint128)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = buildingBaseCost(building);
+        (uint8 numerator, uint8 denominator) = buildingCostFactor(building);
+        return (
+            _scaleByFactor(metal, currentLevel, numerator, denominator),
+            _scaleByFactor(crystal, currentLevel, numerator, denominator),
+            _scaleByFactor(deuterium, currentLevel, numerator, denominator)
+        );
+    }
+
     function defenseCost(Defense defense) public pure returns (uint128, uint128, uint128) {
-        if (defense == Defense.RocketLauncher) return (200, 0, 0);
+        if (defense == Defense.RocketLauncher) return (2_000, 0, 0);
         if (defense == Defense.LightLaser) return (1_500, 500, 0);
         if (defense == Defense.HeavyLaser) return (6_000, 2_000, 0);
         if (defense == Defense.SmallShieldDome) return (10_000, 10_000, 0);
         if (defense == Defense.GaussCannon) return (20_000, 15_000, 2_000);
-        if (defense == Defense.IonCannon) return (2_000, 6_000, 0);
+        if (defense == Defense.IonCannon) return (5_000, 3_000, 0);
         if (defense == Defense.PlasmaTurret) return (50_000, 50_000, 30_000);
         if (defense == Defense.LargeShieldDome) return (50_000, 50_000, 0);
         if (defense == Defense.AntiBallisticMissile) return (8_000, 0, 2_000);
         if (defense == Defense.InterplanetaryMissile) return (12_500, 2_500, 10_000);
         revert InvalidId();
+    }
+
+    function missileSiloCapacity(uint16 missileSiloLevel) public pure returns (uint32) {
+        return uint32(missileSiloLevel) * 10;
+    }
+
+    function missileSlots(Defense defense) public pure returns (uint8) {
+        if (defense == Defense.AntiBallisticMissile) return 1;
+        if (defense == Defense.InterplanetaryMissile) return 2;
+        return 0;
+    }
+
+    function isShieldDome(Defense defense) public pure returns (bool) {
+        return defense == Defense.SmallShieldDome || defense == Defense.LargeShieldDome;
     }
 
     function shipCost(Ship ship) public pure returns (uint128, uint128, uint128) {
@@ -80,8 +121,8 @@ library VeydriftCatalog {
         if (ship == Ship.Destroyer) return 2_000;
         if (ship == Ship.Deathstar) return 1_000_000;
         if (ship == Ship.Battlecruiser) return 750;
-        if (ship == Ship.Reaper) return 10_000;
-        if (ship == Ship.Pathfinder) return 10_000;
+        if (ship == Ship.Reaper) return 7_000;
+        if (ship == Ship.Pathfinder) return 12_000;
         revert InvalidId();
     }
 
@@ -191,6 +232,16 @@ library VeydriftCatalog {
         uint256 raw = (uint256(baseCost) * numerator + (denominator / 2)) / denominator;
         uint256 roundedHundreds = (raw + 50) / 100;
         return _toUint128(roundedHundreds * 100);
+    }
+
+    function _scaleByFactor(uint128 value, uint16 exponent, uint8 numerator, uint8 denominator)
+        private
+        pure
+        returns (uint128)
+    {
+        return uint128(
+            (uint256(value) * (uint256(numerator) ** exponent)) / (uint256(denominator) ** exponent)
+        );
     }
 
     function _toUint128(uint256 value) private pure returns (uint128) {

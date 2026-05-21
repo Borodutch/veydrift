@@ -97,6 +97,7 @@ export type ChainShipyardState = {
   unavailableReason?: string;
   resources: OnChainResources | null;
   shipyardLevel: number;
+  naniteLevel: number;
   technologyLevels: Record<string, number>;
   ships: Array<{
     id: number;
@@ -113,6 +114,7 @@ export type ChainDefenseState = {
   unavailableReason?: string;
   resources: OnChainResources | null;
   shipyardLevel: number;
+  missileSiloLevel: number;
   technologyLevels: Record<string, number>;
   defenses: Array<{
     id: number;

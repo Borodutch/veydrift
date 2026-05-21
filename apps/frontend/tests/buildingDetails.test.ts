@@ -129,15 +129,15 @@ describe("building detail helpers", () => {
     });
     expect(buildingEnergyDetail({ ...queued.buildings, metalMine: 2 }, "metalMine")).toEqual({
       kind: "requires",
-      current: 20,
-      next: 30,
-      delta: 10,
+      current: 24,
+      next: 39,
+      delta: 15,
     });
     expect(buildingEnergyDetail({ ...queued.buildings, solarPlant: 1 }, "solarPlant")).toEqual({
       kind: "produces",
-      current: 30,
-      next: 60,
-      delta: 30,
+      current: 22,
+      next: 48,
+      delta: 26,
     });
   });
 
@@ -192,18 +192,18 @@ describe("building detail helpers", () => {
     expect(rows[0]).toMatchObject({
       cost: { metal: 60, crystal: 15, deuterium: 0 },
       current: true,
-      energyRequired: 10,
+      energyRequired: 11,
       level: 1,
       next: false,
-      production: { resource: "metal", perHour: 24 },
+      production: { resource: "metal", perHour: 33 },
     });
     expect(rows[1]).toMatchObject({
-      cost: { metal: 120, crystal: 30, deuterium: 0 },
+      cost: { metal: 90, crystal: 22, deuterium: 0 },
       current: false,
-      energyRequired: 20,
+      energyRequired: 24,
       level: 2,
       next: true,
-      production: { resource: "metal", perHour: 58 },
+      production: { resource: "metal", perHour: 72 },
     });
   });
 
@@ -219,13 +219,13 @@ describe("building detail helpers", () => {
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 75, crystal: 30, deuterium: 0 },
-      energyProduced: 30,
+      energyProduced: 22,
       level: 1,
       next: true,
     });
     expect(rows[1]).toMatchObject({
-      cost: { metal: 150, crystal: 60, deuterium: 0 },
-      energyProduced: 60,
+      cost: { metal: 112, crystal: 45, deuterium: 0 },
+      energyProduced: 48,
       level: 2,
     });
   });
