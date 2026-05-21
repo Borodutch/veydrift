@@ -1171,6 +1171,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           moonError={moonError}
           moonLoading={moonLoading}
           moonState={moonState}
+          now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}

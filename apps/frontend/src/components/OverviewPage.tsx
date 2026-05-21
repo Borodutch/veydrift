@@ -6,6 +6,7 @@ import {
   buildingQueuePreview,
   displayPlanetStats,
   queueProgressBarState,
+  queueProgressFillState,
   type ChainLoadStatus,
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
@@ -165,7 +166,10 @@ export function OverviewPage({
                   label={onChainBuildingQueue.label}
                   remaining={formatDurationUntil(buildingQueue.readyAt, now)}
                   progress={queueProgress}
+                  readyAt={buildingQueue.readyAt}
+                  startedAt={buildingQueue.startedAt}
                   thumbnailSrc={onChainBuildingQueue.asset}
+                  now={now}
                 />
               ) : (
                 <QueueItemDisplay
@@ -190,7 +194,10 @@ export function OverviewPage({
               label={localBuildingLabel ?? buildingQueue.label}
               remaining={formatDurationUntil(buildingQueue.readyAt, now)}
               progress={queueProgress}
+              readyAt={buildingQueue.readyAt}
+              startedAt={buildingQueue.startedAt}
               thumbnailSrc={localBuildingAsset}
+              now={now}
             />
           ) : (
             <EmptyQueue action={<QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>}>
@@ -235,7 +242,10 @@ export function OverviewPage({
               label={settledState.researchQueue.label}
               remaining={formatDurationUntil(settledState.researchQueue.readyAt, now)}
               progress={researchProgress}
+              readyAt={settledState.researchQueue.readyAt}
+              startedAt={settledState.researchQueue.startedAt}
               color="bg-cyan-300"
+              now={now}
             />
           ) : (
             <EmptyQueue action={<QuickLink onClick={() => onNavigate("research")}>Research</QuickLink>}>
@@ -261,7 +271,10 @@ export function OverviewPage({
               label={settledState.queue.label}
               remaining={formatDurationUntil(settledState.queue.readyAt, now)}
               progress={shipProgress}
+              readyAt={settledState.queue.readyAt}
+              startedAt={settledState.queue.startedAt}
               color="bg-emerald-300"
+              now={now}
             />
           ) : (
             <EmptyQueue action={<QuickLink onClick={() => onNavigate("shipyard")}>Shipyard</QuickLink>}>
@@ -321,18 +334,43 @@ function QueueItemDisplay({
   label,
   remaining,
   progress,
+  readyAt,
   indeterminate,
   color = "bg-signal",
   thumbnailSrc,
+  now,
+  startedAt,
 }: {
   label: string;
   remaining: string;
   progress?: number;
+  readyAt?: number | undefined;
   indeterminate?: boolean;
   color?: string;
   thumbnailSrc?: string | undefined;
+  now?: number | undefined;
+  startedAt?: number | undefined;
 }) {
   const progressBar = queueProgressBarState({ indeterminate, progress, remaining });
+  const progressFill = queueProgressFillState({
+    indeterminate,
+    now: now ?? Date.now(),
+    progress,
+    readyAt,
+    remaining,
+    startedAt,
+  });
+  const progressStyle = progressFill.animated
+    ? {
+      animationDelay: `-${progressFill.elapsedMs}ms`,
+      animationDuration: `${progressFill.durationMs}ms`,
+      animationFillMode: "both",
+      animationName: "queue-progress-fill",
+      animationTimingFunction: "linear",
+      transformOrigin: "left",
+      width: "100%",
+    }
+    : { width: `${progressFill.progress * 100}%` };
 
   return (
     <div className={thumbnailSrc ? "flex min-w-0 items-center gap-3" : undefined}>
@@ -358,7 +396,7 @@ function QueueItemDisplay({
           ) : (
             <div
               className={`h-full rounded-full ${color} transition-[width]`}
-              style={{ width: `${progressBar.progress * 100}%` }}
+              style={progressStyle}
             />
           )}
         </div>

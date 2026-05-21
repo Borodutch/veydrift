@@ -1296,7 +1296,7 @@ export function buildingDurationEstimate(
   buildings: Record<BuildingKey, number>,
   cost: Resources,
 ): number {
-  return buildingDurationSeconds(buildings.roboticsFactory, 0, cost);
+  return buildingDurationSeconds(buildings.roboticsFactory, buildings.naniteFactory, cost);
 }
 
 export function shipDurationEstimate(

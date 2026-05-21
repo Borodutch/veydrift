@@ -2,7 +2,7 @@ import { Info, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
-import { buildingCatalog, buildingEffectMetrics, unmetBuildingRequirement } from "../playableMvp";
+import { buildingCatalog, buildingEffectMetrics, progress, unmetBuildingRequirement } from "../playableMvp";
 import {
   buildingEnergyDetail,
   buildingLevelInfoColumns,
@@ -14,6 +14,7 @@ import {
   formatNumber,
   formatSigned,
 } from "../buildingDetails";
+import { formatDurationUntil } from "../durationFormat";
 import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
 import type { ChainMoonState } from "../walletFlow";
@@ -32,6 +33,8 @@ const fullResourceLabels: Record<keyof Resources, string> = {
 };
 
 const loadedDetailImageKeys = new Set<BuildingKey>();
+
+type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
 
 const buildingDescriptions: Record<BuildingKey, string> = {
   metalMine: "Extracts metal from the planet crust. Metal is the core material for construction and early ship production.",
@@ -64,6 +67,7 @@ interface InfrastructurePageProps {
   planetProductionProfile?: PlanetProductionProfile | undefined;
   state: PlayableState;
   settledState: PlayableState;
+  now?: number | undefined;
   onUpgrade: (key: BuildingKey) => void;
 }
 
@@ -75,6 +79,7 @@ export function InfrastructurePage({
   moonError,
   moonLoading,
   moonState,
+  now = Date.now(),
   onFinishBuilding,
   planetProductionProfile,
   settledState,
@@ -158,6 +163,7 @@ export function InfrastructurePage({
             isBuildingReadyToFinish={isBuildingReadyToFinish}
             onFinishBuilding={onFinishBuilding}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
+            now={now}
             planetProductionProfile={planetProductionProfile}
             state={settledState}
           />
@@ -266,6 +272,16 @@ function formatMoonReadyAt(value: string | null | undefined): string {
   });
 }
 
+function formatQueueReadyAt(readyAtMs: number): string {
+  if (!Number.isFinite(readyAtMs)) return "Unknown";
+  return new Date(readyAtMs).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function ActiveBuildingBadge({ asset, label }: { asset?: string | undefined; label: string }) {
   return (
     <span className="inline-flex min-w-0 items-center gap-2 rounded border border-amber-300/20 bg-amber-300/10 py-1 pl-1 pr-2.5 text-xs text-amber-300">
@@ -347,6 +363,7 @@ function BuildingDetailPanel({
   isBuildingReadyToFinish,
   onFinishBuilding,
   onUpgrade,
+  now,
   planetProductionProfile,
   state,
 }: {
@@ -355,6 +372,7 @@ function BuildingDetailPanel({
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
+  now: number;
   onFinishBuilding?: (() => void) | undefined;
   onUpgrade: () => void;
   planetProductionProfile?: PlanetProductionProfile | undefined;
@@ -368,6 +386,8 @@ function BuildingDetailPanel({
   const levelInfoRows = buildingLevelInfoRows(state.buildings, building.key, planetProductionProfile);
   const actionVerb = currentLevel === 0 ? "Build" : "Upgrade";
   const actionLabel = `${actionVerb} Level ${status.targetLevel}`;
+  const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
+  const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const noticeClass = actionNotice?.tone === "error"
     ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
@@ -438,6 +458,14 @@ function BuildingDetailPanel({
         </p>
       </div>
 
+      {activeBuildingQueue && (
+        <ActiveBuildingQueueDetail
+          isSelectedBuilding={Boolean(isSelectedBuildingQueued)}
+          now={now}
+          queue={activeBuildingQueue}
+        />
+      )}
+
       {actionNotice && (
         <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold ${noticeClass}`}>
           {actionNotice.label}
@@ -454,15 +482,17 @@ function BuildingDetailPanel({
         </button>
       )}
 
-      <button
-        aria-label={`${actionVerb} ${building.label} to Level ${status.targetLevel}`}
-        className="mt-3 h-10 w-full rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-        disabled={status.disabled}
-        onClick={onUpgrade}
-        type="button"
-      >
-        {actionLabel}
-      </button>
+      {!isSelectedBuildingQueued && (
+        <button
+          aria-label={`${actionVerb} ${building.label} to Level ${status.targetLevel}`}
+          className="mt-3 h-10 w-full rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          disabled={status.disabled}
+          onClick={onUpgrade}
+          type="button"
+        >
+          {actionLabel}
+        </button>
+      )}
 
       {isInfoOpen && (
         <BuildingLevelInfoModal
@@ -473,6 +503,56 @@ function BuildingDetailPanel({
         />
       )}
     </aside>
+  );
+}
+
+export function ActiveBuildingQueueDetail({
+  isSelectedBuilding,
+  now,
+  queue,
+}: {
+  isSelectedBuilding: boolean;
+  now: number;
+  queue: BuildingQueueItem;
+}) {
+  const queueLabel = buildingQueueLabel(queue.label, queue.targetLevel);
+  const remaining = formatDurationUntil(queue.readyAt, now);
+  const percent = Math.round(progress(queue, now) * 100);
+
+  return (
+    <div className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-amber-100">
+            {isSelectedBuilding ? "Construction in progress" : "Active construction"}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-amber-200/85">
+            {queueLabel} is upgrading{isSelectedBuilding ? "." : "; the selected building is waiting for this queue."}
+          </p>
+        </div>
+        <span className="shrink-0 rounded bg-black/20 px-2 py-1 text-xs font-semibold text-amber-100">
+          {percent}%
+        </span>
+      </div>
+
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/25">
+        <div
+          className="h-full rounded-full bg-amber-300 transition-[width]"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+
+      <div className="mt-3 grid gap-2 text-xs text-amber-100 sm:grid-cols-2">
+        <p className="min-w-0">
+          <span className="block uppercase tracking-normal text-amber-200/70">Time remaining</span>
+          <span className="mt-1 block font-semibold">{remaining}</span>
+        </p>
+        <p className="min-w-0">
+          <span className="block uppercase tracking-normal text-amber-200/70">Ready at</span>
+          <span className="mt-1 block font-semibold">{formatQueueReadyAt(queue.readyAt)}</span>
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -815,6 +895,7 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (energy.kind === "requires") {
     rows.push({
+      ...(energy.delta !== 0 ? { delta: `(${formatSigned(energy.delta)})` } : {}),
       label: "Energy required",
       next: `${formatNumber(energy.next)} required`,
       tone: "warning",
