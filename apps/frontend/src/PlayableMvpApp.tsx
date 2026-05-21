@@ -11,6 +11,13 @@ import { ResearchPage, type ResearchActionState } from "./components/ResearchPag
 import { ShipyardPage } from "./components/ShipyardPage";
 import { RiftPage } from "./components/RiftPage";
 import {
+  buildingKeyForContractId,
+  infrastructureActionNoticeFor,
+  type BuildingActionState,
+} from "./buildingActionNotice";
+
+export { infrastructureActionNoticeFor } from "./buildingActionNotice";
+import {
   mergePlanetWithSettlement,
   planetFromSettlementPlanet,
   planetsFromSystemResponse,
@@ -95,22 +102,8 @@ type ShipyardActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
-type BuildingActionState = ShipyardActionState;
 type DefenseActionState = ShipyardActionState;
 type RiftActionState = ShipyardActionState;
-
-export function infrastructureActionNoticeFor(
-  action: BuildingActionState,
-): { label: string; tone: "error" | "success" } | undefined {
-  if (action.status === "idle" || action.status === "pending") {
-    return undefined;
-  }
-
-  return {
-    label: action.label,
-    tone: action.status === "error" ? "error" : "success",
-  };
-}
 
 export function displayHomeCoordinates(
   homePlanet: Coordinates | undefined,
@@ -644,13 +637,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId || infrastructureUnavailableReason) {
       setBuildingAction({
         status: "error",
+        buildingKey: key,
         label: infrastructureUnavailableReason ?? "Wallet, game contract, or home planet is unavailable.",
       });
       return;
     }
 
     const building = buildingContractIds[key];
-    setBuildingAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    setBuildingAction({ status: "pending", buildingKey: key, label: "Waiting for wallet confirmation" });
 
     try {
       const txHash = await sendStartBuildingUpgradeTransaction(
@@ -660,15 +654,20 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onChainSettlement.homePlanetId,
         building,
       );
-      setBuildingAction({ status: "pending", label: `Waiting for transaction confirmation ${txHash.slice(0, 10)}...` });
+      setBuildingAction({
+        status: "pending",
+        buildingKey: key,
+        label: `Waiting for transaction confirmation ${txHash.slice(0, 10)}...`,
+      });
       await waitForReceipt(provider, txHash);
       await refreshOnChainState();
       await refreshInfrastructureState();
-      setBuildingAction({ status: "success", label: "Building upgrade started." });
+      setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
     } catch (error) {
       console.error(error);
       setBuildingAction({
         status: "error",
+        buildingKey: key,
         label: error instanceof Error ? error.message : "Building upgrade transaction failed.",
       });
     }
@@ -687,9 +686,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [runBuildingTransaction]);
 
   const handleFinishBuildingUpgrade = useCallback(async () => {
+    const buildingKey = buildingKeyForContractId(onChainQueues?.building?.itemId) ?? buildingQueue?.key;
+
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       setBuildingAction({
         status: "error",
+        buildingKey,
         label: "Wallet, game contract, or home planet is unavailable.",
       });
       return;
@@ -697,12 +699,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (!isBuildingReadyToFinish) {
       setBuildingAction({
         status: "error",
+        buildingKey,
         label: "Building upgrade is not ready to finish yet.",
       });
       return;
     }
 
-    setBuildingAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    setBuildingAction({ status: "pending", buildingKey, label: "Waiting for wallet confirmation" });
     const expectation = {
       itemId: onChainQueues?.building?.itemId,
       targetLevel: onChainQueues?.building?.targetLevel,
@@ -715,15 +718,20 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         gameContract,
         onChainSettlement.homePlanetId,
       );
-      setBuildingAction({ status: "pending", label: `Waiting for transaction confirmation ${txHash.slice(0, 10)}...` });
+      setBuildingAction({
+        status: "pending",
+        buildingKey,
+        label: `Waiting for transaction confirmation ${txHash.slice(0, 10)}...`,
+      });
       await waitForReceipt(provider, txHash);
-      setBuildingAction({ status: "pending", label: "Syncing completed building state..." });
+      setBuildingAction({ status: "pending", buildingKey, label: "Syncing completed building state..." });
       await refreshFinishedBuildingState(expectation);
-      setBuildingAction({ status: "success", label: "Building upgrade finished." });
+      setBuildingAction({ status: "success", buildingKey, label: "Building upgrade finished." });
     } catch (error) {
       console.error(error);
       setBuildingAction({
         status: "error",
+        buildingKey,
         label: error instanceof Error ? error.message : "Finish building upgrade transaction failed.",
       });
     }
@@ -731,6 +739,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     account,
     gameContract,
     isBuildingReadyToFinish,
+    buildingQueue?.key,
     onChainSettlement?.homePlanetId,
     onChainQueues?.building?.itemId,
     onChainQueues?.building?.targetLevel,
