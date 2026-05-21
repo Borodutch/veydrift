@@ -104,6 +104,30 @@ contract VeydriftSpaceDockSystemTest is Test {
         spaceDock.startShipRepair(planetId, Ship.LightFighter, 1);
     }
 
+    function testFreshWreckageDoesNotReviveExpiredRepairableShips() public {
+        uint256 planetId = _startPlanetWithSpaceDock(1);
+
+        vm.prank(admin);
+        spaceDock.recordCombatWreckage(planetId, Ship.LightFighter, 40);
+        assertEq(spaceDock.repairableShipCount(planetId, Ship.LightFighter), 8);
+
+        vm.warp(block.timestamp + 3 days + 1);
+
+        vm.prank(admin);
+        spaceDock.recordCombatWreckage(planetId, Ship.Cruiser, 10);
+
+        assertEq(spaceDock.repairableShipCount(planetId, Ship.LightFighter), 0);
+        assertEq(spaceDock.repairableShipCount(planetId, Ship.Cruiser), 2);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftSpaceDockSystem.InsufficientWreckage.selector, Ship.LightFighter, 0, 1
+            )
+        );
+        spaceDock.startShipRepair(planetId, Ship.LightFighter, 1);
+    }
+
     function _startPlanetWithSpaceDock(uint16 level) internal returns (uint256 planetId) {
         vm.prank(player);
         planetId = game.startPlanet{value: 0.05 ether}();
