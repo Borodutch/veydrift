@@ -105,6 +105,59 @@ abstract contract VeydriftGameStorage {
         uint32 colonyShip;
     }
 
+    enum FleetMissionType {
+        Transport,
+        Deploy,
+        Colonize,
+        Attack,
+        Harvest,
+        AcsDefend,
+        Intercept,
+        MissileAttack
+    }
+
+    enum FleetMissionStatus {
+        None,
+        Outbound,
+        Returning,
+        Resolved,
+        Returned,
+        Recalled
+    }
+
+    struct MissionShips {
+        uint32 smallCargo;
+        uint32 lightFighter;
+        uint32 recycler;
+        uint32 colonyShip;
+        uint32 largeCargo;
+        uint32 heavyFighter;
+        uint32 cruiser;
+        uint32 battleship;
+        uint32 espionageProbe;
+        uint32 bomber;
+        uint32 destroyer;
+        uint32 deathstar;
+        uint32 battlecruiser;
+        uint32 reaper;
+        uint32 pathfinder;
+    }
+
+    struct FleetMission {
+        FleetMissionStatus status;
+        FleetMissionType missionType;
+        address owner;
+        uint256 originPlanetId;
+        uint256 targetPlanetId;
+        uint64 departureAt;
+        uint64 arrivalAt;
+        uint64 returnAt;
+        uint128 fuelCost;
+        Resources cargo;
+        MissionShips ships;
+        uint256 randomnessRequestId;
+    }
+
     struct ResourceWithdrawal {
         bool active;
         uint256 planetId;
@@ -139,6 +192,8 @@ abstract contract VeydriftGameStorage {
     address internal _moonSystem;
     mapping(uint256 planetId => mapping(Ship ship => uint32 count)) internal _shipCounts;
     mapping(uint256 fleetId => Fleet fleet) internal _fleets;
+    mapping(uint256 missionId => FleetMission mission) internal _fleetMissions;
+    mapping(address player => uint256 count) public activeFleetMissionCount;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -169,6 +224,9 @@ abstract contract VeydriftGameStorage {
     error FleetNotArrived(uint64 arrivesAt);
     error FleetAlreadyReturning();
     error FleetAlreadyArrived();
+    error InvalidMissionType(FleetMissionType missionType);
+    error FleetSlotLimitReached(uint256 limit);
+    error FleetMissionNotResolved(uint64 returnAt);
     error RiftStabilizerRequired(uint256 planetId);
     error ResourceTokenNotConfigured(Resource resource);
     error WithdrawalActive(Resource resource);
@@ -292,6 +350,26 @@ abstract contract VeydriftGameStorage {
         uint128 metal,
         uint128 crystal,
         uint128 deuterium
+    );
+    event FleetMissionLaunched(
+        uint256 indexed missionId,
+        address indexed owner,
+        FleetMissionType indexed missionType,
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        uint64 arrivalAt,
+        uint64 returnAt,
+        uint256 randomnessRequestId
+    );
+    event FleetMissionRecalled(uint256 indexed missionId, address indexed owner, uint64 returnAt);
+    event FleetMissionResolved(
+        uint256 indexed missionId,
+        address indexed resolver,
+        FleetMissionType indexed missionType,
+        uint64 returnAt
+    );
+    event FleetMissionReturned(
+        uint256 indexed missionId, address indexed owner, uint256 indexed planetId
     );
     event ResourceTokenUpdated(
         Resource indexed resource, address indexed oldToken, address indexed newToken

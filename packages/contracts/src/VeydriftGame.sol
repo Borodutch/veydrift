@@ -226,18 +226,26 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
-    function dispatchTransport(uint256, uint256, uint32, uint32, uint32, Resources calldata)
-        external
-        returns (uint256)
-    {
+    function launchFleetMission(
+        uint256,
+        uint256,
+        FleetMissionType,
+        MissionShips calldata,
+        Resources calldata,
+        uint256
+    ) external returns (uint256) {
         _delegateToGameplayModule();
     }
 
-    function recallFleet(uint256) external {
+    function recallFleetMission(uint256) external {
         _delegateToGameplayModule();
     }
 
-    function settleFleetArrival(uint256) external {
+    function resolveFleetMission(uint256) external {
+        _delegateToGameplayModule();
+    }
+
+    function completeFleetMissionReturn(uint256) external {
         _delegateToGameplayModule();
     }
 
@@ -257,8 +265,37 @@ contract VeydriftGame is VeydriftResourceReserves {
         return _planets[planetId];
     }
 
-    function fleet(uint256 fleetId) external view returns (Fleet memory fleetData) {
-        return _fleets[fleetId];
+    function fleetMission(uint256 missionId)
+        external
+        view
+        returns (
+            FleetMissionStatus status,
+            FleetMissionType missionType,
+            address owner,
+            uint256 originPlanetId,
+            uint256 targetPlanetId,
+            uint64 departureAt,
+            uint64 arrivalAt,
+            uint64 returnAt,
+            uint128 fuelCost,
+            Resources memory cargo,
+            uint256 randomnessRequestId
+        )
+    {
+        FleetMission storage mission = _fleetMissions[missionId];
+        return (
+            mission.status,
+            mission.missionType,
+            mission.owner,
+            mission.originPlanetId,
+            mission.targetPlanetId,
+            mission.departureAt,
+            mission.arrivalAt,
+            mission.returnAt,
+            mission.fuelCost,
+            mission.cargo,
+            mission.randomnessRequestId
+        );
     }
 
     function activeBuildingConstruction(uint256 planetId)
