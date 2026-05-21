@@ -241,6 +241,29 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function launchFleetMission(
+        uint256,
+        uint256,
+        FleetMissionType,
+        MissionShips calldata,
+        Resources calldata,
+        uint256
+    ) external returns (uint256) {
+        _delegateToGameplayModule();
+    }
+
+    function recallFleetMission(uint256) external {
+        _delegateToGameplayModule();
+    }
+
+    function resolveFleetMission(uint256) external {
+        _delegateToGameplayModule();
+    }
+
+    function completeFleetMissionReturn(uint256) external {
+        _delegateToGameplayModule();
+    }
+
     function depositMarketResource(uint256, Resource, uint128) external {
         _delegateToGameplayModule();
     }
@@ -259,6 +282,14 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function fleet(uint256 fleetId) external view returns (Fleet memory fleetData) {
         return _fleets[fleetId];
+    }
+
+    function fleetMission(uint256 missionId)
+        external
+        view
+        returns (FleetMission memory missionData)
+    {
+        return _fleetMissions[missionId];
     }
 
     function activeBuildingConstruction(uint256 planetId)
