@@ -6,6 +6,7 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 interface IERC20ReserveToken {
     function balanceOf(address account) external view returns (uint256);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
 }
 
 /// @notice Shared storage, ABI structs, events, and owner controls for VeydriftGame modules.
@@ -136,6 +137,8 @@ abstract contract VeydriftGameStorage {
     mapping(address player => mapping(Technology technology => uint16 level)) internal
         _technologyLevels;
     address internal _moonSystem;
+    mapping(uint256 planetId => mapping(Ship ship => uint32 count)) internal _shipCounts;
+    mapping(uint256 fleetId => Fleet fleet) internal _fleets;
 
     error AlreadyStarted();
     error BadStartPayment();

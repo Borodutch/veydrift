@@ -119,6 +119,18 @@
       "offset": 0,
       "slot": "21",
       "type": "address"
+    },
+    {
+      "label": "_shipCounts",
+      "offset": 0,
+      "slot": "22",
+      "type": "mapping(uint256 => mapping(enum Ship => uint32))"
+    },
+    {
+      "label": "_fleets",
+      "offset": 0,
+      "slot": "23",
+      "type": "mapping(uint256 => struct Fleet)"
     }
   ],
   "structs": {
@@ -184,6 +196,80 @@
         "offset": 0,
         "slot": "1",
         "type": "Resources"
+      }
+    ],
+    "Fleet": [
+      {
+        "label": "active",
+        "offset": 0,
+        "slot": "0",
+        "type": "bool"
+      },
+      {
+        "label": "returning",
+        "offset": 1,
+        "slot": "0",
+        "type": "bool"
+      },
+      {
+        "label": "owner",
+        "offset": 2,
+        "slot": "0",
+        "type": "address"
+      },
+      {
+        "label": "originPlanetId",
+        "offset": 0,
+        "slot": "1",
+        "type": "uint256"
+      },
+      {
+        "label": "destinationPlanetId",
+        "offset": 0,
+        "slot": "2",
+        "type": "uint256"
+      },
+      {
+        "label": "dispatchedAt",
+        "offset": 0,
+        "slot": "3",
+        "type": "uint64"
+      },
+      {
+        "label": "arrivesAt",
+        "offset": 8,
+        "slot": "3",
+        "type": "uint64"
+      },
+      {
+        "label": "fuelCost",
+        "offset": 16,
+        "slot": "3",
+        "type": "uint128"
+      },
+      {
+        "label": "cargo",
+        "offset": 0,
+        "slot": "4",
+        "type": "Resources"
+      },
+      {
+        "label": "smallCargo",
+        "offset": 0,
+        "slot": "6",
+        "type": "uint32"
+      },
+      {
+        "label": "recycler",
+        "offset": 4,
+        "slot": "6",
+        "type": "uint32"
+      },
+      {
+        "label": "colonyShip",
+        "offset": 8,
+        "slot": "6",
+        "type": "uint32"
       }
     ],
     "Planet": [
