@@ -3,12 +3,14 @@ pragma solidity ^0.8.28;
 
 import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 
 contract Deploy is ResourceTokenDeployment {
     event VeydriftDeployment(
         address indexed game,
+        address indexed moonSystem,
         address indexed metalToken,
-        address indexed crystalToken,
+        address crystalToken,
         address deuteriumToken
     );
 
@@ -16,6 +18,7 @@ contract Deploy is ResourceTokenDeployment {
         external
         returns (
             address gameAddress,
+            address moonSystemAddress,
             address metalToken,
             address crystalToken,
             address deuteriumToken
@@ -28,9 +31,14 @@ contract Deploy is ResourceTokenDeployment {
         vm.startBroadcast(privateKey);
         VeydriftGame game = new VeydriftGame(admin);
         gameAddress = address(game);
+        VeydriftMoonSystem moonSystem = new VeydriftMoonSystem(gameAddress);
+        moonSystemAddress = address(moonSystem);
         (metalToken, crystalToken, deuteriumToken) = _deployResourceTokens(admin, gameAddress);
         game.setResourceTokens(metalToken, crystalToken, deuteriumToken);
-        emit VeydriftDeployment(gameAddress, metalToken, crystalToken, deuteriumToken);
+        game.setMoonSystem(moonSystemAddress);
+        emit VeydriftDeployment(
+            gameAddress, moonSystemAddress, metalToken, crystalToken, deuteriumToken
+        );
         vm.stopBroadcast();
     }
 }

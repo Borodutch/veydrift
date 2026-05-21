@@ -707,12 +707,7 @@ contract VeydriftGameTest is Test {
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
 
         vm.prank(player);
-        bytes32 shipyardTwoDependency = "SHIPYARD_2";
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftGameStorage.MissingDependency.selector, shipyardTwoDependency
-            )
-        );
+        vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
         game.startShipProduction(planetId, Ship.SmallCargo, 1);
 
         vm.prank(player);

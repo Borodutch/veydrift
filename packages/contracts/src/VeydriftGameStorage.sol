@@ -135,6 +135,7 @@ abstract contract VeydriftGameStorage {
     mapping(uint256 planetId => mapping(Defense defense => uint32 count)) internal _defenseCounts;
     mapping(address player => mapping(Technology technology => uint16 level)) internal
         _technologyLevels;
+    address internal _moonSystem;
 
     error AlreadyStarted();
     error BadStartPayment();

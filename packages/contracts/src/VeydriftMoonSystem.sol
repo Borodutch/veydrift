@@ -10,6 +10,8 @@ import {MoonBuilding, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftMoonGame {
     function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
+    function spendMoonResources(uint256 planetId, VeydriftGameStorage.Resources calldata cost)
+        external;
     function technologyLevel(address player, Technology technology) external view returns (uint16);
 }
 
@@ -139,6 +141,7 @@ contract VeydriftMoonSystem {
 
         _requireMoonBuildingDependencies(planetId, building);
         VeydriftGameStorage.Resources memory cost = moonBuildingUpgradeCost(planetId, building);
+        game.spendMoonResources(planetId, cost);
 
         uint64 readyAt = (uint256(_currentTimestamp()) + _moonBuildingDuration(cost)).toUint64();
         uint16 targetLevel = currentLevel + 1;

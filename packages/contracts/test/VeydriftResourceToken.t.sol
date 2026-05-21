@@ -137,13 +137,19 @@ contract VeydriftResourceTokenTest is Test {
     function testFullDeployScriptWiresGameAndResourceTokenReserves() public {
         address deployer = _setDeployEnv();
 
-        (address gameAddress, address metalToken, address crystalToken, address deuteriumToken) =
-            new Deploy().run();
+        (
+            address gameAddress,
+            address moonSystemAddress,
+            address metalToken,
+            address crystalToken,
+            address deuteriumToken
+        ) = new Deploy().run();
 
         VeydriftGame deployedGame = VeydriftGame(gameAddress);
         VeydriftGame.Resources memory available = deployedGame.resourceReserveAvailable();
 
         assertEq(deployedGame.owner(), deployer);
+        assertTrue(moonSystemAddress.code.length > 0);
         assertEq(deployedGame.resourceToken(Resource.Metal), metalToken);
         assertEq(deployedGame.resourceToken(Resource.Crystal), crystalToken);
         assertEq(deployedGame.resourceToken(Resource.Deuterium), deuteriumToken);
