@@ -20,6 +20,12 @@ enum Building {
     InterdimensionalRiftStabilizer
 }
 
+enum MoonBuilding {
+    LunarBase,
+    SensorPhalanx,
+    JumpGate
+}
+
 enum Defense {
     RocketLauncher,
     LightLaser,

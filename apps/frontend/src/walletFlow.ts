@@ -141,6 +141,31 @@ export type ChainInfrastructureState = {
   queue: QueueStateResponse | null;
 };
 
+export type ChainMoonState = {
+  wallet: string;
+  homePlanetId: string | null;
+  moonAvailable?: boolean;
+  unavailableReason?: string;
+  moon: {
+    exists: boolean;
+    planetId: string;
+    owner: string;
+    fields: number;
+    diameterKm: number;
+    createdAt: string;
+    jumpGateReadyAt: string;
+  } | null;
+  sensorPhalanxRange: string | null;
+  buildings: Array<{
+    id: number;
+    key: "lunarBase" | "sensorPhalanx" | "jumpGate";
+    label: string;
+    level: number;
+    cost: OnChainResources;
+  }>;
+  queue: QueueStateResponse | null;
+};
+
 export type ChainResearchState = {
   wallet: string;
   homePlanetId: string | null;
@@ -1156,6 +1181,10 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string): Promise
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string): Promise<ChainInfrastructureState> {
   return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, "infrastructure", "Infrastructure");
+}
+
+export async function fetchMoonState(apiUrl: string, wallet: string): Promise<ChainMoonState> {
+  return fetchWalletJson<ChainMoonState>(apiUrl, wallet, "moon", "Moon");
 }
 
 export async function fetchShipyardState(apiUrl: string, wallet: string): Promise<ChainShipyardState> {

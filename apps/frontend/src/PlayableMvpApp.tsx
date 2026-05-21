@@ -55,6 +55,7 @@ import {
 } from "./postTransactionRefresh";
 import {
   fetchInfrastructureState,
+  fetchMoonState,
   fetchDefenseState,
   fetchShipyardState,
   fetchResearchState,
@@ -79,6 +80,7 @@ import {
   waitForReceipt,
   type ChainDefenseState,
   type ChainInfrastructureState,
+  type ChainMoonState,
   type ChainResearchState,
   type ChainRiftState,
   type ChainShipyardState,
@@ -129,6 +131,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
   const [infrastructureError, setInfrastructureError] = useState<string | undefined>();
+  const [moonState, setMoonState] = useState<ChainMoonState | null>(null);
+  const [moonLoading, setMoonLoading] = useState(false);
+  const [moonError, setMoonError] = useState<string | undefined>();
   const [defenseState, setDefenseState] = useState<ChainDefenseState | null>(null);
   const [defenseLoading, setDefenseLoading] = useState(false);
   const [defenseError, setDefenseError] = useState<string | undefined>();
@@ -225,20 +230,30 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const refreshInfrastructureState = useCallback(async () => {
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
+      setMoonState(null);
       return;
     }
 
     setInfrastructureLoading(true);
+    setMoonLoading(true);
     setInfrastructureError(undefined);
+    setMoonError(undefined);
     try {
-      const next = await fetchInfrastructureState(apiBaseUrl, account);
-      setInfrastructureChainState(next);
+      const [nextInfrastructure, nextMoon] = await Promise.all([
+        fetchInfrastructureState(apiBaseUrl, account),
+        fetchMoonState(apiBaseUrl, account),
+      ]);
+      setInfrastructureChainState(nextInfrastructure);
+      setMoonState(nextMoon);
     } catch (error) {
       console.error(error);
       setInfrastructureChainState(null);
+      setMoonState(null);
       setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
+      setMoonError(error instanceof Error ? error.message : "Moon state could not be loaded.");
     } finally {
       setInfrastructureLoading(false);
+      setMoonLoading(false);
     }
   }, [account, apiBaseUrl]);
 
@@ -1115,6 +1130,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
+          moonError={moonError}
+          moonLoading={moonLoading}
+          moonState={moonState}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftCatalog} from "./VeydriftCatalog.sol";
-import {Building, Defense, Ship, Technology} from "./VeydriftTypes.sol";
+import {Building, Defense, MoonBuilding, Ship, Technology} from "./VeydriftTypes.sol";
 
 /// @notice Pure unlock/dependency rules for MVP buildings, units, and research.
 library VeydriftDependencies {
@@ -161,6 +161,22 @@ library VeydriftDependencies {
         }
         if (defense == Defense.InterplanetaryMissile && impulseDriveLevel < 1) {
             revert MissingDependency("IMPULSE_1");
+        }
+    }
+
+    function requireMoonBuilding(
+        MoonBuilding building,
+        uint16 lunarBaseLevel,
+        uint16 hyperspaceLevel
+    ) public pure {
+        if (building == MoonBuilding.SensorPhalanx && lunarBaseLevel < 1) {
+            revert MissingDependency("LUNAR_BASE_1");
+        }
+        if (building == MoonBuilding.JumpGate && lunarBaseLevel < 1) {
+            revert MissingDependency("LUNAR_BASE_1");
+        }
+        if (building == MoonBuilding.JumpGate && hyperspaceLevel < 7) {
+            revert MissingDependency("HYPERSPACE_7");
         }
     }
 

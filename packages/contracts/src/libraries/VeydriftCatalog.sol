@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {Building, Defense, Ship, Technology} from "./VeydriftTypes.sol";
+import {Building, Defense, MoonBuilding, Ship, Technology} from "./VeydriftTypes.sol";
 
 /// @notice Static MVP catalog data for buildables and research.
 library VeydriftCatalog {
@@ -70,6 +70,30 @@ library VeydriftCatalog {
         if (defense == Defense.AntiBallisticMissile) return (8_000, 0, 2_000);
         if (defense == Defense.InterplanetaryMissile) return (12_500, 2_500, 10_000);
         revert InvalidId();
+    }
+
+    function moonBuildingBaseCost(MoonBuilding building)
+        public
+        pure
+        returns (uint128, uint128, uint128)
+    {
+        if (building == MoonBuilding.LunarBase) return (20_000, 40_000, 20_000);
+        if (building == MoonBuilding.SensorPhalanx) return (20_000, 40_000, 20_000);
+        if (building == MoonBuilding.JumpGate) return (2_000_000, 4_000_000, 2_000_000);
+        revert InvalidId();
+    }
+
+    function moonBuildingUpgradeCost(MoonBuilding building, uint16 currentLevel)
+        public
+        pure
+        returns (uint128, uint128, uint128)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = moonBuildingBaseCost(building);
+        return (
+            _scaleByFactor(metal, currentLevel, 2, 1),
+            _scaleByFactor(crystal, currentLevel, 2, 1),
+            _scaleByFactor(deuterium, currentLevel, 2, 1)
+        );
     }
 
     function isShieldDome(Defense defense) public pure returns (bool) {

@@ -5,6 +5,7 @@ export type BackendConfig = {
   deploymentMode: DeploymentMode;
   gameContractAddress?: `0x${string}`;
   indexFromBlock: bigint;
+  moonContractAddress?: `0x${string}`;
   resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
@@ -32,6 +33,7 @@ export type SafeConfigSummary = {
   deploymentMode: DeploymentMode;
   gameContractConfigured: boolean;
   hasRpcUrl: boolean;
+  moonContractConfigured: boolean;
   resourceTokensConfigured: {
     crystal: boolean;
     deuterium: boolean;
@@ -62,6 +64,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const settlementContractAddress = parseAddress(
     env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS,
     "VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS",
+    problems
+  );
+  const moonContractAddress = parseAddress(
+    env.VEYDRIFT_MOON_CONTRACT_ADDRESS,
+    "VEYDRIFT_MOON_CONTRACT_ADDRESS",
     problems
   );
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
@@ -102,6 +109,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       deploymentMode,
       ...(gameContractAddress ? { gameContractAddress } : {}),
       indexFromBlock,
+      ...(moonContractAddress ? { moonContractAddress } : {}),
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
@@ -117,6 +125,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     deploymentMode: config.deploymentMode,
     gameContractConfigured: Boolean(config.gameContractAddress),
     hasRpcUrl: Boolean(config.rpcUrl),
+    moonContractConfigured: Boolean(config.moonContractAddress),
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),
       deuterium: Boolean(config.resourceTokenAddresses.deuterium),
