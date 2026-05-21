@@ -149,13 +149,41 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             returnAt,
             randomnessRequestId
         );
+        emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
+        emit FleetMissionShips(
+            missionId,
+            ships.smallCargo,
+            ships.lightFighter,
+            ships.recycler,
+            ships.colonyShip,
+            ships.largeCargo,
+            ships.heavyFighter,
+            ships.cruiser,
+            ships.battleship,
+            ships.bomber,
+            ships.destroyer,
+            ships.deathstar,
+            ships.battlecruiser,
+            ships.reaper,
+            ships.pathfinder
+        );
     }
 
     function recallFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
         _requireActiveMissionOwner(mission);
         if (mission.status == FleetMissionStatus.Returning) revert FleetAlreadyReturning();
+        if (mission.status == FleetMissionStatus.Recalled) revert FleetAlreadyReturning();
+        if (mission.status != FleetMissionStatus.Outbound) {
+            revert FleetMissionNotResolved(mission.returnAt);
+        }
         if (_currentTimestamp() >= mission.arrivalAt) revert FleetAlreadyArrived();
+        uint64 recallDeadline = mission.arrivalAt - FLEET_RECALL_CUTOFF_SECONDS;
+        if (_currentTimestamp() > recallDeadline) revert FleetRecallCutoffPassed(recallDeadline);
+
+        _settleResources(mission.originPlanetId);
+        uint128 recallCost = _fleetRecallCost(mission.fuelCost);
+        _spend(mission.originPlanetId, Resources({metal: 0, crystal: 0, deuterium: recallCost}));
 
         uint64 elapsed = uint64(
             VeydriftAntiRaidPrimitives.recallReturnSeconds(
@@ -165,7 +193,18 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = uint64(_currentTimestamp() + elapsed);
 
-        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt);
+        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, recallCost);
+        emit FleetMissionReturnExposed(
+            missionId,
+            msg.sender,
+            FleetMissionStatus.Recalled,
+            mission.originPlanetId,
+            mission.targetPlanetId,
+            mission.returnAt,
+            mission.cargo.metal,
+            mission.cargo.crystal,
+            mission.cargo.deuterium
+        );
     }
 
     function resolveFleetMission(uint256 missionId) external {
@@ -193,6 +232,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
 
         emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
+        if (mission.status == FleetMissionStatus.Returning) {
+            emit FleetMissionReturnExposed(
+                missionId,
+                mission.owner,
+                FleetMissionStatus.Returning,
+                mission.originPlanetId,
+                mission.targetPlanetId,
+                mission.returnAt,
+                mission.cargo.metal,
+                mission.cargo.crystal,
+                mission.cargo.deuterium
+            );
+        }
     }
 
     function completeFleetMissionReturn(uint256 missionId) external {
@@ -651,6 +703,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             + uint256(ships.colonyShip) * VeydriftCatalog.shipCargoCapacity(Ship.ColonyShip)
             + uint256(ships.largeCargo) * VeydriftCatalog.shipCargoCapacity(Ship.LargeCargo)
             + uint256(ships.pathfinder) * VeydriftCatalog.shipCargoCapacity(Ship.Pathfinder);
+    }
+
+    function _fleetRecallCost(uint128 fuelCost) private pure returns (uint128) {
+        if (fuelCost == 0) return 0;
+        uint128 cost = _toUint128((uint256(fuelCost) * FLEET_RECALL_COST_BPS) / BPS);
+        return cost == 0 ? 1 : cost;
     }
 
     function _missionShipTotal(MissionShips memory ships) private pure returns (uint256) {

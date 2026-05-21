@@ -56,6 +56,31 @@ export type PlayerQueues = {
   research: QueueState | null;
 };
 
+export type FleetMissionVisibility = {
+  wallet: Address;
+  homePlanetId: string | null;
+  incoming: FleetMissionSummary[];
+  outgoing: FleetMissionSummary[];
+  returning: FleetMissionSummary[];
+};
+
+export type FleetMissionSummary = {
+  missionId: string;
+  status: string;
+  missionType: string;
+  owner: Address;
+  originPlanetId: string;
+  targetPlanetId: string;
+  arrivalAt: string;
+  returnAt: string;
+  fuelCost: string;
+  recallCost: string | null;
+  cargo: Resources;
+  ships: Record<string, string>;
+  transactionHash: string;
+  blockNumber: string;
+};
+
 export type ShipyardState = {
   wallet: Address;
   homePlanetId: string | null;
@@ -200,6 +225,7 @@ export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address): Promise<PlayerQueues>;
+  getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility>;
   getInfrastructureState(wallet: Address): Promise<InfrastructureState>;
   getMoonState(wallet: Address): Promise<MoonState>;
   getDefenseState(wallet: Address): Promise<DefenseState>;
@@ -436,6 +462,51 @@ export class VeydriftGameReader implements ChainReader {
       defense,
       ship,
       research
+    };
+  }
+
+  async getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
+    const settlement = await this.getGameSettlement(wallet);
+    if (!settlement.homePlanetId) {
+      return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [] };
+    }
+
+    const missionLogs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+      {
+        address: this.gameContractAddress,
+        fromBlock: toQuantity(this.indexFromBlock),
+        toBlock: "latest",
+        topics: [[
+          fleetMissionLaunchedTopic,
+          fleetMissionCargoTopic,
+          fleetMissionShipsTopic,
+          fleetMissionRecalledTopic,
+          fleetMissionResolvedTopic,
+          fleetMissionReturnExposedTopic
+        ]]
+      }
+    ]);
+    const walletLower = wallet.toLowerCase();
+    const homePlanetId = settlement.homePlanetId;
+    const missions = decodeFleetMissionLogs(missionLogs);
+    const summaries = [...missions.values()].filter(isCompleteFleetMissionSummary);
+
+    return {
+      wallet,
+      homePlanetId,
+      incoming: summaries.filter((mission) =>
+        mission.owner.toLowerCase() !== walletLower
+          && mission.targetPlanetId === homePlanetId
+          && ["Attack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && mission.status === "Outbound"
+      ),
+      outgoing: summaries.filter((mission) =>
+        mission.owner.toLowerCase() === walletLower && mission.status === "Outbound"
+      ),
+      returning: summaries.filter((mission) =>
+        mission.owner.toLowerCase() === walletLower
+          && (mission.status === "Returning" || mission.status === "Recalled")
+      )
     };
   }
 
@@ -1257,6 +1328,106 @@ export class VeydriftGameReader implements ChainReader {
   }
 }
 
+type MutableFleetMissionSummary = Partial<FleetMissionSummary> & { missionId: string };
+
+function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleetMissionSummary> {
+  const missions = new Map<string, MutableFleetMissionSummary>();
+  for (const log of logs) {
+    const topic = topicAt(log.topics, 0);
+    const missionId = decodeUint(topicAt(log.topics, 1)).toString();
+    const mission = missions.get(missionId) ?? {
+      missionId,
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      ships: {},
+      fuelCost: "0",
+      recallCost: null,
+      transactionHash: log.transactionHash,
+      blockNumber: BigInt(log.blockNumber).toString()
+    };
+    mission.transactionHash = log.transactionHash;
+    mission.blockNumber = BigInt(log.blockNumber).toString();
+
+    if (topic === fleetMissionLaunchedTopic) {
+      const words = splitWords(log.data);
+      mission.owner = decodeAddressWord(topicAt(log.topics, 2));
+      mission.missionType = missionTypeLabel(decodeUint(topicAt(log.topics, 3)));
+      mission.status = "Outbound";
+      mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
+      mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
+      mission.arrivalAt = decodeUintWord(wordAt(words, 2)).toString();
+      mission.returnAt = decodeUintWord(wordAt(words, 3)).toString();
+    } else if (topic === fleetMissionCargoTopic) {
+      const words = splitWords(log.data);
+      mission.cargo = decodeResources(words.slice(0, 3));
+      mission.fuelCost = decodeUintWord(wordAt(words, 3)).toString();
+    } else if (topic === fleetMissionShipsTopic) {
+      const words = splitWords(log.data);
+      mission.ships = Object.fromEntries([
+        "smallCargo",
+        "lightFighter",
+        "recycler",
+        "colonyShip",
+        "largeCargo",
+        "heavyFighter",
+        "cruiser",
+        "battleship",
+        "bomber",
+        "destroyer",
+        "deathstar",
+        "battlecruiser",
+        "reaper",
+        "pathfinder"
+      ].map((key, index) => [key, decodeUintWord(wordAt(words, index)).toString()]));
+    } else if (topic === fleetMissionRecalledTopic) {
+      const words = splitWords(log.data);
+      mission.owner = decodeAddressWord(topicAt(log.topics, 2));
+      mission.status = "Recalled";
+      mission.returnAt = decodeUintWord(wordAt(words, 0)).toString();
+      mission.recallCost = decodeUintWord(wordAt(words, 1)).toString();
+    } else if (topic === fleetMissionResolvedTopic) {
+      mission.returnAt = decodeUintWord(wordAt(splitWords(log.data), 0)).toString();
+      mission.status = "Resolved";
+    } else if (topic === fleetMissionReturnExposedTopic) {
+      const words = splitWords(log.data);
+      mission.owner = decodeAddressWord(topicAt(log.topics, 2));
+      mission.status = missionStatusLabel(decodeUint(topicAt(log.topics, 3)));
+      mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
+      mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
+      mission.returnAt = decodeUintWord(wordAt(words, 2)).toString();
+      mission.cargo = decodeResources(words.slice(3, 6));
+    }
+
+    missions.set(missionId, mission);
+  }
+
+  return missions;
+}
+
+function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mission is FleetMissionSummary {
+  return Boolean(
+    mission.status
+      && mission.missionType
+      && mission.owner
+      && mission.originPlanetId
+      && mission.targetPlanetId
+      && mission.arrivalAt
+      && mission.returnAt
+      && mission.fuelCost !== undefined
+      && mission.cargo
+      && mission.ships
+      && mission.transactionHash
+      && mission.blockNumber
+  );
+}
+
+function missionTypeLabel(value: bigint): string {
+  return missionTypes[Number(value)] ?? `Unknown:${value.toString()}`;
+}
+
+function missionStatusLabel(value: bigint): string {
+  return missionStatuses[Number(value)] ?? `Unknown:${value.toString()}`;
+}
+
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
 const buildingCount = 16;
 const defenseCount = 10;
@@ -1277,6 +1448,14 @@ const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "ke
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
+const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
+const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
+const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
+const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack"] as const;
+const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
 
 export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {

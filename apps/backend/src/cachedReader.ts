@@ -2,6 +2,7 @@ import type {
   Address,
   ChainReader,
   DefenseState,
+  FleetMissionVisibility,
   InfrastructureState,
   MoonState,
   PlanetState,
@@ -41,6 +42,10 @@ export class CachedChainReader implements ChainReader {
 
   getPlayerQueues(wallet: Address): Promise<PlayerQueues> {
     return this.cached(`queues:${wallet.toLowerCase()}`, () => this.inner.getPlayerQueues(wallet));
+  }
+
+  getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
+    return this.cached(`fleet-visibility:${wallet.toLowerCase()}`, () => this.inner.getFleetMissionVisibility(wallet));
   }
 
   getInfrastructureState(wallet: Address): Promise<InfrastructureState> {
