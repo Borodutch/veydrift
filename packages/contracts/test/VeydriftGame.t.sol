@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {Building, Defense, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
@@ -57,6 +58,9 @@ contract ShortTransferResourceToken is MockResourceToken {
 
 contract VeydriftGameTest is Test {
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
+    bytes32 internal constant DEP_SHIPYARD_2 = "SHIPYARD_2";
+    bytes32 internal constant DEP_WEAPONS_3 = "WEAPONS_3";
+    bytes32 internal constant DEP_MISSILE_SILO_4 = "MISSILE_SILO_4";
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
@@ -195,7 +199,12 @@ contract VeydriftGameTest is Test {
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
 
         assertEq(game.buildingLevel(planetId, Building.MetalMine), 0);
+        assertEq(game.defenseCost(Defense.RocketLauncher).metal, 2_000);
+        assertEq(game.defenseCost(Defense.IonCannon).metal, 5_000);
+        assertEq(game.defenseCost(Defense.IonCannon).crystal, 3_000);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
+        assertEq(game.technologyLevel(player, Technology.Energy), 0);
         assertEq(game.maxPlanets(player), 1);
         assertEq(game.transportCargoCapacity(1, 1, 1), 32_500);
 
@@ -408,6 +417,76 @@ contract VeydriftGameTest is Test {
         assertFalse(game.activeBuildingConstruction(planetId).active);
     }
 
+    function testDefenseDependenciesMatchVanillaOGameRequirements() public {
+        VeydriftDependencies.requireDefense(Defense.RocketLauncher, 1, 0, 0, 0, 0, 0, 0, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, DEP_SHIPYARD_2)
+        );
+        VeydriftDependencies.requireDefense(Defense.LightLaser, 1, 0, 1, 3, 0, 0, 0, 0, 0);
+
+        VeydriftDependencies.requireDefense(Defense.LightLaser, 2, 0, 1, 3, 0, 0, 0, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, DEP_WEAPONS_3)
+        );
+        VeydriftDependencies.requireDefense(Defense.GaussCannon, 6, 0, 6, 0, 0, 2, 1, 0, 0);
+
+        VeydriftDependencies.requireDefense(Defense.GaussCannon, 6, 0, 6, 0, 0, 3, 1, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftDependencies.MissingDependency.selector, DEP_MISSILE_SILO_4
+            )
+        );
+        VeydriftDependencies.requireDefense(
+            Defense.InterplanetaryMissile, 1, 3, 0, 0, 0, 0, 0, 1, 0
+        );
+
+        VeydriftDependencies.requireDefense(
+            Defense.InterplanetaryMissile, 1, 4, 0, 0, 0, 0, 0, 1, 0
+        );
+    }
+
+    function testDefenseDurationUsesVanillaShipyardNaniteBasis() public pure {
+        assertEq(VeydriftFormulas.unitDuration(1, 0, 2_000, 0, 0, 1, 60), 1_440);
+        assertEq(VeydriftFormulas.unitDuration(1, 2, 2_000, 0, 0, 1, 60), 360);
+        assertEq(VeydriftFormulas.unitDuration(8, 0, 1_500, 500, 0, 1, 60), 320);
+    }
+
+    function testDefenseProductionEnforcesDomeAndMissileCaps() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _seedDefensePrerequisites(planetId);
+        _setResources(planetId, 5_000_000, 5_000_000, 5_000_000);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DefenseLimitReached.selector, Defense.SmallShieldDome
+            )
+        );
+        game.startDefenseProduction(planetId, Defense.SmallShieldDome, 2);
+
+        _buildDefense(planetId, Defense.SmallShieldDome, 1);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DefenseLimitReached.selector, Defense.SmallShieldDome
+            )
+        );
+        game.startDefenseProduction(planetId, Defense.SmallShieldDome, 1);
+
+        _buildDefense(planetId, Defense.InterplanetaryMissile, 20);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.MissileSiloCapacityExceeded.selector, 41, 40)
+        );
+        game.startDefenseProduction(planetId, Defense.AntiBallisticMissile, 1);
+    }
+
     function testAdvancedGameplayModulesFailExplicitly() public {
         vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
         game.depositMarketResource(1, Resource.Metal, 1);
@@ -417,10 +496,6 @@ contract VeydriftGameTest is Test {
         VeydriftGameStorage.Resources memory cargo =
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0});
 
-        vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
-        game.startDefenseProduction(1, Defense.RocketLauncher, 1);
-        vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
-        game.finishDefenseProduction(1);
         vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
         game.startShipProduction(1, Ship.SmallCargo, 1);
         vm.expectRevert(VeydriftGameStorage.UnsupportedGameplayModule.selector);
@@ -463,6 +538,53 @@ contract VeydriftGameTest is Test {
         vm.warp(construction.readyAt);
         vm.prank(account);
         targetGame.finishBuildingUpgrade(planetId);
+    }
+
+    function _buildDefense(uint256 planetId, Defense defense, uint32 quantity) internal {
+        vm.prank(player);
+        game.startDefenseProduction(planetId, defense, quantity);
+        VeydriftGameStorage.DefenseQueue memory queue = game.defenseQueue(planetId);
+        vm.warp(queue.readyAt);
+        vm.prank(player);
+        game.finishDefenseProduction(planetId);
+    }
+
+    function _seedDefensePrerequisites(uint256 planetId) internal {
+        _setBuildingLevel(planetId, Building.Shipyard, 8);
+        _setBuildingLevel(planetId, Building.MissileSilo, 4);
+        _setTechnologyLevel(player, Technology.Energy, 6);
+        _setTechnologyLevel(player, Technology.Laser, 6);
+        _setTechnologyLevel(player, Technology.Ion, 4);
+        _setTechnologyLevel(player, Technology.Weapons, 3);
+        _setTechnologyLevel(player, Technology.Shielding, 6);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 1);
+        _setTechnologyLevel(player, Technology.Plasma, 7);
+    }
+
+    function _setBuildingLevel(uint256 planetId, Building building, uint16 level) internal {
+        bytes32 outerSlot = keccak256(abi.encode(planetId, uint256(6)));
+        bytes32 slot = keccak256(abi.encode(uint256(uint8(building)), outerSlot));
+        vm.store(address(game), slot, bytes32(uint256(level)));
+    }
+
+    function _setTechnologyLevel(address account, Technology technology, uint16 level) internal {
+        bytes32 outerSlot = keccak256(abi.encode(account, uint256(20)));
+        bytes32 slot = keccak256(abi.encode(uint256(uint8(technology)), outerSlot));
+        vm.store(address(game), slot, bytes32(uint256(level)));
+    }
+
+    function _setResources(uint256 planetId, uint128 metal, uint128 crystal, uint128 deuterium)
+        internal
+    {
+        uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
+        vm.store(address(game), bytes32(planetBase + 2), _packResourcesHead(metal, crystal));
+        vm.store(address(game), bytes32(planetBase + 3), bytes32(uint256(deuterium)));
+        vm.store(address(game), bytes32(uint256(14)), _packResourcesHead(metal, crystal));
+        vm.store(address(game), bytes32(uint256(15)), bytes32(uint256(deuterium)));
+    }
+
+    function _packResourcesHead(uint128 metal, uint128 crystal) internal pure returns (bytes32) {
+        return bytes32((uint256(crystal) << 128) | uint256(metal));
     }
 
     function _fundGameReserves(uint256 amount) internal {

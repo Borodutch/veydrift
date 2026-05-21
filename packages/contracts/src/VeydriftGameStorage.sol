@@ -132,6 +132,9 @@ abstract contract VeydriftGameStorage {
     Resources internal _lockedWithdrawalResources;
     mapping(address player => mapping(Resource resource => ResourceWithdrawal withdrawal)) public
         resourceWithdrawals;
+    mapping(uint256 planetId => mapping(Defense defense => uint32 count)) internal _defenseCounts;
+    mapping(address player => mapping(Technology technology => uint16 level)) internal
+        _technologyLevels;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -174,6 +177,8 @@ abstract contract VeydriftGameStorage {
     error ResourceTransferFailed(Resource resource, address token, uint256 amount);
     error InsufficientResourceReserve(Resource resource, uint256 required, uint256 available);
     error UnsupportedGameplayModule();
+    error DefenseLimitReached(Defense defense);
+    error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(

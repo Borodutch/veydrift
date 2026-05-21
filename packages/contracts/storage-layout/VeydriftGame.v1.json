@@ -101,6 +101,18 @@
       "offset": 0,
       "slot": "18",
       "type": "mapping(address => mapping(enum Resource => struct ResourceWithdrawal))"
+    },
+    {
+      "label": "_defenseCounts",
+      "offset": 0,
+      "slot": "19",
+      "type": "mapping(uint256 => mapping(enum Defense => uint32))"
+    },
+    {
+      "label": "_technologyLevels",
+      "offset": 0,
+      "slot": "20",
+      "type": "mapping(address => mapping(enum Technology => uint16))"
     }
   ],
   "structs": {

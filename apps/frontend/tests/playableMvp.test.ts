@@ -176,9 +176,19 @@ describe("playable MVP contract display helpers", () => {
       [7, "largeShieldDome", "Large Shield Dome"],
       [8, "antiBallisticMissile", "Anti-Ballistic Missile"],
       [9, "interplanetaryMissile", "Interplanetary Missile"],
-    ]);
-    expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));
-  });
+	    ]);
+	    expect(defenseCatalog.find((defense) => defense.key === "rocketLauncher")?.baseCost).toEqual({
+	      metal: 2_000,
+	      crystal: 0,
+	      deuterium: 0,
+	    });
+	    expect(defenseCatalog.find((defense) => defense.key === "ionCannon")?.baseCost).toEqual({
+	      metal: 5_000,
+	      crystal: 3_000,
+	      deuterium: 0,
+	    });
+	    expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));
+	  });
 
   test("uses valid deterministic Shipyard, Research, and Defenses asset mappings", () => {
     const allAssets = [...shipAssetManifest, ...researchAssetManifest, ...defenseAssetManifest];

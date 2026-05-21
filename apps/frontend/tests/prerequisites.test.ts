@@ -47,20 +47,38 @@ describe("OGame-style prerequisite gating", () => {
     })).toEqual([]);
   });
 
-  test("reports representative locked defense prerequisites from chain state", () => {
-    const lightLaser = defenseCatalog.find((defense) => defense.key === "lightLaser");
-    expect(lightLaser).toBeDefined();
+	  test("reports representative locked defense prerequisites from chain state", () => {
+	    const lightLaser = defenseCatalog.find((defense) => defense.key === "lightLaser");
+	    expect(lightLaser).toBeDefined();
 
-    expect(missingUnlockRequirements(lightLaser!.requirements, {
-      buildings: { shipyard: 1 },
-      research: {},
-    })).toEqual(["Requires Laser 1"]);
+	    expect(missingUnlockRequirements(lightLaser!.requirements, {
+	      buildings: { shipyard: 1 },
+	      research: {},
+	    })).toEqual([
+	      "Requires Shipyard 2",
+	      "Requires Energy 1",
+	      "Requires Laser 3",
+	    ]);
 
-    expect(missingUnlockRequirements(lightLaser!.requirements, {
-      buildings: { shipyard: 1 },
-      research: { laser: 1 },
-    })).toEqual([]);
-  });
+	    expect(missingUnlockRequirements(lightLaser!.requirements, {
+	      buildings: { shipyard: 2 },
+	      research: { energy: 1, laser: 3 },
+	    })).toEqual([]);
+	  });
+
+	  test("reports missile silo prerequisites from chain state", () => {
+	    const interplanetaryMissile =
+	      defenseCatalog.find((defense) => defense.key === "interplanetaryMissile");
+	    expect(interplanetaryMissile).toBeDefined();
+
+	    expect(missingUnlockRequirements(interplanetaryMissile!.requirements, {
+	      buildings: { shipyard: 1, missileSilo: 3 },
+	      research: {},
+	    })).toEqual([
+	      "Requires Missile Silo 4",
+	      "Requires Impulse Drive 1",
+	    ]);
+	  });
 
   test("exposes Interdimensional Rift Stabilizer as deployed building id 15 with current build prerequisites", () => {
     const state = createInitialPlayableState(1_000);

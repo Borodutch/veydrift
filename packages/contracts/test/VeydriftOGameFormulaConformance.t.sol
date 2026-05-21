@@ -12,7 +12,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
     uint32 internal constant MIN_QUEUE_SECONDS = 60;
     bytes32 private constant DEP_COMBUSTION_2 = "COMBUSTION_2";
     bytes32 private constant DEP_ION_2 = "ION_2";
-    bytes32 private constant DEP_GAUSS_CANNON = "LASER_6_SHIELDING_1";
+    bytes32 private constant DEP_GAUSS_CANNON = "WEAPONS_3";
     bytes32 private constant DEP_PLASMA_RESEARCH = "ENERGY_8_LASER_10_ION_5";
 
     function testVanillaOGameMineProductionAndEnergy() public pure {
@@ -100,7 +100,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
     }
 
     function testVanillaOGameDefenseCostsAndRequirements() public {
-        _assertDefense(Defense.RocketLauncher, 200, 0, 0);
+        _assertDefense(Defense.RocketLauncher, 2_000, 0, 0);
         _assertDefense(Defense.GaussCannon, 20_000, 15_000, 2_000);
         _assertDefense(Defense.PlasmaTurret, 50_000, 50_000, 30_000);
 
@@ -109,8 +109,8 @@ contract VeydriftOGameFormulaConformanceTest is Test {
                 VeydriftDependencies.MissingDependency.selector, DEP_GAUSS_CANNON
             )
         );
-        VeydriftDependencies.requireDefense(Defense.GaussCannon, 1, 6, 0, 0, 0);
-        VeydriftDependencies.requireDefense(Defense.GaussCannon, 1, 6, 0, 1, 0);
+        VeydriftDependencies.requireDefense(Defense.GaussCannon, 6, 0, 6, 0, 0, 2, 1, 0, 0);
+        VeydriftDependencies.requireDefense(Defense.GaussCannon, 6, 0, 6, 0, 0, 3, 1, 0, 0);
     }
 
     function testVanillaOGameResearchCostsAndRequirements() public {
