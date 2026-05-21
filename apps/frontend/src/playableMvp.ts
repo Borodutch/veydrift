@@ -1313,7 +1313,7 @@ function buildingDurationSeconds(roboticsLevel: number, naniteLevel: number, cos
 }
 
 function researchDurationSeconds(researchLabLevel: number, cost: Resources): number {
-  const raw = Math.floor((cost.metal + cost.crystal + cost.deuterium) / (120 * (researchLabLevel + 1)));
+  const raw = Math.floor(((cost.metal + cost.crystal) * 3_600) / (1_000 * (researchLabLevel + 1)));
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 

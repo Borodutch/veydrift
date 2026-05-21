@@ -40,6 +40,20 @@ library VeydriftCatalog {
         return (2, 1);
     }
 
+    function buildingUpgradeCost(Building building, uint16 currentLevel)
+        public
+        pure
+        returns (uint128, uint128, uint128)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = buildingBaseCost(building);
+        (uint8 numerator, uint8 denominator) = buildingCostFactor(building);
+        return (
+            _scaleByFactor(metal, currentLevel, numerator, denominator),
+            _scaleByFactor(crystal, currentLevel, numerator, denominator),
+            _scaleByFactor(deuterium, currentLevel, numerator, denominator)
+        );
+    }
+
     function defenseCost(Defense defense) public pure returns (uint128, uint128, uint128) {
         if (defense == Defense.RocketLauncher) return (200, 0, 0);
         if (defense == Defense.LightLaser) return (1_500, 500, 0);
@@ -120,5 +134,15 @@ library VeydriftCatalog {
         }
         if (technology == Technology.Graviton) return (0, 0, 0);
         revert InvalidId();
+    }
+
+    function _scaleByFactor(uint128 value, uint16 exponent, uint8 numerator, uint8 denominator)
+        private
+        pure
+        returns (uint128)
+    {
+        return uint128(
+            (uint256(value) * (uint256(numerator) ** exponent)) / (uint256(denominator) ** exponent)
+        );
     }
 }

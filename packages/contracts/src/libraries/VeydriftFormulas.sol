@@ -122,12 +122,11 @@ library VeydriftFormulas {
         uint256 labLevel,
         uint128 metalCost,
         uint128 crystalCost,
-        uint128 deuteriumCost,
+        uint128,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
-        uint256 raw =
-            (uint256(metalCost) + uint256(crystalCost) + uint256(deuteriumCost))
-                / (120 * (labLevel + 1));
+        uint256 raw = ((uint256(metalCost) + uint256(crystalCost)) * 1 hours)
+            / (1000 * (labLevel + 1));
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
 
