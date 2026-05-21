@@ -54,6 +54,8 @@ import {
 } from "./overviewData";
 import {
   waitForFinishedBuildingState,
+  waitForHydratedWalletPlanet,
+  type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
 import {
@@ -177,6 +179,61 @@ function selectCounterplayShips(shipyardState: ChainShipyardState | null): Missi
     }
   }
   return null;
+}
+
+async function loadWalletPlanetSyncSnapshot(
+  apiBaseUrl: string,
+  account: string,
+  activePlanetId: string | undefined,
+): Promise<WalletPlanetSyncSnapshot> {
+  const settlement = await fetchWalletSettlement(apiBaseUrl, account);
+  const [planetsResult, queuesResult, visibilityResult] = await Promise.allSettled([
+    fetchWalletPlanets(apiBaseUrl, account),
+    fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+    fetchFleetMissionVisibility(apiBaseUrl, account),
+  ]);
+
+  const planetsResponse = planetsResult.status === "fulfilled"
+    ? planetsResult.value
+    : {
+        wallet: account,
+        homePlanetId: settlement.homePlanetId,
+        planets: [],
+      };
+  const queues = queuesResult.status === "fulfilled"
+    ? queuesResult.value
+    : emptyPlayerQueues(account, settlement.homePlanetId);
+  const fleetVisibility = visibilityResult.status === "fulfilled"
+    ? visibilityResult.value
+    : emptyFleetVisibility(account, settlement.homePlanetId);
+
+  return {
+    fleetVisibility,
+    planetsResponse,
+    queues,
+    settlement,
+  };
+}
+
+function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
+  return {
+    wallet,
+    homePlanetId,
+    building: null,
+    defense: null,
+    ship: null,
+    research: null,
+  };
+}
+
+function emptyFleetVisibility(wallet: string, homePlanetId: string | null): FleetMissionVisibilityResponse {
+  return {
+    wallet,
+    homePlanetId,
+    incoming: [],
+    outgoing: [],
+    returning: [],
+  };
 }
 
 export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProps = {}) {
@@ -460,16 +517,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
     try {
-      const [settlement, planetsResponse, queues, visibility] = await Promise.all([
-        fetchWalletSettlement(apiBaseUrl, account),
-        fetchWalletPlanets(apiBaseUrl, account),
-        fetchWalletQueues(apiBaseUrl, account, activePlanetId),
-        fetchFleetMissionVisibility(apiBaseUrl, account),
-      ]);
+      const snapshot = await waitForHydratedWalletPlanet(
+        () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId),
+        activePlanetId,
+      );
+      const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
       const planets = planetsResponse.planets;
-      const selectedPlanet = planets.find((item) => item.planetId === (activePlanetId ?? settlement.homePlanetId))
-        ?? planets.find((item) => item.isHomePlanet)
-        ?? planets[0];
       setWalletPlanets(planets);
       if (!selectedPlanetId && selectedPlanet?.planetId) {
         setSelectedPlanetId(selectedPlanet.planetId);
@@ -482,7 +535,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           }
         : settlement);
       setOnChainQueues(queues);
-      setFleetVisibility(visibility);
+      setFleetVisibility(fleetVisibility);
       setOnChainError(undefined);
       setOnChainStatus("ready");
     } catch (error) {
@@ -1474,6 +1527,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           error={onChainError}
           onRetry={() => void refreshOnChainState()}
           status={onChainStatus}
+          txHash={planet?.txHash}
         />
       );
     }
@@ -1760,10 +1814,12 @@ function HydratingPlanetState({
   error,
   onRetry,
   status,
+  txHash,
 }: {
   error: string | undefined;
   onRetry: () => void;
   status: ChainLoadStatus;
+  txHash: string | undefined;
 }) {
   const failed = status === "error";
 
@@ -1779,6 +1835,7 @@ function HydratingPlanetState({
             ? "The settlement transaction is confirmed, but the game API has not returned complete planet resources yet."
             : "Reading the new home planet coordinates and starter resources before opening the overview."}
         </p>
+        {failed && txHash ? <p className="mt-2 truncate text-xs text-slate-500">Tx: {txHash}</p> : null}
         {error ? <p className="mt-2 truncate text-xs text-amber-200/80">{error}</p> : null}
         {failed ? (
           <button

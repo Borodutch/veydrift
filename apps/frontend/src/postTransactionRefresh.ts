@@ -1,7 +1,10 @@
 import type {
+  FleetMissionVisibilityResponse,
   ChainInfrastructureState,
+  ManagedPlanetResponse,
   PlayerQueuesResponse,
   WalletSettlementResponse,
+  WalletPlanetsResponse,
 } from "./walletFlow";
 
 export type FinishedBuildingExpectation = {
@@ -13,6 +16,17 @@ export type FinishedBuildingSnapshot = {
   infrastructure: ChainInfrastructureState;
   queues: PlayerQueuesResponse;
   settlement: WalletSettlementResponse;
+};
+
+export type WalletPlanetSyncSnapshot = {
+  fleetVisibility: FleetMissionVisibilityResponse;
+  planetsResponse: WalletPlanetsResponse;
+  queues: PlayerQueuesResponse;
+  settlement: WalletSettlementResponse;
+};
+
+export type HydratedWalletPlanetSnapshot = WalletPlanetSyncSnapshot & {
+  selectedPlanet: ManagedPlanetResponse | NonNullable<WalletSettlementResponse["planet"]>;
 };
 
 type WaitOptions = {
@@ -34,6 +48,31 @@ export function isFinishedBuildingStateVisible(
 
   const row = snapshot.infrastructure.buildings.find((building) => building.id === expectation.itemId);
   return (row?.level ?? 0) >= expectation.targetLevel;
+}
+
+export function hydratedWalletPlanetSnapshot(
+  snapshot: WalletPlanetSyncSnapshot,
+  preferredPlanetId?: string | undefined,
+): HydratedWalletPlanetSnapshot | undefined {
+  const homePlanetId = snapshot.settlement.homePlanetId ?? snapshot.planetsResponse.homePlanetId;
+  if (!homePlanetId) return undefined;
+
+  const selectedPlanet = snapshot.planetsResponse.planets.find((planet) => planet.planetId === (preferredPlanetId ?? homePlanetId))
+    ?? snapshot.planetsResponse.planets.find((planet) => planet.planetId === homePlanetId || planet.isHomePlanet)
+    ?? snapshot.planetsResponse.planets[0]
+    ?? snapshot.settlement.planet
+    ?? undefined;
+
+  if (!selectedPlanet) return undefined;
+  if (!selectedPlanet.resources?.metal || !selectedPlanet.resources.crystal || !selectedPlanet.resources.deuterium) return undefined;
+  if (!Number.isFinite(selectedPlanet.galaxy) || !Number.isFinite(selectedPlanet.system) || !Number.isFinite(selectedPlanet.position)) {
+    return undefined;
+  }
+
+  return {
+    ...snapshot,
+    selectedPlanet,
+  };
 }
 
 export async function waitForFinishedBuildingState(
@@ -60,6 +99,35 @@ export async function waitForFinishedBuildingState(
   throw new Error(finishedBuildingTimeoutMessage(latest, expectation));
 }
 
+export async function waitForHydratedWalletPlanet(
+  load: () => Promise<WalletPlanetSyncSnapshot>,
+  preferredPlanetId?: string | undefined,
+  options: WaitOptions = {},
+): Promise<HydratedWalletPlanetSnapshot> {
+  const attempts = options.attempts ?? 12;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: WalletPlanetSyncSnapshot | undefined;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      latest = await load();
+      lastError = undefined;
+      const hydrated = hydratedWalletPlanetSnapshot(latest, preferredPlanetId);
+      if (hydrated) return hydrated;
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(walletPlanetHydrationTimeoutMessage(latest, lastError, attempts * intervalMs));
+}
+
 function finishedBuildingTimeoutMessage(
   snapshot: FinishedBuildingSnapshot | undefined,
   expectation: FinishedBuildingExpectation,
@@ -79,6 +147,23 @@ function finishedBuildingTimeoutMessage(
   }
 
   return "Building transaction confirmed, but the completed building state is still syncing. Try refreshing the game state in a few seconds.";
+}
+
+function walletPlanetHydrationTimeoutMessage(
+  snapshot: WalletPlanetSyncSnapshot | undefined,
+  lastError: unknown,
+  waitedMs: number,
+): string {
+  const waitedSeconds = Math.round(waitedMs / 1_000);
+  const homePlanetId = snapshot?.settlement.homePlanetId ?? snapshot?.planetsResponse.homePlanetId ?? null;
+  const planetCount = snapshot?.planetsResponse.planets.length ?? 0;
+  const reason = lastError instanceof Error
+    ? lastError.message
+    : homePlanetId
+      ? `home planet ${homePlanetId} is visible, but complete resources are not hydrated yet`
+      : "home planet id is not visible from the game API yet";
+
+  return `Settlement transaction is confirmed, but the game API did not hydrate a complete planet after ${waitedSeconds}s. Last status: ${reason}. Indexed planets: ${planetCount}. Retry sync in a few seconds; if it repeats, share this status with the transaction hash.`;
 }
 
 function defaultDelay(ms: number): Promise<void> {
