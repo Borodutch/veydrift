@@ -33,6 +33,7 @@ describe("Randomness fulfillment worker", () => {
     const status = await worker.tick();
 
     expect(fulfilled).toEqual([{ requestId: 42n, randomWord: 777n }]);
+    expect(status.pending).toBe(0);
     expect(status.fulfilled).toBe(1);
     expect(status.failed).toBe(0);
     expect(status.alerts).toEqual([]);
@@ -58,6 +59,7 @@ describe("Randomness fulfillment worker", () => {
 
     expect(status.fulfilled).toBe(0);
     expect(status.failed).toBe(1);
+    expect(status.pending).toBe(1);
     expect(status.oldestPendingAgeSeconds).toBe(60);
     expect(status.alerts).toEqual([
       "oldest randomness request has been pending for 60s",
