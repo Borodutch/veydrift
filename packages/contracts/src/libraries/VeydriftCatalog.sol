@@ -76,8 +76,8 @@ library VeydriftCatalog {
         if (ship == Ship.Destroyer) return 2_000;
         if (ship == Ship.Deathstar) return 1_000_000;
         if (ship == Ship.Battlecruiser) return 750;
-        if (ship == Ship.Reaper) return 10_000;
-        if (ship == Ship.Pathfinder) return 10_000;
+        if (ship == Ship.Reaper) return 7_000;
+        if (ship == Ship.Pathfinder) return 12_000;
         revert InvalidId();
     }
 

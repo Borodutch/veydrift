@@ -281,8 +281,8 @@ export const shipCatalog: Array<{
     group: "civil",
     baseCost: { metal: 2_000, crystal: 2_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
     ],
     asset: shipAssetByKey.smallCargo,
   },
@@ -305,8 +305,9 @@ export const shipCatalog: Array<{
     group: "civil",
     baseCost: { metal: 10_000, crystal: 6_000, deuterium: 2_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 6 },
+      { kind: "technology", key: "shielding", label: "Shielding", level: 2 },
     ],
     asset: shipAssetByKey.recycler,
   },
@@ -317,8 +318,8 @@ export const shipCatalog: Array<{
     group: "civil",
     baseCost: { metal: 10_000, crystal: 20_000, deuterium: 10_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
-      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 3 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
+      { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 3 },
     ],
     asset: shipAssetByKey.colonyShip,
   },
@@ -329,7 +330,7 @@ export const shipCatalog: Array<{
     group: "civil",
     baseCost: { metal: 6_000, crystal: 6_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 6 },
     ],
     asset: shipAssetByKey.largeCargo,
@@ -341,8 +342,9 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 6_000, crystal: 4_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 3 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 2 },
+      { kind: "technology", key: "armor", label: "Armor", level: 2 },
     ],
     asset: shipAssetByKey.heavyFighter,
   },
@@ -353,8 +355,9 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 20_000, crystal: 7_000, deuterium: 2_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 4 },
+      { kind: "technology", key: "ion", label: "Ion", level: 2 },
     ],
     asset: shipAssetByKey.cruiser,
   },
@@ -365,7 +368,7 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 45_000, crystal: 15_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 7 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 4 },
     ],
     asset: shipAssetByKey.battleship,
@@ -377,7 +380,8 @@ export const shipCatalog: Array<{
     group: "special",
     baseCost: { metal: 0, crystal: 1_000, deuterium: 0 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 3 },
+      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 3 },
       { kind: "technology", key: "espionage", label: "Espionage", level: 2 },
     ],
     asset: shipAssetByKey.espionageProbe,
@@ -389,8 +393,9 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 50_000, crystal: 25_000, deuterium: 15_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 8 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 6 },
+      { kind: "technology", key: "plasma", label: "Plasma", level: 5 },
     ],
     asset: shipAssetByKey.bomber,
   },
@@ -412,8 +417,9 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 60_000, crystal: 50_000, deuterium: 15_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 9 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 6 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
     ],
     asset: shipAssetByKey.destroyer,
   },
@@ -424,7 +430,9 @@ export const shipCatalog: Array<{
     group: "special",
     baseCost: { metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 12 },
+      { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 7 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 6 },
       { kind: "technology", key: "graviton", label: "Graviton", level: 1 },
     ],
     asset: shipAssetByKey.deathstar,
@@ -436,8 +444,10 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 30_000, crystal: 40_000, deuterium: 15_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 8 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 5 },
+      { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
+      { kind: "technology", key: "laser", label: "Laser", level: 12 },
     ],
     asset: shipAssetByKey.battlecruiser,
   },
@@ -448,9 +458,10 @@ export const shipCatalog: Array<{
     group: "combat",
     baseCost: { metal: 85_000, crystal: 55_000, deuterium: 20_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 10 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 7 },
       { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 6 },
+      { kind: "technology", key: "shielding", label: "Shielding", level: 6 },
     ],
     asset: shipAssetByKey.reaper,
   },
@@ -461,7 +472,7 @@ export const shipCatalog: Array<{
     group: "special",
     baseCost: { metal: 8_000, crystal: 15_000, deuterium: 8_000 },
     requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
+      { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
     ],
     asset: shipAssetByKey.pathfinder,
@@ -1103,6 +1114,15 @@ export function buildingDurationEstimate(
   return buildingDurationSeconds(buildings.roboticsFactory, cost);
 }
 
+export function shipDurationEstimate(
+  shipyardLevel: number,
+  naniteLevel: number,
+  cost: Resources,
+  quantity = 1,
+): number {
+  return shipDurationSeconds(shipyardLevel, naniteLevel, cost, quantity);
+}
+
 export function canAfford(resources: Resources, cost: Resources): boolean {
   return resources.metal >= cost.metal
     && resources.crystal >= cost.crystal
@@ -1194,6 +1214,12 @@ function buildingDurationSeconds(roboticsLevel: number, cost: Resources): number
 
 function researchDurationSeconds(researchLabLevel: number, cost: Resources): number {
   const raw = Math.floor((cost.metal + cost.crystal + cost.deuterium) / (120 * (researchLabLevel + 1)));
+  return Math.max(MIN_QUEUE_SECONDS, raw);
+}
+
+function shipDurationSeconds(shipyardLevel: number, naniteLevel: number, cost: Resources, quantity: number): number {
+  const denominator = 2500 * (shipyardLevel + 1) * (2 ** naniteLevel);
+  const raw = Math.ceil(((cost.metal + cost.crystal) * Math.max(1, Math.floor(quantity)) * 3_600) / denominator);
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 
