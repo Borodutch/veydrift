@@ -15,6 +15,7 @@ import {
   formatSigned,
 } from "../buildingDetails";
 import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
+import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
 import { OptimizedImage } from "./OptimizedImage";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -45,7 +46,7 @@ const buildingDescriptions: Record<BuildingKey, string> = {
 };
 
 interface InfrastructurePageProps {
-  actionNotice?: { label: string; tone: "error" | "success" | "pending" } | undefined;
+  actionNotice?: InfrastructureActionNotice | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
@@ -135,7 +136,7 @@ export function InfrastructurePage({
 
         <div className="order-1 xl:order-2" ref={detailPanelRef}>
           <BuildingDetailPanel
-            actionNotice={actionNotice}
+            actionNotice={actionNoticeForBuilding(actionNotice, selectedBuilding.key)}
             actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
@@ -235,7 +236,7 @@ function BuildingDetailPanel({
   planetProductionProfile,
   state,
 }: {
-  actionNotice?: { label: string; tone: "error" | "success" | "pending" } | undefined;
+  actionNotice?: InfrastructureActionNotice | undefined;
   actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
