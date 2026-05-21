@@ -261,6 +261,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
     }
 
+    function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
+        _delegateToCombatModule();
+    }
+
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
         _requireRiftUnlocked(planetId);

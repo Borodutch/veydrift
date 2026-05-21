@@ -453,6 +453,16 @@ abstract contract VeydriftGameStorage {
     event FleetMissionReturned(
         uint256 indexed missionId, address indexed owner, uint256 indexed planetId
     );
+    event InterplanetaryMissileAttack(
+        address indexed attacker,
+        uint256 indexed originPlanetId,
+        uint256 indexed targetPlanetId,
+        Defense primaryTarget,
+        uint32 launched,
+        uint32 intercepted,
+        uint32 hits,
+        uint32 destroyedPrimary
+    );
     event RaidLootResolved(
         uint256 indexed targetPlanetId,
         uint256 cargoCapacity,
