@@ -19,6 +19,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _combatModule = combatModule;
     }
 
+    function attackProtectionStatus(address attacker, uint256 targetPlanetId)
+        external
+        view
+        returns (AttackBlockReason)
+    {
+        address defender = _attackDefender(targetPlanetId);
+        return _attackBlockReason(
+            attacker,
+            defender,
+            _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId))
+        );
+    }
+
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
         _validateShipProduction(planetId, ship, quantity);
         _settleResources(planetId);
@@ -84,6 +97,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (originPlanetId == targetPlanetId) revert SamePlanet();
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
         _validateMissionType(missionType);
+        if (missionType == FleetMissionType.Attack) {
+            _enforceAttackProtection(msg.sender, targetPlanetId);
+        }
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
             _technologyLevels[msg.sender][Technology.Computer]
         );
@@ -145,6 +161,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             ships: ships,
             randomnessRequestId: randomnessRequestId
         });
+        if (missionType == FleetMissionType.Attack) {
+            _recordAttack(msg.sender, targetPlanetId);
+        }
 
         emit FleetMissionLaunched(
             missionId,
@@ -589,6 +608,90 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
     }
 
+    function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
+        address defender = _attackDefender(targetPlanetId);
+        AttackBlockReason reason = _attackBlockReason(
+            attacker,
+            defender,
+            _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId))
+        );
+        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
+        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
+    }
+
+    function _recordAttack(address attacker, uint256 targetPlanetId) private {
+        address defender = _attackDefender(targetPlanetId);
+        if (_isAttackProtectionExempt(attacker, defender)) return;
+
+        bytes32 windowKey = _attackWindowKey(attacker, defender, targetPlanetId);
+        AttackWindow storage window = _attackWindows[windowKey];
+        uint64 currentTime = _currentTimestamp();
+        if (
+            window.windowStartedAt == 0
+                || currentTime
+                    >= window.windowStartedAt + VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS
+        ) {
+            window.windowStartedAt = currentTime;
+            window.count = 1;
+        } else {
+            window.count += 1;
+        }
+    }
+
+    function _attackBlockReason(address attacker, address defender, uint32 attacksInWindow)
+        private
+        view
+        returns (AttackBlockReason)
+    {
+        if (attacker == defender || _isAttackProtectionExempt(attacker, defender)) {
+            return AttackBlockReason.None;
+        }
+        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(attacksInWindow, false)) {
+            return AttackBlockReason.BashingLimit;
+        }
+        if (VeydriftAntiRaidPrimitives.isScoreProtected(
+                _totalUserScore(attacker), _totalUserScore(defender), false
+            )) {
+            return AttackBlockReason.ScoreProtection;
+        }
+        return AttackBlockReason.None;
+    }
+
+    function _currentAttackCount(bytes32 windowKey) private view returns (uint32) {
+        AttackWindow memory window = _attackWindows[windowKey];
+        uint64 currentTime = _currentTimestamp();
+        if (
+            window.windowStartedAt == 0
+                || currentTime
+                    >= window.windowStartedAt + VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS
+        ) {
+            return 0;
+        }
+        return window.count;
+    }
+
+    function _isAttackProtectionExempt(address attacker, address defender)
+        private
+        view
+        returns (bool)
+    {
+        return _attackProtectionExemptions[_playerPairKey(attacker, defender)];
+    }
+
+    function _attackDefender(uint256 targetPlanetId) private view returns (address) {
+        address defender = _planets[targetPlanetId].owner;
+        if (defender == address(0)) revert NoPlanet();
+        return defender;
+    }
+
+    function _attackWindowKey(address attacker, address defender, uint256 targetPlanetId)
+        private
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(attacker, defender, targetPlanetId));
+    }
+
     function _requireActiveMissionOwner(FleetMission storage mission) private view {
         if (
             mission.status == FleetMissionStatus.None
@@ -721,6 +824,41 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint128 deuteriumCap = _toUint128((uint256(unprotected.deuterium) * RAID_LOOT_BPS) / BPS);
         uint128 deuterium = _toUint128(_min(deuteriumCap, capacity));
         return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
+    }
+
+    function _totalUserScore(address player) private view returns (uint256 score) {
+        for (uint8 id = 0; id <= MAX_TECHNOLOGY_ID;) {
+            score += uint256(_technologyLevels[player][Technology(id)]) * (id + 1) * 15;
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint256 planetId = 1; planetId < nextPlanetId;) {
+            if (_planets[planetId].owner == player) {
+                score += 1_000;
+                for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
+                    score += uint256(_buildingLevels[planetId][Building(id)]) * (id + 1) * 10;
+                    unchecked {
+                        ++id;
+                    }
+                }
+                for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
+                    score += uint256(_defenseCounts[planetId][Defense(id)]) * (id + 1) * 2;
+                    unchecked {
+                        ++id;
+                    }
+                }
+                for (uint8 id = 0; id <= MAX_SHIP_ID;) {
+                    score += uint256(_shipCounts[planetId][Ship(id)]) * (id + 1) * 4;
+                    unchecked {
+                        ++id;
+                    }
+                }
+            }
+            unchecked {
+                ++planetId;
+            }
+        }
     }
 
     function _delegateToCombatModule() private {

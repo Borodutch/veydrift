@@ -271,6 +271,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function attackProtectionStatus(address, uint256) external returns (AttackBlockReason) {
+        _delegateToGameplayModule();
+    }
+
     function depositMarketResource(uint256, Resource, uint128) external {
         _delegateToGameplayModule();
     }

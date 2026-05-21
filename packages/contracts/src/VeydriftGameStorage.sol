@@ -140,6 +140,12 @@ abstract contract VeydriftGameStorage {
         DefenderWin
     }
 
+    enum AttackBlockReason {
+        None,
+        BashingLimit,
+        ScoreProtection
+    }
+
     struct MissionShips {
         uint32 smallCargo;
         uint32 lightFighter;
@@ -171,6 +177,11 @@ abstract contract VeydriftGameStorage {
         Resources cargo;
         MissionShips ships;
         uint256 randomnessRequestId;
+    }
+
+    struct AttackWindow {
+        uint64 windowStartedAt;
+        uint32 count;
     }
 
     struct DebrisField {
@@ -217,6 +228,8 @@ abstract contract VeydriftGameStorage {
     mapping(uint256 planetId => string name) public planetNames;
     mapping(uint256 planetId => DebrisField field) internal _debrisFields;
     address internal _spaceDockSystem;
+    mapping(bytes32 attackKey => AttackWindow window) internal _attackWindows;
+    mapping(bytes32 playerPairKey => bool enabled) internal _attackProtectionExemptions;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -266,6 +279,8 @@ abstract contract VeydriftGameStorage {
     error UnsupportedGameplayModule();
     error DefenseLimitReached(Defense defense);
     error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
+    error AttackBashingLimitReached();
+    error AttackScoreProtection();
     error InvalidPlanetName();
     error CannotAbandonHomePlanet();
     error PlanetHasActiveQueues();
@@ -534,6 +549,17 @@ abstract contract VeydriftGameStorage {
         uint256 oldPrice = startPrice;
         startPrice = nextPrice;
         emit StartPriceUpdated(oldPrice, nextPrice);
+    }
+
+    function setAttackProtectionExemption(address attacker, address defender, bool enabled)
+        external
+        onlyOwner
+    {
+        _attackProtectionExemptions[_playerPairKey(attacker, defender)] = enabled;
+    }
+
+    function _playerPairKey(address attacker, address defender) internal pure returns (bytes32) {
+        return keccak256(abi.encode(attacker, defender));
     }
 
     function withdrawFees(address payable to) external onlyOwner {

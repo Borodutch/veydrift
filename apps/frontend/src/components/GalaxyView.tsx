@@ -54,6 +54,13 @@ export type GalaxyMissionPreview = {
   returnAt: number;
 };
 
+export type AttackProtectionStatus = {
+  allowed: boolean;
+  blockedReason: "none" | "bashing_limit" | "score_protection";
+  blockedReasonLabel: string | null;
+  targetPlanetId: string;
+};
+
 export type GalaxyActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
@@ -92,6 +99,7 @@ export function GalaxyView({
   onNavigate,
 }: Props) {
   const [planets, setPlanets] = useState<Planet[]>([]);
+  const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
   const [loading, setLoading] = useState(true);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
@@ -131,6 +139,45 @@ export function GalaxyView({
 
     return () => abortController.abort();
   }, [apiBaseUrl, galaxy, homeCoordsInSystem?.position, homePlanetOverride?.fields, homePlanetOverride?.image, system]);
+
+  useEffect(() => {
+    const occupiedTargets = planets
+      .filter((planet) => planet.occupiedBy && account && !sameCoordinates(homeCoords, planet))
+      .map((planet) => planet.occupiedBy?.planetId)
+      .filter((planetId): planetId is string => Boolean(planetId));
+
+    if (occupiedTargets.length === 0) {
+      setAttackProtection({});
+      return;
+    }
+
+    const abortController = new AbortController();
+    const apiRoot = apiBaseUrl.replace(/\/+$/, "");
+    Promise.all(
+      occupiedTargets.map((planetId) =>
+        fetch(`${apiRoot}/wallet/${account}/attack-protection?targetPlanetId=${planetId}`, {
+          headers: { accept: "application/json" },
+          signal: abortController.signal,
+        }).then((response) => {
+          if (!response.ok) throw new Error(`Attack protection request failed with ${response.status}`);
+          return response.json() as Promise<AttackProtectionStatus>;
+        })
+      )
+    )
+      .then((statuses) => {
+        if (!abortController.signal.aborted) {
+          setAttackProtection(Object.fromEntries(statuses.map((status) => [status.targetPlanetId, status])));
+        }
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setAttackProtection({});
+        }
+      });
+
+    return () => abortController.abort();
+  }, [account, apiBaseUrl, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, planets]);
 
   const handlePrevSystem = () => {
     let newSystem = system - 1;
@@ -266,6 +313,7 @@ export function GalaxyView({
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
                   onAction={onAction}
+                  attackProtection={planet?.occupiedBy ? attackProtection[planet.occupiedBy.planetId] : undefined}
                   homeCoords={homeCoordsInSystem}
                   homePlanetId={homePlanetId}
                   planet={planet}
@@ -432,6 +480,7 @@ function GalaxySlot({
   isHome,
   shipyardState,
   onAction,
+  attackProtection,
   onSelectPlanet,
 }: {
   account: string | undefined;
@@ -447,6 +496,7 @@ function GalaxySlot({
   isHome: boolean;
   shipyardState: ChainShipyardState | null;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  attackProtection: AttackProtectionStatus | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -513,6 +563,7 @@ function GalaxySlot({
     planner: missionPlanner,
     target: { galaxy, system, position },
   });
+  const attackBlockLabel = formatAttackBlockReason(attackProtection);
 
   return (
     <div
@@ -566,6 +617,12 @@ function GalaxySlot({
               <>
                 <span className="text-slate-700">/</span>
                 <span>Moon</span>
+              </>
+            ) : null}
+            {attackBlockLabel ? (
+              <>
+                <span className="text-slate-700">/</span>
+                <span className="text-amber-200">{attackBlockLabel}</span>
               </>
             ) : null}
             {debrisLabel ? (
@@ -649,6 +706,14 @@ export function formatMissionPreview(preview: GalaxyMissionPreview): string {
   if (preview.blockedReason) return `${slotLabel} / ${preview.blockedReason}`;
 
   return `${slotLabel} / Fuel ${preview.fuelCost.toLocaleString()} D / Cargo ${preview.cargoCapacity.toLocaleString()} / Arrives ${formatMissionClock(preview.arrivalAt)} / Returns ${formatMissionClock(preview.returnAt)}`;
+}
+
+export function formatAttackBlockReason(status: AttackProtectionStatus | undefined): string | undefined {
+  if (!status || status.allowed || status.blockedReason === "none") return undefined;
+  if (status.blockedReasonLabel) return status.blockedReasonLabel;
+  if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit";
+  if (status.blockedReason === "score_protection") return "Attack blocked by score protection";
+  return "Attack blocked";
 }
 
 function formatMissionClock(timestamp: number): string {
