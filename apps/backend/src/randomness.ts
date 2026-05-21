@@ -55,6 +55,7 @@ export class RandomnessFulfillmentWorker {
 
   async tick(): Promise<RandomnessOperationalStatus> {
     const pending = await this.chainClient.listPendingRequests();
+    const stillPending: RandomnessRequestEvent[] = [];
 
     for (const request of pending) {
       try {
@@ -67,6 +68,7 @@ export class RandomnessFulfillmentWorker {
           transactionHash: txHash
         });
       } catch (error) {
+        stillPending.push(request);
         this.failures.push({
           ...request,
           failedAt: this.now().toISOString(),
@@ -75,7 +77,7 @@ export class RandomnessFulfillmentWorker {
       }
     }
 
-    return this.status(pending);
+    return this.status(stillPending);
   }
 
   status(pendingRequests: RandomnessRequestEvent[] = []): RandomnessOperationalStatus {
