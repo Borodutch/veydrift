@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftGameplayModule} from "./VeydriftGameplayModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
@@ -237,18 +238,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
-    function launchFleetMissionWithSpeed(
-        uint256,
-        uint256,
-        FleetMissionType,
-        MissionShips calldata,
-        Resources calldata,
-        uint256,
-        uint16
-    ) external returns (uint256) {
-        _delegateToGameplayModule();
-    }
-
     function recallFleetMission(uint256) external {
         _delegateToGameplayModule();
     }
@@ -407,17 +396,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
-    function missionTravelSeconds(uint256, uint256, uint16) public returns (uint256) {
-        _delegateToGameplayModule();
-    }
-
-    function missionFuelCost(uint256, uint256, MissionShips calldata, uint16)
-        public
-        returns (uint128)
-    {
-        _delegateToGameplayModule();
-    }
-
     function transportFuelCost(
         uint256,
         uint256,
@@ -427,8 +405,26 @@ contract VeydriftGame is VeydriftResourceReserves {
     ) public pure returns (uint128) {
         uint256 ships =
             uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
-        if (ships == 0) return 0;
-        return _toUint128(ships);
+        return _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
+    }
+
+    function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
+        return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
+    }
+
+    function protectedStorageAmount(uint256 storageCap) external pure returns (uint256) {
+        return VeydriftAntiRaidPrimitives.protectedStorageAmount(storageCap);
+    }
+
+    function raidableResource(
+        uint256 balance,
+        uint256 cargoRemaining,
+        uint256 protectedAmount,
+        uint16 lootCapBps
+    ) external pure returns (uint256) {
+        return VeydriftAntiRaidPrimitives.raidableResource(
+            balance, cargoRemaining, protectedAmount, lootCapBps
+        );
     }
 
     function fleetSlotLimit(address player) external view returns (uint256) {
@@ -746,7 +742,6 @@ contract VeydriftGame is VeydriftResourceReserves {
             _technologyLevels[player][Technology.Laser],
             _technologyLevels[player][Technology.Ion],
             _technologyLevels[player][Technology.Hyperspace],
-            _technologyLevels[player][Technology.Espionage],
             _technologyLevels[player][Technology.ImpulseDrive],
             _technologyLevels[player][Technology.Computer],
             _technologyLevels[player][Technology.Shielding]

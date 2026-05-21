@@ -126,6 +126,16 @@ class MockChainReader implements ChainReader {
     };
   }
 
+  async getFleetMissionVisibility(wallet: Address) {
+    return {
+      wallet,
+      homePlanetId: planet.planetId,
+      incoming: [],
+      outgoing: [],
+      returning: []
+    };
+  }
+
   async getInfrastructureState(wallet: Address): Promise<InfrastructureState> {
     return {
       wallet,

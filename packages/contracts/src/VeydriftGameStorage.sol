@@ -21,8 +21,8 @@ abstract contract VeydriftGameStorage {
     uint16 public constant BPS = 10_000;
     uint32 public constant MIN_QUEUE_SECONDS = 60;
     uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
-    uint16 public constant MIN_MISSION_SPEED_BPS = 1_000;
-    uint16 public constant DEFAULT_MISSION_SPEED_BPS = BPS;
+    uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
+    uint16 public constant FLEET_RECALL_COST_BPS = 2_500;
     uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
     uint16 public constant MAX_GALAXY = 9;
     uint16 public constant MAX_SYSTEM = 499;
@@ -136,7 +136,7 @@ abstract contract VeydriftGameStorage {
         uint32 heavyFighter;
         uint32 cruiser;
         uint32 battleship;
-        uint32 espionageProbe;
+        uint32 removedShipSlot;
         uint32 bomber;
         uint32 destroyer;
         uint32 deathstar;
@@ -226,8 +226,8 @@ abstract contract VeydriftGameStorage {
     error FleetNotArrived(uint64 arrivesAt);
     error FleetAlreadyReturning();
     error FleetAlreadyArrived();
+    error FleetRecallCutoffPassed(uint64 recallDeadline);
     error InvalidMissionType(FleetMissionType missionType);
-    error InvalidMissionSpeed(uint256 speedBps);
     error FleetSlotLimitReached(uint256 limit);
     error FleetMissionNotResolved(uint64 returnAt);
     error RiftStabilizerRequired(uint256 planetId);
@@ -364,12 +364,49 @@ abstract contract VeydriftGameStorage {
         uint64 returnAt,
         uint256 randomnessRequestId
     );
-    event FleetMissionRecalled(uint256 indexed missionId, address indexed owner, uint64 returnAt);
+    event FleetMissionCargo(
+        uint256 indexed missionId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium,
+        uint128 fuelCost
+    );
+    event FleetMissionShips(
+        uint256 indexed missionId,
+        uint32 smallCargo,
+        uint32 lightFighter,
+        uint32 recycler,
+        uint32 colonyShip,
+        uint32 largeCargo,
+        uint32 heavyFighter,
+        uint32 cruiser,
+        uint32 battleship,
+        uint32 bomber,
+        uint32 destroyer,
+        uint32 deathstar,
+        uint32 battlecruiser,
+        uint32 reaper,
+        uint32 pathfinder
+    );
+    event FleetMissionRecalled(
+        uint256 indexed missionId, address indexed owner, uint64 returnAt, uint128 recallCost
+    );
     event FleetMissionResolved(
         uint256 indexed missionId,
         address indexed resolver,
         FleetMissionType indexed missionType,
         uint64 returnAt
+    );
+    event FleetMissionReturnExposed(
+        uint256 indexed missionId,
+        address indexed owner,
+        FleetMissionStatus indexed status,
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        uint64 returnAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
     );
     event FleetMissionReturned(
         uint256 indexed missionId, address indexed owner, uint256 indexed planetId

@@ -12,6 +12,11 @@ import {
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
+import type { ChainShipyardState } from "../walletFlow";
+import {
+  galaxyActionsForSlot,
+  type GalaxyAction,
+} from "../galaxyActions";
 import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
@@ -49,18 +54,43 @@ export type GalaxyMissionPreview = {
   returnAt: number;
 };
 
+export type GalaxyActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
+
 interface Props {
+  account?: string | undefined;
+  actionState?: GalaxyActionState | undefined;
   galaxy: number;
   system: number;
   apiBaseUrl?: string | undefined;
   homeCoords?: Coordinates | undefined;
+  homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
   missionPlanner?: GalaxyMissionPlanner | undefined;
+  shipyardState?: ChainShipyardState | null | undefined;
+  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
 }
 
-export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, missionPlanner, onSelectPlanet, onNavigate }: Props) {
+export function GalaxyView({
+  account,
+  actionState = { status: "idle" },
+  galaxy,
+  system,
+  apiBaseUrl = playableApiUrl,
+  homeCoords,
+  homePlanetId,
+  homePlanet,
+  missionPlanner,
+  shipyardState = null,
+  onAction,
+  onSelectPlanet,
+  onNavigate,
+}: Props) {
   const [planets, setPlanets] = useState<Planet[]>([]);
   const [loading, setLoading] = useState(true);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
@@ -195,6 +225,17 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
             {formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem))}
           </span>
         </div>
+        {actionState.status !== "idle" ? (
+          <div className={`rounded border px-3 py-2 text-xs ${
+            actionState.status === "error"
+              ? "border-red-300/30 bg-red-500/10 text-red-100"
+              : actionState.status === "success"
+                ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
+                : "border-signal/25 bg-signal/10 text-signal"
+          }`}>
+            {actionState.label}
+          </div>
+        ) : null}
 
         <div className="grid gap-1.5">
           {loading && (
@@ -214,10 +255,15 @@ export function GalaxyView({ galaxy, system, apiBaseUrl = playableApiUrl, homeCo
                   key={pos}
                   missionPlanner={missionPlanner}
                   missionHomeCoords={homeCoords}
+                  account={account}
+                  actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
+                  onAction={onAction}
                   homeCoords={homeCoordsInSystem}
+                  homePlanetId={homePlanetId}
                   planet={planet}
                   position={pos}
+                  shipyardState={shipyardState}
                   system={system}
                 />
               );
@@ -366,6 +412,8 @@ function galaxyMissionDistance(origin: Coordinates, target: Coordinates): number
 }
 
 function GalaxySlot({
+  account,
+  actionState,
   galaxy,
   system,
   position,
@@ -373,9 +421,14 @@ function GalaxySlot({
   missionPlanner,
   missionHomeCoords,
   homeCoords,
+  homePlanetId,
   isHome,
+  shipyardState,
+  onAction,
   onSelectPlanet,
 }: {
+  account: string | undefined;
+  actionState: GalaxyActionState;
   galaxy: number;
   system: number;
   position: number;
@@ -383,12 +436,23 @@ function GalaxySlot({
   missionPlanner: GalaxyMissionPlanner | undefined;
   missionHomeCoords: Coordinates | undefined;
   homeCoords: Coordinates | undefined;
+  homePlanetId: string | null | undefined;
   isHome: boolean;
+  shipyardState: ChainShipyardState | null;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const isPendingHomePlanet = !planet && homeCoords?.position === position;
+  const coords = { galaxy, system, position };
+  const actions = galaxyActionsForSlot({
+    account,
+    homePlanetId,
+    isOrigin: isHome,
+    planet,
+    shipyardState,
+  });
 
   useEffect(() => {
     setImageLoaded(isImageReady(imageRef.current));
@@ -412,13 +476,19 @@ function GalaxySlot({
     }
 
     return (
-      <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-white/5 bg-black/15 px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_7rem]">
+      <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-white/5 bg-black/15 px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_minmax(8rem,auto)]">
         <SlotNumber position={position} muted />
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-500">Empty space</div>
           <div className="text-xs text-slate-700">No generated or indexed planet at this position.</div>
         </div>
-        <div className="hidden justify-self-end text-xs text-slate-700 sm:block">No action</div>
+        <ActionButtons
+          actions={actions}
+          busy={actionState.status === "pending"}
+          coords={coords}
+          onAction={onAction}
+          planet={undefined}
+        />
       </div>
     );
   }
@@ -435,18 +505,20 @@ function GalaxySlot({
   });
 
   return (
-    <button
+    <div
       className={`group grid min-h-16 w-full grid-cols-[3rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2 text-left transition sm:grid-cols-[4rem_minmax(0,1fr)_7rem_auto] ${
         isHome
           ? "border-cyan-300/40 bg-cyan-300/10 shadow-[0_0_18px_rgba(103,232,249,0.10)]"
           : "border-white/10 bg-white/[0.035] hover:border-signal/35 hover:bg-white/[0.06]"
       }`}
-      onClick={() => onSelectPlanet({ galaxy, system, position })}
-      type="button"
     >
       <SlotNumber position={position} />
 
-      <div className="flex min-w-0 items-center gap-3">
+      <button
+        className="flex min-w-0 items-center gap-3 text-left"
+        onClick={() => onSelectPlanet(coords)}
+        type="button"
+      >
         <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
           isHome ? "border-cyan-300/35" : "border-white/15"
         }`}>
@@ -493,16 +565,66 @@ function GalaxySlot({
             </div>
           ) : null}
         </div>
-      </div>
+      </button>
 
       <div className={`hidden justify-self-end text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
         {ownerLabel}
       </div>
 
-      <span className="justify-self-end rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal group-hover:bg-signal/10">
-        Inspect
-      </span>
-    </button>
+      <div className="flex flex-wrap justify-end gap-1.5">
+        <button
+          className="rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal hover:bg-signal/10"
+          onClick={() => onSelectPlanet(coords)}
+          type="button"
+        >
+          Inspect
+        </button>
+        <ActionButtons
+          actions={actions}
+          busy={actionState.status === "pending"}
+          coords={coords}
+          onAction={onAction}
+          planet={planet}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ActionButtons({
+  actions,
+  busy,
+  coords,
+  onAction,
+  planet,
+}: {
+  actions: GalaxyAction[];
+  busy: boolean;
+  coords: Coordinates;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  planet: Planet | undefined;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-1.5">
+      {actions.map((action) => (
+        <button
+          className={`rounded border px-2 py-1 text-xs font-medium transition ${
+            action.enabled
+              ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
+              : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
+          }`}
+          disabled={!action.enabled || busy || !onAction}
+          key={action.kind}
+          onClick={() => {
+            if (action.enabled) onAction?.(action, planet, coords);
+          }}
+          title={action.enabled ? action.label : action.reason}
+          type="button"
+        >
+          {action.label}
+        </button>
+      ))}
+    </div>
   );
 }
 

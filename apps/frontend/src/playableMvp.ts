@@ -52,7 +52,6 @@ export type ShipKey =
   | "heavyFighter"
   | "cruiser"
   | "battleship"
-  | "espionageProbe"
   | "bomber"
   | "solarSatellite"
   | "destroyer"
@@ -77,7 +76,6 @@ export type ResearchKey =
   | "laser"
   | "ion"
   | "combustionDrive"
-  | "espionage"
   | "computer"
   | "weapons"
   | "shielding"
@@ -441,19 +439,6 @@ export const shipCatalog: Array<{
     asset: shipAssetByKey.battleship,
   },
   {
-    key: "espionageProbe",
-    id: 8,
-    label: "Espionage Probe",
-    group: "special",
-    baseCost: { metal: 0, crystal: 1_000, deuterium: 0 },
-    requirements: [
-      { kind: "building", key: "shipyard", label: "Shipyard", level: 3 },
-      { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 3 },
-      { kind: "technology", key: "espionage", label: "Espionage", level: 2 },
-    ],
-    asset: shipAssetByKey.espionageProbe,
-  },
-  {
     key: "bomber",
     id: 9,
     label: "Bomber",
@@ -802,15 +787,6 @@ export const researchCatalog: Array<{
     asset: researchAssetByKey.hyperspaceDrive,
   },
   {
-    key: "espionage",
-    id: 4,
-    label: "Espionage Technology",
-    lane: "Advanced",
-    baseCost: { metal: 200, crystal: 1_000, deuterium: 200 },
-    requirements: [{ type: "building", key: "researchLab", level: 3 }],
-    asset: researchAssetByKey.espionage,
-  },
-  {
     key: "computer",
     id: 5,
     label: "Computer Technology",
@@ -827,7 +803,6 @@ export const researchCatalog: Array<{
     baseCost: { metal: 4_000, crystal: 8_000, deuterium: 4_000 },
     requirements: [
       { type: "building", key: "researchLab", level: 3 },
-      { type: "research", key: "espionage", level: 4 },
       { type: "research", key: "impulseDrive", level: 3 },
     ],
     asset: researchAssetByKey.astrophysics,
@@ -951,7 +926,6 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       laser: 0,
       ion: 0,
       combustionDrive: 0,
-      espionage: 0,
       computer: 0,
       weapons: 0,
       shielding: 0,
@@ -973,7 +947,6 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
       heavyFighter: 0,
       cruiser: 0,
       battleship: 0,
-      espionageProbe: 0,
       bomber: 0,
       solarSatellite: 0,
       destroyer: 0,

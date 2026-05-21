@@ -31,7 +31,6 @@ const researchDescriptions: Partial<Record<ResearchKey, string>> = {
   combustionDrive: "Improves early engine efficiency for basic ship movement and logistics.",
   impulseDrive: "Unlocks stronger drive systems for faster military and utility ships.",
   hyperspaceDrive: "Enables the highest tier of interstellar ship propulsion.",
-  espionage: "Improves scanning, intelligence, and future reconnaissance capabilities.",
   computer: "Increases command-and-control capacity for fleet and automation systems.",
   astrophysics: "Expands colonization and deep-space discovery capability.",
   intergalacticResearchNetwork: "Links laboratories so mature empires can coordinate advanced research.",
