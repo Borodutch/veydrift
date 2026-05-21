@@ -10,6 +10,8 @@ export type BackendConfig = {
   rpcUrl?: string;
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
   settlementContractAddress?: `0x${string}`;
+  wsRpcUrl?: string;
+  wsRpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
 };
 
 export type ResourceTokenAddresses = {
@@ -40,6 +42,8 @@ export type SafeConfigSummary = {
     metal: boolean;
   };
   rpcSource: BackendConfig["rpcSource"];
+  wsRpcSource: BackendConfig["wsRpcSource"];
+  hasWsRpcUrl: boolean;
   resourceTokenAddressesConfigured: boolean;
   settlementContractConfigured: boolean;
   indexFromBlock: string;
@@ -56,6 +60,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
+  const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
   const gameContractAddress = parseAddress(
     env.VEYDRIFT_GAME_CONTRACT_ADDRESS ?? env.VEYDRIFT_CONTRACT_ADDRESS,
     env.VEYDRIFT_GAME_CONTRACT_ADDRESS ? "VEYDRIFT_GAME_CONTRACT_ADDRESS" : "VEYDRIFT_CONTRACT_ADDRESS",
@@ -113,7 +118,9 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
-      ...(settlementContractAddress ? { settlementContractAddress } : {})
+      ...(settlementContractAddress ? { settlementContractAddress } : {}),
+      wsRpcSource,
+      ...(wsRpcUrl ? { wsRpcUrl } : {})
     },
     problems
   };
@@ -132,6 +139,8 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
       metal: Boolean(config.resourceTokenAddresses.metal)
     },
     rpcSource: config.rpcSource,
+    wsRpcSource: config.wsRpcSource,
+    hasWsRpcUrl: Boolean(config.wsRpcUrl),
     resourceTokenAddressesConfigured: Boolean(
       config.resourceTokenAddresses?.metal
         && config.resourceTokenAddresses.crystal
@@ -248,4 +257,25 @@ function resolveRpcUrl(env: Record<string, string | undefined>): Pick<BackendCon
   }
 
   return { rpcSource: "missing" };
+}
+
+export function resolveWsRpcUrl(
+  env: Record<string, string | undefined>
+): Pick<BackendConfig, "wsRpcUrl" | "wsRpcSource"> {
+  if (env.VEYDRIFT_WS_RPC_URL) {
+    return { wsRpcUrl: env.VEYDRIFT_WS_RPC_URL, wsRpcSource: "custom-url" };
+  }
+
+  if (env.ALCHEMY_BASE_SEPOLIA_WS_URL) {
+    return { wsRpcUrl: env.ALCHEMY_BASE_SEPOLIA_WS_URL, wsRpcSource: "alchemy-url" };
+  }
+
+  if (env.ALCHEMY_BASE_SEPOLIA_API_KEY) {
+    return {
+      wsRpcUrl: `wss://base-sepolia.g.alchemy.com/v2/${env.ALCHEMY_BASE_SEPOLIA_API_KEY}`,
+      wsRpcSource: "alchemy-key"
+    };
+  }
+
+  return { wsRpcSource: "missing" };
 }
