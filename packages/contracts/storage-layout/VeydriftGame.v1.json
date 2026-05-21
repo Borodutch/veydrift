@@ -143,6 +143,12 @@
       "offset": 0,
       "slot": "25",
       "type": "mapping(address => uint256)"
+    },
+    {
+      "label": "planetNames",
+      "offset": 0,
+      "slot": "26",
+      "type": "mapping(uint256 => string)"
     }
   ],
   "structs": {

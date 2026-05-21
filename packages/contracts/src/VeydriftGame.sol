@@ -16,9 +16,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     using SafeCast for uint256;
 
     address private immutable _gameplayModule;
+    address private immutable _planetManagementModule;
 
-    constructor(address admin, address gameplayModule) VeydriftResourceReserves(admin) {
+    constructor(address admin, address gameplayModule, address planetManagementModule)
+        VeydriftResourceReserves(admin)
+    {
+        if (gameplayModule == address(0)) revert UnsupportedGameplayModule();
+        if (planetManagementModule == address(0)) revert UnsupportedGameplayModule();
         _gameplayModule = gameplayModule;
+        _planetManagementModule = planetManagementModule;
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -219,11 +225,19 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function createColonyAtNextSlot(uint256, uint256) external returns (uint256) {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function createColony(uint256, uint16, uint16, uint8) external returns (uint256) {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
+    }
+
+    function renamePlanet(uint256, string calldata) external {
+        _delegateToPlanetManagementModule();
+    }
+
+    function abandonPlanet(uint256) external {
+        _delegateToPlanetManagementModule();
     }
 
     function launchFleetMission(
@@ -377,24 +391,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         return !occupiedCoordinates[coordinateKey(galaxy, system, position)];
     }
 
-    function nextColonyCoordinates(address, uint256) external returns (uint16, uint16, uint8) {
-        _delegateToGameplayModule();
-    }
-
-    function shipCargoCapacity(Ship ship) external pure returns (uint256) {
-        return VeydriftCatalog.shipCargoCapacity(ship);
-    }
-
-    function transportCargoCapacity(uint32 smallCargo, uint32 recycler, uint32 colonyShip)
-        external
-        pure
-        returns (uint256)
-    {
-        return smallCargo * VeydriftCatalog.shipCargoCapacity(Ship.SmallCargo) + recycler
-            * VeydriftCatalog.shipCargoCapacity(Ship.Recycler) + colonyShip
-            * VeydriftCatalog.shipCargoCapacity(Ship.ColonyShip);
-    }
-
     function transportTravelSeconds(uint256, uint256) public returns (uint256) {
         _delegateToGameplayModule();
     }
@@ -409,10 +405,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint256 ships =
             uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
         return _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
-    }
-
-    function fleetSlotLimit(uint16 computerLevel) external pure returns (uint256) {
-        return VeydriftAntiRaidPrimitives.fleetSlotLimit(computerLevel);
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
@@ -894,6 +886,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToGameplayModule() private {
         (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToPlanetManagementModule() private {
+        (bool ok, bytes memory result) = _planetManagementModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

@@ -209,6 +209,7 @@ abstract contract VeydriftGameStorage {
     mapping(uint256 fleetId => Fleet fleet) internal _fleets;
     mapping(uint256 missionId => FleetMission mission) internal _fleetMissions;
     mapping(address player => uint256 count) public activeFleetMissionCount;
+    mapping(uint256 planetId => string name) public planetNames;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -257,6 +258,11 @@ abstract contract VeydriftGameStorage {
     error UnsupportedGameplayModule();
     error DefenseLimitReached(Defense defense);
     error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
+    error InvalidPlanetName();
+    error CannotAbandonHomePlanet();
+    error PlanetHasActiveQueues();
+    error PlanetHasResources();
+    error PlanetHasActiveFleetMissions();
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -486,6 +492,14 @@ abstract contract VeydriftGameStorage {
     );
     event MarketResourceWithdrawalFinished(
         address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
+    );
+    event PlanetRenamed(address indexed player, uint256 indexed planetId, string name);
+    event PlanetAbandoned(
+        address indexed player,
+        uint256 indexed planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position
     );
     event FeesWithdrawn(address indexed to, uint256 amount);
 

@@ -6,6 +6,7 @@ import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
+import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
@@ -94,6 +95,14 @@ contract VeydriftGameTest is Test {
         uint8 position,
         bytes32 coordinateKey,
         bytes32 planetSeed
+    );
+    event PlanetRenamed(address indexed player, uint256 indexed planetId, string name);
+    event PlanetAbandoned(
+        address indexed player,
+        uint256 indexed planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position
     );
     event AttackBattleResolved(
         uint256 indexed missionId,
@@ -281,9 +290,14 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
         assertEq(game.technologyLevel(player, Technology.Energy), 0);
-        assertEq(game.shipCargoCapacity(Ship.Crawler), 0);
+        assertEq(VeydriftCatalog.shipCargoCapacity(Ship.Crawler), 0);
         assertEq(game.maxPlanets(player), 1);
-        assertEq(game.transportCargoCapacity(1, 1, 1), 32_500);
+        assertEq(
+            VeydriftCatalog.shipCargoCapacity(Ship.SmallCargo)
+                + VeydriftCatalog.shipCargoCapacity(Ship.Recycler)
+                + VeydriftCatalog.shipCargoCapacity(Ship.ColonyShip),
+            32_500
+        );
 
         (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) =
             game.productionPerHour(planetId);
@@ -874,9 +888,8 @@ contract VeydriftGameTest is Test {
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
 
-        (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(player, 7);
         vm.prank(player);
-        uint256 colonyPlanetId = game.createColony(originPlanetId, galaxy, system, position);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(originPlanetId, 7);
 
         assertEq(game.planetCountOf(player), 2);
         assertEq(game.planet(colonyPlanetId).owner, player);
@@ -909,6 +922,94 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
         assertEq(game.planet(colonyPlanetId).resources.metal, 100);
         assertEq(game.shipCount(colonyPlanetId, Ship.SmallCargo), 1);
+    }
+
+    function testRenamePlanetIsContractBackedAndOwnerGated() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        game.renamePlanet(planetId, "New Eos");
+
+        assertEq(game.planetNames(planetId), "New Eos");
+
+        vm.prank(address(0xCAFE));
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        game.renamePlanet(planetId, "Stolen");
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidPlanetName.selector);
+        game.renamePlanet(planetId, "");
+    }
+
+    function testAbandonColonyClearsOwnershipAndCoordinateOnlyWhenSafe() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(originPlanetId, 11);
+        VeydriftGameStorage.Planet memory colony = game.planet(colonyPlanetId);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.CannotAbandonHomePlanet.selector);
+        game.abandonPlanet(originPlanetId);
+
+        _setResources(colonyPlanetId, 1, 0, 0);
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.PlanetHasResources.selector);
+        game.abandonPlanet(colonyPlanetId);
+        _setResources(colonyPlanetId, 0, 0, 0);
+
+        vm.prank(player);
+        game.abandonPlanet(colonyPlanetId);
+
+        assertEq(game.planetCountOf(player), 1);
+        assertEq(game.planet(colonyPlanetId).owner, address(0));
+        assertTrue(game.isCoordinateAvailable(colony.galaxy, colony.system, colony.position));
+    }
+
+    function testAbandonColonyRejectsActiveQueuesAndFleetMissions() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(originPlanetId, 12);
+
+        _setResources(colonyPlanetId, 1_000, 1_000, 0);
+        vm.prank(player);
+        game.startBuildingUpgrade(colonyPlanetId, Building.MetalMine);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.PlanetHasActiveQueues.selector);
+        game.abandonPlanet(colonyPlanetId);
+
+        VeydriftGameStorage.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(colonyPlanetId);
+        vm.warp(construction.readyAt);
+        vm.prank(player);
+        game.finishBuildingUpgrade(colonyPlanetId);
+        _setResources(colonyPlanetId, 0, 0, 0);
+
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 100, 100, 100);
+        vm.prank(player);
+        game.launchFleetMission(
+            originPlanetId,
+            colonyPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.PlanetHasActiveFleetMissions.selector);
+        game.abandonPlanet(colonyPlanetId);
     }
 
     function testGenericFleetMissionLaunchRecallResolveAndReturn() public {
@@ -1597,10 +1698,6 @@ contract VeydriftGameTest is Test {
     function testAuditScopedReadEntrypointsAreContractBacked() public {
         vm.expectRevert(VeydriftGameStorage.NoPlanet.selector);
         game.transportTravelSeconds(1, 2);
-        (uint16 galaxy, uint16 system, uint8 position) = game.nextColonyCoordinates(player, 1);
-        assertGe(galaxy, 1);
-        assertGe(system, 1);
-        assertGe(position, 1);
     }
 
     function _build(address account, uint256 planetId, Building building) internal {
@@ -1719,6 +1816,14 @@ contract VeydriftGameTest is Test {
         ships.lightFighter = 1;
     }
 
+    function _smallCargoManifest()
+        internal
+        pure
+        returns (VeydriftGameStorage.MissionShips memory ships)
+    {
+        ships.smallCargo = 1;
+    }
+
     function _fleetMission(uint256 missionId)
         internal
         view
@@ -1743,7 +1848,8 @@ contract VeydriftGameTest is Test {
     function _newGame(address owner) internal returns (VeydriftGame) {
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
-        return new VeydriftGame(owner, address(gameplayModule));
+        VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
+        return new VeydriftGame(owner, address(gameplayModule), address(planetManagementModule));
     }
 
     function _fundGameReserves(

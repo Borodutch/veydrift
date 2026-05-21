@@ -20,6 +20,7 @@ export type EnergyBalance = {
 export type PlanetState = Coordinates & {
   planetId: string;
   owner: Address;
+  name: string | null;
   fields: number;
   temperature: number;
   metalMultiplierBps: number;
@@ -27,6 +28,37 @@ export type PlanetState = Coordinates & {
   deuteriumMultiplierBps: number;
   lastSettledAt: string;
   resources: Resources;
+};
+
+export type ManagedPlanet = PlanetState & {
+  coordinates: string;
+  isHomePlanet: boolean;
+  fieldsUsed: number;
+  fieldsCapacity: number;
+  keyLevels: {
+    metalMine: number;
+    crystalMine: number;
+    deuteriumSynthesizer: number;
+    solarPlant: number;
+    roboticsFactory: number;
+    shipyard: number;
+    researchLab: number;
+    terraformer: number;
+  };
+  queues: {
+    building: QueueState | null;
+    defense: QueueState | null;
+    ship: QueueState | null;
+  };
+  moon: {
+    exists: boolean;
+  } | null;
+};
+
+export type WalletPlanets = {
+  wallet: Address;
+  homePlanetId: string | null;
+  planets: ManagedPlanet[];
 };
 
 export type WalletSettlement = {
@@ -254,15 +286,16 @@ export type SettledPlanetEvent = PlanetState & {
 
 export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
+  getWalletPlanets(wallet: Address): Promise<WalletPlanets>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
-  getPlayerQueues(wallet: Address): Promise<PlayerQueues>;
+  getPlayerQueues(wallet: Address, planetId?: bigint): Promise<PlayerQueues>;
   getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility>;
-  getInfrastructureState(wallet: Address): Promise<InfrastructureState>;
-  getMoonState(wallet: Address): Promise<MoonState>;
-  getDefenseState(wallet: Address): Promise<DefenseState>;
-  getShipyardState(wallet: Address): Promise<ShipyardState>;
-  getResearchState(wallet: Address): Promise<ResearchState>;
-  getRiftState(wallet: Address): Promise<RiftState>;
+  getInfrastructureState(wallet: Address, planetId?: bigint): Promise<InfrastructureState>;
+  getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState>;
+  getDefenseState(wallet: Address, planetId?: bigint): Promise<DefenseState>;
+  getShipyardState(wallet: Address, planetId?: bigint): Promise<ShipyardState>;
+  getResearchState(wallet: Address, planetId?: bigint): Promise<ResearchState>;
+  getRiftState(wallet: Address, planetId?: bigint): Promise<RiftState>;
   getAllianceState(wallet: Address): Promise<AllianceState>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
@@ -452,10 +485,12 @@ export class VeydriftGameReader implements ChainReader {
     if (owner === zeroAddress) {
       return null;
     }
+    const name = await this.readPlanetName(planetId);
 
     return {
       planetId: planetId.toString(),
       owner,
+      name,
       galaxy: Number(decodeUintWord(wordAt(words, 1))),
       system: Number(decodeUintWord(wordAt(words, 2))),
       position: Number(decodeUintWord(wordAt(words, 3))),
@@ -469,8 +504,38 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
-  async getPlayerQueues(wallet: Address): Promise<PlayerQueues> {
+  async getWalletPlanets(wallet: Address): Promise<WalletPlanets> {
+    assertAddress(wallet);
     const settlement = await this.getGameSettlement(wallet);
+    const events = await this.listSettledPlanetEvents(this.indexFromBlock, "latest");
+    const ids = new Set<string>();
+    if (settlement.homePlanetId) ids.add(settlement.homePlanetId);
+    for (const event of events) {
+      if (event.owner.toLowerCase() === wallet.toLowerCase()) ids.add(event.planetId);
+    }
+
+    const planets = (await Promise.all(
+      [...ids].map(async (id) => {
+        const planet = await this.getPlanet(BigInt(id));
+        if (!planet || planet.owner.toLowerCase() !== wallet.toLowerCase()) return null;
+        return this.readManagedPlanet(planet, settlement.homePlanetId);
+      })
+    )).filter((planet): planet is ManagedPlanet => planet !== null);
+
+    planets.sort((left, right) => {
+      if (left.isHomePlanet !== right.isHomePlanet) return left.isHomePlanet ? -1 : 1;
+      return Number(BigInt(left.planetId) - BigInt(right.planetId));
+    });
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      planets
+    };
+  }
+
+  async getPlayerQueues(wallet: Address, selectedPlanetId?: bigint): Promise<PlayerQueues> {
+    const settlement = await this.resolveWalletPlanet(wallet, selectedPlanetId);
     if (!settlement.homePlanetId) {
       return {
         wallet,
@@ -545,10 +610,10 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
-  async getInfrastructureState(wallet: Address): Promise<InfrastructureState> {
+  async getInfrastructureState(wallet: Address, selectedPlanetId?: bigint): Promise<InfrastructureState> {
     let settlement: WalletSettlement;
     try {
-      settlement = await this.getGameSettlement(wallet);
+      settlement = await this.resolveWalletPlanet(wallet, selectedPlanetId);
     } catch (error) {
       if (!isRpcRevert(error) || !this.settlementContractAddress) {
         throw error;
@@ -627,10 +692,10 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
-  async getMoonState(wallet: Address): Promise<MoonState> {
+  async getMoonState(wallet: Address, selectedPlanetId?: bigint): Promise<MoonState> {
     let settlement: WalletSettlement;
     try {
-      settlement = await this.getGameSettlement(wallet);
+      settlement = await this.resolveWalletPlanet(wallet, selectedPlanetId);
     } catch (error) {
       if (!isRpcRevert(error) || !this.settlementContractAddress) {
         throw error;
@@ -685,10 +750,10 @@ export class VeydriftGameReader implements ChainReader {
     }
   }
 
-  async getShipyardState(wallet: Address): Promise<ShipyardState> {
+  async getShipyardState(wallet: Address, selectedPlanetId?: bigint): Promise<ShipyardState> {
     let settlement: WalletSettlement;
     try {
-      settlement = await this.getGameSettlement(wallet);
+      settlement = await this.resolveWalletPlanet(wallet, selectedPlanetId);
     } catch (error) {
       if (!isRpcRevert(error) || !this.settlementContractAddress) {
         throw error;
@@ -757,10 +822,10 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
-  async getDefenseState(wallet: Address): Promise<DefenseState> {
+  async getDefenseState(wallet: Address, selectedPlanetId?: bigint): Promise<DefenseState> {
     let settlement: WalletSettlement;
     try {
-      settlement = await this.getGameSettlement(wallet);
+      settlement = await this.resolveWalletPlanet(wallet, selectedPlanetId);
     } catch (error) {
       if (!isRpcRevert(error) || !this.settlementContractAddress) {
         throw error;
@@ -822,10 +887,10 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
-  async getResearchState(wallet: Address): Promise<ResearchState> {
+  async getResearchState(wallet: Address, selectedPlanetId?: bigint): Promise<ResearchState> {
     let settlement: WalletSettlement;
     try {
-      settlement = await this.getGameSettlement(wallet);
+      settlement = await this.resolveWalletPlanet(wallet, selectedPlanetId);
     } catch (error) {
       if (!isRpcRevert(error) || !this.settlementContractAddress) {
         throw error;
@@ -883,10 +948,10 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
-  async getRiftState(wallet: Address): Promise<RiftState> {
+  async getRiftState(wallet: Address, selectedPlanetId?: bigint): Promise<RiftState> {
     let settlement: WalletSettlement;
     try {
-      settlement = await this.getGameSettlement(wallet);
+      settlement = await this.resolveWalletPlanet(wallet, selectedPlanetId);
     } catch (error) {
       if (!isRpcRevert(error) || !this.settlementContractAddress) {
         throw error;
@@ -1330,6 +1395,90 @@ export class VeydriftGameReader implements ChainReader {
     return withdrawals.filter((withdrawal): withdrawal is PendingWithdrawal => withdrawal !== null);
   }
 
+  private async readManagedPlanet(planet: PlanetState, homePlanetId: string | null): Promise<ManagedPlanet> {
+    const planetId = BigInt(planet.planetId);
+    const [buildings, building, defense, ship, moon] = await Promise.all([
+      this.readBuildingRows(planetId),
+      this.readPlanetQueue("0xb8e835ab", planetId, "building"),
+      this.readPlanetQueue("0x5758361d", planetId, "defense"),
+      this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
+      this.readMoonSummary(planetId)
+    ]);
+    const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
+    const fieldsUsed = buildings.reduce((sum, building) => sum + building.level, 0);
+
+    return {
+      ...planet,
+      coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+      isHomePlanet: planet.planetId === homePlanetId,
+      fieldsUsed,
+      fieldsCapacity: planet.fields,
+      keyLevels: {
+        metalMine: level(0),
+        crystalMine: level(1),
+        deuteriumSynthesizer: level(2),
+        solarPlant: level(3),
+        roboticsFactory: level(4),
+        shipyard: level(5),
+        researchLab: level(6),
+        terraformer: level(12)
+      },
+      queues: {
+        building,
+        defense,
+        ship
+      },
+      moon
+    };
+  }
+
+  private async resolveWalletPlanet(wallet: Address, selectedPlanetId?: bigint): Promise<WalletSettlement> {
+    if (!selectedPlanetId) return this.getGameSettlement(wallet);
+
+    assertAddress(wallet);
+    const [settlement, planet] = await Promise.all([
+      this.getGameSettlement(wallet),
+      this.getPlanet(selectedPlanetId)
+    ]);
+    if (!planet || planet.owner.toLowerCase() !== wallet.toLowerCase()) {
+      return {
+        wallet,
+        hasFirstPlanet: settlement.hasFirstPlanet,
+        homePlanetId: null,
+        planet: null,
+        contractKind: "game"
+      };
+    }
+
+    return {
+      wallet,
+      hasFirstPlanet: settlement.hasFirstPlanet,
+      homePlanetId: planet.planetId,
+      planet,
+      contractKind: "game"
+    };
+  }
+
+  private async readPlanetName(planetId: bigint): Promise<string | null> {
+    try {
+      const value = decodeStringResult(await this.call("0xec16d865", [encodeUint(planetId)]));
+      return value.length > 0 ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async readMoonSummary(planetId: bigint): Promise<{ exists: boolean } | null> {
+    if (!this.moonContractAddress) return null;
+    try {
+      const moon = await this.readMoon(planetId);
+      return { exists: moon.exists };
+    } catch (error) {
+      if (isRpcRevert(error)) return null;
+      throw error;
+    }
+  }
+
   private async readOptionalUintCall(selector: string, args: string[]): Promise<bigint | null> {
     try {
       return await this.readUintCall(selector, args);
@@ -1385,6 +1534,7 @@ export class VeydriftGameReader implements ChainReader {
       planet: {
         planetId: `${galaxy}:${system}:${position}`,
         owner: wallet,
+        name: null,
         galaxy,
         system,
         position,
@@ -1716,6 +1866,7 @@ export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
     blockNumber: BigInt(log.blockNumber).toString(),
     planetId: planetId.toString(),
     owner: player,
+    name: null,
     galaxy: Number(decodeUintWord(wordAt(words, 0))),
     system: Number(decodeUintWord(wordAt(words, 1))),
     position: Number(decodeUintWord(wordAt(words, 2))),
@@ -1806,6 +1957,18 @@ function decodeBoolWord(word: string): boolean {
 
 function decodeAddressWord(word: string): Address {
   return `0x${word.slice(-40)}` as Address;
+}
+
+function decodeStringResult(hex: string): string {
+  const words = splitWords(hex);
+  const offset = Number(decodeUintWord(wordAt(words, 0)) / 32n);
+  const length = Number(decodeUintWord(wordAt(words, offset)));
+  const data = words.slice(offset + 1).join("").slice(0, length * 2);
+  const bytes = new Uint8Array(length);
+  for (let index = 0; index < length; index++) {
+    bytes[index] = Number.parseInt(data.slice(index * 2, index * 2 + 2), 16);
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function decodeString(words: string[], headIndex: number): string {
