@@ -284,6 +284,26 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return _transportTravelSeconds(originPlanetId, destinationPlanetId);
     }
 
+    function protectedResources(uint256 planetId) external view returns (Resources memory) {
+        return _protectedResources(planetId);
+    }
+
+    function raidableResources(uint256 planetId) external view returns (Resources memory) {
+        Resources memory protected = _protectedResources(planetId);
+        return _unprotectedResources(_planets[planetId].resources, protected);
+    }
+
+    function maxRaidLoot(uint256 planetId, uint256 cargoCapacity)
+        external
+        view
+        returns (Resources memory)
+    {
+        Resources memory protected = _protectedResources(planetId);
+        return _selectRaidLoot(
+            _unprotectedResources(_planets[planetId].resources, protected), cargoCapacity
+        );
+    }
+
     function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
         _requirePlanetOwner(planetId);
         if (quantity == 0) revert InvalidQuantity();
@@ -686,14 +706,64 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         returns (Resources memory raided)
     {
         Resources storage target = _planets[targetPlanetId].resources;
-        uint128 metal = _toUint128(_min(uint256(target.metal) / 10, capacity));
+        Resources memory protected = _protectedResources(targetPlanetId);
+        raided = _selectRaidLoot(_unprotectedResources(target, protected), capacity);
+        target.metal -= raided.metal;
+        target.crystal -= raided.crystal;
+        target.deuterium -= raided.deuterium;
+        emit RaidLootResolved(
+            targetPlanetId,
+            capacity,
+            raided.metal,
+            raided.crystal,
+            raided.deuterium,
+            protected.metal,
+            protected.crystal,
+            protected.deuterium
+        );
+    }
+
+    function _protectedResources(uint256 planetId) private view returns (Resources memory) {
+        (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = _storageCaps(planetId);
+        return Resources({
+            metal: _toUint128((uint256(metalCap) * PROTECTED_STORAGE_BPS) / BPS),
+            crystal: _toUint128((uint256(crystalCap) * PROTECTED_STORAGE_BPS) / BPS),
+            deuterium: _toUint128((uint256(deuteriumCap) * PROTECTED_STORAGE_BPS) / BPS)
+        });
+    }
+
+    function _unprotectedResources(Resources storage resources, Resources memory protected)
+        private
+        view
+        returns (Resources memory)
+    {
+        return Resources({
+            metal: resources.metal > protected.metal ? resources.metal - protected.metal : 0,
+            crystal: resources.crystal > protected.crystal
+                ? resources.crystal - protected.crystal
+                : 0,
+            deuterium: resources.deuterium > protected.deuterium
+                ? resources.deuterium - protected.deuterium
+                : 0
+        });
+    }
+
+    function _selectRaidLoot(Resources memory unprotected, uint256 capacity)
+        private
+        pure
+        returns (Resources memory)
+    {
+        uint128 metalCap = _toUint128((uint256(unprotected.metal) * RAID_LOOT_CAP_BPS) / BPS);
+        uint128 metal = _toUint128(_min(metalCap, capacity));
         capacity -= metal;
-        uint128 crystal = _toUint128(_min(uint256(target.crystal) / 10, capacity));
+
+        uint128 crystalCap = _toUint128((uint256(unprotected.crystal) * RAID_LOOT_CAP_BPS) / BPS);
+        uint128 crystal = _toUint128(_min(crystalCap, capacity));
         capacity -= crystal;
-        uint128 deuterium = _toUint128(_min(uint256(target.deuterium) / 10, capacity));
-        target.metal -= metal;
-        target.crystal -= crystal;
-        target.deuterium -= deuterium;
+
+        uint128 deuteriumCap =
+            _toUint128((uint256(unprotected.deuterium) * RAID_LOOT_CAP_BPS) / BPS);
+        uint128 deuterium = _toUint128(_min(deuteriumCap, capacity));
         return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
     }
 

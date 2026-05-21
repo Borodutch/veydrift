@@ -17,7 +17,7 @@ import {
 import { formatDurationUntil } from "../durationFormat";
 import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
-import type { ChainMoonState } from "../walletFlow";
+import type { ChainMoonState, OnChainResources } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -65,6 +65,8 @@ interface InfrastructurePageProps {
   moonState?: ChainMoonState | null | undefined;
   onFinishBuilding?: (() => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
+  protectedResources?: OnChainResources | null | undefined;
+  raidableResources?: OnChainResources | null | undefined;
   state: PlayableState;
   settledState: PlayableState;
   now?: number | undefined;
@@ -82,6 +84,8 @@ export function InfrastructurePage({
   now = Date.now(),
   onFinishBuilding,
   planetProductionProfile,
+  protectedResources,
+  raidableResources,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
@@ -129,6 +133,10 @@ export function InfrastructurePage({
       </div>
 
       <MoonSystemsPanel error={moonError} loading={moonLoading} moonState={moonState} />
+      <RaidProtectionPanel
+        protectedResources={protectedResources}
+        raidableResources={raidableResources}
+      />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
         <div className="order-2 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:order-1 xl:grid-cols-3 2xl:grid-cols-4">
@@ -240,12 +248,60 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function resourcesFromChain(resources: ChainMoonState["buildings"][number]["cost"]): Resources {
+function resourcesFromChain(resources: OnChainResources): Resources {
   return {
     metal: Number(resources.metal),
     crystal: Number(resources.crystal),
     deuterium: Number(resources.deuterium),
   };
+}
+
+function RaidProtectionPanel({
+  protectedResources,
+  raidableResources,
+}: {
+  protectedResources?: OnChainResources | null | undefined;
+  raidableResources?: OnChainResources | null | undefined;
+}) {
+  if (!protectedResources && !raidableResources) return null;
+
+  return (
+    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <ResourceSummaryBlock
+        label="Protected storage"
+        resources={protectedResources ? resourcesFromChain(protectedResources) : undefined}
+      />
+      <ResourceSummaryBlock
+        label="Raid-exposed resources"
+        resources={raidableResources ? resourcesFromChain(raidableResources) : undefined}
+      />
+    </section>
+  );
+}
+
+function ResourceSummaryBlock({
+  label,
+  resources,
+}: {
+  label: string;
+  resources?: Resources | undefined;
+}) {
+  return (
+    <div className="min-w-0 rounded border border-white/10 bg-black/15 px-3 py-2">
+      <div className="text-[0.68rem] font-semibold uppercase tracking-normal text-slate-500">{label}</div>
+      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm font-semibold text-slate-200">
+        {resources ? (
+          <>
+            <span>{formatNumber(resources.metal)} Metal</span>
+            <span>{formatNumber(resources.crystal)} Crystal</span>
+            <span>{formatNumber(resources.deuterium)} Deut.</span>
+          </>
+        ) : (
+          <span className="text-slate-500">Unavailable</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function fallbackMoonBuildings(): ChainMoonState["buildings"] {

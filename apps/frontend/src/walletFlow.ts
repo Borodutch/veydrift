@@ -133,6 +133,8 @@ export type ChainInfrastructureState = {
   productionPerHour: OnChainResources | null;
   energyBalance: OnChainEnergyBalance | null;
   storageCaps: OnChainResources | null;
+  protectedResources?: OnChainResources | null;
+  raidableResources?: OnChainResources | null;
   buildings: Array<{
     id: number;
     level: number;
