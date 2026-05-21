@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
@@ -1740,7 +1741,9 @@ contract VeydriftGameTest is Test {
     }
 
     function _newGame(address owner) internal returns (VeydriftGame) {
-        return new VeydriftGame(owner, address(new VeydriftCombatModule()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule();
+        VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
+        return new VeydriftGame(owner, address(gameplayModule));
     }
 
     function _fundGameReserves(

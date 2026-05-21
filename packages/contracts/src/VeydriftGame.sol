@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {VeydriftGameplayModule} from "./VeydriftGameplayModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
@@ -18,8 +17,8 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     address private immutable _gameplayModule;
 
-    constructor(address admin, address combatModule) VeydriftResourceReserves(admin) {
-        _gameplayModule = address(new VeydriftGameplayModule(combatModule));
+    constructor(address admin, address gameplayModule) VeydriftResourceReserves(admin) {
+        _gameplayModule = gameplayModule;
     }
 
     function startPlanet() external payable returns (uint256 planetId) {

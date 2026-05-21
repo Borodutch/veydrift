@@ -24,6 +24,43 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     constructor() VeydriftResourceReserves(address(0)) {}
 
+    function launchInterplanetaryMissileAttack(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        Defense primaryTarget,
+        uint32 quantity
+    ) external {
+        Planet storage origin = _planets[originPlanetId];
+        if (origin.owner == address(0)) revert NoPlanet();
+        if (origin.owner != msg.sender) revert NotPlanetOwner();
+        if (originPlanetId == targetPlanetId) revert SamePlanet();
+        if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+
+        uint32 available = _defenseCounts[originPlanetId][Defense.InterplanetaryMissile];
+        if (quantity == 0 || available < quantity) revert InvalidQuantity();
+        _defenseCounts[originPlanetId][Defense.InterplanetaryMissile] = available - quantity;
+
+        uint32 antiBallistic = _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile];
+        uint32 intercepted = antiBallistic < quantity ? antiBallistic : quantity;
+        _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile] = antiBallistic - intercepted;
+
+        uint32 hits = quantity - intercepted;
+        uint32 targetDefense = _defenseCounts[targetPlanetId][primaryTarget];
+        uint32 destroyedPrimary = targetDefense < hits ? targetDefense : hits;
+        _defenseCounts[targetPlanetId][primaryTarget] = targetDefense - destroyedPrimary;
+
+        emit InterplanetaryMissileAttack(
+            msg.sender,
+            originPlanetId,
+            targetPlanetId,
+            primaryTarget,
+            quantity,
+            intercepted,
+            hits,
+            destroyedPrimary
+        );
+    }
+
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
         BattleSettlement memory settlement = _runBattle(missionId, mission);
