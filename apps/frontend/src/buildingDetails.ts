@@ -1,4 +1,4 @@
-import type { BuildingKey, PlayableState, Resources } from "./playableMvp";
+import type { BuildingKey, PlayableState, ResearchKey, Resources } from "./playableMvp";
 import {
   buildingCost,
   buildingDurationEstimate,
@@ -19,12 +19,6 @@ const resourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
   crystal: "Crystal",
   deuterium: "Deuterium",
-};
-
-const buildingEnergyConsumption: Partial<Record<BuildingKey, number>> = {
-  metalMine: 10,
-  crystalMine: 12,
-  deuteriumSynthesizer: 20,
 };
 
 export type BuildingUpgradeStatus = {
@@ -211,7 +205,9 @@ export function formatBuildingRequirements(key: BuildingKey): string {
 }
 
 function formatBuildingRequirement(requirement: ReturnType<typeof buildingRequirementsFor>[number]): string {
-  const label = buildingLabel(requirement.key);
+  const label = requirement.type === "building"
+    ? buildingLabel(requirement.key)
+    : researchLabel(requirement.key);
   return `${label} ${requirement.level}`;
 }
 
@@ -230,13 +226,12 @@ export function buildingEnergyDetail(
     };
   }
 
-  const perLevel = buildingEnergyConsumption[key];
-  if (!perLevel) {
+  const current = energyRequiredForBuildingLevel(key, buildings[key]);
+  const next = energyRequiredForBuildingLevel(key, buildings[key] + 1);
+  if (current === undefined || next === undefined) {
     return { kind: "none" };
   }
 
-  const current = buildings[key] * perLevel;
-  const next = (buildings[key] + 1) * perLevel;
   return {
     kind: "requires",
     current,
@@ -289,8 +284,20 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
 }
 
 function energyRequiredForBuildingLevel(key: BuildingKey, level: number): number | undefined {
-  const perLevel = buildingEnergyConsumption[key];
-  return perLevel === undefined ? undefined : perLevel * level;
+  if (key === "metalMine" || key === "crystalMine") {
+    return scaledLevelValue(10, level);
+  }
+
+  if (key === "deuteriumSynthesizer") {
+    return scaledLevelValue(20, level);
+  }
+
+  return undefined;
+}
+
+function scaledLevelValue(base: number, level: number): number {
+  if (level === 0) return 0;
+  return Math.floor((base * level * (11 ** level)) / (10 ** level));
 }
 
 function productionResourceForBuilding(key: BuildingKey): keyof Resources {
@@ -326,6 +333,10 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
     return `x${formatNumber(level + 1)} research speed`;
   }
 
+  if (key === "interdimensionalRiftStabilizer") {
+    return level > 0 ? "Rift bridge online" : "Rift bridge locked";
+  }
+
   return `x${formatNumber(level + 1)} construction speed`;
 }
 
@@ -341,6 +352,29 @@ function buildingLabel(key: BuildingKey): string {
     metalStorage: "Metal Storage",
     crystalStorage: "Crystal Storage",
     deuteriumTank: "Deuterium Tank",
+    interdimensionalRiftStabilizer: "Interdimensional Rift Stabilizer",
+  };
+  return labels[key];
+}
+
+function researchLabel(key: ResearchKey): string {
+  const labels: Record<ResearchKey, string> = {
+    energy: "Energy Technology",
+    laser: "Laser",
+    ion: "Ion",
+    combustionDrive: "Combustion Drive",
+    espionage: "Espionage",
+    computer: "Computer",
+    weapons: "Weapons",
+    shielding: "Shielding",
+    armor: "Armor",
+    hyperspace: "Hyperspace",
+    impulseDrive: "Impulse Drive",
+    hyperspaceDrive: "Hyperspace Drive",
+    plasma: "Plasma",
+    astrophysics: "Astrophysics",
+    intergalacticResearchNetwork: "Intergalactic Research Network",
+    graviton: "Graviton Technology",
   };
   return labels[key];
 }

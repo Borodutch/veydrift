@@ -41,9 +41,9 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Energy use");
     expect(text).toContain("Level 1 Current");
     expect(text).toContain("Level 2 Next");
-    expect(text).toContain("Metal 120 / Crystal 30");
-    expect(text).toContain("58 Metal/h");
-    expect(text).toContain("20 required");
+    expect(text).toContain("Metal 90 / Crystal 22");
+    expect(text).toContain("72 Metal/h");
+    expect(text).toContain("24 required");
   });
 
   test("renders Solar Plant modal rows with energy output", () => {
@@ -59,8 +59,8 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Energy output");
     expect(text).toContain("Level 1 Next");
     expect(text).toContain("Metal 75 / Crystal 30");
-    expect(text).toContain("30 produced");
-    expect(text).toContain("60 produced");
+    expect(text).toContain("22 produced");
+    expect(text).toContain("48 produced");
   });
 
   test("renders storage modal rows without production or energy columns", () => {
@@ -92,8 +92,8 @@ describe("Infrastructure page display helpers", () => {
 
     expect(solarRows).toContainEqual({
       label: "Energy output",
-      next: "60 produced",
-      value: "30 produced",
+      next: "48 produced",
+      value: "22 produced",
     });
     expect(solarRows.some((row) => row.delta?.includes("produced"))).toBe(false);
 
@@ -102,9 +102,9 @@ describe("Infrastructure page display helpers", () => {
 
     expect(mineRows).toContainEqual({
       label: "Energy required",
-      next: "20 required",
+      next: "24 required",
       tone: "warning",
-      value: "10 required",
+      value: "11 required",
     });
     expect(mineRows.some((row) => row.delta?.includes("required"))).toBe(false);
   });
@@ -121,14 +121,14 @@ describe("Infrastructure page display helpers", () => {
     const rows = detailEffectRows(mineEffect, buildingEnergyDetail(unpoweredMineBuild, "metalMine"));
 
     expect(rows).toContainEqual({
-      delta: "+24/h",
+      delta: "+33/h",
       label: "Production capacity",
-      next: "24 Metal/h",
+      next: "33 Metal/h",
       value: "0 Metal/h",
     });
     expect(rows).toContainEqual({
       label: "Energy required",
-      next: "10 required",
+      next: "11 required",
       tone: "warning",
       value: "0 required",
     });
