@@ -1074,7 +1074,7 @@ function riftRequirements(
       key: "hyperspace",
       label: "Hyperspace Technology",
       currentLevel: technologyLevels["9"] ?? 0,
-      requiredLevel: 2
+      requiredLevel: 1
     }
   ];
 }

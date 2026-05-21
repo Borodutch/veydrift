@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
@@ -469,63 +470,115 @@ contract VeydriftGame {
         _settleResources(planetId);
     }
 
-    function startDefenseProduction(uint256, Defense, uint32) external pure {
-        revert UnsupportedGameplayModule();
-    }
-
-    function finishDefenseProduction(uint256) external pure {
-        revert UnsupportedGameplayModule();
-    }
-
-    function startShipProduction(uint256, Ship, uint32) external pure {
-        revert UnsupportedGameplayModule();
-    }
-
-    function finishShipProduction(uint256) external pure {
-        revert UnsupportedGameplayModule();
-    }
-
-    function startResearch(uint256, Technology) external pure {
-        revert UnsupportedGameplayModule();
-    }
-
-    function finishResearch() external pure {
-        revert UnsupportedGameplayModule();
-    }
-
-    function createColonyAtNextSlot(uint256, uint256) external pure returns (uint256) {
-        revert UnsupportedGameplayModule();
-    }
-
-    function createColony(uint256, uint16, uint16, uint8) external pure returns (uint256) {
-        revert UnsupportedGameplayModule();
-    }
-
-    function dispatchTransport(uint256, uint256, uint32, uint32, uint32, Resources calldata)
+    function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity)
         external
-        pure
+        view
+    {
+        _validateDefenseProduction(planetId, defense, quantity);
+        revert UnsupportedGameplayModule();
+    }
+
+    function finishDefenseProduction(uint256 planetId) external view {
+        _requireReadyDefenseQueue(planetId);
+        revert UnsupportedGameplayModule();
+    }
+
+    function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external view {
+        _validateShipProduction(planetId, ship, quantity);
+        revert UnsupportedGameplayModule();
+    }
+
+    function finishShipProduction(uint256 planetId) external view {
+        _requireReadyShipQueue(planetId);
+        revert UnsupportedGameplayModule();
+    }
+
+    function startResearch(uint256 planetId, Technology technology) external view {
+        _validateResearchStart(planetId, technology);
+        revert UnsupportedGameplayModule();
+    }
+
+    function finishResearch() external view {
+        ResearchQueue memory queue = researchQueues[msg.sender];
+        if (!queue.active) revert QueueInactive();
+        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
+        revert UnsupportedGameplayModule();
+    }
+
+    function createColonyAtNextSlot(uint256 originPlanetId, uint256)
+        external
+        view
         returns (uint256)
     {
+        _validateColonyCreation(originPlanetId);
         revert UnsupportedGameplayModule();
     }
 
-    function recallFleet(uint256) external pure {
+    function createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
+        external
+        view
+        returns (uint256)
+    {
+        _validateColonyCreation(originPlanetId);
+        bytes32 target = coordinateKey(galaxy, system, position);
+        if (occupiedCoordinates[target]) revert CoordinatesOccupied();
         revert UnsupportedGameplayModule();
     }
 
-    function settleFleetArrival(uint256) external pure {
+    function dispatchTransport(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        uint32 smallCargo,
+        uint32 recycler,
+        uint32 colonyShip,
+        Resources calldata cargo
+    ) external view returns (uint256) {
+        _validateTransport(
+            originPlanetId, destinationPlanetId, smallCargo, recycler, colonyShip, cargo
+        );
         revert UnsupportedGameplayModule();
     }
 
-    function depositMarketResource(uint256, Resource, uint128) external pure {
+    function recallFleet(uint256 fleetId) external pure {
+        if (fleetId == 0) revert InvalidId();
+        revert FleetInactive();
+    }
+
+    function settleFleetArrival(uint256 fleetId) external pure {
+        if (fleetId == 0) revert InvalidId();
+        revert FleetInactive();
+    }
+
+    function depositMarketResource(uint256 planetId, Resource resource, uint128 amount)
+        external
+        view
+    {
+        _validateMarketResourceAction(planetId, resource, amount);
         revert UnsupportedGameplayModule();
     }
 
-    function requestMarketResourceWithdrawal(uint256, Resource, uint128) external pure {
+    function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
+        external
+        view
+    {
+        _validateMarketResourceAction(planetId, resource, amount);
+        if (resourceWithdrawals[msg.sender][resource].active) revert WithdrawalActive(resource);
+
+        Resources memory resources = _planets[planetId].resources;
+        if (_resourceAmount(resources, resource) < amount) {
+            revert InsufficientResources(resources.metal, resources.crystal, resources.deuterium);
+        }
+
         revert UnsupportedGameplayModule();
     }
 
-    function finishMarketResourceWithdrawal(Resource) external pure {
+    function finishMarketResourceWithdrawal(Resource resource) external view {
+        _requireReserveResourceId(resource);
+        ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
+        if (!withdrawal.active) revert WithdrawalInactive(resource);
+        if (_currentTimestamp() < withdrawal.unlocksAt) {
+            revert WithdrawalNotReady(withdrawal.unlocksAt);
+        }
         revert UnsupportedGameplayModule();
     }
 
@@ -883,24 +936,183 @@ contract VeydriftGame {
     }
 
     function _requireBuildingDependencies(uint256 planetId, Building building) private view {
-        uint16 roboticsFactoryLevel = _buildingLevels[planetId][Building.RoboticsFactory];
-        uint16 researchLabLevel = _buildingLevels[planetId][Building.ResearchLab];
+        VeydriftDependencies.requireBuilding(
+            building,
+            _buildingLevels[planetId][Building.RoboticsFactory],
+            _buildingLevels[planetId][Building.ResearchLab],
+            _technologyLevel(msg.sender, Technology.Energy),
+            _technologyLevel(msg.sender, Technology.Hyperspace)
+        );
+    }
 
-        if (building == Building.Shipyard && roboticsFactoryLevel < 2) {
-            revert MissingDependency("ROBOTICS_FACTORY_2");
+    function _validateDefenseProduction(uint256 planetId, Defense defense, uint32 quantity)
+        private
+        view
+    {
+        _requirePlanetOwner(planetId);
+        if (quantity == 0) revert InvalidQuantity();
+        if (defenseQueues[planetId].active) revert QueueActive();
+
+        VeydriftDependencies.requireDefense(
+            defense,
+            _buildingLevels[planetId][Building.Shipyard],
+            _technologyLevel(msg.sender, Technology.Laser),
+            _technologyLevel(msg.sender, Technology.Ion),
+            _technologyLevel(msg.sender, Technology.Shielding),
+            _technologyLevel(msg.sender, Technology.Plasma)
+        );
+
+        _requireAffordable(planetId, _multiply(defenseCost(defense), quantity));
+    }
+
+    function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
+        _requirePlanetOwner(planetId);
+        if (quantity == 0) revert InvalidQuantity();
+        if (shipQueues[planetId].active) revert QueueActive();
+
+        VeydriftDependencies.requireShip(
+            ship,
+            _buildingLevels[planetId][Building.Shipyard],
+            _technologyLevel(msg.sender, Technology.Espionage),
+            _technologyLevel(msg.sender, Technology.CombustionDrive),
+            _technologyLevel(msg.sender, Technology.ImpulseDrive),
+            _technologyLevel(msg.sender, Technology.HyperspaceDrive),
+            _technologyLevel(msg.sender, Technology.Hyperspace),
+            _technologyLevel(msg.sender, Technology.Graviton)
+        );
+
+        _requireAffordable(planetId, _multiply(shipCost(ship), quantity));
+    }
+
+    function _validateResearchStart(uint256 planetId, Technology technology) private view {
+        _requirePlanetOwner(planetId);
+        if (researchQueues[msg.sender].active) revert QueueActive();
+        if (_buildingLevels[planetId][Building.ResearchLab] == 0) {
+            revert MissingDependency("RESEARCH_LAB_1");
         }
-        if (building == Building.ResearchLab && roboticsFactoryLevel < 1) {
-            revert MissingDependency("ROBOTICS_FACTORY_1");
+
+        VeydriftDependencies.requireResearch(
+            technology,
+            _technologyLevel(msg.sender, Technology.Energy),
+            _technologyLevel(msg.sender, Technology.Laser),
+            _technologyLevel(msg.sender, Technology.Ion),
+            _technologyLevel(msg.sender, Technology.Hyperspace),
+            _technologyLevel(msg.sender, Technology.Espionage),
+            _technologyLevel(msg.sender, Technology.ImpulseDrive),
+            _technologyLevel(msg.sender, Technology.Computer)
+        );
+
+        _requireAffordable(planetId, researchCost(msg.sender, technology));
+    }
+
+    function _validateColonyCreation(uint256 originPlanetId) private view {
+        _requirePlanetOwner(originPlanetId);
+        if (planetCountOf[msg.sender] >= maxPlanets(msg.sender)) {
+            revert PlanetLimitReached(maxPlanets(msg.sender));
         }
-        if (building == Building.NaniteFactory && roboticsFactoryLevel < 10) {
-            revert MissingDependency("ROBOTICS_FACTORY_10");
+        _requireShips(originPlanetId, Ship.ColonyShip, 1);
+    }
+
+    function _validateTransport(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        uint32 smallCargo,
+        uint32 recycler,
+        uint32 colonyShip,
+        Resources calldata cargo
+    ) private view {
+        _requirePlanetOwner(originPlanetId);
+        if (_planets[destinationPlanetId].owner == address(0)) revert NoPlanet();
+        if (originPlanetId == destinationPlanetId) revert SamePlanet();
+
+        _requireShips(originPlanetId, Ship.SmallCargo, smallCargo);
+        _requireShips(originPlanetId, Ship.Recycler, recycler);
+        _requireShips(originPlanetId, Ship.ColonyShip, colonyShip);
+
+        uint256 capacity = transportCargoCapacity(smallCargo, recycler, colonyShip);
+        uint256 cargoTotal =
+            uint256(cargo.metal) + uint256(cargo.crystal) + uint256(cargo.deuterium);
+        if (cargoTotal > capacity) revert CargoCapacityExceeded(capacity, cargoTotal);
+        _requireAffordable(originPlanetId, cargo);
+    }
+
+    function _validateMarketResourceAction(uint256 planetId, Resource resource, uint128 amount)
+        private
+        view
+    {
+        _requirePlanetOwner(planetId);
+        _requireReserveResourceId(resource);
+        if (amount == 0) revert InvalidQuantity();
+        _requireRiftUnlocked(planetId);
+    }
+
+    function _requireReadyDefenseQueue(uint256 planetId) private view {
+        _requirePlanetOwner(planetId);
+        DefenseQueue memory queue = defenseQueues[planetId];
+        if (!queue.active) revert QueueInactive();
+        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
+    }
+
+    function _requireReadyShipQueue(uint256 planetId) private view {
+        _requirePlanetOwner(planetId);
+        ShipQueue memory queue = shipQueues[planetId];
+        if (!queue.active) revert QueueInactive();
+        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
+    }
+
+    function _requireRiftUnlocked(uint256 planetId) private view {
+        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] == 0) {
+            revert RiftStabilizerRequired(planetId);
         }
-        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 4) {
-            revert MissingDependency("ROBOTICS_FACTORY_4");
+
+        _requireBuildingDependencies(planetId, Building.InterdimensionalRiftStabilizer);
+    }
+
+    function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private pure {
+        if (quantity == 0) return;
+        uint32 available = _shipCount(planetId, ship);
+        if (available < quantity) revert InsufficientShips(ship, available, quantity);
+    }
+
+    function _requireAffordable(uint256 planetId, Resources memory cost) private view {
+        Resources memory available = _planets[planetId].resources;
+        if (
+            available.metal < cost.metal || available.crystal < cost.crystal
+                || available.deuterium < cost.deuterium
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
         }
-        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
-            revert MissingDependency("RESEARCH_LAB_2");
-        }
+    }
+
+    function _technologyLevel(address, Technology) private pure returns (uint16) {
+        return 0;
+    }
+
+    function _shipCount(uint256, Ship) private pure returns (uint32) {
+        return 0;
+    }
+
+    function _resourceAmount(Resources memory resources, Resource resource)
+        private
+        pure
+        returns (uint128)
+    {
+        if (resource == Resource.Metal) return resources.metal;
+        if (resource == Resource.Crystal) return resources.crystal;
+        if (resource == Resource.Deuterium) return resources.deuterium;
+        revert InvalidResource(resource);
+    }
+
+    function _multiply(Resources memory cost, uint32 quantity)
+        private
+        pure
+        returns (Resources memory)
+    {
+        return Resources({
+            metal: _toUint128(uint256(cost.metal) * quantity),
+            crystal: _toUint128(uint256(cost.crystal) * quantity),
+            deuterium: _toUint128(uint256(cost.deuterium) * quantity)
+        });
     }
 
     function _settleResources(uint256 planetId) private {

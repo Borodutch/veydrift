@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
-import {Building, Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
+import {Building, Defense, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
 contract MockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -285,9 +285,128 @@ contract VeydriftGameTest is Test {
         assertFalse(game.activeBuildingConstruction(planetId).active);
     }
 
-    function testAdvancedGameplayModulesFailExplicitly() public {
-        vm.expectRevert(VeydriftGame.UnsupportedGameplayModule.selector);
+    function testAdvancedGameplayModulesRequireAPlanetBeforeUnsupported() public {
+        vm.expectRevert(VeydriftGame.NoPlanet.selector);
         game.depositMarketResource(1, Resource.Metal, 1);
+    }
+
+    function testDirectCallsEnforceShipDefenseAndResearchPrerequisitesBeforeUnsupported() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        bytes32 shipyardDependency = "SHIPYARD";
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.MissingDependency.selector, shipyardDependency)
+        );
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.MissingDependency.selector, shipyardDependency)
+        );
+        game.startDefenseProduction(planetId, Defense.LightLaser, 1);
+
+        vm.prank(player);
+        bytes32 researchLabDependency = "RESEARCH_LAB_1";
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.MissingDependency.selector, researchLabDependency)
+        );
+        game.startResearch(planetId, Technology.Energy);
+    }
+
+    function testDirectCallsRejectInvalidQuantitiesBeforeUnsupported() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.InvalidQuantity.selector);
+        game.startShipProduction(planetId, Ship.SmallCargo, 0);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.InvalidQuantity.selector);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 0);
+    }
+
+    function testDirectColonyCallsEnforcePlanetLimitBeforeUnsupported() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGame.PlanetLimitReached.selector, 1));
+        game.createColonyAtNextSlot(planetId, 0);
+    }
+
+    function testDirectFleetCallsEnforceTransportOwnershipCoordinatesAndShips() public {
+        address destinationOwner = address(0xCAFE);
+        vm.deal(destinationOwner, 1 ether);
+
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(destinationOwner);
+        uint256 destinationPlanetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.SamePlanet.selector);
+        game.dispatchTransport(
+            originPlanetId,
+            originPlanetId,
+            1,
+            0,
+            0,
+            VeydriftGame.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.InsufficientShips.selector, Ship.SmallCargo, 0, 1)
+        );
+        game.dispatchTransport(
+            originPlanetId,
+            destinationPlanetId,
+            1,
+            0,
+            0,
+            VeydriftGame.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+    }
+
+    function testDirectQueueFinishCallsRequireActiveReadyQueues() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.QueueInactive.selector);
+        game.finishShipProduction(planetId);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.QueueInactive.selector);
+        game.finishDefenseProduction(planetId);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.QueueInactive.selector);
+        game.finishResearch();
+    }
+
+    function testDirectMarketCallsRequireRiftUnlockAndWithdrawalState() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGame.InvalidQuantity.selector);
+        game.depositMarketResource(planetId, Resource.Metal, 0);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.RiftStabilizerRequired.selector, planetId)
+        );
+        game.depositMarketResource(planetId, Resource.Metal, 1);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGame.WithdrawalInactive.selector, Resource.Metal)
+        );
+        game.finishMarketResourceWithdrawal(Resource.Metal);
     }
 
     function _build(address account, uint256 planetId, Building building) internal {
