@@ -49,7 +49,8 @@ enum Ship {
     Deathstar,
     Battlecruiser,
     Reaper,
-    Pathfinder
+    Pathfinder,
+    Crawler
 }
 
 enum Technology {

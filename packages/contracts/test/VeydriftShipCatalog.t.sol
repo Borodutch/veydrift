@@ -12,6 +12,8 @@ contract VeydriftShipCatalogTest is Test {
     bytes32 private constant DEP_ION_2 = "ION_2";
     bytes32 private constant DEP_HYPERSPACE_5 = "HYPERSPACE_5";
     bytes32 private constant DEP_GRAVITON_1 = "GRAVITON_1";
+    bytes32 private constant DEP_REAPER_ENERGY_5 = "ENERGY_5";
+    bytes32 private constant DEP_PATHFINDER_SHIELDING_4 = "SHIELDING_4";
 
     function testVanillaOGameRepresentativeShipCostsAndCargo() public pure {
         _assertShip(Ship.SmallCargo, 2_000, 2_000, 0, 5_000);
@@ -50,6 +52,22 @@ contract VeydriftShipCatalogTest is Test {
         );
         _requireShip(Ship.Deathstar, 12, 0, 0, 0, 7, 6, 0, 0, 0, 0, 0, 0);
         _requireShip(Ship.Deathstar, 12, 0, 0, 0, 7, 6, 1, 0, 0, 0, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftDependencies.MissingDependency.selector, DEP_REAPER_ENERGY_5
+            )
+        );
+        _requireShipWithEnergy(Ship.Reaper, 10, 0, 0, 0, 7, 6, 0, 4, 0, 0, 6, 0, 0);
+        _requireShipWithEnergy(Ship.Reaper, 10, 0, 0, 0, 7, 6, 0, 5, 0, 0, 6, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftDependencies.MissingDependency.selector, DEP_PATHFINDER_SHIELDING_4
+            )
+        );
+        _requireShip(Ship.Pathfinder, 5, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0);
+        _requireShip(Ship.Pathfinder, 5, 0, 0, 0, 2, 0, 0, 0, 0, 4, 0, 0);
     }
 
     function testShipDurationUsesOGameShipyardAndNaniteFormula() public pure {
@@ -100,6 +118,41 @@ contract VeydriftShipCatalogTest is Test {
             hyperspaceDrive,
             hyperspace,
             graviton,
+            0,
+            laser,
+            ion,
+            shielding,
+            armor,
+            plasma
+        );
+    }
+
+    function _requireShipWithEnergy(
+        Ship ship,
+        uint16 shipyard,
+        uint16 espionage,
+        uint16 combustion,
+        uint16 impulse,
+        uint16 hyperspaceDrive,
+        uint16 hyperspace,
+        uint16 graviton,
+        uint16 energy,
+        uint16 laser,
+        uint16 ion,
+        uint16 shielding,
+        uint16 armor,
+        uint16 plasma
+    ) private pure {
+        VeydriftDependencies.requireShip(
+            ship,
+            shipyard,
+            espionage,
+            combustion,
+            impulse,
+            hyperspaceDrive,
+            hyperspace,
+            graviton,
+            energy,
             laser,
             ion,
             shielding,

@@ -512,6 +512,15 @@
       "512": "/assets/game/sizes/512/planets/warm-terracotta.webp"
     }
   },
+  "/assets/game/style-pass/generated/buildings/alliance-depot-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/alliance-depot-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/alliance-depot-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/alliance-depot-mid.webp"
+    }
+  },
   "/assets/game/style-pass/generated/buildings/crystal-mine-mid.webp": {
     "width": 1024,
     "height": 1024,
@@ -548,6 +557,15 @@
       "512": "/assets/game/sizes/512/style-pass/generated/buildings/deuterium-tank-mid.webp"
     }
   },
+  "/assets/game/style-pass/generated/buildings/fusion-reactor-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/fusion-reactor-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/fusion-reactor-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/fusion-reactor-mid.webp"
+    }
+  },
   "/assets/game/style-pass/generated/buildings/interdimensional-rift-stabilizer-mid.webp": {
     "width": 1024,
     "height": 1024,
@@ -573,6 +591,24 @@
       "64": "/assets/game/sizes/64/style-pass/generated/buildings/metal-storage-mid.webp",
       "256": "/assets/game/sizes/256/style-pass/generated/buildings/metal-storage-mid.webp",
       "512": "/assets/game/sizes/512/style-pass/generated/buildings/metal-storage-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/missile-silo-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/missile-silo-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/missile-silo-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/missile-silo-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/nanite-factory-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/nanite-factory-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/nanite-factory-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/nanite-factory-mid.webp"
     }
   },
   "/assets/game/style-pass/generated/buildings/research-lab-mid.webp": {
@@ -609,6 +645,15 @@
       "64": "/assets/game/sizes/64/style-pass/generated/buildings/solar-plant-mid.webp",
       "256": "/assets/game/sizes/256/style-pass/generated/buildings/solar-plant-mid.webp",
       "512": "/assets/game/sizes/512/style-pass/generated/buildings/solar-plant-mid.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/terraformer-mid.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/terraformer-mid.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/terraformer-mid.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/terraformer-mid.webp"
     }
   },
   "/assets/game/style-pass/generated/defenses/anti-ballistic-missile.webp": {
@@ -987,6 +1032,15 @@
       "64": "/assets/game/sizes/64/style-pass/generated/ships/colony-ship.webp",
       "256": "/assets/game/sizes/256/style-pass/generated/ships/colony-ship.webp",
       "512": "/assets/game/sizes/512/style-pass/generated/ships/colony-ship.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/ships/crawler.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/crawler.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/crawler.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/crawler.webp"
     }
   },
   "/assets/game/style-pass/generated/ships/cruiser.webp": {

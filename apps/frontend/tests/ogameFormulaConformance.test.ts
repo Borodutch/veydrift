@@ -127,6 +127,7 @@ describe("vanilla OGame formula conformance", () => {
     const cruiser = shipCatalog.find((ship) => ship.key === "cruiser");
     const deathstar = shipCatalog.find((ship) => ship.key === "deathstar");
     const reaper = shipCatalog.find((ship) => ship.key === "reaper");
+    const pathfinder = shipCatalog.find((ship) => ship.key === "pathfinder");
 
     expect(smallCargo).toMatchObject({
       baseCost: { metal: 2_000, crystal: 2_000, deuterium: 0 },
@@ -145,6 +146,14 @@ describe("vanilla OGame formula conformance", () => {
     });
     expect(deathstar?.baseCost).toEqual({ metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 });
     expect(reaper?.baseCost).toEqual({ metal: 85_000, crystal: 55_000, deuterium: 20_000 });
+    expect(pathfinder).toMatchObject({
+      baseCost: { metal: 8_000, crystal: 15_000, deuterium: 8_000 },
+      requirements: [
+        { kind: "building", key: "shipyard", label: "Shipyard", level: 5 },
+        { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
+        { kind: "technology", key: "shielding", label: "Shielding", level: 4 },
+      ],
+    });
     expect(shipDurationEstimate(2, 0, { metal: 2_000, crystal: 2_000, deuterium: 0 })).toBe(1_920);
     expect(shipDurationEstimate(7, 2, { metal: 45_000, crystal: 15_000, deuterium: 0 })).toBe(2_700);
   });
@@ -153,6 +162,9 @@ describe("vanilla OGame formula conformance", () => {
     expect(defenseCatalog.find((defense) => defense.key === "rocketLauncher")).toMatchObject({
       baseCost: { metal: 2_000, crystal: 0, deuterium: 0 },
       requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
+    });
+    expect(defenseCatalog.find((defense) => defense.key === "ionCannon")).toMatchObject({
+      baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
     });
     expect(defenseCatalog.find((defense) => defense.key === "gaussCannon")).toMatchObject({
       baseCost: { metal: 20_000, crystal: 15_000, deuterium: 2_000 },

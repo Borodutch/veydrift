@@ -64,22 +64,12 @@ library VeydriftCatalog {
         if (defense == Defense.HeavyLaser) return (6_000, 2_000, 0);
         if (defense == Defense.SmallShieldDome) return (10_000, 10_000, 0);
         if (defense == Defense.GaussCannon) return (20_000, 15_000, 2_000);
-        if (defense == Defense.IonCannon) return (5_000, 3_000, 0);
+        if (defense == Defense.IonCannon) return (2_000, 6_000, 0);
         if (defense == Defense.PlasmaTurret) return (50_000, 50_000, 30_000);
         if (defense == Defense.LargeShieldDome) return (50_000, 50_000, 0);
         if (defense == Defense.AntiBallisticMissile) return (8_000, 0, 2_000);
         if (defense == Defense.InterplanetaryMissile) return (12_500, 2_500, 10_000);
         revert InvalidId();
-    }
-
-    function missileSiloCapacity(uint16 missileSiloLevel) public pure returns (uint32) {
-        return uint32(missileSiloLevel) * 10;
-    }
-
-    function missileSlots(Defense defense) public pure returns (uint8) {
-        if (defense == Defense.AntiBallisticMissile) return 1;
-        if (defense == Defense.InterplanetaryMissile) return 2;
-        return 0;
     }
 
     function isShieldDome(Defense defense) public pure returns (bool) {
@@ -103,6 +93,7 @@ library VeydriftCatalog {
         if (ship == Ship.Battlecruiser) return (30_000, 40_000, 15_000);
         if (ship == Ship.Reaper) return (85_000, 55_000, 20_000);
         if (ship == Ship.Pathfinder) return (8_000, 15_000, 8_000);
+        if (ship == Ship.Crawler) return (2_000, 2_000, 1_000);
         revert InvalidId();
     }
 
@@ -123,7 +114,23 @@ library VeydriftCatalog {
         if (ship == Ship.Battlecruiser) return 750;
         if (ship == Ship.Reaper) return 7_000;
         if (ship == Ship.Pathfinder) return 12_000;
+        if (ship == Ship.Crawler) return 0;
         revert InvalidId();
+    }
+
+    function missileSlots(Defense defense) public pure returns (uint8) {
+        if (defense == Defense.AntiBallisticMissile) return 1;
+        if (defense == Defense.InterplanetaryMissile) return 2;
+        return 0;
+    }
+
+    function missileSiloCapacity(uint16 missileSiloLevel) public pure returns (uint16) {
+        return missileSiloLevel * 10;
+    }
+
+    function maxDefensePerPlanet(Defense defense) public pure returns (uint32) {
+        if (defense == Defense.SmallShieldDome || defense == Defense.LargeShieldDome) return 1;
+        return type(uint32).max;
     }
 
     function researchBaseCost(Technology technology)
