@@ -138,6 +138,24 @@ describe("ChainSyncService", () => {
       })
     ]);
 
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x7e",
+          transactionHash: "0xfeed",
+          topics: [
+            debrisFieldUpdatedTopic,
+            `0x${(7n).toString(16).padStart(64, "0")}`
+          ],
+          data: abiWords(0n, 0n)
+        }
+      }
+    });
+
+    expect(indexer.debrisFieldsInSystem(2, 44)).toEqual([]);
+
     service.stop();
   });
 

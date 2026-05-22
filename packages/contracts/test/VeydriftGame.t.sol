@@ -1911,6 +1911,9 @@ contract VeydriftGameTest is Test {
         game.resolveFleetMission(harvestMissionId);
         (,,, VeydriftGameStorage.Resources memory harvestedCargo) = _fleetMission(harvestMissionId);
         assertGt(harvestedCargo.metal + harvestedCargo.crystal, 0);
+        (uint128 remainingDebrisMetal, uint128 remainingDebrisCrystal) =
+            game.debrisField(targetPlanetId);
+        assertLt(remainingDebrisMetal + remainingDebrisCrystal, debrisMetal + debrisCrystal);
 
         vm.warp(harvestReturnAt);
         game.completeFleetMissionReturn(harvestMissionId);
@@ -2032,6 +2035,108 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             0
         );
+    }
+
+    function testMissionEntrypointsRejectDirectBypassesForNonOwnerUnsupportedMissionAndRecallOwner()
+        public
+    {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.prank(defender);
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InvalidMissionType.selector,
+                VeydriftGameStorage.FleetMissionType.MissileAttack
+            )
+        );
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.MissileAttack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        vm.prank(defender);
+        vm.expectRevert(VeydriftGameStorage.FleetNotOwner.selector);
+        game.recallFleetMission(missionId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetNotArrived.selector, arrivalAt)
+        );
+        game.resolveFleetMission(missionId);
+    }
+
+    function testMissionReturnKeeperCannotCreditBeforeReturnAndCreditsOriginalOwner() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        address keeper = address(0xA11CE5);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        vm.prank(defender);
+        game.resolveFleetMission(missionId);
+
+        (VeydriftGameStorage.FleetMissionStatus status,, uint64 returnAt,) =
+            _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetNotArrived.selector, returnAt)
+        );
+        game.completeFleetMissionReturn(missionId);
+
+        vm.warp(returnAt);
+        vm.prank(keeper);
+        game.completeFleetMissionReturn(missionId);
+
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
+        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), 0);
+        assertEq(game.activeFleetMissionCount(player), 0);
     }
 
     function testRiftDepositWithdrawalMovesTokenAndInGameBalances() public {
