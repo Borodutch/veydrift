@@ -25,13 +25,13 @@ interface IVeydriftAllianceGame {
         );
 }
 
-/// @notice Canonical alliance and diplomacy authority for public-state combat rules.
+/// @notice Canonical on-chain alliance roster and public profile authority.
 contract VeydriftAllianceSystem {
     enum AllianceRole {
         None,
         Member,
         Officer,
-        Leader
+        Owner
     }
 
     enum DiplomacyStatus {
@@ -45,8 +45,8 @@ contract VeydriftAllianceSystem {
         bool active;
         string tag;
         string name;
-        string metadataURI;
-        address founder;
+        string description;
+        address owner;
         uint64 createdAt;
         uint32 memberCount;
     }
@@ -90,7 +90,7 @@ contract VeydriftAllianceSystem {
 
     error AllianceInactive(uint256 allianceId);
     error AlreadyInAlliance(address player, uint256 allianceId);
-    error EmptyAllianceMetadata();
+    error EmptyAllianceProfile();
     error InvalidAlliance(uint256 allianceId);
     error InvalidInvite(address player, uint256 allianceId);
     error InvalidRole(AllianceRole role);
@@ -102,10 +102,10 @@ contract VeydriftAllianceSystem {
     error SelfDiplomacy(uint256 allianceId);
 
     event AllianceCreated(
-        uint256 indexed allianceId, address indexed founder, string tag, string name
+        uint256 indexed allianceId, address indexed owner, string tag, string name
     );
-    event AllianceMetadataUpdated(
-        uint256 indexed allianceId, string tag, string name, string metadataURI
+    event AllianceProfileUpdated(
+        uint256 indexed allianceId, string tag, string name, string description
     );
     event AllianceInviteCreated(
         uint256 indexed allianceId, address indexed inviter, address indexed player
@@ -132,7 +132,7 @@ contract VeydriftAllianceSystem {
         game = gameContract;
     }
 
-    function createAlliance(string calldata tag, string calldata name, string calldata metadataURI)
+    function createAlliance(string calldata tag, string calldata name, string calldata description)
         external
         returns (uint256 allianceId)
     {
@@ -140,38 +140,38 @@ contract VeydriftAllianceSystem {
         if (_memberships[msg.sender].allianceId != 0) {
             revert AlreadyInAlliance(msg.sender, _memberships[msg.sender].allianceId);
         }
-        _requireMetadata(tag, name);
+        _requireProfile(tag, name);
 
         allianceId = nextAllianceId++;
         _alliances[allianceId] = Alliance({
             active: true,
             tag: tag,
             name: name,
-            metadataURI: metadataURI,
-            founder: msg.sender,
+            description: description,
+            owner: msg.sender,
             createdAt: _now(),
             memberCount: 0
         });
-        _addMember(allianceId, msg.sender, AllianceRole.Leader);
+        _addMember(allianceId, msg.sender, AllianceRole.Owner);
 
         emit AllianceCreated(allianceId, msg.sender, tag, name);
     }
 
-    function updateAllianceMetadata(
+    function updateAllianceProfile(
         uint256 allianceId,
         string calldata tag,
         string calldata name,
-        string calldata metadataURI
+        string calldata description
     ) external {
         _requireOfficer(allianceId, msg.sender);
-        _requireMetadata(tag, name);
+        _requireProfile(tag, name);
 
         Alliance storage target = _requireAlliance(allianceId);
         target.tag = tag;
         target.name = name;
-        target.metadataURI = metadataURI;
+        target.description = description;
 
-        emit AllianceMetadataUpdated(allianceId, tag, name, metadataURI);
+        emit AllianceProfileUpdated(allianceId, tag, name, description);
     }
 
     function inviteMember(uint256 allianceId, address player) external {
@@ -206,9 +206,15 @@ contract VeydriftAllianceSystem {
 
     function kickMember(uint256 allianceId, address player) external {
         _requireOfficer(allianceId, msg.sender);
+        Membership memory kicker = _memberships[msg.sender];
         Membership memory kicked = _memberships[player];
         if (kicked.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
-        if (kicked.role == AllianceRole.Leader) revert NotAuthorized(msg.sender, allianceId);
+        if (
+            kicked.role == AllianceRole.Owner
+                || (kicker.role == AllianceRole.Officer && kicked.role != AllianceRole.Member)
+        ) {
+            revert NotAuthorized(msg.sender, allianceId);
+        }
 
         _removeMember(allianceId, player);
     }
@@ -217,7 +223,7 @@ contract VeydriftAllianceSystem {
         Membership memory membership = _memberships[msg.sender];
         if (membership.allianceId == 0) revert NoAlliance(msg.sender);
         if (
-            membership.role == AllianceRole.Leader
+            membership.role == AllianceRole.Owner
                 && _alliances[membership.allianceId].memberCount > 1
         ) {
             revert NotAuthorized(msg.sender, membership.allianceId);
@@ -227,10 +233,11 @@ contract VeydriftAllianceSystem {
     }
 
     function setMemberRole(uint256 allianceId, address player, AllianceRole role) external {
-        _requireLeader(allianceId, msg.sender);
-        if (role == AllianceRole.None) revert InvalidRole(role);
+        _requireOwner(allianceId, msg.sender);
+        if (role != AllianceRole.Member && role != AllianceRole.Officer) revert InvalidRole(role);
         Membership storage membership = _memberships[player];
         if (membership.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
+        if (membership.role == AllianceRole.Owner) revert NotAuthorized(msg.sender, allianceId);
 
         membership.role = role;
         emit AllianceRoleUpdated(allianceId, player, role);
@@ -449,16 +456,16 @@ contract VeydriftAllianceSystem {
         if (
             membership.allianceId != allianceId
                 || (membership.role != AllianceRole.Officer
-                    && membership.role != AllianceRole.Leader)
+                    && membership.role != AllianceRole.Owner)
         ) {
             revert NotAuthorized(player, allianceId);
         }
     }
 
-    function _requireLeader(uint256 allianceId, address player) private view {
+    function _requireOwner(uint256 allianceId, address player) private view {
         _requireAlliance(allianceId);
         Membership memory membership = _memberships[player];
-        if (membership.allianceId != allianceId || membership.role != AllianceRole.Leader) {
+        if (membership.allianceId != allianceId || membership.role != AllianceRole.Owner) {
             revert NotAuthorized(player, allianceId);
         }
     }
@@ -467,8 +474,8 @@ contract VeydriftAllianceSystem {
         if (game.homePlanetOf(player) == 0) revert NoPlanet(player);
     }
 
-    function _requireMetadata(string calldata tag, string calldata name) private pure {
-        if (bytes(tag).length == 0 || bytes(name).length == 0) revert EmptyAllianceMetadata();
+    function _requireProfile(string calldata tag, string calldata name) private pure {
+        if (bytes(tag).length == 0 || bytes(name).length == 0) revert EmptyAllianceProfile();
     }
 
     function _relationship(uint256 allianceId, uint256 otherAllianceId)

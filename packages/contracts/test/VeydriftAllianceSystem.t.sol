@@ -46,6 +46,7 @@ contract VeydriftAllianceSystemTest is Test {
     address internal leader = address(0xB0B);
     address internal member = address(0xCAFE);
     address internal enemy = address(0xE11A);
+    address internal recruit = address(0xBEEF);
 
     VeydriftGame internal game;
     VeydriftAllianceSystem internal alliances;
@@ -66,23 +67,26 @@ contract VeydriftAllianceSystemTest is Test {
         vm.deal(leader, 1 ether);
         vm.deal(member, 1 ether);
         vm.deal(enemy, 1 ether);
+        vm.deal(recruit, 1 ether);
         _start(leader);
         _start(member);
         _start(enemy);
+        _start(recruit);
     }
 
     function testAllianceCreationInvitesRolesAndPublicMembers() public {
         vm.prank(leader);
-        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "ipfs://union");
+        uint256 allianceId =
+            alliances.createAlliance("VDFT", "Veydrift Union", "Discord: https://discord.gg/vdft");
 
         VeydriftAllianceSystem.Alliance memory profile = alliances.allianceProfile(allianceId);
         VeydriftAllianceSystem.Membership memory leaderMembership = alliances.allianceOf(leader);
         assertEq(profile.active, true);
         assertEq(profile.tag, "VDFT");
         assertEq(profile.name, "Veydrift Union");
-        assertEq(profile.metadataURI, "ipfs://union");
+        assertEq(profile.description, "Discord: https://discord.gg/vdft");
         assertEq(profile.memberCount, 1);
-        assertEq(uint8(leaderMembership.role), uint8(VeydriftAllianceSystem.AllianceRole.Leader));
+        assertEq(uint8(leaderMembership.role), uint8(VeydriftAllianceSystem.AllianceRole.Owner));
         assertEq(alliances.allianceMemberAt(allianceId, 0), leader);
 
         vm.prank(leader);
@@ -104,6 +108,65 @@ contract VeydriftAllianceSystemTest is Test {
         alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
         memberMembership = alliances.allianceOf(member);
         assertEq(uint8(memberMembership.role), uint8(VeydriftAllianceSystem.AllianceRole.Officer));
+    }
+
+    function testOwnerOfficerMemberPermissionBoundaries() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "discord.gg/vdft");
+
+        vm.prank(member);
+        vm.expectRevert();
+        alliances.inviteMember(allianceId, enemy);
+
+        _inviteAndAccept(allianceId, member);
+        _inviteAndAccept(allianceId, enemy);
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        vm.prank(member);
+        alliances.inviteMember(allianceId, recruit);
+        vm.prank(recruit);
+        alliances.acceptInvite(allianceId);
+
+        vm.prank(member);
+        alliances.kickMember(allianceId, recruit);
+        assertEq(
+            uint8(alliances.allianceOf(recruit).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.None)
+        );
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, enemy, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        vm.prank(member);
+        vm.expectRevert();
+        alliances.kickMember(allianceId, enemy);
+
+        vm.prank(member);
+        vm.expectRevert();
+        alliances.setMemberRole(allianceId, enemy, VeydriftAllianceSystem.AllianceRole.Member);
+
+        vm.prank(leader);
+        vm.expectRevert();
+        alliances.setMemberRole(allianceId, leader, VeydriftAllianceSystem.AllianceRole.Member);
+
+        vm.prank(leader);
+        vm.expectRevert();
+        alliances.setMemberRole(allianceId, enemy, VeydriftAllianceSystem.AllianceRole.Owner);
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, enemy, VeydriftAllianceSystem.AllianceRole.Member);
+        assertEq(
+            uint8(alliances.allianceOf(enemy).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Member)
+        );
+
+        vm.prank(member);
+        alliances.kickMember(allianceId, enemy);
+        assertEq(
+            uint8(alliances.allianceOf(enemy).role), uint8(VeydriftAllianceSystem.AllianceRole.None)
+        );
     }
 
     function testDiplomacyFeedsAttackLimitContext() public {
@@ -177,6 +240,13 @@ contract VeydriftAllianceSystemTest is Test {
     function _start(address player) internal {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _inviteAndAccept(uint256 allianceId, address player) internal {
+        vm.prank(leader);
+        alliances.inviteMember(allianceId, player);
+        vm.prank(player);
+        alliances.acceptInvite(allianceId);
     }
 
     function _fundGameReserves(uint256 amount) internal {
