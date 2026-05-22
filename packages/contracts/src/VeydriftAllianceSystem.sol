@@ -68,6 +68,13 @@ contract VeydriftAllianceSystem {
         uint64 invitedAt;
     }
 
+    struct JoinRequest {
+        bool active;
+        uint256 allianceId;
+        address requester;
+        uint64 requestedAt;
+    }
+
     struct DefenseIntent {
         bool active;
         uint256 allianceId;
@@ -88,6 +95,11 @@ contract VeydriftAllianceSystem {
     mapping(uint256 allianceId => mapping(address player => uint256 indexPlusOne)) internal
         _memberIndexes;
     mapping(address player => mapping(uint256 allianceId => Invite invite)) internal _invites;
+    mapping(uint256 allianceId => address[] requesters) internal _joinRequestLists;
+    mapping(uint256 allianceId => mapping(address player => uint256 indexPlusOne)) internal
+        _joinRequestIndexes;
+    mapping(uint256 allianceId => mapping(address player => JoinRequest request)) internal
+        _joinRequests;
     mapping(uint256 allianceId => mapping(uint256 otherAllianceId => DiplomacyStatus status))
         internal _diplomacy;
     mapping(uint256 intentId => DefenseIntent intent) internal _defenseIntents;
@@ -97,6 +109,7 @@ contract VeydriftAllianceSystem {
     error EmptyAllianceProfile();
     error InvalidAlliance(uint256 allianceId);
     error InvalidInvite(address player, uint256 allianceId);
+    error InvalidJoinRequest(address player, uint256 allianceId);
     error InvalidRole(AllianceRole role);
     error NoAlliance(address player);
     error NoPlanet(address player);
@@ -115,6 +128,13 @@ contract VeydriftAllianceSystem {
         uint256 indexed allianceId, address indexed inviter, address indexed player
     );
     event AllianceInviteCancelled(uint256 indexed allianceId, address indexed player);
+    event AllianceJoinRequested(
+        uint256 indexed allianceId, address indexed requester, uint64 requestedAt
+    );
+    event AllianceJoinRequestCancelled(uint256 indexed allianceId, address indexed requester);
+    event AllianceJoinRequestApproved(
+        uint256 indexed allianceId, address indexed approver, address indexed requester
+    );
     event AllianceJoined(uint256 indexed allianceId, address indexed player, AllianceRole role);
     event AllianceLeft(uint256 indexed allianceId, address indexed player);
     event AllianceRoleUpdated(
@@ -167,7 +187,7 @@ contract VeydriftAllianceSystem {
         string calldata name,
         string calldata description
     ) external {
-        _requireOfficer(allianceId, msg.sender);
+        _requireOwner(allianceId, msg.sender);
         _requireProfile(tag, name);
 
         Alliance storage target = _requireAlliance(allianceId);
@@ -205,7 +225,46 @@ contract VeydriftAllianceSystem {
         }
 
         delete _invites[msg.sender][allianceId];
+        if (_joinRequestIndexes[allianceId][msg.sender] != 0) {
+            _removeJoinRequest(allianceId, msg.sender);
+        }
         _addMember(allianceId, msg.sender, AllianceRole.Member);
+    }
+
+    function requestJoinAlliance(uint256 allianceId) external {
+        _requireAlliance(allianceId);
+        _requireSettledPlayer(msg.sender);
+        if (_memberships[msg.sender].allianceId != 0) {
+            revert AlreadyInAlliance(msg.sender, _memberships[msg.sender].allianceId);
+        }
+
+        if (_joinRequestIndexes[allianceId][msg.sender] == 0) {
+            _joinRequestIndexes[allianceId][msg.sender] = _joinRequestLists[allianceId].length + 1;
+            _joinRequestLists[allianceId].push(msg.sender);
+        }
+        uint64 requestedAt = _now();
+        _joinRequests[allianceId][msg.sender] = JoinRequest({
+            active: true, allianceId: allianceId, requester: msg.sender, requestedAt: requestedAt
+        });
+        emit AllianceJoinRequested(allianceId, msg.sender, requestedAt);
+    }
+
+    function cancelJoinRequest(uint256 allianceId) external {
+        _removeJoinRequest(allianceId, msg.sender);
+        emit AllianceJoinRequestCancelled(allianceId, msg.sender);
+    }
+
+    function approveJoinRequest(uint256 allianceId, address player) external {
+        _requireOfficer(allianceId, msg.sender);
+        JoinRequest memory request = _joinRequests[allianceId][player];
+        if (!request.active) revert InvalidJoinRequest(player, allianceId);
+        if (_memberships[player].allianceId != 0) {
+            revert AlreadyInAlliance(player, _memberships[player].allianceId);
+        }
+
+        _removeJoinRequest(allianceId, player);
+        _addMember(allianceId, player, AllianceRole.Member);
+        emit AllianceJoinRequestApproved(allianceId, msg.sender, player);
     }
 
     function kickMember(uint256 allianceId, address player) external {
@@ -325,12 +384,33 @@ contract VeydriftAllianceSystem {
         return _memberLists[allianceId];
     }
 
+    function allianceIds() external view returns (uint256[] memory) {
+        uint256 count = nextAllianceId - 1;
+        uint256[] memory ids = new uint256[](count);
+        for (uint256 allianceId = 1; allianceId <= count; allianceId++) {
+            ids[allianceId - 1] = allianceId;
+        }
+        return ids;
+    }
+
     function allianceInvite(address player, uint256 allianceId)
         external
         view
         returns (Invite memory)
     {
         return _invites[player][allianceId];
+    }
+
+    function allianceJoinRequest(address player, uint256 allianceId)
+        external
+        view
+        returns (JoinRequest memory)
+    {
+        return _joinRequests[allianceId][player];
+    }
+
+    function allianceJoinRequests(uint256 allianceId) external view returns (address[] memory) {
+        return _joinRequestLists[allianceId];
     }
 
     function diplomacyStatus(uint256 allianceId, uint256 otherAllianceId)
@@ -489,6 +569,21 @@ contract VeydriftAllianceSystem {
         delete _memberships[player];
         _alliances[allianceId].memberCount -= 1;
         emit AllianceLeft(allianceId, player);
+    }
+
+    function _removeJoinRequest(uint256 allianceId, address player) private {
+        uint256 indexPlusOne = _joinRequestIndexes[allianceId][player];
+        if (indexPlusOne == 0) revert InvalidJoinRequest(player, allianceId);
+
+        uint256 index = indexPlusOne - 1;
+        address[] storage requesters = _joinRequestLists[allianceId];
+        address last = requesters[requesters.length - 1];
+        requesters[index] = last;
+        _joinRequestIndexes[allianceId][last] = index + 1;
+        requesters.pop();
+
+        delete _joinRequestIndexes[allianceId][player];
+        delete _joinRequests[allianceId][player];
     }
 
     function _requireAlliance(uint256 allianceId) private view returns (Alliance storage alliance) {
