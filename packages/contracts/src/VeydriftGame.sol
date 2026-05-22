@@ -86,7 +86,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (buildingConstructions[planetId].active) revert ConstructionActive();
 
         uint16 currentLevel = _buildingLevels[planetId][building];
-        if (currentLevel >= (building == Building.InterdimensionalRiftStabilizer ? 1 : MAX_LEVEL)) {
+        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
+        if (building == Building.InterdimensionalRiftStabilizer && currentLevel != 0) {
             revert LevelTooHigh();
         }
         if (_usedFields(planetId) >= _planets[planetId].fields) revert FieldCapacityReached();
@@ -97,8 +98,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources memory cost = buildingUpgradeCost(planetId, building);
         _spend(planetId, cost);
 
-        uint64 readyAt =
-            (uint256(_currentTimestamp()) + _buildingDuration(planetId, cost)).toUint64();
+        uint64 readyAt = (block.timestamp + _buildingDuration(planetId, cost)).toUint64();
         uint16 targetLevel = currentLevel + 1;
         buildingConstructions[planetId] = BuildingConstruction({
             active: true, building: building, targetLevel: targetLevel, readyAt: readyAt, cost: cost
@@ -113,7 +113,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         _requirePlanetOwner(planetId);
         BuildingConstruction memory construction = buildingConstructions[planetId];
         if (!construction.active) revert ConstructionInactive();
-        if (_currentTimestamp() < construction.readyAt) {
+        uint64 currentTime = uint64(block.timestamp);
+        if (currentTime < construction.readyAt) {
             revert ConstructionNotReady(construction.readyAt);
         }
 
@@ -133,9 +134,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources memory totalCost = _multiply(unitCost, quantity);
         _spend(planetId, totalCost);
 
-        uint64 readyAt = (uint256(_currentTimestamp())
-                + _defenseDuration(planetId, unitCost, quantity))
-        .toUint64();
+        uint64 readyAt =
+            (block.timestamp + _defenseDuration(planetId, unitCost, quantity)).toUint64();
         defenseQueues[planetId] = DefenseQueue({
             active: true, defense: defense, quantity: quantity, readyAt: readyAt, cost: totalCost
         });
@@ -155,7 +155,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         _requirePlanetOwner(planetId);
         DefenseQueue memory queue = defenseQueues[planetId];
         if (!queue.active) revert QueueInactive();
-        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
+        uint64 currentTime = uint64(block.timestamp);
+        if (currentTime < queue.readyAt) revert QueueNotReady(queue.readyAt);
 
         delete defenseQueues[planetId];
         uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
@@ -184,8 +185,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources memory cost = researchCost(msg.sender, technology);
         _spend(planetId, cost);
 
-        uint64 readyAt =
-            (uint256(_currentTimestamp()) + _researchDuration(planetId, cost)).toUint64();
+        uint64 readyAt = (block.timestamp + _researchDuration(planetId, cost)).toUint64();
         uint16 targetLevel = currentLevel + 1;
         researchQueues[msg.sender] = ResearchQueue({
             active: true,
@@ -203,7 +203,8 @@ contract VeydriftGame is VeydriftResourceReserves {
     function finishResearch() external {
         ResearchQueue memory queue = researchQueues[msg.sender];
         if (!queue.active) revert QueueInactive();
-        if (_currentTimestamp() < queue.readyAt) {
+        uint64 currentTime = uint64(block.timestamp);
+        if (currentTime < queue.readyAt) {
             revert QueueNotReady(queue.readyAt);
         }
 
@@ -420,7 +421,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
         Planet storage planetRef = _planets[planetId];
         resources = planetRef.resources;
-        uint256 elapsed = uint256(_currentTimestamp()) - planetRef.lastSettledAt;
+        uint256 elapsed = block.timestamp - planetRef.lastSettledAt;
         if (elapsed == 0) return resources;
 
         (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
@@ -553,7 +554,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             metalMultiplierBps: metalMultiplier,
             crystalMultiplierBps: crystalMultiplier,
             deuteriumMultiplierBps: deuteriumMultiplier,
-            lastSettledAt: _currentTimestamp(),
+            lastSettledAt: uint64(block.timestamp),
             resources: startingResources
         });
 
@@ -629,7 +630,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _settleResources(uint256 planetId) private {
-        uint64 currentTime = _currentTimestamp();
+        uint64 currentTime = uint64(block.timestamp);
         BuildingConstruction memory construction = buildingConstructions[planetId];
         if (construction.active && currentTime >= construction.readyAt) {
             _settleResourcesUntil(planetId, construction.readyAt);
@@ -886,10 +887,6 @@ contract VeydriftGame is VeydriftResourceReserves {
                 )
             )
         });
-    }
-
-    function _currentTimestamp() private view returns (uint64) {
-        return uint64(block.timestamp);
     }
 
     function _delegateToGameplayModule() private {
