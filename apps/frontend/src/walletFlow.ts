@@ -299,7 +299,6 @@ export type MissionShips = {
   heavyFighter: number;
   cruiser: number;
   battleship: number;
-  espionageProbe: number;
   bomber: number;
   destroyer: number;
   deathstar: number;
@@ -396,7 +395,7 @@ const GAME_SELECTORS = {
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
   finishResourceWithdrawal: "0xde0f208c",
-  launchFleetMission: "0x0c9d601c",
+  launchFleetMission: "0x28247df8",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
@@ -517,7 +516,6 @@ export function encodeLaunchFleetMissionCall({
     ships.heavyFighter,
     ships.cruiser,
     ships.battleship,
-    0,
     ships.bomber,
     ships.destroyer,
     ships.deathstar,

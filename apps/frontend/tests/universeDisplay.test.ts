@@ -8,13 +8,15 @@ import {
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
-import { galaxyActionsForSlot } from "../src/galaxyActions";
+import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
   formatGalaxyHeatLabel,
   formatMissionPreview,
   formatGalaxyOccupancySource,
-  formatGalaxyOccupancySummary
+  formatGalaxyOccupancySummary,
+  galaxyMissionFuelCost,
+  galaxyMissionTravelSeconds
 } from "../src/components/GalaxyView";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
@@ -140,6 +142,7 @@ describe("tester universe display data", () => {
       planner: {
         fleetSlots: { active: 1, limit: 3 },
         resources: { deuterium: 250 },
+        missionShips: { smallCargo: 2, lightFighter: 1 },
         ships: [{ id: 0, count: 2 }],
       },
       target: { galaxy: 1, system: 20, position: 7 },
@@ -149,9 +152,9 @@ describe("tester universe display data", () => {
       blockedReason: undefined,
       cargoCapacity: 5_000,
       fleetSlots: { active: 1, limit: 3 },
-      fuelCost: 1,
+      fuelCost: 3,
     });
-    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 1 D / Cargo 5,000");
+    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 3 D / Cargo 5,000");
 
     expect(estimateGalaxyMissionPreview({
       homeCoords: { galaxy: 1, system: 10, position: 5 },
@@ -162,6 +165,21 @@ describe("tester universe display data", () => {
       },
       target: { galaxy: 1, system: 20, position: 7 },
     })?.blockedReason).toBe("No fleet slots open");
+  });
+
+  test("galaxy mission preview formulas match contract primitives across distances", () => {
+    const origin = { galaxy: 1, system: 1, position: 1 };
+
+    expect(galaxyMissionTravelSeconds(origin, origin)).toBe(300);
+    expect(galaxyMissionFuelCost(origin, origin, 3)).toBe(3);
+
+    const nearby = { galaxy: 1, system: 3, position: 4 };
+    expect(galaxyMissionTravelSeconds(origin, nearby)).toBe(333);
+    expect(galaxyMissionFuelCost(origin, nearby, 3)).toBe(3);
+
+    const distant = { galaxy: 4, system: 499, position: 15 };
+    expect(galaxyMissionTravelSeconds(origin, distant)).toBe(30_239);
+    expect(galaxyMissionFuelCost(origin, distant, 3)).toBe(11);
   });
 
   test("galaxy slot actions expose supported public-state missions without espionage", () => {
@@ -206,7 +224,6 @@ describe("tester universe display data", () => {
         { id: 0, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 3, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
-        { id: 8, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } },
       ],
       queue: null,
       wallet: "0x1111111111111111111111111111111111111111",
@@ -269,7 +286,9 @@ describe("tester universe display data", () => {
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
     ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
-    expect(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships.espionageProbe).toBe(0);
+    expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
+      Object.keys(emptyMissionShips())
+    );
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {

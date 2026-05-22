@@ -165,10 +165,10 @@ const counterplayShipIds: Record<CounterplayShipKey, number> = {
   heavyFighter: 5,
   cruiser: 6,
   battleship: 7,
-  destroyer: 11,
-  battlecruiser: 13,
-  reaper: 14,
-  pathfinder: 15,
+  destroyer: 10,
+  battlecruiser: 12,
+  reaper: 13,
+  pathfinder: 14,
 };
 
 function selectCounterplayShips(shipyardState: ChainShipyardState | null): MissionShips | null {

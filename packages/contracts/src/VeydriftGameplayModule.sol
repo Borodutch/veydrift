@@ -416,12 +416,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint64 currentTime = _currentTimestamp();
         Planet storage planetRef = _planets[planetId];
         if (currentTime <= planetRef.lastSettledAt) {
-            emit PlanetSettled(
-                planetId,
-                planetRef.resources.metal,
-                planetRef.resources.crystal,
-                planetRef.resources.deuterium
-            );
             return;
         }
 
@@ -439,12 +433,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _increaseInternalResources(added);
         planetRef.resources = _add(planetRef.resources, added);
         planetRef.lastSettledAt = currentTime;
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
     }
 
     function _productionPerHour(uint256 planetId)
@@ -654,10 +642,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _requireMissionShips(uint256 planetId, MissionShips memory ships) private view {
-        if (ships.removedShipSlot != 0) revert InvalidQuantity();
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _requireShips(planetId, ship, quantity);
             }
@@ -670,7 +657,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _debitMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _shipCounts[planetId][ship] -= quantity;
             }
@@ -683,7 +670,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _shipCounts[planetId][ship] += quantity;
             }

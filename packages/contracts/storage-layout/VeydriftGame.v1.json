@@ -478,44 +478,38 @@
         "type": "uint32"
       },
       {
-        "label": "removedShipSlot",
+        "label": "bomber",
         "offset": 0,
         "slot": "1",
         "type": "uint32"
       },
       {
-        "label": "bomber",
+        "label": "destroyer",
         "offset": 4,
         "slot": "1",
         "type": "uint32"
       },
       {
-        "label": "destroyer",
+        "label": "deathstar",
         "offset": 8,
         "slot": "1",
         "type": "uint32"
       },
       {
-        "label": "deathstar",
+        "label": "battlecruiser",
         "offset": 12,
         "slot": "1",
         "type": "uint32"
       },
       {
-        "label": "battlecruiser",
+        "label": "reaper",
         "offset": 16,
         "slot": "1",
         "type": "uint32"
       },
       {
-        "label": "reaper",
-        "offset": 20,
-        "slot": "1",
-        "type": "uint32"
-      },
-      {
         "label": "pathfinder",
-        "offset": 24,
+        "offset": 20,
         "slot": "1",
         "type": "uint32"
       }

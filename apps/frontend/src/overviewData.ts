@@ -18,6 +18,9 @@ const RESOURCE_DISPLAY_MAX = 999_999_999_999n;
 
 export type ChainLoadStatus = "local" | "loading" | "ready" | "error";
 
+export const overviewQueueItemLabelClassName = "break-words text-xs font-semibold leading-snug text-white";
+export const overviewQueueItemRemainingClassName = "text-[10px] leading-none text-slate-400";
+
 export type PlanetStatDisplay = {
   fields: string;
   temperature: string;
@@ -227,9 +230,13 @@ export function queueProgressFillState({
   const timelineProgress = hasCanonicalTimeline
     ? Math.min(1, Math.max(0, elapsedMs / durationMs))
     : progressBar.progress;
+  const isTimelineRunning = hasCanonicalTimeline
+    && elapsedMs >= 0
+    && elapsedMs < durationMs
+    && remaining !== "Ready";
 
   return {
-    animated: false,
+    animated: isTimelineRunning,
     durationMs: hasCanonicalTimeline ? durationMs : 0,
     elapsedMs: hasCanonicalTimeline ? Math.min(durationMs, Math.max(0, elapsedMs)) : 0,
     progress: remaining === "Ready" ? 1 : timelineProgress,

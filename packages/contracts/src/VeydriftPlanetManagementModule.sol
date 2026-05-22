@@ -81,6 +81,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _requirePlanetOwner(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
+        _requireReserveResource(resource);
         if (resourceWithdrawals[msg.sender][resource].active) revert WithdrawalActive(resource);
 
         _settleResources(planetId);
@@ -203,9 +204,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     }
 
     function _requireRiftUnlocked(uint256 planetId) private view {
-        _requireReserveResource(Resource.Metal);
-        _requireReserveResource(Resource.Crystal);
-        _requireReserveResource(Resource.Deuterium);
         if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] == 0) {
             revert RiftStabilizerRequired(planetId);
         }
@@ -220,12 +218,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         uint64 currentTime = _currentTimestamp();
         Planet storage planetRef = _planets[planetId];
         if (currentTime <= planetRef.lastSettledAt) {
-            emit PlanetSettled(
-                planetId,
-                planetRef.resources.metal,
-                planetRef.resources.crystal,
-                planetRef.resources.deuterium
-            );
             return;
         }
 
@@ -243,12 +235,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _increaseInternalResources(added);
         planetRef.resources = _add(planetRef.resources, added);
         planetRef.lastSettledAt = currentTime;
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
     }
 
     function _spend(uint256 planetId, Resources memory cost) private {
@@ -270,15 +256,9 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         pure
         returns (Resources memory)
     {
-        if (resource == Resource.Metal) {
-            return Resources({metal: amount, crystal: 0, deuterium: 0});
-        }
-        if (resource == Resource.Crystal) {
-            return Resources({metal: 0, crystal: amount, deuterium: 0});
-        }
-        if (resource == Resource.Deuterium) {
-            return Resources({metal: 0, crystal: 0, deuterium: amount});
-        }
+        if (resource == Resource.Metal) return Resources(amount, 0, 0);
+        if (resource == Resource.Crystal) return Resources(0, amount, 0);
+        if (resource == Resource.Deuterium) return Resources(0, 0, amount);
         revert InvalidResource(resource);
     }
 

@@ -406,18 +406,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         return !occupiedCoordinates[coordinateKey(galaxy, system, position)];
     }
 
-    function transportFuelCost(
-        uint256,
-        uint256,
-        uint32 smallCargo,
-        uint32 recycler,
-        uint32 colonyShip
-    ) public pure returns (uint128) {
-        uint256 ships =
-            uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
-        return _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
-    }
-
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
         Planet storage planetRef = _planets[planetId];
         resources = planetRef.resources;
@@ -667,13 +655,6 @@ contract VeydriftGame is VeydriftResourceReserves {
             }
             planetRef.lastSettledAt = settledAt;
         }
-
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
     }
 
     function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {

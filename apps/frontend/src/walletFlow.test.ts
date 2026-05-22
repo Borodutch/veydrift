@@ -99,7 +99,6 @@ describe("walletFlow", () => {
       heavyFighter: 0,
       cruiser: 0,
       battleship: 0,
-      espionageProbe: 99,
       bomber: 0,
       destroyer: 0,
       deathstar: 0,
@@ -127,7 +126,7 @@ describe("walletFlow", () => {
     })).resolves.toBe("0xgalaxy1");
     await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10)).resolves.toBe("0xgalaxy2");
 
-    expect(missionData.startsWith("0x0c9d601c")).toBe(true);
+    expect(missionData.startsWith("0x28247df8")).toBe(true);
     expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000007");
     expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000009");
     expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");

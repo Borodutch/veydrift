@@ -16,7 +16,12 @@ Galaxy UI work can preview the same rules the contracts enforce.
 - Fleet slots: `1 + Computer Technology level`, with launched ships and cargo unavailable until
   return or final resolution.
 - Travel and fuel: missions have a minimum travel time, distance-based travel seconds, and a
-  deuterium fuel cost derived from committed ship count and distance.
+  deuterium fuel cost derived from committed ship count and distance. The current contract
+  intentionally keeps this as the Veydrift MVP formula, `5 minutes + distance` for one-way travel
+  and `shipCount + floor(shipCount * distance / 10000)` for fuel. It does not yet model selected
+  mission speed, per-ship consumption, or drive-technology speed bonuses, so UI previews must mirror
+  this contract formula exactly instead of presenting classic OGame mechanics the contract will not
+  charge or store.
 - Recall: recalled fleets still spend fuel, cannot return faster than the minimum recall window,
   and use contract-calculated return timing.
 - Hostile visibility: hostile inbound missions become publicly highlighted inside the reveal
