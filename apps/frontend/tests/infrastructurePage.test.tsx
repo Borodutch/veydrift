@@ -38,11 +38,13 @@ describe("Infrastructure page display helpers", () => {
     const text = visibleText(modal);
 
     expect(text).toContain("Metal Mine levels");
+    expect(text).toContain("Build time");
     expect(text).toContain("Production");
     expect(text).toContain("Energy use");
     expect(text).toContain("Level 1 Current");
     expect(text).toContain("Level 2 Next");
     expect(text).toContain("Metal 90 / Crystal 22");
+    expect(text).toContain("2m 41s");
     expect(text).toContain("72 Metal/h");
     expect(text).toContain("24 required");
   });
