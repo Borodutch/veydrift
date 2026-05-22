@@ -294,10 +294,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
         _settleResources(mission.targetPlanetId);
-        if (
-            mission.missionType == FleetMissionType.Transport
-                || mission.missionType == FleetMissionType.Deploy
-        ) {
+        if (mission.missionType == FleetMissionType.Transport) {
+            _planets[mission.targetPlanetId].resources =
+                _add(_planets[mission.targetPlanetId].resources, mission.cargo);
+            mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+            mission.status = FleetMissionStatus.Returning;
+        } else if (mission.missionType == FleetMissionType.Deploy) {
             _planets[mission.targetPlanetId].resources =
                 _add(_planets[mission.targetPlanetId].resources, mission.cargo);
             _creditMissionShips(mission.targetPlanetId, mission.ships);
