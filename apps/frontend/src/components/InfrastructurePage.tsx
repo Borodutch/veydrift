@@ -921,10 +921,9 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (energy.kind === "requires") {
     rows.push({
-      ...(energy.delta !== 0 ? { delta: `(${formatSigned(energy.delta)})` } : {}),
+      ...(energy.delta !== 0 ? { delta: formatSigned(energy.delta) } : {}),
       label: "Energy required",
       next: `${formatNumber(energy.next)} required`,
-      tone: "warning",
       value: `${formatNumber(energy.current)} required`,
     });
   }
