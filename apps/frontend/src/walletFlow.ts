@@ -196,6 +196,7 @@ export type ChainInfrastructureState = {
   storageCaps: OnChainResources | null;
   protectedResources?: OnChainResources | null;
   raidableResources?: OnChainResources | null;
+  technologyLevels?: Record<string, number>;
   buildings: Array<{
     id: number;
     level: number;

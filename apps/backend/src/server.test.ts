@@ -217,6 +217,9 @@ class MockChainReader implements ChainReader {
         crystal: "3900",
         deuterium: "3800"
       },
+      technologyLevels: {
+        "0": 3
+      },
       buildings: [
         {
           id: 0,
@@ -962,6 +965,7 @@ describe("Veydrift backend", () => {
         }
         if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;
         if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0xe512884c") return abiWords(0n) as T;
 
         throw new Error(`Unexpected individual call ${selector}`);
       },

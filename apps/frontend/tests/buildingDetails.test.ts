@@ -232,6 +232,7 @@ describe("building detail helpers", () => {
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
       constructionTime: true,
+      deuteriumConsumed: false,
       effect: false,
       energyProduced: false,
       energyRequired: true,
@@ -263,6 +264,7 @@ describe("building detail helpers", () => {
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
       constructionTime: true,
+      deuteriumConsumed: false,
       effect: false,
       energyProduced: true,
       energyRequired: false,
@@ -282,11 +284,40 @@ describe("building detail helpers", () => {
     });
   });
 
+  test("builds Fusion Reactor level table rows with energy output and deuterium use", () => {
+    const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "fusionReactor", undefined, 2, 3);
+
+    expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
+      deuteriumConsumed: true,
+      effect: false,
+      energyProduced: true,
+      energyRequired: false,
+      production: false,
+      storage: false,
+    });
+    expect(rows[0]).toMatchObject({
+      cost: { metal: 900, crystal: 360, deuterium: 180 },
+      deuteriumConsumed: 11,
+      energyProduced: 32,
+      level: 1,
+      next: true,
+    });
+    expect(rows[1]).toMatchObject({
+      cost: { metal: 1_620, crystal: 648, deuterium: 324 },
+      deuteriumConsumed: 25,
+      energyProduced: 69,
+      level: 2,
+    });
+    expect(rows.map((row) => row.effect)).toEqual([undefined, undefined]);
+  });
+
   test("builds storage level table rows without production or energy columns", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
       constructionTime: true,
+      deuteriumConsumed: false,
       effect: false,
       energyProduced: false,
       energyRequired: false,
@@ -313,6 +344,7 @@ describe("building detail helpers", () => {
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
       constructionTime: true,
+      deuteriumConsumed: false,
       effect: true,
       energyProduced: false,
       energyRequired: false,

@@ -346,11 +346,23 @@ function BuildingDetailPanel({
   state: PlayableState;
 }) {
   const currentLevel = state.buildings[building.key];
-  const effect = buildingEffectMetrics(state.buildings, building.key, planetProductionProfile);
-  const energy = buildingEnergyDetail(state.buildings, building.key);
+  const energyTechnologyLevel = state.research.energy;
+  const effect = buildingEffectMetrics(
+    state.buildings,
+    building.key,
+    planetProductionProfile,
+    energyTechnologyLevel,
+  );
+  const energy = buildingEnergyDetail(state.buildings, building.key, energyTechnologyLevel);
   const status = buildingUpgradeStatus(state, building.key, { actionUnavailableReason, chainCost });
   const effectRows = detailEffectRows(effect, energy);
-  const levelInfoRows = buildingLevelInfoRows(state.buildings, building.key, planetProductionProfile);
+  const levelInfoRows = buildingLevelInfoRows(
+    state.buildings,
+    building.key,
+    planetProductionProfile,
+    undefined,
+    energyTechnologyLevel,
+  );
   const binary = isBinaryBuilding(building.key);
   const built = currentLevel > 0;
   const actionVerb = currentLevel === 0 || binary ? "Build" : "Upgrade";
@@ -605,6 +617,7 @@ export function BuildingLevelInfoModal({
                 {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
                 {columns.energyRequired && <LevelInfoHeader className="min-w-36">Energy use</LevelInfoHeader>}
                 {columns.energyProduced && <LevelInfoHeader className="min-w-40">Energy output</LevelInfoHeader>}
+                {columns.deuteriumConsumed && <LevelInfoHeader className="min-w-44">Deuterium use</LevelInfoHeader>}
               </tr>
             </thead>
             <tbody>
@@ -651,6 +664,13 @@ export function BuildingLevelInfoModal({
                   {columns.energyProduced && (
                     <LevelInfoCell>
                       {row.energyProduced === undefined ? "N/A" : `${formatNumber(row.energyProduced)} produced`}
+                    </LevelInfoCell>
+                  )}
+                  {columns.deuteriumConsumed && (
+                    <LevelInfoCell>
+                      {row.deuteriumConsumed === undefined
+                        ? "N/A"
+                        : `${formatNumber(row.deuteriumConsumed)} Deuterium/h`}
                     </LevelInfoCell>
                   )}
                 </tr>
@@ -823,6 +843,17 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       next: `${formatNumber(effect.nextProduced)} produced`,
       value: `${formatNumber(effect.currentProduced)} produced`,
     });
+    if (effect.nextDeuteriumConsumed > 0 || effect.currentDeuteriumConsumed > 0) {
+      rows.push({
+        ...(effect.deltaDeuteriumConsumed !== 0
+          ? { delta: `(${formatSigned(effect.deltaDeuteriumConsumed)}/h)` }
+          : {}),
+        label: "Deuterium consumed",
+        next: `${formatNumber(effect.nextDeuteriumConsumed)}/h`,
+        tone: "warning",
+        value: `${formatNumber(effect.currentDeuteriumConsumed)}/h`,
+      });
+    }
     return rows;
   } else if (effect.kind === "storage") {
     rows.push({
