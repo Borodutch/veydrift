@@ -142,10 +142,9 @@ describe("Infrastructure page display helpers", () => {
     const mineRows = detailEffectRows(mineEffect, buildingEnergyDetail(mineBuildings, "metalMine"));
 
     expect(mineRows).toContainEqual({
-      delta: "(+13)",
+      delta: "+13",
       label: "Energy required",
       next: "24 required",
-      tone: "warning",
       value: "11 required",
     });
     expect(mineRows.some((row) => row.delta?.includes("required"))).toBe(false);
@@ -169,10 +168,9 @@ describe("Infrastructure page display helpers", () => {
       value: "0 Metal/h",
     });
     expect(rows).toContainEqual({
-      delta: "(+11)",
+      delta: "+11",
       label: "Energy required",
       next: "11 required",
-      tone: "warning",
       value: "0 required",
     });
   });
