@@ -230,9 +230,13 @@ export function queueProgressFillState({
   const timelineProgress = hasCanonicalTimeline
     ? Math.min(1, Math.max(0, elapsedMs / durationMs))
     : progressBar.progress;
+  const isTimelineRunning = hasCanonicalTimeline
+    && elapsedMs >= 0
+    && elapsedMs < durationMs
+    && remaining !== "Ready";
 
   return {
-    animated: false,
+    animated: isTimelineRunning,
     durationMs: hasCanonicalTimeline ? durationMs : 0,
     elapsedMs: hasCanonicalTimeline ? Math.min(durationMs, Math.max(0, elapsedMs)) : 0,
     progress: remaining === "Ready" ? 1 : timelineProgress,
