@@ -172,6 +172,54 @@ describe("building detail helpers", () => {
     });
   });
 
+  test("treats the Rift bridge as a binary build instead of an upgrade ladder", () => {
+    const readyState = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        roboticsFactory: 4,
+        researchLab: 2,
+      },
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        energy: 5,
+        hyperspace: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(buildingUpgradeStatus(readyState, "interdimensionalRiftStabilizer")).toMatchObject({
+      disabled: false,
+      reason: "Ready to build Rift bridge",
+      targetLevel: 1,
+    });
+    expect(buildingUpgradeStatus({
+      ...readyState,
+      buildings: {
+        ...readyState.buildings,
+        interdimensionalRiftStabilizer: 1,
+      },
+    }, "interdimensionalRiftStabilizer")).toMatchObject({
+      disabled: true,
+      reason: "Rift bridge built on this planet",
+      targetLevel: 1,
+    });
+    expect(buildingUpgradeStatus({
+      ...readyState,
+      queue: {
+        kind: "building",
+        key: "interdimensionalRiftStabilizer",
+        label: "Interdimensional Rift Stabilizer",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 1,
+      },
+    }, "metalMine")).toMatchObject({
+      disabled: true,
+      reason: "Another building is currently upgrading: Interdimensional Rift Stabilizer",
+    });
+  });
+
   test("builds Metal Mine level table rows with costs, production, and energy use", () => {
     const state = {
       ...createInitialPlayableState(1_000),
