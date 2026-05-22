@@ -1970,6 +1970,52 @@ contract VeydriftGameTest is Test {
         assertEq(metalToken.balanceOf(player), 950);
     }
 
+    function testRiftBridgeIsBinaryPerPlanet() public {
+        vm.prank(player);
+        uint256 homePlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(homePlanetId, Ship.ColonyShip, 1);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(homePlanetId, 8);
+
+        _setBuildingLevel(homePlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(homePlanetId, 1_000, 1_000, 1_000);
+        _setResources(colonyPlanetId, 1_000, 1_000, 1_000);
+
+        metalToken.mint(player, 1_000);
+        vm.prank(player);
+        metalToken.approve(address(game), 1_000);
+
+        vm.prank(player);
+        game.depositMarketResource(homePlanetId, Resource.Metal, 100);
+        assertEq(game.planet(homePlanetId).resources.metal, 1_100);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.RiftStabilizerRequired.selector, colonyPlanetId
+            )
+        );
+        game.depositMarketResource(colonyPlanetId, Resource.Metal, 100);
+
+        _setBuildingLevel(colonyPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        vm.prank(player);
+        game.depositMarketResource(colonyPlanetId, Resource.Metal, 100);
+        assertEq(game.planet(colonyPlanetId).resources.metal, 1_100);
+    }
+
+    function testRiftBridgeCannotBeUpgradedPastBuilt() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.LevelTooHigh.selector);
+        game.startBuildingUpgrade(planetId, Building.InterdimensionalRiftStabilizer);
+    }
+
     function testDirectCallsEnforceShipAndResearchPrerequisitesBeforeUnsupported() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();

@@ -5,6 +5,7 @@ import {
   buildingRequirementsFor,
   canAfford,
   energyBalance,
+  isBinaryBuilding,
   fusionReactorDeuteriumConsumption,
   missileSiloCapacity,
   productionCapacityPerHour,
@@ -84,8 +85,20 @@ export function buildingUpgradeStatus(
   options: { actionUnavailableReason?: string | undefined; chainCost?: Resources | undefined } = {},
 ): BuildingUpgradeStatus {
   const cost = options.chainCost ?? buildingCost(state.buildings, key);
-  const targetLevel = state.buildings[key] + 1;
+  const binary = isBinaryBuilding(key);
+  const currentLevel = state.buildings[key];
+  const targetLevel = binary ? 1 : currentLevel + 1;
   const durationSeconds = buildingDurationEstimate(state.buildings, cost);
+
+  if (binary && currentLevel > 0) {
+    return {
+      cost,
+      disabled: true,
+      durationSeconds,
+      reason: "Rift bridge built on this planet",
+      targetLevel,
+    };
+  }
 
   if (options.actionUnavailableReason) {
     return {
@@ -98,7 +111,7 @@ export function buildingUpgradeStatus(
   }
 
   if (state.queue?.kind === "building") {
-    const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.label, state.queue.targetLevel);
+    const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.key, state.queue.label, state.queue.targetLevel);
 
     return {
       cost,
@@ -136,7 +149,7 @@ export function buildingUpgradeStatus(
     cost,
     disabled: false,
     durationSeconds,
-    reason: `Ready for Level ${targetLevel}`,
+    reason: binary ? "Ready to build Rift bridge" : `Ready for Level ${targetLevel}`,
     targetLevel,
   };
 }
@@ -289,7 +302,8 @@ function formatMissingResources(resources: Resources, cost: Resources): string {
     .join(", ")}`;
 }
 
-function formatBuildingQueueLabel(label: string, targetLevel: number | undefined): string {
+function formatBuildingQueueLabel(key: BuildingKey, label: string, targetLevel: number | undefined): string {
+  if (isBinaryBuilding(key)) return label;
   return targetLevel ? `${label} Level ${targetLevel}` : label;
 }
 

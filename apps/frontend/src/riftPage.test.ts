@@ -7,9 +7,12 @@ import {
 
 describe("RiftPage helpers", () => {
   test("formats locked requirement status", () => {
-    expect(riftRequirementStatus(null, 1)).toBe("Requires Level 1; not available on this deployment");
-    expect(riftRequirementStatus(0, 1)).toBe("Level 0 / 1 required");
-    expect(riftRequirementStatus(2, 1)).toBe("Level 2 / 1");
+    expect(riftRequirementStatus({ currentLevel: null, requiredLevel: 1 })).toBe("Requires Level 1; not available on this deployment");
+    expect(riftRequirementStatus({ currentLevel: 0, requiredLevel: 1 })).toBe("Level 0 / 1 required");
+    expect(riftRequirementStatus({ currentLevel: 2, requiredLevel: 1 })).toBe("Level 2 / 1");
+    expect(riftRequirementStatus({ binary: true, built: null, currentLevel: null, requiredLevel: 1 })).toBe("Not available on this deployment");
+    expect(riftRequirementStatus({ binary: true, built: false, currentLevel: 0, requiredLevel: 1 })).toBe("Not built");
+    expect(riftRequirementStatus({ binary: true, built: true, currentLevel: 1, requiredLevel: 1 })).toBe("Built");
   });
 
   test("formats withdrawal countdowns", () => {
