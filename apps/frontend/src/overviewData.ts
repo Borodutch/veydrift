@@ -222,15 +222,15 @@ export function queueProgressFillState({
     ? readyAt - startedAt
     : 0;
   const elapsedMs = typeof startedAt === "number" ? now - startedAt : 0;
-  const canAnimate = durationMs > 0
-    && elapsedMs >= 0
-    && elapsedMs < durationMs
-    && progressBar.progress < 1;
+  const hasCanonicalTimeline = durationMs > 0 && Number.isFinite(elapsedMs);
+  const timelineProgress = hasCanonicalTimeline
+    ? Math.min(1, Math.max(0, elapsedMs / durationMs))
+    : progressBar.progress;
 
   return {
-    animated: canAnimate,
-    durationMs: canAnimate ? durationMs : 0,
-    elapsedMs: canAnimate ? elapsedMs : 0,
-    progress: progressBar.progress,
+    animated: false,
+    durationMs: hasCanonicalTimeline ? durationMs : 0,
+    elapsedMs: hasCanonicalTimeline ? Math.min(durationMs, Math.max(0, elapsedMs)) : 0,
+    progress: remaining === "Ready" ? 1 : timelineProgress,
   };
 }
