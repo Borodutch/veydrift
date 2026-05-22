@@ -3,7 +3,12 @@ import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
 } from "../src/overviewHeroImage";
-import { queueProgressBarState, queueProgressFillState } from "../src/overviewData";
+import {
+  overviewQueueItemLabelClassName,
+  overviewQueueItemRemainingClassName,
+  queueProgressBarState,
+  queueProgressFillState,
+} from "../src/overviewData";
 import type { Planet } from "../src/types";
 
 const homePlanet: Planet = {
@@ -60,6 +65,12 @@ describe("overview planet hero image", () => {
 });
 
 describe("overview queue progress display", () => {
+  test("allows long active building names to wrap beside queue metadata", () => {
+    expect(overviewQueueItemLabelClassName).not.toContain("truncate");
+    expect(overviewQueueItemLabelClassName).toContain("break-words");
+    expect(overviewQueueItemRemainingClassName).not.toContain("shrink-0");
+  });
+
   test("renders ready queues as complete even when the source payload was indeterminate", () => {
     expect(queueProgressBarState({
       indeterminate: true,
