@@ -2,7 +2,7 @@ import { Info, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
-import { buildingCatalog, buildingEffectMetrics, progress, unmetBuildingRequirement } from "../playableMvp";
+import { buildingCatalog, buildingEffectMetrics, isBinaryBuilding, progress, unmetBuildingRequirement } from "../playableMvp";
 import {
   buildingEnergyDetail,
   buildingLevelInfoColumns,
@@ -302,7 +302,9 @@ function BuildingSelectorTile({
       <span className="mt-2 block min-w-0">
         <span className="block truncate text-sm font-semibold text-white">{label}</span>
         <span className="mt-0.5 flex items-center justify-between gap-2 text-xs">
-          <span className={isUnbuilt ? "text-slate-500" : "text-slate-300"}>Level {currentLevel}</span>
+          <span className={isUnbuilt ? "text-slate-500" : "text-slate-300"}>
+            {buildingStatusText(label, currentLevel)}
+          </span>
           <span className={`truncate text-right ${statusText ? "text-amber-300" : "text-signal"}`}>
             {statusText ?? effectView}
           </span>
@@ -310,6 +312,14 @@ function BuildingSelectorTile({
       </span>
     </button>
   );
+}
+
+function buildingStatusText(label: string, currentLevel: number): string {
+  if (label === "Interdimensional Rift Stabilizer") {
+    return currentLevel > 0 ? "Built" : "Not built";
+  }
+
+  return `Level ${currentLevel}`;
 }
 
 function BuildingDetailPanel({
@@ -336,13 +346,27 @@ function BuildingDetailPanel({
   state: PlayableState;
 }) {
   const currentLevel = state.buildings[building.key];
-  const effect = buildingEffectMetrics(state.buildings, building.key, planetProductionProfile);
-  const energy = buildingEnergyDetail(state.buildings, building.key);
+  const energyTechnologyLevel = state.research.energy;
+  const effect = buildingEffectMetrics(
+    state.buildings,
+    building.key,
+    planetProductionProfile,
+    energyTechnologyLevel,
+  );
+  const energy = buildingEnergyDetail(state.buildings, building.key, energyTechnologyLevel);
   const status = buildingUpgradeStatus(state, building.key, { actionUnavailableReason, chainCost });
   const effectRows = detailEffectRows(effect, energy);
-  const levelInfoRows = buildingLevelInfoRows(state.buildings, building.key, planetProductionProfile);
-  const actionVerb = currentLevel === 0 ? "Build" : "Upgrade";
-  const actionLabel = `${actionVerb} Level ${status.targetLevel}`;
+  const levelInfoRows = buildingLevelInfoRows(
+    state.buildings,
+    building.key,
+    planetProductionProfile,
+    undefined,
+    energyTechnologyLevel,
+  );
+  const binary = isBinaryBuilding(building.key);
+  const built = currentLevel > 0;
+  const actionVerb = currentLevel === 0 || binary ? "Build" : "Upgrade";
+  const actionLabel = binary ? "Build Rift Bridge" : `${actionVerb} Level ${status.targetLevel}`;
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -366,11 +390,13 @@ function BuildingDetailPanel({
             <div className="min-w-0">
               <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
-                <span>{currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}</span>
-                <BuildingLevelInfoButton
-                  buildingLabel={building.label}
-                  onClick={() => setIsInfoOpen(true)}
-                />
+                <span>{binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}</span>
+                {!binary && (
+                  <BuildingLevelInfoButton
+                    buildingLabel={building.label}
+                    onClick={() => setIsInfoOpen(true)}
+                  />
+                )}
               </div>
             </div>
             {currentLevel === 0 ? (
@@ -405,8 +431,14 @@ function BuildingDetailPanel({
 
       <div className="mt-4 grid gap-2 border-t border-white/10 pt-4 text-sm sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
         <InfoBlock label="Requirements" value={formatBuildingRequirements(building.key)} />
-        <InfoBlock label="Upgrade cost" value={formatCost(status.cost)} />
-        <InfoBlock label="Upgrade time" value={formatDuration(status.durationSeconds)} />
+        {binary && built ? (
+          <InfoBlock label="Rift bridge" value="Built" />
+        ) : (
+          <>
+            <InfoBlock label={binary ? "Build cost" : "Upgrade cost"} value={formatCost(status.cost)} />
+            <InfoBlock label={binary ? "Build time" : "Upgrade time"} value={formatDuration(status.durationSeconds)} />
+          </>
+        )}
       </div>
 
       <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
@@ -435,13 +467,13 @@ function BuildingDetailPanel({
           onClick={onFinishBuilding}
           type="button"
         >
-          Finish upgrade
+          {binary ? "Finish build" : "Finish upgrade"}
         </button>
       )}
 
-      {!isSelectedBuildingQueued && (
+      {!isSelectedBuildingQueued && !(binary && built) && (
         <button
-          aria-label={`${actionVerb} ${building.label} to Level ${status.targetLevel}`}
+          aria-label={binary ? `${actionVerb} ${building.label}` : `${actionVerb} ${building.label} to Level ${status.targetLevel}`}
           className="mt-3 h-10 w-full rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
           disabled={status.disabled}
           onClick={onUpgrade}
@@ -579,14 +611,13 @@ export function BuildingLevelInfoModal({
               <tr>
                 <LevelInfoHeader className="min-w-28">Level</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
-                {columns.constructionTime && (
-                  <LevelInfoHeader className="min-w-40">Construction time</LevelInfoHeader>
-                )}
+                <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>
                 {columns.production && <LevelInfoHeader className="min-w-40">Production</LevelInfoHeader>}
                 {columns.storage && <LevelInfoHeader className="min-w-40">Storage</LevelInfoHeader>}
                 {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
                 {columns.energyRequired && <LevelInfoHeader className="min-w-36">Energy use</LevelInfoHeader>}
                 {columns.energyProduced && <LevelInfoHeader className="min-w-40">Energy output</LevelInfoHeader>}
+                {columns.deuteriumConsumed && <LevelInfoHeader className="min-w-44">Deuterium use</LevelInfoHeader>}
               </tr>
             </thead>
             <tbody>
@@ -609,9 +640,7 @@ export function BuildingLevelInfoModal({
                     </span>
                   </LevelInfoCell>
                   <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
-                  {columns.constructionTime && (
-                    <LevelInfoCell>{formatDuration(row.constructionTimeSeconds)}</LevelInfoCell>
-                  )}
+                  <LevelInfoCell>{formatDuration(row.durationSeconds)}</LevelInfoCell>
                   {columns.production && (
                     <LevelInfoCell>
                       {row.production
@@ -635,6 +664,13 @@ export function BuildingLevelInfoModal({
                   {columns.energyProduced && (
                     <LevelInfoCell>
                       {row.energyProduced === undefined ? "N/A" : `${formatNumber(row.energyProduced)} produced`}
+                    </LevelInfoCell>
+                  )}
+                  {columns.deuteriumConsumed && (
+                    <LevelInfoCell>
+                      {row.deuteriumConsumed === undefined
+                        ? "N/A"
+                        : `${formatNumber(row.deuteriumConsumed)} Deuterium/h`}
                     </LevelInfoCell>
                   )}
                 </tr>
@@ -807,6 +843,17 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       next: `${formatNumber(effect.nextProduced)} produced`,
       value: `${formatNumber(effect.currentProduced)} produced`,
     });
+    if (effect.nextDeuteriumConsumed > 0 || effect.currentDeuteriumConsumed > 0) {
+      rows.push({
+        ...(effect.deltaDeuteriumConsumed !== 0
+          ? { delta: `(${formatSigned(effect.deltaDeuteriumConsumed)}/h)` }
+          : {}),
+        label: "Deuterium consumed",
+        next: `${formatNumber(effect.nextDeuteriumConsumed)}/h`,
+        tone: "warning",
+        value: `${formatNumber(effect.currentDeuteriumConsumed)}/h`,
+      });
+    }
     return rows;
   } else if (effect.kind === "storage") {
     rows.push({
@@ -814,6 +861,13 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       label: "Storage capacity",
       next: `${formatNumber(effect.nextCapacity)} ${shortResourceLabels[effect.resource]}`,
       value: `${formatNumber(effect.currentCapacity)} ${shortResourceLabels[effect.resource]}`,
+    });
+  } else if (effect.kind === "missileSilo") {
+    rows.push({
+      delta: `${formatSigned(effect.deltaSlots)} slots`,
+      label: "Missile capacity",
+      next: `${formatNumber(effect.nextSlots)} slots`,
+      value: `${formatNumber(effect.currentSlots)} slots`,
     });
   } else if (effect.kind === "constructionSpeed") {
     rows.push({
@@ -843,6 +897,15 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
 
     rows.push(fasterPercent > 0 ? { ...row, delta: `+${formatNumber(fasterPercent)}% faster` } : row);
   } else {
+    if (effect.binary) {
+      rows.push({
+        label: effect.label,
+        next: "Built",
+        value: effect.currentLevel > 0 ? "Built" : "Not built",
+      });
+      return rows;
+    }
+
     rows.push({
       label: effect.label,
       next: `Level ${effect.nextLevel}`,
@@ -882,11 +945,19 @@ function compactEffect(effect: BuildingEffectMetrics): string {
     return `${formatNumber(effect.currentCapacity)} cap`;
   }
 
+  if (effect.kind === "missileSilo") {
+    return `${formatNumber(effect.currentSlots)} slots`;
+  }
+
   if (effect.kind === "shipyard") {
     return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
   }
 
   if (effect.kind === "facility") {
+    if (effect.binary) {
+      return effect.currentLevel > 0 ? "Built" : "Not built";
+    }
+
     return effect.currentLevel > 0 ? `Level ${effect.currentLevel}` : "Locked";
   }
 

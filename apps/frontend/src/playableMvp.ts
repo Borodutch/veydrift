@@ -43,6 +43,10 @@ export const buildingContractIds: Record<BuildingKey, number> = {
   interdimensionalRiftStabilizer: 15,
 };
 
+export function isBinaryBuilding(key: BuildingKey): boolean {
+  return key === "interdimensionalRiftStabilizer";
+}
+
 export type ShipKey =
   | "smallCargo"
   | "lightFighter"
@@ -166,6 +170,7 @@ export type PlayableState = {
 };
 
 export type EnergyBalance = {
+  deuteriumConsumed: number;
   produced: number;
   required: number;
   scaleBps: number;
@@ -187,9 +192,12 @@ export type BuildingEffectMetrics =
     }
   | {
       kind: "energy";
+      currentDeuteriumConsumed: number;
       currentProduced: number;
+      deltaDeuteriumConsumed: number;
       nextProduced: number;
       deltaProduced: number;
+      nextDeuteriumConsumed: number;
       required: number;
     }
   | {
@@ -198,6 +206,12 @@ export type BuildingEffectMetrics =
       currentCapacity: number;
       nextCapacity: number;
       deltaCapacity: number;
+    }
+  | {
+      kind: "missileSilo";
+      currentSlots: number;
+      nextSlots: number;
+      deltaSlots: number;
     }
   | {
       kind: "constructionSpeed";
@@ -224,6 +238,7 @@ export type BuildingEffectMetrics =
       currentLevel: number;
       nextLevel: number;
       label: string;
+      binary?: boolean;
     };
 
 export const buildingCatalog: Array<{
@@ -680,6 +695,135 @@ export const defenseCatalog: Array<{
   },
 ];
 
+export type CombatStatRow = {
+  label: string;
+  value: number | string;
+  hint?: string | undefined;
+};
+
+export type CombatStatBlock = {
+  rows: CombatStatRow[];
+  notes: string[];
+};
+
+const shipCargoCapacityByKey: Record<ShipKey, number> = {
+  smallCargo: 5_000,
+  lightFighter: 50,
+  recycler: 20_000,
+  colonyShip: 7_500,
+  largeCargo: 25_000,
+  heavyFighter: 100,
+  cruiser: 800,
+  battleship: 1_500,
+  bomber: 500,
+  solarSatellite: 0,
+  destroyer: 2_000,
+  deathstar: 1_000_000,
+  battlecruiser: 750,
+  reaper: 7_000,
+  pathfinder: 12_000,
+  crawler: 0,
+};
+
+const fleetMissionShipKeys = new Set<ShipKey>([
+  "smallCargo",
+  "lightFighter",
+  "recycler",
+  "colonyShip",
+  "largeCargo",
+  "heavyFighter",
+  "cruiser",
+  "battleship",
+  "bomber",
+  "destroyer",
+  "deathstar",
+  "battlecruiser",
+  "reaper",
+  "pathfinder",
+]);
+
+export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatBlock {
+  const structuralValue = resourceTotal(ship.baseCost);
+  const notes = [
+    "Mission fuel is distance and ship-count based; there is no separate per-ship fuel stat yet.",
+    "Rapid-fire and separate shield points are not part of the current Veydrift battle module.",
+  ];
+
+  if (!fleetMissionShipKeys.has(ship.key)) {
+    notes.unshift("Cannot be assigned to fleet missions; it only contributes when present on a defending planet.");
+  }
+
+  return {
+    rows: [
+      {
+        label: "Attack",
+        value: Math.max(1, Math.floor(structuralValue / 20)),
+        hint: "Scaled by Weapons Technology.",
+      },
+      {
+        label: "Hull",
+        value: Math.floor(structuralValue / 10),
+        hint: "Scaled by Armor and Shielding Technology in battle durability.",
+      },
+      {
+        label: "Cargo",
+        value: shipCargoCapacityByKey[ship.key],
+        hint: "Contract cargo capacity for missions and loot.",
+      },
+    ],
+    notes,
+  };
+}
+
+export function defenseCombatStats(defense: (typeof defenseCatalog)[number]): CombatStatBlock {
+  const battlefieldDefense = defense.id <= 7;
+  const notes = battlefieldDefense
+    ? ["Rapid-fire and separate shield points are not part of the current Veydrift battle module."]
+    : ["Missile attack and interception rules are separate from current fleet battle defense stats."];
+
+  if (defense.key === "smallShieldDome" || defense.key === "largeShieldDome") {
+    notes.unshift("Shield domes are limited to one of each type per planet.");
+  }
+
+  if (!battlefieldDefense) {
+    return {
+      rows: [
+        {
+          label: "Fleet battle",
+          value: "Not counted",
+          hint: "Missiles are silo ordnance and are not included in current fleet battle defense totals.",
+        },
+        {
+          label: "Silo slots",
+          value: defense.key === "interplanetaryMissile" ? 2 : 1,
+          hint: "Missile silo capacity cost from the contract catalog.",
+        },
+      ],
+      notes,
+    };
+  }
+
+  const structuralValue = resourceTotal(defense.baseCost);
+
+  return {
+    rows: [
+      {
+        label: "Attack",
+        value: defense.key === "smallShieldDome" || defense.key === "largeShieldDome"
+          ? 1
+          : Math.max(1, Math.floor(structuralValue / 20)),
+        hint: "Scaled by Weapons Technology.",
+      },
+      {
+        label: "Hull",
+        value: Math.max(1, Math.floor(structuralValue / 10)),
+        hint: "Scaled by Armor and Shielding Technology in battle durability.",
+      },
+    ],
+    notes,
+  };
+}
+
 export const researchCatalog: Array<{
   key: ResearchKey;
   id: number;
@@ -975,15 +1119,16 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
 export function productionPerHour(
   buildings: Record<BuildingKey, number>,
   profile: PlanetProductionProfile = PLANET,
+  energyTechnologyLevel = 0,
 ): Resources {
-  const energy = energyBalance(buildings);
+  const energy = energyBalance(buildings, energyTechnologyLevel);
 
   const capacity = productionCapacityPerHour(buildings, profile);
 
   return {
     metal: scaleByBps(capacity.metal, energy.scaleBps),
     crystal: scaleByBps(capacity.crystal, energy.scaleBps),
-    deuterium: scaleByBps(capacity.deuterium, energy.scaleBps),
+    deuterium: scaleByBps(Math.max(0, capacity.deuterium - energy.deuteriumConsumed), energy.scaleBps),
   };
 }
 
@@ -998,15 +1143,20 @@ export function productionCapacityPerHour(
   };
 }
 
-export function energyBalance(buildings: Record<BuildingKey, number>): EnergyBalance {
+export function energyBalance(
+  buildings: Record<BuildingKey, number>,
+  energyTechnologyLevel = 0,
+): EnergyBalance {
   const required = (
     scaledLevelValue(10, buildings.metalMine)
     + scaledLevelValue(10, buildings.crystalMine)
     + scaledLevelValue(20, buildings.deuteriumSynthesizer)
   );
-  const produced = scaledLevelValue(20, buildings.solarPlant);
+  const produced = scaledLevelValue(20, buildings.solarPlant)
+    + fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel);
 
   return {
+    deuteriumConsumed: fusionReactorDeuteriumConsumption(buildings.fusionReactor),
     produced,
     required,
     scaleBps: required === 0 || produced >= required
@@ -1039,6 +1189,7 @@ export function buildingEffectMetrics(
   buildings: Record<BuildingKey, number>,
   key: BuildingKey,
   profile: PlanetProductionProfile = PLANET,
+  energyTechnologyLevel = 0,
 ): BuildingEffectMetrics {
   const nextBuildings = {
     ...buildings,
@@ -1059,15 +1210,18 @@ export function buildingEffectMetrics(
     };
   }
 
-  if (key === "solarPlant") {
-    const current = energyBalance(buildings);
-    const next = energyBalance(nextBuildings);
+  if (key === "solarPlant" || key === "fusionReactor") {
+    const current = energyBalance(buildings, energyTechnologyLevel);
+    const next = energyBalance(nextBuildings, energyTechnologyLevel);
 
     return {
       kind: "energy",
+      currentDeuteriumConsumed: current.deuteriumConsumed,
       currentProduced: current.produced,
-      nextProduced: next.produced,
+      deltaDeuteriumConsumed: next.deuteriumConsumed - current.deuteriumConsumed,
       deltaProduced: next.produced - current.produced,
+      nextDeuteriumConsumed: next.deuteriumConsumed,
+      nextProduced: next.produced,
       required: current.required,
     };
   }
@@ -1083,6 +1237,18 @@ export function buildingEffectMetrics(
       currentCapacity: current[resource],
       nextCapacity: next[resource],
       deltaCapacity: next[resource] - current[resource],
+    };
+  }
+
+  if (key === "missileSilo") {
+    const currentSlots = missileSiloCapacity(buildings.missileSilo);
+    const nextSlots = missileSiloCapacity(nextBuildings.missileSilo);
+
+    return {
+      kind: "missileSilo",
+      currentSlots,
+      nextSlots,
+      deltaSlots: nextSlots - currentSlots,
     };
   }
 
@@ -1118,12 +1284,26 @@ export function buildingEffectMetrics(
     };
   }
 
+  if (key === "interdimensionalRiftStabilizer") {
+    return {
+      kind: "facility",
+      currentLevel: buildings[key],
+      nextLevel: 1,
+      label: "Rift bridge",
+      binary: true,
+    };
+  }
+
   return {
     kind: "facility",
     currentLevel: buildings[key],
     nextLevel: nextBuildings[key],
     label: "Catalog facility",
   };
+}
+
+export function missileSiloCapacity(level: number): number {
+  return level * 10;
 }
 
 export function researchCost(
@@ -1182,7 +1362,7 @@ export function unmetResearchRequirement(
     }
 
     if (requirement.type === "energy") {
-      return energyBalance(state.buildings).produced < requirement.produced;
+      return energyBalance(state.buildings, state.research.energy).produced < requirement.produced;
     }
 
     return state.research[requirement.key] < requirement.level;
@@ -1350,6 +1530,10 @@ function scaleResearchCost(cost: Resources, currentLevel: number, factor: 2 | 1.
 }
 
 function scaleBuildingCost(cost: Resources, key: BuildingKey, currentLevel: number): Resources {
+  if (isBinaryBuilding(key)) {
+    return cost;
+  }
+
   const [numerator, denominator] = buildingCostFactor(key);
 
   return {
@@ -1372,12 +1556,26 @@ function buildingCostFactor(key: BuildingKey): [number, number] {
     return [16, 10];
   }
 
+  if (key === "fusionReactor") {
+    return [18, 10];
+  }
+
   return [2, 1];
 }
 
 function scaledLevelValue(base: number, level: number): number {
   if (level === 0) return 0;
   return Math.floor((base * level * (11 ** level)) / (10 ** level));
+}
+
+export function fusionReactorEnergyProduction(level: number, energyTechnologyLevel: number): number {
+  if (level === 0) return 0;
+  return Math.floor((30 * level * ((105 + energyTechnologyLevel) ** level)) / (100 ** level));
+}
+
+export function fusionReactorDeuteriumConsumption(level: number): number {
+  if (level === 0) return 0;
+  return Math.ceil((10 * level * (11 ** level)) / (10 ** level));
 }
 
 function scaleByFactor(value: number, exponent: number, numerator: number, denominator: number): number {
@@ -1444,6 +1642,26 @@ const STORAGE_CAPS = [
   292_924_545_000,
   536_987_950_000,
   984_403_885_000,
+  1_804_604_750_000,
+  3_308_193_270_000,
+  6_064_564_940_000,
+  11_117_533_015_000,
+  20_380_611_235_000,
+  37_361_644_330_000,
+  68_491_197_375_000,
+  125_557_753_210_000,
+  230_171_905_210_000,
+  421_950_095_435_000,
+  773_517_006_225_000,
+  1_418_007_876_745_000,
+  2_599_485_625_175_000,
+  4_765_365_289_085_000,
+  8_735_846_091_420_000,
+  16_014_513_537_450_000,
+  29_357_733_773_850_000,
+  53_818_464_752_040_000,
+  98_659_766_131_065_000,
+  180_862_636_975_685_000,
 ];
 
 function storageCap(level: number): number {
@@ -1478,6 +1696,10 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
     ["crystal", resources.crystal],
     ["deuterium", resources.deuterium],
   ];
+}
+
+function resourceTotal(resources: Resources): number {
+  return resources.metal + resources.crystal + resources.deuterium;
 }
 
 function multiply(resources: Resources, quantity: number): Resources {

@@ -38,7 +38,7 @@ describe("Infrastructure page display helpers", () => {
     const text = visibleText(modal);
 
     expect(text).toContain("Metal Mine levels");
-    expect(text).toContain("Construction time");
+    expect(text).toContain("Build time");
     expect(text).toContain("Production");
     expect(text).toContain("Energy use");
     expect(text).toContain("Level 1 Current");
@@ -64,6 +64,46 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Metal 75 / Crystal 30");
     expect(text).toContain("22 produced");
     expect(text).toContain("48 produced");
+  });
+
+  test("renders Fusion Reactor modal rows with energy output and deuterium use", () => {
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Fusion Reactor",
+      currentLevel: 0,
+      rows: buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "fusionReactor", undefined, 2, 3),
+      onClose: () => undefined,
+    });
+    const text = visibleText(modal);
+
+    expect(text).toContain("Fusion Reactor levels");
+    expect(text).toContain("Energy output");
+    expect(text).toContain("Deuterium use");
+    expect(text).toContain("32 produced");
+    expect(text).toContain("11 Deuterium/h");
+    expect(text).toContain("69 produced");
+    expect(text).toContain("25 Deuterium/h");
+    expect(text).not.toContain("construction speed");
+  });
+
+  test("shows Fusion Reactor detail as power with fuel draw, not construction speed", () => {
+    const state = createInitialPlayableState(1_000);
+    const effect = buildingEffectMetrics(state.buildings, "fusionReactor", undefined, 3);
+    const rows = detailEffectRows(effect, buildingEnergyDetail(state.buildings, "fusionReactor", 3));
+
+    expect(rows).toEqual([
+      {
+        label: "Energy output",
+        next: "32 produced",
+        value: "0 produced",
+      },
+      {
+        delta: "(+11/h)",
+        label: "Deuterium consumed",
+        next: "11/h",
+        tone: "warning",
+        value: "0/h",
+      },
+    ]);
   });
 
   test("renders storage modal rows without production or energy columns", () => {

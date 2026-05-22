@@ -17,22 +17,40 @@ contract VeydriftOGameFormulaConformanceTest is Test {
 
     function testVanillaOGameMineProductionAndEnergy() public pure {
         (uint256 produced, uint256 required, uint256 scaleBps) =
-            VeydriftFormulas.energyBalance(3, 3, 2, 6, 0, BPS);
+            VeydriftFormulas.energyBalance(3, 3, 2, 6, 0, 0);
         assertEq(produced, 212);
         assertEq(required, 126);
         assertEq(scaleBps, BPS);
 
         (uint256 metal, uint256 crystal, uint256 deuterium) =
-            VeydriftFormulas.productionPerHour(5, 4, 3, 12, 0, 10_000, 10_000, 13_040, BPS);
+            VeydriftFormulas.productionPerHour(5, 4, 3, 12, 0, 0, 10_000, 10_000, 13_040);
         assertEq(metal, 241);
         assertEq(crystal, 117);
         assertEq(deuterium, 50);
 
         (metal, crystal, deuterium) =
-            VeydriftFormulas.productionPerHour(5, 4, 3, 0, 0, 10_000, 10_000, 13_040, BPS);
+            VeydriftFormulas.productionPerHour(5, 4, 3, 0, 0, 0, 10_000, 10_000, 13_040);
         assertEq(metal, 0);
         assertEq(crystal, 0);
         assertEq(deuterium, 0);
+    }
+
+    function testVanillaOGameFusionReactorEnergyAndDeuteriumUse() public pure {
+        (uint256 produced, uint256 required, uint256 scaleBps) =
+            VeydriftFormulas.energyBalance(0, 0, 0, 0, 2, 3);
+
+        assertEq(produced, 69);
+        assertEq(required, 0);
+        assertEq(scaleBps, BPS);
+        assertEq(VeydriftFormulas.fusionReactorEnergyProduction(1, 3), 32);
+        assertEq(VeydriftFormulas.fusionReactorDeuteriumConsumption(1), 11);
+        assertEq(VeydriftFormulas.fusionReactorDeuteriumConsumption(2), 25);
+
+        (uint256 metal, uint256 crystal, uint256 deuterium) =
+            VeydriftFormulas.productionPerHour(0, 0, 3, 0, 2, 3, 10_000, 10_000, 13_040);
+        assertEq(metal, 0);
+        assertEq(crystal, 0);
+        assertEq(deuterium, 21);
     }
 
     function testVanillaOGamePlanetMultipliers() public pure {
@@ -58,6 +76,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         _assertBuildingCost(Building.CrystalMine, 3, 196, 98, 0);
         _assertBuildingCost(Building.DeuteriumSynthesizer, 4, 1_139, 379, 0);
         _assertBuildingCost(Building.SolarPlant, 9, 2_883, 1_153, 0);
+        _assertBuildingCost(Building.FusionReactor, 1, 1_620, 648, 324);
         _assertBuildingCost(Building.RoboticsFactory, 1, 800, 240, 400);
         _assertBuildingCost(Building.MetalStorage, 10, 1_024_000, 0, 0);
     }

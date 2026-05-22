@@ -182,7 +182,7 @@ function LockedRiftState({
           <div className="rounded border border-white/10 bg-black/20 p-3" key={`${requirement.kind}:${requirement.key}`}>
             <p className="text-sm font-medium text-white">{requirement.label}</p>
             <p className="mt-1 text-xs text-slate-400">
-              {riftRequirementStatus(requirement.currentLevel, requirement.requiredLevel)}
+              {riftRequirementStatus(requirement)}
             </p>
           </div>
         ))}
@@ -326,10 +326,15 @@ function Notice({ children, tone }: { children: string; tone: "danger" | "info" 
   );
 }
 
-export function riftRequirementStatus(currentLevel: number | null, requiredLevel: number): string {
-  if (currentLevel === null) return `Requires Level ${requiredLevel}; not available on this deployment`;
-  if (currentLevel >= requiredLevel) return `Level ${currentLevel} / ${requiredLevel}`;
-  return `Level ${currentLevel} / ${requiredLevel} required`;
+export function riftRequirementStatus(requirement: Pick<ChainRiftState["requirements"][number], "binary" | "built" | "currentLevel" | "requiredLevel">): string {
+  if (requirement.binary) {
+    if (requirement.built === null || requirement.currentLevel === null) return "Not available on this deployment";
+    return requirement.built || requirement.currentLevel > 0 ? "Built" : "Not built";
+  }
+
+  if (requirement.currentLevel === null) return `Requires Level ${requirement.requiredLevel}; not available on this deployment`;
+  if (requirement.currentLevel >= requirement.requiredLevel) return `Level ${requirement.currentLevel} / ${requirement.requiredLevel}`;
+  return `Level ${requirement.currentLevel} / ${requirement.requiredLevel} required`;
 }
 
 export function isWithdrawalReady(withdrawal: PendingWithdrawal, now: number): boolean {
@@ -375,4 +380,3 @@ function resourceLabel(resource: RiftResourceKey): string {
   } satisfies Record<RiftResourceKey, string>;
   return labels[resource];
 }
-

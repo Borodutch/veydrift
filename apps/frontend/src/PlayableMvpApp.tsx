@@ -92,11 +92,13 @@ import {
   sendRequestResourceWithdrawalTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
+  sendAcceptAllianceInviteTransaction,
+  sendAllianceKickTransaction,
   sendAllianceInviteTransaction,
+  sendAllianceRoleTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
-  sendOpenDefenseIntentTransaction,
   waitForReceipt,
   type ChainDefenseState,
   type ChainAllianceState,
@@ -716,13 +718,20 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   ]);
   const rates = useMemo(() => {
     const production = infrastructureChainState?.productionPerHour;
-    if (!production) return productionPerHour(settledState.buildings, planetProductionProfile);
+    if (!production) {
+      return productionPerHour(settledState.buildings, planetProductionProfile, settledState.research.energy);
+    }
     return {
       metal: Number(production.metal),
       crystal: Number(production.crystal),
       deuterium: Number(production.deuterium),
     };
-  }, [infrastructureChainState?.productionPerHour, planetProductionProfile, settledState.buildings]);
+  }, [
+    infrastructureChainState?.productionPerHour,
+    planetProductionProfile,
+    settledState.buildings,
+    settledState.research.energy,
+  ]);
   const caps = useMemo(() => {
     const nextCaps = infrastructureChainState?.storageCaps;
     if (!nextCaps) return storageCaps(settledState.buildings);
@@ -804,13 +813,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     return energyBalanceFromChain(infrastructureChainState.energyBalance)
-      ?? energyBalance(settledState.buildings);
+      ?? energyBalance(settledState.buildings, settledState.research.energy);
   }, [
     infrastructureChainState,
     infrastructureError,
     infrastructureLoading,
     isWalletConnected,
     settledState.buildings,
+    settledState.research.energy,
   ]);
 
   useEffect(() => {
@@ -1193,7 +1203,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, defenseState?.homePlanetId, gameContract, provider, runDefenseTransaction]);
 
-  const handleCreateAlliance = useCallback((tag: string, name: string, metadataURI: string) => {
+  const handleCreateAlliance = useCallback((tag: string, name: string, description: string) => {
     if (!provider || !account || !allianceContract) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
       return;
@@ -1205,7 +1215,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       allianceContract,
       tag,
       name,
-      metadataURI,
+      description,
     ));
   }, [account, allianceContract, provider, runAllianceTransaction]);
 
@@ -1224,20 +1234,50 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
-  const handleOpenDefenseIntent = useCallback((defenderPlanetId: string, hostileMissionId: string) => {
+  const handleAcceptAllianceInvite = useCallback((allianceId: string) => {
     if (!provider || !account || !allianceContract) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
       return;
     }
 
-    void runAllianceTransaction("ACS defense intent", () => sendOpenDefenseIntentTransaction(
+    void runAllianceTransaction("Alliance invite acceptance", () => sendAcceptAllianceInviteTransaction(
       provider,
       account,
       allianceContract,
-      defenderPlanetId,
-      hostileMissionId,
+      allianceId,
     ));
   }, [account, allianceContract, provider, runAllianceTransaction]);
+
+  const handleKickAllianceMember = useCallback((playerAddress: string) => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance roster removal", () => sendAllianceKickTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddress,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
+  const handleSetAllianceRole = useCallback((playerAddress: string, role: "member" | "officer") => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance role update", () => sendAllianceRoleTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddress,
+      role,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleResearch = useCallback((technologyId: number, _key: ResearchKey) => {
     if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
@@ -1542,12 +1582,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           homeCoords={homeCoords}
           homePlanetId={onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
-          missionPlanner={{
-            fleetSlots: shipyardState?.fleetSlots,
-            now,
-            resources: onChainResources,
-            ships: shipyardState?.ships,
-          }}
           shipyardState={shipyardState}
           onAction={handleGalaxyAction}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
@@ -1640,10 +1674,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           canTransact={Boolean(provider && account && allianceContract)}
           error={allianceError}
           loading={allianceLoading}
+          onAcceptInvite={handleAcceptAllianceInvite}
           onCreate={handleCreateAlliance}
+          onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
-          onOpenDefenseIntent={handleOpenDefenseIntent}
           onRefresh={refreshAllianceState}
+          onSetRole={handleSetAllianceRole}
         />
       );
     }

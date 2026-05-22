@@ -9,9 +9,11 @@ import {
   canAfford,
   collectibleResourceDeltas,
   createInitialPlayableState,
+  defenseCombatStats,
   defenseCatalog,
   energyBalance,
   hasCollectableResources,
+  missileSiloCapacity,
   productionCapacityPerHour,
   productionPerHour,
   researchCatalog,
@@ -20,6 +22,7 @@ import {
   researchRequirementsFor,
   shipDurationEstimate,
   shipCatalog,
+  shipCombatStats,
   storageCaps,
   unmetResearchRequirement,
 } from "../src/playableMvp";
@@ -165,6 +168,24 @@ describe("playable MVP contract display helpers", () => {
     expect(shipDurationEstimate(12, 0, { metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 })).toBe(996_924);
   });
 
+  test("derives ship combat info from contract catalog formulas", () => {
+    const lightFighter = shipCatalog.find((ship) => ship.key === "lightFighter")!;
+    const battleship = shipCatalog.find((ship) => ship.key === "battleship")!;
+    const solarSatellite = shipCatalog.find((ship) => ship.key === "solarSatellite")!;
+
+    expect(shipCombatStats(lightFighter).rows).toEqual([
+      expect.objectContaining({ label: "Attack", value: 200 }),
+      expect.objectContaining({ label: "Hull", value: 400 }),
+      expect.objectContaining({ label: "Cargo", value: 50 }),
+    ]);
+    expect(shipCombatStats(battleship).rows).toEqual([
+      expect.objectContaining({ label: "Attack", value: 3_000 }),
+      expect.objectContaining({ label: "Hull", value: 6_000 }),
+      expect.objectContaining({ label: "Cargo", value: 1_500 }),
+    ]);
+    expect(shipCombatStats(solarSatellite).notes[0]).toContain("Cannot be assigned to fleet missions");
+  });
+
   test("maps the Solidity defense catalog for Defenses display", () => {
     expect(defenseCatalog.map((defense) => [defense.id, defense.key, defense.label])).toEqual([
       [0, "rocketLauncher", "Rocket Launcher"],
@@ -190,6 +211,25 @@ describe("playable MVP contract display helpers", () => {
 	    });
 	    expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));
 	  });
+
+  test("derives defense combat info from current battle rules", () => {
+    const rocketLauncher = defenseCatalog.find((defense) => defense.key === "rocketLauncher")!;
+    const smallShieldDome = defenseCatalog.find((defense) => defense.key === "smallShieldDome")!;
+    const interplanetaryMissile = defenseCatalog.find((defense) => defense.key === "interplanetaryMissile")!;
+
+    expect(defenseCombatStats(rocketLauncher).rows).toEqual([
+      expect.objectContaining({ label: "Attack", value: 100 }),
+      expect.objectContaining({ label: "Hull", value: 200 }),
+    ]);
+    expect(defenseCombatStats(smallShieldDome).rows).toEqual([
+      expect.objectContaining({ label: "Attack", value: 1 }),
+      expect.objectContaining({ label: "Hull", value: 2_000 }),
+    ]);
+    expect(defenseCombatStats(interplanetaryMissile).rows).toEqual([
+      expect.objectContaining({ label: "Fleet battle", value: "Not counted" }),
+      expect.objectContaining({ label: "Silo slots", value: 2 }),
+    ]);
+  });
 
   test("uses valid deterministic Shipyard, Research, and Defenses asset mappings", () => {
     const allAssets = [...shipAssetManifest, ...researchAssetManifest, ...defenseAssetManifest];
@@ -370,10 +410,12 @@ describe("playable MVP contract display helpers", () => {
       metalMine: 1,
       solarPlant: 2,
       metalStorage: 1,
+      missileSilo: 3,
     };
 
     const mineEffect = buildingEffectMetrics(buildings, "metalMine");
     const storageEffect = buildingEffectMetrics(buildings, "metalStorage");
+    const missileSiloEffect = buildingEffectMetrics(buildings, "missileSilo");
 
     expect(mineEffect.kind).toBe("production");
     if (mineEffect.kind === "production") {
@@ -382,12 +424,20 @@ describe("playable MVP contract display helpers", () => {
       expect(mineEffect.deltaPerHour).toBeGreaterThan(0);
     }
 
-      expect(storageEffect.kind).toBe("storage");
+    expect(storageEffect.kind).toBe("storage");
     if (storageEffect.kind === "storage") {
       expect(storageEffect.resource).toBe("metal");
       expect(storageEffect.currentCapacity).toBe(storageCaps(buildings).metal);
       expect(storageEffect.deltaCapacity).toBe(20_000);
     }
+
+    expect(missileSiloCapacity(3)).toBe(30);
+    expect(missileSiloEffect).toEqual({
+      kind: "missileSilo",
+      currentSlots: 30,
+      nextSlots: 40,
+      deltaSlots: 10,
+    });
   });
 
   test("uses settled planet multipliers for infrastructure production effects", () => {
