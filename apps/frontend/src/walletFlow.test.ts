@@ -153,6 +153,46 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("encodes mission ships, cargo, and randomness in contract ABI order", () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 2,
+      recycler: 3,
+      colonyShip: 4,
+      largeCargo: 5,
+      heavyFighter: 6,
+      cruiser: 7,
+      battleship: 8,
+      bomber: 9,
+      destroyer: 10,
+      deathstar: 11,
+      battlecruiser: 12,
+      reaper: 13,
+      pathfinder: 14,
+    };
+
+    expect(encodeLaunchFleetMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+      cargo: {
+        metal: "101",
+        crystal: "202",
+        deuterium: "303",
+      },
+      randomnessRequestId: 404,
+    })).toBe(
+      "0x28247df8"
+        + [
+          7, 9, 3,
+          1, 2, 3, 4, 5, 6, 7,
+          8, 9, 10, 11, 12, 13, 14,
+          101, 202, 303, 404,
+        ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
+    );
+  });
+
   test("encodes fleet lifecycle resolver transactions", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
