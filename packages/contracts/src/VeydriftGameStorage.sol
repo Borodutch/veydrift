@@ -122,7 +122,8 @@ abstract contract VeydriftGameStorage {
         Harvest,
         AcsDefend,
         Intercept,
-        MissileAttack
+        MissileAttack,
+        AcsAttack
     }
 
     enum FleetMissionStatus {
@@ -290,6 +291,8 @@ abstract contract VeydriftGameStorage {
     error PlanetHasActiveQueues();
     error PlanetHasResources();
     error PlanetHasActiveFleetMissions();
+    error AttackJoinCutoffPassed(uint64 cutoffAt);
+    error CannotJoinOwnAttackTarget();
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -409,6 +412,13 @@ abstract contract VeydriftGameStorage {
         uint64 arrivalAt,
         uint64 returnAt,
         uint256 randomnessRequestId
+    );
+    event AttackMissionJoined(
+        uint256 indexed attackMissionId,
+        uint256 indexed joinedMissionId,
+        address indexed participant,
+        uint256 originPlanetId,
+        uint256 targetPlanetId
     );
     event FleetMissionCargo(
         uint256 indexed missionId,

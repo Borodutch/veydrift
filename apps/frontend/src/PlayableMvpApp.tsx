@@ -93,6 +93,7 @@ import {
   sendFinishResearchTransaction,
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
+  sendJoinAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
   sendRecallFleetMissionTransaction,
@@ -289,6 +290,7 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
     incoming: [],
     outgoing: [],
     returning: [],
+    joinableAttacks: [],
   };
 }
 
@@ -1741,6 +1743,31 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     );
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState]);
 
+  const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string) => {
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    const ships = selectCounterplayShips(shipyardState);
+    if (!ships) {
+      setGalaxyAction({ status: "error", label: "No ships available to join the attack." });
+      return;
+    }
+
+    void runGalaxyTransaction("ACS attack join", () => sendJoinAttackMissionTransaction(
+      provider,
+      account,
+      gameContract,
+      {
+        originPlanetId: onChainSettlement.homePlanetId ?? "0",
+        attackMissionId,
+        targetPlanetId,
+        ships,
+      },
+    ));
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
+
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
     setSelectedCoords(undefined);
@@ -1983,6 +2010,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onCounterplay={handleCounterplay}
+        onJoinAttack={handleJoinAttack}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
         onResolveMission={handleResolveMission}

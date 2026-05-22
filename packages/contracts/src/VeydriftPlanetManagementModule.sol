@@ -131,6 +131,50 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         );
     }
 
+    function protectedResources(uint256 planetId) external view returns (Resources memory) {
+        return _protectedResources(planetId);
+    }
+
+    function raidableResources(uint256 planetId) external view returns (Resources memory) {
+        Resources memory protected = _protectedResources(planetId);
+        return _unprotectedResources(_planets[planetId].resources, protected);
+    }
+
+    function maxRaidLoot(uint256 planetId, uint256 cargoCapacity)
+        external
+        view
+        returns (Resources memory)
+    {
+        Resources memory protected = _protectedResources(planetId);
+        return _selectRaidLoot(
+            _unprotectedResources(_planets[planetId].resources, protected), cargoCapacity
+        );
+    }
+
+    function debrisField(uint256 planetId) external view returns (uint128 metal, uint128 crystal) {
+        DebrisField storage field = _debrisFields[planetId];
+        return (field.metal, field.crystal);
+    }
+
+    function completeFleetMissionReturn(uint256 missionId) external {
+        FleetMission storage mission = _fleetMissions[missionId];
+        if (
+            mission.status != FleetMissionStatus.Returning
+                && mission.status != FleetMissionStatus.Recalled
+        ) {
+            revert FleetMissionNotResolved(mission.returnAt);
+        }
+        _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
+        if (_currentTimestamp() < mission.returnAt) revert FleetNotArrived(mission.returnAt);
+
+        _planets[mission.originPlanetId].resources =
+            _add(_planets[mission.originPlanetId].resources, mission.cargo);
+        _creditMissionShips(mission.originPlanetId, mission.ships);
+        mission.status = FleetMissionStatus.Returned;
+        activeFleetMissionCount[mission.owner] -= 1;
+        emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
+    }
+
     function startResearch(uint256 planetId, Technology technology) external {
         _requirePlanetOwner(planetId);
         _requireNoPendingMissionResolutionForPlayer(msg.sender);
@@ -426,6 +470,66 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             _buildingLevels[planetId][Building.CrystalStorage],
             _buildingLevels[planetId][Building.DeuteriumTank]
         );
+    }
+
+    function _protectedResources(uint256 planetId) private view returns (Resources memory) {
+        (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = _storageCaps(planetId);
+        return Resources({
+            metal: _toUint128((uint256(metalCap) * RAID_PROTECTED_STORAGE_BPS) / BPS),
+            crystal: _toUint128((uint256(crystalCap) * RAID_PROTECTED_STORAGE_BPS) / BPS),
+            deuterium: _toUint128((uint256(deuteriumCap) * RAID_PROTECTED_STORAGE_BPS) / BPS)
+        });
+    }
+
+    function _unprotectedResources(Resources storage resources, Resources memory protected)
+        private
+        view
+        returns (Resources memory)
+    {
+        return Resources({
+            metal: resources.metal > protected.metal ? resources.metal - protected.metal : 0,
+            crystal: resources.crystal > protected.crystal
+                ? resources.crystal - protected.crystal
+                : 0,
+            deuterium: resources.deuterium > protected.deuterium
+                ? resources.deuterium - protected.deuterium
+                : 0
+        });
+    }
+
+    function _selectRaidLoot(Resources memory unprotected, uint256 capacity)
+        private
+        pure
+        returns (Resources memory)
+    {
+        uint128 metalCap = _toUint128((uint256(unprotected.metal) * RAID_LOOT_BPS) / BPS);
+        uint128 metal = _toUint128(_min(metalCap, capacity));
+        capacity -= metal;
+
+        uint128 crystalCap = _toUint128((uint256(unprotected.crystal) * RAID_LOOT_BPS) / BPS);
+        uint128 crystal = _toUint128(_min(crystalCap, capacity));
+        capacity -= crystal;
+
+        uint128 deuteriumCap = _toUint128((uint256(unprotected.deuterium) * RAID_LOOT_BPS) / BPS);
+        uint128 deuterium = _toUint128(_min(deuteriumCap, capacity));
+        return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
+    }
+
+    function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
+        _shipCounts[planetId][Ship.SmallCargo] += ships.smallCargo;
+        _shipCounts[planetId][Ship.LightFighter] += ships.lightFighter;
+        _shipCounts[planetId][Ship.Recycler] += ships.recycler;
+        _shipCounts[planetId][Ship.ColonyShip] += ships.colonyShip;
+        _shipCounts[planetId][Ship.LargeCargo] += ships.largeCargo;
+        _shipCounts[planetId][Ship.HeavyFighter] += ships.heavyFighter;
+        _shipCounts[planetId][Ship.Cruiser] += ships.cruiser;
+        _shipCounts[planetId][Ship.Battleship] += ships.battleship;
+        _shipCounts[planetId][Ship.Bomber] += ships.bomber;
+        _shipCounts[planetId][Ship.Destroyer] += ships.destroyer;
+        _shipCounts[planetId][Ship.Deathstar] += ships.deathstar;
+        _shipCounts[planetId][Ship.Battlecruiser] += ships.battlecruiser;
+        _shipCounts[planetId][Ship.Reaper] += ships.reaper;
+        _shipCounts[planetId][Ship.Pathfinder] += ships.pathfinder;
     }
 
     function _addWithCap(uint128 current, uint128 addition, uint128 cap)

@@ -212,6 +212,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function joinAttackMission(uint256, uint256, uint256, MissionShips calldata, Resources calldata)
+        external
+        returns (uint256)
+    {
+        _delegateToGameplayModule();
+    }
+
     function recallFleetMission(uint256) external {
         _delegateToGameplayModule();
     }
@@ -221,7 +228,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function completeFleetMissionReturn(uint256) external {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
@@ -282,7 +289,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function debrisField(uint256) external returns (uint128, uint128) {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function activeBuildingConstruction(uint256 planetId)
@@ -426,15 +433,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function protectedResources(uint256) external returns (Resources memory) {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function raidableResources(uint256) external returns (Resources memory) {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function maxRaidLoot(uint256, uint256) external returns (Resources memory) {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function buildingUpgradeCost(uint256 planetId, Building building)

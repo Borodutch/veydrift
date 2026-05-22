@@ -183,7 +183,8 @@ class MockChainReader implements ChainReader {
       homePlanetId: planet.planetId,
       incoming: [],
       outgoing: [],
-      returning: []
+      returning: [],
+      joinableAttacks: []
     };
   }
 
