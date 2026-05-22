@@ -251,7 +251,7 @@ describe("Infrastructure page display helpers", () => {
 
     expect(text).toContain("Active construction");
     expect(text).toContain("Solar Plant Level 3 is upgrading");
-    expect(text).toContain("the selected building is waiting for this queue.");
+    expect(text).not.toMatch(/selected building is waiting/i);
     expect(text).toContain("25 %");
   });
 
