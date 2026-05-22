@@ -1544,7 +1544,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         account,
         gameContract,
         {
-          originPlanetId: onChainSettlement.homePlanetId ?? "0",
+          originPlanetId,
           targetPlanetId,
           primaryTargetId: action.primaryTargetId,
           quantity: action.quantity,
