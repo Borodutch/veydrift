@@ -67,6 +67,7 @@ describe("contract state adapters", () => {
       deuterium: 0,
     });
     expect(energyBalanceFromChain(infrastructureState.energyBalance)).toEqual({
+      deuteriumConsumed: 0,
       produced: 60,
       required: 100,
       scaleBps: 6000,
