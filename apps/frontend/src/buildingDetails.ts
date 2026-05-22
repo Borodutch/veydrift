@@ -166,12 +166,13 @@ export function buildingLevelInfoRows(
 
   return Array.from({ length: cappedMaxLevel }, (_, index) => {
     const level = index + 1;
+    const preUpgradeBuildings = { ...buildings, [key]: level - 1 };
     const rowBuildings = { ...buildings, [key]: level };
-    const cost = buildingCost({ ...buildings, [key]: level - 1 }, key);
+    const cost = buildingCost(preUpgradeBuildings, key);
     const row: BuildingLevelInfoRow = {
       cost,
       current: currentLevel === level,
-      durationSeconds: buildingDurationEstimate(buildings, cost),
+      durationSeconds: buildingDurationEstimate(preUpgradeBuildings, cost),
       level,
       next: currentLevel + 1 === level,
     };

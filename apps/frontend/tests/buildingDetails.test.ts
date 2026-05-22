@@ -273,6 +273,7 @@ describe("building detail helpers", () => {
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 75, crystal: 30, deuterium: 0 },
+      durationSeconds: 151,
       energyProduced: 22,
       level: 1,
       next: true,
@@ -330,6 +331,18 @@ describe("building detail helpers", () => {
       level: 1,
       storage: { resource: "metal", capacity: 20_000 },
     });
+  });
+
+  test("adjusts level table construction times with Robotics and Nanite levels", () => {
+    const buildings = {
+      ...createInitialPlayableState(1_000).buildings,
+      roboticsFactory: 1,
+      naniteFactory: 1,
+    };
+
+    const rows = buildingLevelInfoRows(buildings, "metalStorage", undefined, 2);
+
+    expect(rows.map((row) => row.durationSeconds)).toEqual([360, 720]);
   });
 
   test("builds Missile Silo rows with OGame missile slot capacity", () => {
