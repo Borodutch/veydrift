@@ -7,6 +7,7 @@ import {
   encodeAddressUintCall,
   encodeAddressCall,
   encodeGameCall,
+  encodeLaunchInterplanetaryMissileAttackCall,
   encodeLaunchFleetMissionCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
@@ -28,6 +29,7 @@ import {
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
   sendCreateColonyTransaction,
+  sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceKickTransaction,
@@ -125,8 +127,26 @@ describe("walletFlow", () => {
       ships,
     })).resolves.toBe("0xgalaxy1");
     await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10)).resolves.toBe("0xgalaxy2");
+    await expect(sendLaunchInterplanetaryMissileAttackTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      primaryTargetId: 0,
+      quantity: 1,
+    })).resolves.toBe("0xgalaxy3");
 
     expect(missionData.startsWith("0x28247df8")).toBe(true);
+    expect(encodeLaunchInterplanetaryMissileAttackCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      primaryTargetId: 0,
+      quantity: 1,
+    })).toBe(
+      "0xa72cd29a"
+      + "0000000000000000000000000000000000000000000000000000000000000007"
+      + "0000000000000000000000000000000000000000000000000000000000000009"
+      + "0000000000000000000000000000000000000000000000000000000000000000"
+      + "0000000000000000000000000000000000000000000000000000000000000001"
+    );
     expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000007");
     expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000009");
     expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");
@@ -145,6 +165,14 @@ describe("walletFlow", () => {
           from: account,
           to: contract,
           data: encodeGameCall("0x71358ab8", [7, 2, 44, 10]),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0xa72cd29a", [7, 9, 0, 1]),
         }],
       },
     ]);

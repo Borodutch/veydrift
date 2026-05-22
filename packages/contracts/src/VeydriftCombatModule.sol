@@ -39,7 +39,17 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (origin.owner == address(0)) revert NoPlanet();
         if (origin.owner != msg.sender) revert NotPlanetOwner();
         if (originPlanetId == targetPlanetId) revert SamePlanet();
-        if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+        Planet storage target = _planets[targetPlanetId];
+        if (target.owner == address(0)) revert NoPlanet();
+        if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
+
+        uint256 range = _interplanetaryMissileRange(msg.sender);
+        if (
+            origin.galaxy != target.galaxy
+                || _systemDistanceForMissiles(origin.system, target.system) > range
+        ) {
+            revert InterplanetaryMissileOutOfRange(origin.system, target.system, range);
+        }
 
         uint32 available = _defenseCounts[originPlanetId][Defense.InterplanetaryMissile];
         if (quantity == 0 || available < quantity) revert InvalidQuantity();
@@ -64,6 +74,22 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             hits,
             destroyedPrimary
         );
+    }
+
+    function _interplanetaryMissileRange(address attacker) private view returns (uint256) {
+        uint16 impulseDrive = _technologyLevels[attacker][Technology.ImpulseDrive];
+        if (impulseDrive == 0) return 0;
+        return uint256(impulseDrive) * 5 - 1;
+    }
+
+    function _systemDistanceForMissiles(uint16 originSystem, uint16 targetSystem)
+        private
+        pure
+        returns (uint256)
+    {
+        return originSystem > targetSystem
+            ? uint256(originSystem - targetSystem)
+            : uint256(targetSystem - originSystem);
     }
 
     function resolveFleetMission(uint256 missionId) external {

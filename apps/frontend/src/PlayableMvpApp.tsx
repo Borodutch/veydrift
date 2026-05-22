@@ -86,6 +86,7 @@ import {
   sendFinishResearchTransaction,
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
+  sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
   sendDepositResourceTransaction,
   sendRenamePlanetTransaction,
@@ -655,7 +656,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       void refreshOnChainState();
       refreshInfrastructureState();
       if (page === "shipyard" || page === "galaxy") refreshShipyardState();
-      if (page === "defenses") refreshDefenseState();
+      if (page === "defenses" || page === "galaxy") refreshDefenseState();
       if (page === "alliance") refreshAllianceState();
       if (page === "research") refreshResearchState();
       if (page === "rift") refreshRiftState();
@@ -837,7 +838,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [page, refreshShipyardState]);
 
   useEffect(() => {
-    if (page === "defenses") {
+    if (page === "defenses" || page === "galaxy") {
       refreshDefenseState();
     }
   }, [page, refreshDefenseState]);
@@ -1119,6 +1120,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       }
       setGalaxyAction({ status: "success", label: `${label} confirmed.` });
       refreshShipyardState();
+      refreshDefenseState();
       void refreshOnChainState();
       refreshInfrastructureState();
     } catch (error) {
@@ -1128,7 +1130,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         label: error instanceof Error ? error.message : `${label} failed.`,
       });
     }
-  }, [provider, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
+  }, [provider, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
 
   const handleCollectResources = useCallback(() => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -1478,6 +1480,21 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return;
     }
 
+    if (action.mode === "missile") {
+      void runGalaxyTransaction("Missile attack", () => sendLaunchInterplanetaryMissileAttackTransaction(
+        provider,
+        account,
+        gameContract,
+        {
+          originPlanetId: onChainSettlement.homePlanetId ?? "0",
+          targetPlanetId,
+          primaryTargetId: action.primaryTargetId,
+          quantity: action.quantity,
+        },
+      ));
+      return;
+    }
+
     void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchFleetMissionTransaction(
       provider,
       account,
@@ -1582,6 +1599,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           homeCoords={homeCoords}
           homePlanetId={onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
+          defenseState={defenseState}
           shipyardState={shipyardState}
           onAction={handleGalaxyAction}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}

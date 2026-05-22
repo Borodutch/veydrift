@@ -19,7 +19,7 @@ import {
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
-import type { ChainShipyardState } from "../walletFlow";
+import type { ChainDefenseState, ChainShipyardState } from "../walletFlow";
 import {
   galaxyActionsForSlot,
   type GalaxyAction,
@@ -82,6 +82,7 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
+  defenseState?: ChainDefenseState | null | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
@@ -97,6 +98,7 @@ export function GalaxyView({
   homeCoords,
   homePlanetId,
   homePlanet,
+  defenseState = null,
   shipyardState = null,
   onAction,
   onSelectPlanet,
@@ -323,6 +325,7 @@ export function GalaxyView({
                   homePlanetId={homePlanetId}
                   planet={planet}
                   position={pos}
+                  defenseState={defenseState}
                   shipyardState={shipyardState}
                   system={system}
                 />
@@ -472,6 +475,7 @@ function GalaxySlot({
   homeCoords,
   homePlanetId,
   isHome,
+  defenseState,
   shipyardState,
   onAction,
   attackProtection,
@@ -486,6 +490,7 @@ function GalaxySlot({
   homeCoords: Coordinates | undefined;
   homePlanetId: string | null | undefined;
   isHome: boolean;
+  defenseState: ChainDefenseState | null;
   shipyardState: ChainShipyardState | null;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   attackProtection: AttackProtectionStatus | undefined;
@@ -500,6 +505,7 @@ function GalaxySlot({
     homePlanetId,
     isOrigin: isHome,
     planet,
+    defenseState,
     shipyardState,
   });
 
