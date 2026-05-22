@@ -1583,13 +1583,58 @@ export async function fetchAllianceState(apiUrl: string, wallet: string): Promis
 }
 
 export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?limit=${limit}`, {
-    headers: {
-      accept: "application/json"
-    }
-  });
-  if (!response.ok) throw new Error(`Highscores API failed: ${response.status}`);
+  let response: Response;
+
+  try {
+    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?limit=${limit}`, {
+      headers: {
+        accept: "application/json"
+      }
+    });
+  } catch (error) {
+    throw new Error(highscoreNetworkFailureMessage(error));
+  }
+
+  if (!response.ok) throw new Error(await highscoreHttpFailureMessage(response));
   return response.json();
+}
+
+async function highscoreHttpFailureMessage(response: Response): Promise<string> {
+  const errorBody = await readJsonErrorBody(response);
+  const errorCode = typeof errorBody?.error === "string" ? errorBody.error : undefined;
+
+  if (response.status === 503 && errorCode === "highscores_not_supported") {
+    return "Rankings are temporarily unavailable because the deployed game API does not support highscores yet. Retry after the backend redeploys.";
+  }
+
+  if (response.status === 503 && errorCode === "backend_not_configured") {
+    return "Rankings are temporarily unavailable because the game API is not fully configured. Retry after the backend configuration is restored.";
+  }
+
+  if (response.status >= 500) {
+    return `Rankings are temporarily unavailable because the game API returned ${response.status}. Retry in a moment.`;
+  }
+
+  return `Rankings could not be loaded because the game API returned ${response.status}.`;
+}
+
+async function readJsonErrorBody(response: Response): Promise<{ error?: unknown } | undefined> {
+  try {
+    const parsed = await response.clone().json();
+    return parsed && typeof parsed === "object" ? parsed as { error?: unknown } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function highscoreNetworkFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+
+  if (/failed to fetch|load failed|network/i.test(message)) {
+    return "Rankings are temporarily unavailable because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry.";
+  }
+
+  return message || "Rankings could not be loaded.";
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
