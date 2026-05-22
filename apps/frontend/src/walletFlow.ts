@@ -299,7 +299,6 @@ export type MissionShips = {
   heavyFighter: number;
   cruiser: number;
   battleship: number;
-  espionageProbe: number;
   bomber: number;
   destroyer: number;
   deathstar: number;
@@ -390,18 +389,22 @@ const START_PLANET_SELECTOR = "0xf45f1f18";
 const START_PRICE_SELECTOR = "0xf1a9af89";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
+  completeFleetMissionReturn: "0xc2472852",
   collectResources: "0xdb43284d",
   createColony: "0x71358ab8",
   depositResource: "0x25819e15",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
   finishResourceWithdrawal: "0xde0f208c",
-  launchFleetMission: "0x0c9d601c",
+  launchInterplanetaryMissileAttack: "0xa72cd29a",
+  launchFleetMission: "0x28247df8",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
   renamePlanet: "0xa74c0906",
   requestResourceWithdrawal: "0x62a10a46",
+  recallFleetMission: "0x1cbc460c",
+  resolveFleetMission: "0xde09e7cf",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
@@ -517,7 +520,6 @@ export function encodeLaunchFleetMissionCall({
     ships.heavyFighter,
     ships.cruiser,
     ships.battleship,
-    0,
     ships.bomber,
     ships.destroyer,
     ships.deathstar,
@@ -528,6 +530,25 @@ export function encodeLaunchFleetMissionCall({
     cargo?.crystal ?? 0,
     cargo?.deuterium ?? 0,
     randomnessRequestId,
+  ]);
+}
+
+export function encodeLaunchInterplanetaryMissileAttackCall({
+  originPlanetId,
+  targetPlanetId,
+  primaryTargetId,
+  quantity,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  primaryTargetId: bigint | number | string;
+  quantity: bigint | number | string;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.launchInterplanetaryMissileAttack, [
+    originPlanetId,
+    targetPlanetId,
+    primaryTargetId,
+    quantity,
   ]);
 }
 
@@ -1171,6 +1192,78 @@ export async function sendLaunchFleetMissionTransaction(
         from: account,
         to: contractAddress,
         data: encodeLaunchFleetMissionCall(params)
+      }
+    ]
+  });
+}
+
+export async function sendLaunchInterplanetaryMissileAttackTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchInterplanetaryMissileAttackCall>[0]
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeLaunchInterplanetaryMissileAttackCall(params)
+      }
+    ]
+  });
+}
+
+export async function sendRecallFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.recallFleetMission, [missionId])
+      }
+    ]
+  });
+}
+
+export async function sendResolveFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId])
+      }
+    ]
+  });
+}
+
+export async function sendCompleteFleetMissionReturnTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId])
       }
     ]
   });

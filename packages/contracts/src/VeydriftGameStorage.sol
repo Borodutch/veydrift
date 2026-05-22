@@ -155,7 +155,6 @@ abstract contract VeydriftGameStorage {
         uint32 heavyFighter;
         uint32 cruiser;
         uint32 battleship;
-        uint32 removedShipSlot;
         uint32 bomber;
         uint32 destroyer;
         uint32 deathstar;
@@ -281,6 +280,8 @@ abstract contract VeydriftGameStorage {
     error UnsupportedGameplayModule();
     error DefenseLimitReached(Defense defense);
     error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
+    error InvalidMissileTarget(Defense defense);
+    error InterplanetaryMissileOutOfRange(uint16 originSystem, uint16 targetSystem, uint256 range);
     error AttackBashingLimitReached();
     error AttackScoreProtection();
     error InvalidPlanetName();

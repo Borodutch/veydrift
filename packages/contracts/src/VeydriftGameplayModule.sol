@@ -2,19 +2,22 @@
 pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
-import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftCounterplayAllianceSystem {
-    function canCoordinateDefense(
+    function counterplayDefenseFuelContext(
         address viewer,
         uint256 defenderPlanetId,
-        uint256 hostileMissionId
-    ) external view returns (bool);
+        uint256 hostileMissionId,
+        VeydriftGameStorage.MissionShips calldata ships,
+        uint256 holdSeconds
+    ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport);
 }
 
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
@@ -164,10 +167,24 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             if (arrivalAt > hostile.arrivalAt) {
                 revert FleetAlreadyArrived();
             }
-            if (!IVeydriftCounterplayAllianceSystem(_allianceSystem)
-                    .canCoordinateDefense(msg.sender, targetPlanetId, hostileMissionId)) {
+            (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport) = IVeydriftCounterplayAllianceSystem(
+                    _allianceSystem
+                )
+                .counterplayDefenseFuelContext(
+                    msg.sender,
+                    targetPlanetId,
+                    hostileMissionId,
+                    ships,
+                    hostile.arrivalAt - arrivalAt
+                );
+            if (!canCoordinate) {
                 revert InvalidQuantity();
             }
+            if (depotSupport != 0) {
+                _settleResources(targetPlanetId);
+                _spend(targetPlanetId, Resources({metal: 0, crystal: 0, deuterium: depotSupport}));
+            }
+            fuelCost = _toUint128(uint256(fuelCost) + netHoldingFuelCost);
             arrivalAt = hostile.arrivalAt;
             randomnessRequestId = hostileMissionId;
         }
@@ -277,10 +294,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
         _settleResources(mission.targetPlanetId);
-        if (
-            mission.missionType == FleetMissionType.Transport
-                || mission.missionType == FleetMissionType.Deploy
-        ) {
+        if (mission.missionType == FleetMissionType.Transport) {
+            _planets[mission.targetPlanetId].resources =
+                _add(_planets[mission.targetPlanetId].resources, mission.cargo);
+            mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+            mission.status = FleetMissionStatus.Returning;
+        } else if (mission.missionType == FleetMissionType.Deploy) {
             _planets[mission.targetPlanetId].resources =
                 _add(_planets[mission.targetPlanetId].resources, mission.cargo);
             _creditMissionShips(mission.targetPlanetId, mission.ships);
@@ -337,66 +356,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _delegateToCombatModule();
     }
 
-    function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
-        _requirePlanetOwner(planetId);
-        _requireRiftUnlocked(planetId);
-        if (amount == 0) revert InvalidQuantity();
-
-        _transferReserveIn(resource, amount);
-        Resources memory resourceAmount = _resourceAmount(resource, amount);
-        _planets[planetId].resources = _add(_planets[planetId].resources, resourceAmount);
-        _increaseInternalResources(resourceAmount);
-        emit MarketResourceDeposited(msg.sender, planetId, resource, amount);
-    }
-
-    function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
-        external
-    {
-        _requirePlanetOwner(planetId);
-        _requireRiftUnlocked(planetId);
-        if (amount == 0) revert InvalidQuantity();
-        if (resourceWithdrawals[msg.sender][resource].active) revert WithdrawalActive(resource);
-
-        _settleResources(planetId);
-        Resources memory resourceAmount = _resourceAmount(resource, amount);
-        _spend(planetId, resourceAmount);
-        _lockedWithdrawalResources = _add(_lockedWithdrawalResources, resourceAmount);
-
-        uint64 unlocksAt = uint64(_currentTimestamp() + MARKET_WITHDRAWAL_DELAY);
-        resourceWithdrawals[msg.sender][resource] = ResourceWithdrawal({
-            active: true,
-            planetId: planetId,
-            resource: resource,
-            amount: amount,
-            unlocksAt: unlocksAt
-        });
-        emit MarketResourceWithdrawalRequested(msg.sender, planetId, resource, amount, unlocksAt);
-    }
-
-    function finishMarketResourceWithdrawal(Resource resource) external {
-        ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
-        if (!withdrawal.active) revert WithdrawalInactive(resource);
-        if (_currentTimestamp() < withdrawal.unlocksAt) {
-            revert WithdrawalNotReady(withdrawal.unlocksAt);
-        }
-
-        delete resourceWithdrawals[msg.sender][resource];
-        Resources memory amount = _resourceAmount(resource, withdrawal.amount);
-        _lockedWithdrawalResources = Resources({
-            metal: _lockedWithdrawalResources.metal - amount.metal,
-            crystal: _lockedWithdrawalResources.crystal - amount.crystal,
-            deuterium: _lockedWithdrawalResources.deuterium - amount.deuterium
-        });
-        if (!_requireReserveResource(resource).transfer(msg.sender, withdrawal.amount)) {
-            revert ResourceTransferFailed(
-                resource, address(_resourceTokens[resource]), withdrawal.amount
-            );
-        }
-        emit MarketResourceWithdrawalFinished(
-            msg.sender, withdrawal.planetId, resource, withdrawal.amount
-        );
-    }
-
     function protectedResources(uint256 planetId) external view returns (Resources memory) {
         return _protectedResources(planetId);
     }
@@ -450,15 +409,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (planetRef.owner != msg.sender) revert NotPlanetOwner();
     }
 
-    function _requireRiftUnlocked(uint256 planetId) private view {
-        _requireReserveResource(Resource.Metal);
-        _requireReserveResource(Resource.Crystal);
-        _requireReserveResource(Resource.Deuterium);
-        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] == 0) {
-            revert RiftStabilizerRequired(planetId);
-        }
-    }
-
     function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private view {
         uint32 available = _shipCounts[planetId][ship];
         if (available < quantity) revert InsufficientShips(ship, available, quantity);
@@ -468,12 +418,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint64 currentTime = _currentTimestamp();
         Planet storage planetRef = _planets[planetId];
         if (currentTime <= planetRef.lastSettledAt) {
-            emit PlanetSettled(
-                planetId,
-                planetRef.resources.metal,
-                planetRef.resources.crystal,
-                planetRef.resources.deuterium
-            );
             return;
         }
 
@@ -491,12 +435,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _increaseInternalResources(added);
         planetRef.resources = _add(planetRef.resources, added);
         planetRef.lastSettledAt = currentTime;
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
     }
 
     function _productionPerHour(uint256 planetId)
@@ -568,23 +506,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             crystal: _toUint128(uint256(resources.crystal) * quantity),
             deuterium: _toUint128(uint256(resources.deuterium) * quantity)
         });
-    }
-
-    function _resourceAmount(Resource resource, uint128 amount)
-        private
-        pure
-        returns (Resources memory)
-    {
-        if (resource == Resource.Metal) {
-            return Resources({metal: amount, crystal: 0, deuterium: 0});
-        }
-        if (resource == Resource.Crystal) {
-            return Resources({metal: 0, crystal: amount, deuterium: 0});
-        }
-        if (resource == Resource.Deuterium) {
-            return Resources({metal: 0, crystal: 0, deuterium: amount});
-        }
-        revert InvalidResource(resource);
     }
 
     function _cappedResourceIncrease(
@@ -723,10 +644,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _requireMissionShips(uint256 planetId, MissionShips memory ships) private view {
-        if (ships.removedShipSlot != 0) revert InvalidQuantity();
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _requireShips(planetId, ship, quantity);
             }
@@ -739,7 +659,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _debitMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _shipCounts[planetId][ship] -= quantity;
             }
@@ -752,7 +672,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _shipCounts[planetId][ship] += quantity;
             }

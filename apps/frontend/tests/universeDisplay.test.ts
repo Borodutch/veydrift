@@ -8,13 +8,16 @@ import {
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
-import { galaxyActionsForSlot } from "../src/galaxyActions";
+import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
   formatGalaxyHeatLabel,
+  formatMoonChanceLabel,
   formatMissionPreview,
   formatGalaxyOccupancySource,
-  formatGalaxyOccupancySummary
+  formatGalaxyOccupancySummary,
+  galaxyMissionFuelCost,
+  galaxyMissionTravelSeconds
 } from "../src/components/GalaxyView";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
@@ -127,6 +130,21 @@ describe("tester universe display data", () => {
     expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
   });
 
+  test("formats moon chance status for galaxy rows", () => {
+    expect(formatMoonChanceLabel({
+      battleId: "42",
+      targetPlanetId: "7",
+      status: "pending",
+      chanceBps: 1500,
+    })).toBe("Moon chance 15% pending");
+    expect(formatMoonChanceLabel({
+      battleId: "43",
+      targetPlanetId: "7",
+      status: "created",
+      moonDiameterKm: 7000,
+    })).toBe("Moon created 7,000 km");
+  });
+
   test("galaxy heat label is derived from the orbital temperature range", () => {
     expect(formatGalaxyHeatLabel({ min: 46, max: 74 })).toBe("Scorching Molten");
     expect(formatGalaxyHeatLabel({ min: -28, max: 68 })).toBe("Lush Temperate");
@@ -140,6 +158,7 @@ describe("tester universe display data", () => {
       planner: {
         fleetSlots: { active: 1, limit: 3 },
         resources: { deuterium: 250 },
+        missionShips: { smallCargo: 2, lightFighter: 1 },
         ships: [{ id: 0, count: 2 }],
       },
       target: { galaxy: 1, system: 20, position: 7 },
@@ -149,9 +168,9 @@ describe("tester universe display data", () => {
       blockedReason: undefined,
       cargoCapacity: 5_000,
       fleetSlots: { active: 1, limit: 3 },
-      fuelCost: 1,
+      fuelCost: 3,
     });
-    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 1 D / Cargo 5,000");
+    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 3 D / Cargo 5,000");
 
     expect(estimateGalaxyMissionPreview({
       homeCoords: { galaxy: 1, system: 10, position: 5 },
@@ -162,6 +181,21 @@ describe("tester universe display data", () => {
       },
       target: { galaxy: 1, system: 20, position: 7 },
     })?.blockedReason).toBe("No fleet slots open");
+  });
+
+  test("galaxy mission preview formulas match contract primitives across distances", () => {
+    const origin = { galaxy: 1, system: 1, position: 1 };
+
+    expect(galaxyMissionTravelSeconds(origin, origin)).toBe(300);
+    expect(galaxyMissionFuelCost(origin, origin, 3)).toBe(3);
+
+    const nearby = { galaxy: 1, system: 3, position: 4 };
+    expect(galaxyMissionTravelSeconds(origin, nearby)).toBe(333);
+    expect(galaxyMissionFuelCost(origin, nearby, 3)).toBe(3);
+
+    const distant = { galaxy: 4, system: 499, position: 15 };
+    expect(galaxyMissionTravelSeconds(origin, distant)).toBe(30_239);
+    expect(galaxyMissionFuelCost(origin, distant, 3)).toBe(11);
   });
 
   test("galaxy slot actions expose supported public-state missions without espionage", () => {
@@ -206,7 +240,19 @@ describe("tester universe display data", () => {
         { id: 0, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 3, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
-        { id: 8, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+      wallet: "0x1111111111111111111111111111111111111111",
+    };
+    const defenseState = {
+      homePlanetId: "7",
+      productionAvailable: true,
+      resources: null,
+      shipyardLevel: 1,
+      missileSiloLevel: 4,
+      technologyLevels: {},
+      defenses: [
+        { id: 9, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
       ],
       queue: null,
       wallet: "0x1111111111111111111111111111111111111111",
@@ -216,6 +262,7 @@ describe("tester universe display data", () => {
       account: "0x1111111111111111111111111111111111111111",
       homePlanetId: "7",
       planet: enemy,
+      defenseState,
       shipyardState,
     });
     const ownActions = galaxyActionsForSlot({
@@ -257,6 +304,12 @@ describe("tester universe display data", () => {
       "Missile",
     ]);
     expect(enemyActions.find((action) => action.kind === "attack")?.enabled).toBe(true);
+    expect(enemyActions.find((action) => action.kind === "missileAttack")).toMatchObject({
+      enabled: true,
+      mode: "missile",
+      primaryTargetId: 0,
+      quantity: 1,
+    });
     expect(enemyActions.find((action) => action.kind === "harvest")).toMatchObject({
       enabled: false,
       reason: "Debris fields are not live on this deployment yet.",
@@ -269,7 +322,23 @@ describe("tester universe display data", () => {
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
     ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
-    expect(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships.espionageProbe).toBe(0);
+    expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
+      Object.keys(emptyMissionShips())
+    );
+
+    expect(galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: enemy,
+      defenseState: {
+        ...defenseState,
+        defenses: [{ id: 9, count: 0, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      },
+      shipyardState,
+    }).find((action) => action.kind === "missileAttack")).toMatchObject({
+      enabled: false,
+      reason: "Requires an interplanetary missile on your active planet.",
+    });
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {

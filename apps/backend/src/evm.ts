@@ -348,7 +348,6 @@ export interface ChainReader {
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
-  listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -616,8 +615,8 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
-    const settlement = await this.getGameSettlement(wallet);
-    if (!settlement.homePlanetId) {
+    const planets = await this.getWalletPlanets(wallet);
+    if (!planets.homePlanetId) {
       return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [] };
     }
 
@@ -637,16 +636,16 @@ export class VeydriftGameReader implements ChainReader {
       }
     ]);
     const walletLower = wallet.toLowerCase();
-    const homePlanetId = settlement.homePlanetId;
+    const ownedPlanetIds = new Set(planets.planets.map((planet) => planet.planetId));
     const missions = decodeFleetMissionLogs(missionLogs);
     const summaries = [...missions.values()].filter(isCompleteFleetMissionSummary);
 
     return {
       wallet,
-      homePlanetId,
+      homePlanetId: planets.homePlanetId,
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
-          && mission.targetPlanetId === homePlanetId
+          && ownedPlanetIds.has(mission.targetPlanetId)
           && ["Attack", "Intercept", "MissileAttack"].includes(mission.missionType)
           && mission.status === "Outbound"
       ),
@@ -867,7 +866,7 @@ export class VeydriftGameReader implements ChainReader {
       resources,
       fleetSlots: {
         active: Number(activeFleetMissions ?? 0n),
-        limit: 1 + (technologyLevels["5"] ?? 0)
+        limit: 1 + (technologyLevels["4"] ?? 0)
       },
       shipyardLevel: Number(shipyardLevel),
       naniteLevel: Number(naniteLevel),
@@ -1865,8 +1864,8 @@ function missionStatusLabel(value: bigint): string {
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
 const buildingCount = 16;
 const defenseCount = 10;
-const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16];
-const supportedTechnologyIds = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const riftBuildingId = 15;
 const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
 const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [

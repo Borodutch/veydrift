@@ -3,8 +3,10 @@ pragma solidity ^0.8.28;
 
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
+import {Building} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftAllianceGame {
+    function buildingLevel(uint256 planetId, Building building) external view returns (uint16);
     function homePlanetOf(address player) external view returns (uint256);
     function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
     function fleetMission(uint256 missionId)
@@ -27,6 +29,8 @@ interface IVeydriftAllianceGame {
 
 /// @notice Canonical on-chain alliance roster and public profile authority.
 contract VeydriftAllianceSystem {
+    uint128 private constant ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL = 20_000;
+
     enum AllianceRole {
         None,
         Member,
@@ -366,6 +370,33 @@ contract VeydriftAllianceSystem {
         uint256 defenderPlanetId,
         uint256 hostileMissionId
     ) external view returns (bool) {
+        return _canCoordinateDefense(viewer, defenderPlanetId, hostileMissionId);
+    }
+
+    function counterplayDefenseFuelContext(
+        address viewer,
+        uint256 defenderPlanetId,
+        uint256 hostileMissionId,
+        VeydriftGameStorage.MissionShips calldata ships,
+        uint256 holdSeconds
+    ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport) {
+        canCoordinate = _canCoordinateDefense(viewer, defenderPlanetId, hostileMissionId);
+        if (!canCoordinate) return (false, 0, 0);
+
+        uint128 holdingFuelCost = _acsHoldingFuelCost(ships, holdSeconds);
+        uint128 supportCapacity = uint128(
+            uint256(game.buildingLevel(defenderPlanetId, Building.AllianceDepot))
+                * ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL
+        );
+        depotSupport = holdingFuelCost < supportCapacity ? holdingFuelCost : supportCapacity;
+        netHoldingFuelCost = holdingFuelCost - depotSupport;
+    }
+
+    function _canCoordinateDefense(
+        address viewer,
+        uint256 defenderPlanetId,
+        uint256 hostileMissionId
+    ) private view returns (bool) {
         VeydriftGameStorage.Planet memory target = game.planet(defenderPlanetId);
         Membership memory targetMembership = _memberships[target.owner];
         Membership memory viewerMembership = _memberships[viewer];
@@ -386,6 +417,21 @@ contract VeydriftAllianceSystem {
         return status == VeydriftGameStorage.FleetMissionStatus.Outbound
             && targetPlanetId == defenderPlanetId && _isHostileMission(missionType)
             && VeydriftAntiRaidPrimitives.canJoinAcsDefense(block.timestamp, arrivalAt);
+    }
+
+    function _acsHoldingFuelCost(
+        VeydriftGameStorage.MissionShips calldata ships,
+        uint256 holdSeconds
+    ) private pure returns (uint128) {
+        if (holdSeconds == 0) return 0;
+        uint256 tenthsPerHour = uint256(ships.smallCargo) * 50 + uint256(ships.lightFighter) * 20
+            + uint256(ships.recycler) * 300 + uint256(ships.colonyShip) * 1_000
+            + uint256(ships.largeCargo) * 50 + uint256(ships.heavyFighter) * 70
+            + uint256(ships.cruiser) * 300 + uint256(ships.battleship) * 500 + uint256(ships.bomber)
+            * 1_000 + uint256(ships.destroyer) * 1_000 + uint256(ships.deathstar)
+            + uint256(ships.battlecruiser) * 250 + uint256(ships.reaper) * 1_000
+            + uint256(ships.pathfinder) * 300;
+        return uint128((tenthsPerHour * holdSeconds + 10 hours - 1) / (10 hours));
     }
 
     function hostileMissionVisibilityContext(address viewer, uint256 missionId)

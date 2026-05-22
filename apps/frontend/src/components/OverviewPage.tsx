@@ -5,6 +5,8 @@ import {
   buildingQueueLabel,
   buildingQueuePreview,
   displayPlanetStats,
+  overviewQueueItemLabelClassName,
+  overviewQueueItemRemainingClassName,
   queueProgressBarState,
   queueProgressFillState,
   type ChainLoadStatus,
@@ -472,9 +474,9 @@ function QueueItemDisplay({
         </div>
       ) : null}
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="truncate text-xs font-semibold text-white">{label}</p>
-          <p className="shrink-0 text-[10px] text-slate-400">{remaining}</p>
+        <div className="grid min-w-0 gap-1">
+          <p className={overviewQueueItemLabelClassName}>{label}</p>
+          <p className={overviewQueueItemRemainingClassName}>{remaining}</p>
         </div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
           {progressBar.indeterminate ? (

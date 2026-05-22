@@ -1,8 +1,10 @@
 import type { BackendConfig } from "./config";
 import {
   decodeDebrisFieldLog,
+  decodeMoonChanceReportLog,
   decodeSettledPlanetLog,
   isDebrisFieldLog,
+  isMoonChanceReportLog,
   isSettledPlanetLog,
   type RpcLog
 } from "./evm";
@@ -74,7 +76,7 @@ export class ChainSyncService {
 
   constructor(
     private readonly config: BackendConfig,
-    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent"> | undefined,
+    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> | undefined,
     private readonly options: {
       reconnectBaseMs?: number;
       WebSocketCtor?: WebSocketConstructor;
@@ -287,6 +289,12 @@ export class ChainSyncService {
         this.indexer?.applyDebrisEvent(decodeDebrisFieldLog(result));
       } catch (error) {
         this.lastError = error instanceof Error ? error.message : "Failed to index debris field log.";
+      }
+    } else if (isMoonChanceReportLog(result)) {
+      try {
+        this.indexer?.applyMoonChanceEvent(decodeMoonChanceReportLog(result));
+      } catch (error) {
+        this.lastError = error instanceof Error ? error.message : "Failed to index moon chance log.";
       }
     }
 

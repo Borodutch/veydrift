@@ -73,7 +73,6 @@ const shipCosts: readonly Cost[] = [
   [6_000n, 4_000n, 0n],
   [20_000n, 7_000n, 2_000n],
   [45_000n, 15_000n, 0n],
-  [0n, 1_000n, 0n],
   [50_000n, 25_000n, 15_000n],
   [0n, 2_000n, 500n],
   [60_000n, 50_000n, 15_000n],
@@ -89,7 +88,6 @@ const researchBaseCosts: readonly Cost[] = [
   [200n, 100n, 0n],
   [1_000n, 300n, 100n],
   [400n, 0n, 600n],
-  [200n, 1_000n, 200n],
   [0n, 400n, 600n],
   [800n, 200n, 0n],
   [200n, 600n, 0n],
@@ -179,8 +177,8 @@ function completedResearchValue(technologyId: number, level: number): bigint {
 }
 
 function researchCost(technologyId: number, currentLevel: number, baseCost: Cost): Cost {
-  if (technologyId === 15) return [0n, 0n, 0n];
-  if (technologyId === 13) {
+  if (technologyId === 14) return [0n, 0n, 0n];
+  if (technologyId === 12) {
     return [
       scaleAstrophysicsCost(baseCost[0], currentLevel),
       scaleAstrophysicsCost(baseCost[1], currentLevel),

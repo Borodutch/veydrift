@@ -135,14 +135,14 @@ describe("playable MVP contract display helpers", () => {
       [5, "heavyFighter", "Heavy Fighter"],
       [6, "cruiser", "Cruiser"],
       [7, "battleship", "Battleship"],
-      [9, "bomber", "Bomber"],
-      [10, "solarSatellite", "Solar Satellite"],
-      [11, "destroyer", "Destroyer"],
-      [12, "deathstar", "Dreadstar"],
-      [13, "battlecruiser", "Battlecruiser"],
-      [14, "reaper", "Reaper"],
-      [15, "pathfinder", "Pathfinder"],
-      [16, "crawler", "Crawler"],
+      [8, "bomber", "Bomber"],
+      [9, "solarSatellite", "Solar Satellite"],
+      [10, "destroyer", "Destroyer"],
+      [11, "deathstar", "Dreadstar"],
+      [12, "battlecruiser", "Battlecruiser"],
+      [13, "reaper", "Reaper"],
+      [14, "pathfinder", "Pathfinder"],
+      [15, "crawler", "Crawler"],
     ]);
     expect(shipCatalog.map((ship) => ship.asset)).toEqual(shipAssetManifest.map((asset) => asset.src));
   });

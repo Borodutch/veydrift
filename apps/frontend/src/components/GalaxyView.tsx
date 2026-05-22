@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
+  fleetMissionDistance,
+  fleetMissionFuelCost,
+  fleetMissionShipCount,
+  fleetMissionTravelSeconds,
+} from "../fleetMissionRules";
+import type { MissionShips } from "../galaxyActions";
+import {
   formatPlanetType,
   generateSystem,
   GALAXY_COUNT,
@@ -12,7 +19,7 @@ import {
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
-import type { ChainShipyardState } from "../walletFlow";
+import type { ChainDefenseState, ChainShipyardState } from "../walletFlow";
 import {
   galaxyActionsForSlot,
   type GalaxyAction,
@@ -21,8 +28,6 @@ import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
-const MISSION_SPEED_BPS = 10_000;
-const MIN_FLEET_TRAVEL_SECONDS = 300;
 const SMALL_CARGO_CAPACITY = 5_000;
 const SMALL_CARGO_SHIP_ID = 0;
 
@@ -38,6 +43,7 @@ export type GalaxyMissionPlanner = {
     limit: number;
   } | undefined;
   resources?: MissionResources | undefined;
+  missionShips?: Partial<MissionShips> | undefined;
   ships?: Array<{ id: number; count: number }> | undefined;
   now?: number | undefined;
 };
@@ -76,6 +82,7 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
+  defenseState?: ChainDefenseState | null | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
@@ -91,6 +98,7 @@ export function GalaxyView({
   homeCoords,
   homePlanetId,
   homePlanet,
+  defenseState = null,
   shipyardState = null,
   onAction,
   onSelectPlanet,
@@ -214,6 +222,7 @@ export function GalaxyView({
   const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
   const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
   const debrisCount = planets.filter((planet) => planet.debrisField).length;
+  const moonChanceCount = planets.filter((planet) => planet.moonChance).length;
   const emptyCount = POSITION_COUNT - planets.length;
   const occupiedSummary = formatGalaxyOccupancySummary(occupiedCount);
   const occupancySource = formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem));
@@ -273,6 +282,12 @@ export function GalaxyView({
                 <span>{debrisCount} debris</span>
               </>
             ) : null}
+            {moonChanceCount > 0 ? (
+              <>
+                <span className="text-slate-700">/</span>
+                <span>{moonChanceCount} moon chance</span>
+              </>
+            ) : null}
           </div>
           {occupancySource ? (
             <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
@@ -317,6 +332,7 @@ export function GalaxyView({
                   homePlanetId={homePlanetId}
                   planet={planet}
                   position={pos}
+                  defenseState={defenseState}
                   shipyardState={shipyardState}
                   system={system}
                 />
@@ -421,8 +437,9 @@ export function estimateGalaxyMissionPreview({
   if (!homeCoords || !planner) return undefined;
   const fleetSlots = planner.fleetSlots ?? { active: 0, limit: 1 };
   const smallCargoCount = planner.ships?.find((ship) => ship.id === SMALL_CARGO_SHIP_ID)?.count ?? 0;
+  const missionShipCount = planner.missionShips ? fleetMissionShipCount(planner.missionShips) : 1;
   const travelSeconds = galaxyMissionTravelSeconds(homeCoords, target);
-  const fuelCost = galaxyMissionFuelCost(homeCoords, target, 1);
+  const fuelCost = galaxyMissionFuelCost(homeCoords, target, missionShipCount);
   const arrivalAt = now + travelSeconds * 1_000;
   const returnAt = arrivalAt + travelSeconds * 1_000;
   let blockedReason: string | undefined;
@@ -448,21 +465,11 @@ export function estimateGalaxyMissionPreview({
 }
 
 export function galaxyMissionTravelSeconds(origin: Coordinates, target: Coordinates): number {
-  const distance = galaxyMissionDistance(origin, target);
-  return MIN_FLEET_TRAVEL_SECONDS + Math.ceil((distance * 10_000) / MISSION_SPEED_BPS);
+  return fleetMissionTravelSeconds(fleetMissionDistance(origin, target));
 }
 
 export function galaxyMissionFuelCost(origin: Coordinates, target: Coordinates, shipCount: number): number {
-  if (shipCount <= 0) return 0;
-  const distance = Math.max(galaxyMissionDistance(origin, target), 1);
-  const scaledFuel = Math.floor((shipCount * distance * MISSION_SPEED_BPS) / (10_000 * 1_000));
-  return Math.max(scaledFuel, shipCount);
-}
-
-function galaxyMissionDistance(origin: Coordinates, target: Coordinates): number {
-  return Math.abs(origin.galaxy - target.galaxy) * SYSTEM_COUNT * POSITION_COUNT
-    + Math.abs(origin.system - target.system) * POSITION_COUNT
-    + Math.abs(origin.position - target.position);
+  return fleetMissionFuelCost(shipCount, fleetMissionDistance(origin, target));
 }
 
 function GalaxySlot({
@@ -475,6 +482,7 @@ function GalaxySlot({
   homeCoords,
   homePlanetId,
   isHome,
+  defenseState,
   shipyardState,
   onAction,
   attackProtection,
@@ -489,6 +497,7 @@ function GalaxySlot({
   homeCoords: Coordinates | undefined;
   homePlanetId: string | null | undefined;
   isHome: boolean;
+  defenseState: ChainDefenseState | null;
   shipyardState: ChainShipyardState | null;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   attackProtection: AttackProtectionStatus | undefined;
@@ -503,6 +512,7 @@ function GalaxySlot({
     homePlanetId,
     isOrigin: isHome,
     planet,
+    defenseState,
     shipyardState,
   });
 
@@ -553,6 +563,7 @@ function GalaxySlot({
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
+  const moonChanceLabel = formatMoonChanceLabel(planet.moonChance);
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
 
   return (
@@ -619,6 +630,12 @@ function GalaxySlot({
               <>
                 <span className="text-slate-700">/</span>
                 <span className="text-amber-200">{debrisLabel}</span>
+              </>
+            ) : null}
+            {moonChanceLabel ? (
+              <>
+                <span className="text-slate-700">/</span>
+                <span className="text-cyan-200">{moonChanceLabel}</span>
               </>
             ) : null}
           </div>
@@ -699,6 +716,17 @@ export function formatAttackBlockReason(status: AttackProtectionStatus | undefin
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit";
   if (status.blockedReason === "score_protection") return "Attack blocked by score protection";
   return "Attack blocked";
+}
+
+export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string | null {
+  if (!moonChance) return null;
+  const chance = typeof moonChance.chanceBps === "number"
+    ? ` ${(moonChance.chanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
+    : "";
+  if (moonChance.status === "pending") return `Moon chance${chance} pending`;
+  if (moonChance.status === "created") return `Moon created${moonChance.moonDiameterKm ? ` ${moonChance.moonDiameterKm.toLocaleString()} km` : ""}`;
+  if (moonChance.status === "not_created") return `Moon chance${chance} missed`;
+  return "Existing moon skipped";
 }
 
 function formatMissionClock(timestamp: number): string {
