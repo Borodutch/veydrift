@@ -41,6 +41,20 @@ describe("combat stat info controls", () => {
     expect(formatCombatStatValue(1_000_000)).toBe("1,000,000");
     expect(formatCombatStatValue("Not counted")).toBe("Not counted");
   });
+
+  test("renders the battle stats popup as a viewport-positioned layer", () => {
+    const lightFighter = shipCatalog.find((ship) => ship.key === "lightFighter")!;
+    const control = CombatStatsInfoButton({
+      label: lightFighter.label,
+      stats: shipCombatStats(lightFighter),
+    }) as VNode;
+    const panel = findByProp(control, "data-combat-stats-panel", true);
+
+    expect(typeof control.props?.onToggle).toBe("function");
+    expect(panel?.props?.className).toContain("fixed");
+    expect(panel?.props?.className).toContain("overflow-auto");
+    expect(panel?.props?.style?.maxHeight).toContain("--combat-stats-panel-max-height");
+  });
 });
 
 function visibleText(node: ComponentChildren): string {
@@ -79,4 +93,30 @@ function ariaLabels(node: ComponentChildren): string[] {
     ...(typeof label === "string" ? [label] : []),
     ...ariaLabels(vnode.props?.children as ComponentChildren),
   ];
+}
+
+function findByProp(node: ComponentChildren, propName: string, value: unknown): VNode | undefined {
+  if (node === null || node === undefined || typeof node === "boolean" || typeof node === "string" || typeof node === "number") {
+    return undefined;
+  }
+
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const match = findByProp(child, propName, value);
+
+      if (match) {
+        return match;
+      }
+    }
+
+    return undefined;
+  }
+
+  const vnode = node as VNode;
+
+  if (vnode.props?.[propName] === value) {
+    return vnode;
+  }
+
+  return findByProp(vnode.props?.children as ComponentChildren, propName, value);
 }

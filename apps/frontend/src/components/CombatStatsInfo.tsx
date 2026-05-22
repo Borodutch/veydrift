@@ -1,7 +1,12 @@
 import { Info } from "lucide-preact";
+import type { JSX } from "preact";
 import type { CombatStatBlock } from "../playableMvp";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const panelWidth = 288;
+const panelGutter = 12;
+const panelOffset = 8;
+const panelMinHeight = 160;
 
 export function CombatStatsInfoButton({
   label,
@@ -11,15 +16,26 @@ export function CombatStatsInfoButton({
   stats: CombatStatBlock;
 }) {
   return (
-    <details className="group relative inline-flex">
+    <details className="group relative inline-flex" onToggle={handlePanelToggle}>
       <summary
         aria-label={`Open ${label} combat stats`}
         className="grid h-6 w-6 cursor-pointer list-none place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-sky-200 transition hover:border-sky-200/60 hover:bg-sky-300/20 focus:outline-none focus:ring-2 focus:ring-sky-300/40 [&::-webkit-details-marker]:hidden"
+        onClick={handleSummaryInteraction}
+        onFocus={handleSummaryInteraction}
         title="Combat stats"
       >
         <Info aria-hidden="true" size={13} strokeWidth={2.4} />
       </summary>
-      <div className="absolute right-0 top-8 z-30 w-72 max-w-[calc(100vw-2rem)] rounded border border-white/15 bg-[#111827] p-3 text-left shadow-2xl shadow-black/50">
+      <div
+        className="fixed z-50 overflow-auto rounded border border-white/15 bg-[#111827] p-3 text-left shadow-2xl shadow-black/50"
+        data-combat-stats-panel
+        style={{
+          left: "var(--combat-stats-panel-left, 0px)",
+          maxHeight: "var(--combat-stats-panel-max-height, calc(100vh - 1.5rem))",
+          top: "var(--combat-stats-panel-top, 0px)",
+          width: "var(--combat-stats-panel-width, 18rem)",
+        }}
+      >
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-200">
           Battle stats
         </div>
@@ -46,4 +62,82 @@ export function CombatStatsInfoButton({
 
 export function formatCombatStatValue(value: number | string): string {
   return typeof value === "number" ? formatter.format(value) : value;
+}
+
+function handlePanelToggle(event: JSX.TargetedEvent<HTMLDetailsElement, Event>) {
+  if (event.currentTarget.open) {
+    schedulePanelPosition(event.currentTarget);
+  }
+}
+
+function handleSummaryInteraction(event: JSX.TargetedEvent<HTMLElement, Event>) {
+  schedulePanelPosition(event.currentTarget.closest("details"));
+}
+
+function schedulePanelPosition(details: HTMLDetailsElement | null) {
+  if (!details || typeof window === "undefined") {
+    return;
+  }
+
+  positionPanel(details);
+  window.requestAnimationFrame(() => positionPanel(details));
+}
+
+function positionPanel(details: HTMLDetailsElement) {
+  const summary = details.querySelector("summary");
+  const panel = details.querySelector<HTMLElement>("[data-combat-stats-panel]");
+
+  if (!(summary instanceof HTMLElement) || !panel) {
+    return;
+  }
+
+  const triggerRect = summary.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const width = Math.min(panelWidth, Math.max(0, viewportWidth - panelGutter * 2));
+
+  if (width <= 0) {
+    return;
+  }
+
+  const left = clamp(
+    triggerRect.right - width,
+    panelGutter,
+    viewportWidth - width - panelGutter,
+  );
+  const belowSpace = viewportHeight - triggerRect.bottom - panelOffset - panelGutter;
+  const aboveSpace = triggerRect.top - panelOffset - panelGutter;
+  const shouldOpenAbove = belowSpace < panelMinHeight && aboveSpace > belowSpace;
+  let maxHeight: number;
+  let top: number;
+
+  if (shouldOpenAbove) {
+    maxHeight = Math.min(
+      Math.max(aboveSpace, panelMinHeight),
+      viewportHeight - panelGutter * 2,
+    );
+    top = Math.max(
+      panelGutter,
+      triggerRect.top - panelOffset - Math.min(panel.getBoundingClientRect().height || maxHeight, maxHeight),
+    );
+  } else {
+    top = Math.min(triggerRect.bottom + panelOffset, viewportHeight - panelGutter);
+    maxHeight = Math.min(
+      Math.max(viewportHeight - top - panelGutter, panelMinHeight),
+      viewportHeight - panelGutter * 2,
+    );
+  }
+
+  details.style.setProperty("--combat-stats-panel-left", `${Math.round(left)}px`);
+  details.style.setProperty("--combat-stats-panel-max-height", `${Math.round(maxHeight)}px`);
+  details.style.setProperty("--combat-stats-panel-top", `${Math.round(top)}px`);
+  details.style.setProperty("--combat-stats-panel-width", `${Math.round(width)}px`);
+}
+
+function clamp(value: number, min: number, max: number) {
+  if (max < min) {
+    return min;
+  }
+
+  return Math.min(Math.max(value, min), max);
 }
