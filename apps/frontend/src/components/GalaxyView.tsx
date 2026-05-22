@@ -213,11 +213,11 @@ export function GalaxyView({
   for (const p of planets) planetByPosition.set(p.position, p);
 
   const positions = Array.from({ length: POSITION_COUNT }, (_, i) => i + 1);
-  const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
   const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
   const debrisCount = planets.filter((planet) => planet.debrisField).length;
   const emptyCount = POSITION_COUNT - planets.length;
   const occupiedSummary = formatGalaxyOccupancySummary(occupiedCount);
+  const occupancySourceLabel = formatGalaxyOccupancySource(source);
 
   return (
     <div className="grid gap-4">
@@ -275,9 +275,11 @@ export function GalaxyView({
               </>
             ) : null}
           </div>
-          <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
-            {formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem))}
-          </span>
+          {occupancySourceLabel ? (
+            <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
+              {occupancySourceLabel}
+            </span>
+          ) : null}
         </div>
         {actionState.status !== "idle" ? (
           <div className={`rounded border px-3 py-2 text-xs ${
@@ -395,12 +397,10 @@ export function formatGalaxyOccupancySummary(occupiedCount: number): string {
 }
 
 export function formatGalaxyOccupancySource(
-  source: "api" | "fallback" | "loading",
-  hasHomePlanet: boolean
-): string {
+  source: "api" | "fallback" | "loading"
+): string | null {
   if (source === "loading") return "Loading";
-  if (hasHomePlanet) return "Home planet shown";
-  return source === "api" ? "Current system" : "Preview system";
+  return source === "fallback" ? "Preview system" : null;
 }
 
 export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): string {
