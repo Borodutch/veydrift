@@ -90,22 +90,22 @@ describe("overview queue progress display", () => {
     });
   });
 
-  test("derives a live fill animation from the canonical queue timeline", () => {
+  test("derives live fill progress from the canonical queue timeline", () => {
     expect(queueProgressFillState({
       now: 1_700_000_500_000,
-      progress: 0.5,
+      progress: 0,
       readyAt: 1_700_001_000_000,
       remaining: "8m 20s",
       startedAt: 1_700_000_000_000,
     })).toEqual({
-      animated: true,
+      animated: false,
       durationMs: 1_000_000,
       elapsedMs: 500_000,
       progress: 0.5,
     });
   });
 
-  test("starts animating immediately at the beginning of a live queue", () => {
+  test("starts live queue progress at the beginning of a canonical timeline", () => {
     expect(queueProgressFillState({
       now: 1_700_000_000_000,
       progress: 0,
@@ -113,10 +113,23 @@ describe("overview queue progress display", () => {
       remaining: "16m 40s",
       startedAt: 1_700_000_000_000,
     })).toEqual({
-      animated: true,
+      animated: false,
       durationMs: 1_000_000,
       elapsedMs: 0,
       progress: 0,
+    });
+  });
+
+  test("prefers canonical timeline progress over a stale caller progress value", () => {
+    expect(queueProgressFillState({
+      now: 1_700_000_750_000,
+      progress: 0.1,
+      readyAt: 1_700_001_000_000,
+      remaining: "4m 10s",
+      startedAt: 1_700_000_000_000,
+    })).toMatchObject({
+      animated: false,
+      progress: 0.75,
     });
   });
 
@@ -129,8 +142,8 @@ describe("overview queue progress display", () => {
       startedAt: 1_700_000_000_000,
     })).toEqual({
       animated: false,
-      durationMs: 0,
-      elapsedMs: 0,
+      durationMs: 1_000_000,
+      elapsedMs: 1_000_000,
       progress: 1,
     });
   });
