@@ -139,6 +139,7 @@ export function buildingQueueAsset(key: BuildingKey): string | undefined {
 }
 
 export function buildingQueueLabel(label: string, targetLevel: number | undefined): string {
+  if (label === "Interdimensional Rift Stabilizer") return label;
   return targetLevel ? `${label} Level ${targetLevel}` : label;
 }
 

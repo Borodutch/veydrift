@@ -172,6 +172,54 @@ describe("building detail helpers", () => {
     });
   });
 
+  test("treats the Rift bridge as a binary build instead of an upgrade ladder", () => {
+    const readyState = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        roboticsFactory: 4,
+        researchLab: 2,
+      },
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        energy: 5,
+        hyperspace: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(buildingUpgradeStatus(readyState, "interdimensionalRiftStabilizer")).toMatchObject({
+      disabled: false,
+      reason: "Ready to build Rift bridge",
+      targetLevel: 1,
+    });
+    expect(buildingUpgradeStatus({
+      ...readyState,
+      buildings: {
+        ...readyState.buildings,
+        interdimensionalRiftStabilizer: 1,
+      },
+    }, "interdimensionalRiftStabilizer")).toMatchObject({
+      disabled: true,
+      reason: "Rift bridge built on this planet",
+      targetLevel: 1,
+    });
+    expect(buildingUpgradeStatus({
+      ...readyState,
+      queue: {
+        kind: "building",
+        key: "interdimensionalRiftStabilizer",
+        label: "Interdimensional Rift Stabilizer",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 1,
+      },
+    }, "metalMine")).toMatchObject({
+      disabled: true,
+      reason: "Another building is currently upgrading: Interdimensional Rift Stabilizer",
+    });
+  });
+
   test("builds Metal Mine level table rows with costs, production, and energy use", () => {
     const state = {
       ...createInitialPlayableState(1_000),
@@ -184,6 +232,7 @@ describe("building detail helpers", () => {
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
       constructionTime: true,
+      deuteriumConsumed: false,
       effect: false,
       energyProduced: false,
       energyRequired: true,
@@ -215,6 +264,7 @@ describe("building detail helpers", () => {
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
       constructionTime: true,
+      deuteriumConsumed: false,
       effect: false,
       energyProduced: true,
       energyRequired: false,
@@ -234,11 +284,40 @@ describe("building detail helpers", () => {
     });
   });
 
+  test("builds Fusion Reactor level table rows with energy output and deuterium use", () => {
+    const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "fusionReactor", undefined, 2, 3);
+
+    expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
+      deuteriumConsumed: true,
+      effect: false,
+      energyProduced: true,
+      energyRequired: false,
+      production: false,
+      storage: false,
+    });
+    expect(rows[0]).toMatchObject({
+      cost: { metal: 900, crystal: 360, deuterium: 180 },
+      deuteriumConsumed: 11,
+      energyProduced: 32,
+      level: 1,
+      next: true,
+    });
+    expect(rows[1]).toMatchObject({
+      cost: { metal: 1_620, crystal: 648, deuterium: 324 },
+      deuteriumConsumed: 25,
+      energyProduced: 69,
+      level: 2,
+    });
+    expect(rows.map((row) => row.effect)).toEqual([undefined, undefined]);
+  });
+
   test("builds storage level table rows without production or energy columns", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
       constructionTime: true,
+      deuteriumConsumed: false,
       effect: false,
       energyProduced: false,
       energyRequired: false,
@@ -265,6 +344,7 @@ describe("building detail helpers", () => {
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
       constructionTime: true,
+      deuteriumConsumed: false,
       effect: true,
       energyProduced: false,
       energyRequired: false,

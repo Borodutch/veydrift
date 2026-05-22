@@ -196,6 +196,7 @@ export type ChainInfrastructureState = {
   storageCaps: OnChainResources | null;
   protectedResources?: OnChainResources | null;
   raidableResources?: OnChainResources | null;
+  technologyLevels?: Record<string, number>;
   buildings: Array<{
     id: number;
     level: number;
@@ -253,6 +254,8 @@ export type RiftRequirement = {
   label: string;
   currentLevel: number | null;
   requiredLevel: number;
+  binary?: boolean;
+  built?: boolean | null;
 };
 
 export type RiftResourceState = {
@@ -311,23 +314,26 @@ export type ChainAllianceState = {
   unavailableReason?: string;
   membership: {
     allianceId: string;
-    role: "none" | "member" | "officer" | "leader";
+    role: AllianceRole;
     joinedAt: string;
   };
   profile: {
     active: boolean;
     tag: string;
     name: string;
-    metadataURI: string;
-    founder: string;
+    description: string;
+    owner: string;
     createdAt: string;
     memberCount: number;
   } | null;
-  defenseCoordination: {
-    acsDefendSupported: boolean;
-    interceptSupported: boolean;
-  };
+  members: Array<{
+    address: string;
+    role: AllianceRole;
+    joinedAt: string;
+  }>;
 };
+
+export type AllianceRole = "none" | "member" | "officer" | "owner";
 
 export type HighscoreCategory = "total" | "economy" | "research" | "fleet" | "defense";
 
@@ -404,7 +410,8 @@ const ALLIANCE_SELECTORS = {
   createAlliance: "0x944cde0e",
   inviteMember: "0x9e6d6830",
   acceptInvite: "0xbf8e9176",
-  openDefenseIntent: "0x56f919e7"
+  kickMember: "0xbd0e667c",
+  setMemberRole: "0xbfbb73f1"
 } as const;
 const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
@@ -539,6 +546,14 @@ export function encodeStringTripleCall(selector: string, values: [string, string
 
 export function encodeAddressUintCall(selector: string, address: string, value: bigint | number | string): string {
   return `${selector}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${BigInt(value).toString(16).padStart(64, "0")}`;
+}
+
+export function encodeUintAddressCall(selector: string, value: bigint | number | string, address: string): string {
+  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+}
+
+export function encodeUintAddressUintCall(selector: string, value: bigint | number | string, address: string, role: bigint | number | string): string {
+  return `${encodeUintAddressCall(selector, value, address)}${BigInt(role).toString(16).padStart(64, "0")}`;
 }
 
 function encodeAbiString(value: string): string {
@@ -889,7 +904,7 @@ export async function sendCreateAllianceTransaction(
   contractAddress: string,
   tag: string,
   name: string,
-  metadataURI: string
+  description: string
 ): Promise<string> {
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -897,7 +912,7 @@ export async function sendCreateAllianceTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, metadataURI])
+        data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, description])
       }
     ]
   });
@@ -922,12 +937,11 @@ export async function sendAllianceInviteTransaction(
   });
 }
 
-export async function sendOpenDefenseIntentTransaction(
+export async function sendAcceptAllianceInviteTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  defenderPlanetId: string,
-  hostileMissionId: string
+  allianceId: string
 ): Promise<string> {
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -935,7 +949,46 @@ export async function sendOpenDefenseIntentTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeGameCall(ALLIANCE_SELECTORS.openDefenseIntent, [defenderPlanetId, hostileMissionId])
+        data: encodeUintCall(ALLIANCE_SELECTORS.acceptInvite, allianceId)
+      }
+    ]
+  });
+}
+
+export async function sendAllianceKickTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintAddressCall(ALLIANCE_SELECTORS.kickMember, allianceId, playerAddress)
+      }
+    ]
+  });
+}
+
+export async function sendAllianceRoleTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string,
+  role: "member" | "officer"
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
       }
     ]
   });
@@ -1533,13 +1586,58 @@ export async function fetchAllianceState(apiUrl: string, wallet: string): Promis
 }
 
 export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?limit=${limit}`, {
-    headers: {
-      accept: "application/json"
-    }
-  });
-  if (!response.ok) throw new Error(`Highscores API failed: ${response.status}`);
+  let response: Response;
+
+  try {
+    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?limit=${limit}`, {
+      headers: {
+        accept: "application/json"
+      }
+    });
+  } catch (error) {
+    throw new Error(highscoreNetworkFailureMessage(error));
+  }
+
+  if (!response.ok) throw new Error(await highscoreHttpFailureMessage(response));
   return response.json();
+}
+
+async function highscoreHttpFailureMessage(response: Response): Promise<string> {
+  const errorBody = await readJsonErrorBody(response);
+  const errorCode = typeof errorBody?.error === "string" ? errorBody.error : undefined;
+
+  if (response.status === 503 && errorCode === "highscores_not_supported") {
+    return "Rankings are temporarily unavailable because the deployed game API does not support highscores yet. Retry after the backend redeploys.";
+  }
+
+  if (response.status === 503 && errorCode === "backend_not_configured") {
+    return "Rankings are temporarily unavailable because the game API is not fully configured. Retry after the backend configuration is restored.";
+  }
+
+  if (response.status >= 500) {
+    return `Rankings are temporarily unavailable because the game API returned ${response.status}. Retry in a moment.`;
+  }
+
+  return `Rankings could not be loaded because the game API returned ${response.status}.`;
+}
+
+async function readJsonErrorBody(response: Response): Promise<{ error?: unknown } | undefined> {
+  try {
+    const parsed = await response.clone().json();
+    return parsed && typeof parsed === "object" ? parsed as { error?: unknown } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function highscoreNetworkFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+
+  if (/failed to fetch|load failed|network/i.test(message)) {
+    return "Rankings are temporarily unavailable because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry.";
+  }
+
+  return message || "Rankings could not be loaded.";
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {

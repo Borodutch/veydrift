@@ -163,6 +163,7 @@ export type InfrastructureState = {
   storageCaps: Resources | null;
   protectedResources: Resources | null;
   raidableResources: Resources | null;
+  technologyLevels: Record<string, number>;
   buildings: Array<{
     id: number;
     level: number;
@@ -220,6 +221,8 @@ export type RiftRequirement = {
   label: string;
   currentLevel: number | null;
   requiredLevel: number;
+  binary?: boolean;
+  built?: boolean | null;
 };
 
 export type RiftResourceState = {
@@ -260,23 +263,26 @@ export type AllianceState = {
   unavailableReason?: string;
   membership: {
     allianceId: string;
-    role: "none" | "member" | "officer" | "leader";
+    role: AllianceRoleName;
     joinedAt: string;
   };
   profile: {
     active: boolean;
     tag: string;
     name: string;
-    metadataURI: string;
-    founder: Address;
+    description: string;
+    owner: Address;
     createdAt: string;
     memberCount: number;
   } | null;
-  defenseCoordination: {
-    acsDefendSupported: boolean;
-    interceptSupported: boolean;
-  };
+  members: Array<{
+    address: Address;
+    role: AllianceRoleName;
+    joinedAt: string;
+  }>;
 };
+
+type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
 export type AttackBlockReason = "none" | "bashing_limit" | "score_protection";
 
@@ -675,6 +681,7 @@ export class VeydriftGameReader implements ChainReader {
         storageCaps: null,
         protectedResources: null,
         raidableResources: null,
+        technologyLevels: {},
         buildings: [],
         queue: null
       };
@@ -691,6 +698,7 @@ export class VeydriftGameReader implements ChainReader {
         storageCaps: null,
         protectedResources: null,
         raidableResources: null,
+        technologyLevels: {},
         buildings: Array.from({ length: buildingCount }, (_, id) => ({
           id,
           level: 0,
@@ -709,7 +717,8 @@ export class VeydriftGameReader implements ChainReader {
       protectedResources,
       raidableResources,
       queue,
-      buildings
+      buildings,
+      technologyLevels
     ] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readResources("0x9ec5e0d5", planetId),
@@ -718,7 +727,8 @@ export class VeydriftGameReader implements ChainReader {
       this.readOptionalResources("0x222a58f5", planetId),
       this.readOptionalResources("0x1da1f692", planetId),
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
-      this.readBuildingRows(planetId)
+      this.readBuildingRows(planetId),
+      this.readTechnologyLevels(wallet)
     ]);
 
     return {
@@ -731,6 +741,7 @@ export class VeydriftGameReader implements ChainReader {
       storageCaps,
       protectedResources,
       raidableResources,
+      technologyLevels,
       buildings,
       queue
     };
@@ -846,7 +857,7 @@ export class VeydriftGameReader implements ChainReader {
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readTechnologyLevels(wallet),
       this.readShipRows(planetId),
-      this.readUintCall("0x423f9f10", [encodeAddress(wallet)])
+      this.readOptionalUintCall("0x423f9f10", [encodeAddress(wallet)])
     ]);
 
     return {
@@ -855,7 +866,7 @@ export class VeydriftGameReader implements ChainReader {
       productionAvailable: true,
       resources,
       fleetSlots: {
-        active: Number(activeFleetMissions),
+        active: Number(activeFleetMissions ?? 0n),
         limit: 1 + (technologyLevels["5"] ?? 0)
       },
       shipyardLevel: Number(shipyardLevel),
@@ -1020,22 +1031,21 @@ export class VeydriftGameReader implements ChainReader {
       this.readTechnologyLevels(wallet)
     ]);
 
+    const bridgeBuilt = riftLevel === null ? null : riftLevel > 0n;
     const requirements = riftRequirements(
-      riftLevel === null ? null : Number(riftLevel),
+      bridgeBuilt,
       Number(roboticsLevel),
       Number(researchLabLevel),
       technologyLevels
     );
-    const unlocked = requirements.every((requirement) =>
-      requirement.currentLevel !== null && requirement.currentLevel >= requirement.requiredLevel
-    );
+    const unlocked = bridgeBuilt === true;
     const tokenAddressesConfigured = riftResourceCatalog.every((resource) => this.resourceTokenAddresses[resource.key]);
     const pendingWithdrawals = await this.readRiftWithdrawals(wallet);
     const resources = await this.readRiftResources(wallet, settlement.planet.resources, pendingWithdrawals);
     const unavailableReason = riftLevel === null
       ? "This deployment does not expose the Interdimensional Rift Stabilizer building yet."
       : !unlocked
-        ? "Build the Interdimensional Rift Stabilizer and meet its prerequisites to unlock resource bridging."
+        ? "Build the Interdimensional Rift Stabilizer on this planet to unlock resource bridging."
         : !tokenAddressesConfigured
           ? "Resource token addresses are not configured for this deployment yet."
           : undefined;
@@ -1061,7 +1071,7 @@ export class VeydriftGameReader implements ChainReader {
       unavailableReason: reason,
       membership: { allianceId: "0", role: "none", joinedAt: "0" },
       profile: null,
-      defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+      members: []
     });
 
     if (!this.allianceContractAddress) {
@@ -1080,12 +1090,19 @@ export class VeydriftGameReader implements ChainReader {
         allianceAvailable: true,
         membership: { allianceId: "0", role, joinedAt },
         profile: null,
-        defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+        members: []
       };
     }
 
     const profileWords = splitWords(
       await this.callContract(this.allianceContractAddress, "0x79c76adf", [encodeUint(allianceId)])
+    );
+    const memberAddresses = decodeAddressArray(
+      await this.callContract(this.allianceContractAddress, "0x2a1ef311", [encodeUint(allianceId)])
+    );
+    const memberMemberships = await this.batchCallContract(
+      this.allianceContractAddress,
+      memberAddresses.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
     );
     return {
       wallet,
@@ -1095,12 +1112,19 @@ export class VeydriftGameReader implements ChainReader {
         active: decodeBoolWord(wordAt(profileWords, 0)),
         tag: decodeString(profileWords, 1),
         name: decodeString(profileWords, 2),
-        metadataURI: decodeString(profileWords, 3),
-        founder: decodeAddressWord(wordAt(profileWords, 4)),
+        description: decodeString(profileWords, 3),
+        owner: decodeAddressWord(wordAt(profileWords, 4)),
         createdAt: decodeUintWord(wordAt(profileWords, 5)).toString(),
         memberCount: Number(decodeUintWord(wordAt(profileWords, 6)))
       },
-      defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+      members: memberAddresses.map((address, index) => {
+        const words = splitWords(memberMemberships[index] ?? "0x");
+        return {
+          address,
+          role: allianceRoleName(Number(decodeUintWord(wordAt(words, 1)))),
+          joinedAt: decodeUintWord(wordAt(words, 2)).toString()
+        };
+      })
     };
   }
 
@@ -1311,20 +1335,30 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readShipRows(planetId: bigint): Promise<ShipyardState["ships"]> {
-    return Promise.all(
+    const rows = await Promise.all(
       supportedShipIds.map(async (id) => {
-        const [count, cost] = await Promise.all([
-          this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
-          this.readResources("0xc4222030", BigInt(id))
-        ]);
+        try {
+          const [count, cost] = await Promise.all([
+            this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
+            this.readResources("0xc4222030", BigInt(id))
+          ]);
 
-        return {
-          id,
-          count: Number(count),
-          cost
-        };
+          return {
+            id,
+            count: Number(count),
+            cost
+          };
+        } catch (error) {
+          if (isRpcRevert(error)) {
+            return null;
+          }
+
+          throw error;
+        }
       })
     );
+
+    return rows.filter((row): row is ShipyardState["ships"][number] => row !== null);
   }
 
   private async readDefenseRows(planetId: bigint): Promise<DefenseState["defenses"]> {
@@ -1907,7 +1941,7 @@ function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailabl
 }
 
 export function riftRequirements(
-  riftLevel: number | null,
+  riftBuilt: boolean | null,
   roboticsLevel: number,
   researchLabLevel: number,
   technologyLevels: Record<string, number>
@@ -1917,29 +1951,38 @@ export function riftRequirements(
       kind: "building",
       key: "interdimensionalRiftStabilizer",
       label: "Interdimensional Rift Stabilizer",
-      currentLevel: riftLevel,
-      requiredLevel: 1
+      currentLevel: riftBuilt === null ? null : riftBuilt ? 1 : 0,
+      requiredLevel: 1,
+      binary: true,
+      built: riftBuilt
     },
     {
       kind: "building",
       key: "roboticsFactory",
       label: "Robotics Factory",
       currentLevel: roboticsLevel,
-      requiredLevel: 2
+      requiredLevel: 4
     },
     {
       kind: "building",
       key: "researchLab",
       label: "Research Lab",
       currentLevel: researchLabLevel,
-      requiredLevel: 1
+      requiredLevel: 2
     },
     {
       kind: "technology",
       key: "energy",
       label: "Energy Technology",
       currentLevel: technologyLevels["0"] ?? 0,
-      requiredLevel: 2
+      requiredLevel: 5
+    },
+    {
+      kind: "technology",
+      key: "hyperspace",
+      label: "Hyperspace Technology",
+      currentLevel: technologyLevels["9"] ?? 0,
+      requiredLevel: 1
     },
   ];
 }
@@ -2155,6 +2198,13 @@ function decodeString(words: string[], headIndex: number): string {
   return new TextDecoder().decode(hexToBytes(hex.slice(0, length * 2)));
 }
 
+function decodeAddressArray(hex: string): Address[] {
+  const words = splitWords(hex);
+  const offset = Number(decodeUintWord(wordAt(words, 0))) / 32;
+  const length = Number(decodeUintWord(wordAt(words, offset)));
+  return Array.from({ length }, (_, index) => decodeAddressWord(wordAt(words, offset + 1 + index)));
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let index = 0; index < bytes.length; index += 1) {
@@ -2163,10 +2213,10 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-function allianceRoleName(role: number): AllianceState["membership"]["role"] {
+function allianceRoleName(role: number): AllianceRoleName {
   if (role === 1) return "member";
   if (role === 2) return "officer";
-  if (role === 3) return "leader";
+  if (role === 3) return "owner";
   return "none";
 }
 

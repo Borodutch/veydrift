@@ -5,6 +5,8 @@ import {
   buildingRequirementsFor,
   canAfford,
   energyBalance,
+  isBinaryBuilding,
+  fusionReactorDeuteriumConsumption,
   missileSiloCapacity,
   productionCapacityPerHour,
   storageCaps,
@@ -54,6 +56,7 @@ export type BuildingLevelInfoRow = {
   effect?: string;
   energyProduced?: number;
   energyRequired?: number;
+  deuteriumConsumed?: number;
   level: number;
   next: boolean;
   production?: {
@@ -69,6 +72,7 @@ export type BuildingLevelInfoRow = {
 export type BuildingLevelInfoColumns = {
   constructionTime: boolean;
   effect: boolean;
+  deuteriumConsumed: boolean;
   energyProduced: boolean;
   energyRequired: boolean;
   production: boolean;
@@ -81,8 +85,20 @@ export function buildingUpgradeStatus(
   options: { actionUnavailableReason?: string | undefined; chainCost?: Resources | undefined } = {},
 ): BuildingUpgradeStatus {
   const cost = options.chainCost ?? buildingCost(state.buildings, key);
-  const targetLevel = state.buildings[key] + 1;
+  const binary = isBinaryBuilding(key);
+  const currentLevel = state.buildings[key];
+  const targetLevel = binary ? 1 : currentLevel + 1;
   const durationSeconds = buildingDurationEstimate(state.buildings, cost);
+
+  if (binary && currentLevel > 0) {
+    return {
+      cost,
+      disabled: true,
+      durationSeconds,
+      reason: "Rift bridge built on this planet",
+      targetLevel,
+    };
+  }
 
   if (options.actionUnavailableReason) {
     return {
@@ -95,7 +111,7 @@ export function buildingUpgradeStatus(
   }
 
   if (state.queue?.kind === "building") {
-    const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.label, state.queue.targetLevel);
+    const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.key, state.queue.label, state.queue.targetLevel);
 
     return {
       cost,
@@ -133,7 +149,7 @@ export function buildingUpgradeStatus(
     cost,
     disabled: false,
     durationSeconds,
-    reason: `Ready for Level ${targetLevel}`,
+    reason: binary ? "Ready to build Rift bridge" : `Ready for Level ${targetLevel}`,
     targetLevel,
   };
 }
@@ -143,6 +159,7 @@ export function buildingLevelInfoRows(
   key: BuildingKey,
   profile?: PlanetProductionProfile | undefined,
   maxLevel = MAX_BUILDING_LEVEL,
+  energyTechnologyLevel = 0,
 ): BuildingLevelInfoRow[] {
   const currentLevel = buildings[key];
   const cappedMaxLevel = Math.max(1, maxLevel);
@@ -172,8 +189,12 @@ export function buildingLevelInfoRows(
       return row;
     }
 
-    if (key === "solarPlant") {
-      row.energyProduced = energyBalance(rowBuildings).produced;
+    if (key === "solarPlant" || key === "fusionReactor") {
+      const energy = energyBalance(rowBuildings, energyTechnologyLevel);
+      row.energyProduced = energy.produced;
+      if (key === "fusionReactor") {
+        row.deuteriumConsumed = fusionReactorDeuteriumConsumption(level);
+      }
       return row;
     }
 
@@ -194,6 +215,7 @@ export function buildingLevelInfoRows(
 export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): BuildingLevelInfoColumns {
   return {
     constructionTime: rows.some((row) => row.durationSeconds !== undefined),
+    deuteriumConsumed: rows.some((row) => row.deuteriumConsumed !== undefined),
     effect: rows.some((row) => row.effect !== undefined),
     energyProduced: rows.some((row) => row.energyProduced !== undefined),
     energyRequired: rows.some((row) => row.energyRequired !== undefined),
@@ -219,10 +241,14 @@ function formatBuildingRequirement(requirement: ReturnType<typeof buildingRequir
 export function buildingEnergyDetail(
   buildings: Record<BuildingKey, number>,
   key: BuildingKey,
+  energyTechnologyLevel = 0,
 ): BuildingEnergyDetail {
-  if (key === "solarPlant") {
-    const current = energyBalance(buildings).produced;
-    const next = energyBalance({ ...buildings, solarPlant: buildings.solarPlant + 1 }).produced;
+  if (key === "solarPlant" || key === "fusionReactor") {
+    const current = energyBalance(buildings, energyTechnologyLevel).produced;
+    const next = energyBalance(
+      { ...buildings, [key]: buildings[key] + 1 },
+      energyTechnologyLevel,
+    ).produced;
     return {
       kind: "produces",
       current,
@@ -276,7 +302,8 @@ function formatMissingResources(resources: Resources, cost: Resources): string {
     .join(", ")}`;
 }
 
-function formatBuildingQueueLabel(label: string, targetLevel: number | undefined): string {
+function formatBuildingQueueLabel(key: BuildingKey, label: string, targetLevel: number | undefined): string {
+  if (isBinaryBuilding(key)) return label;
   return targetLevel ? `${label} Level ${targetLevel}` : label;
 }
 

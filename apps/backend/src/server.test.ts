@@ -64,34 +64,43 @@ const planet: PlanetState = {
 
 describe("Rift requirement projection", () => {
   test("matches the current Interdimensional Rift Stabilizer build dependencies", () => {
-    expect(riftRequirements(0, 0, 0, {})).toEqual([
+    expect(riftRequirements(false, 0, 0, {})).toEqual([
       {
         kind: "building",
         key: "interdimensionalRiftStabilizer",
         label: "Interdimensional Rift Stabilizer",
         currentLevel: 0,
-        requiredLevel: 1
+        requiredLevel: 1,
+        binary: true,
+        built: false
       },
       {
         kind: "building",
         key: "roboticsFactory",
         label: "Robotics Factory",
         currentLevel: 0,
-        requiredLevel: 2
+        requiredLevel: 4
       },
       {
         kind: "building",
         key: "researchLab",
         label: "Research Lab",
         currentLevel: 0,
-        requiredLevel: 1
+        requiredLevel: 2
       },
       {
         kind: "technology",
         key: "energy",
         label: "Energy Technology",
         currentLevel: 0,
-        requiredLevel: 2
+        requiredLevel: 5
+      },
+      {
+        kind: "technology",
+        key: "hyperspace",
+        label: "Hyperspace Technology",
+        currentLevel: 0,
+        requiredLevel: 1
       }
     ]);
   });
@@ -207,6 +216,9 @@ class MockChainReader implements ChainReader {
         metal: "4000",
         crystal: "3900",
         deuterium: "3800"
+      },
+      technologyLevels: {
+        "0": 3
       },
       buildings: [
         {
@@ -453,7 +465,9 @@ class MockChainReader implements ChainReader {
           key: "interdimensionalRiftStabilizer",
           label: "Interdimensional Rift Stabilizer",
           currentLevel: 1,
-          requiredLevel: 1
+          requiredLevel: 1,
+          binary: true,
+          built: true
         }
       ],
       resources: [
@@ -487,22 +501,19 @@ class MockChainReader implements ChainReader {
       allianceAvailable: true,
       membership: {
         allianceId: "1",
-        role: "leader",
+        role: "owner",
         joinedAt: "1770000000"
       },
       profile: {
         active: true,
         tag: "VDFT",
         name: "Veydrift Union",
-        metadataURI: "ipfs://union",
-        founder: wallet,
+        description: "Discord: https://discord.gg/vdft",
+        owner: wallet,
         createdAt: "1770000000",
         memberCount: 1
       },
-      defenseCoordination: {
-        acsDefendSupported: true,
-        interceptSupported: true
-      }
+      members: [{ address: wallet, role: "owner", joinedAt: "1770000000" }]
     };
   }
 
@@ -954,6 +965,7 @@ describe("Veydrift backend", () => {
         }
         if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;
         if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0xe512884c") return abiWords(0n) as T;
 
         throw new Error(`Unexpected individual call ${selector}`);
       },
@@ -1081,18 +1093,16 @@ describe("Veydrift backend", () => {
     expect(body.allianceAvailable).toBe(true);
     expect(body.membership).toEqual({
       allianceId: "1",
-      role: "leader",
+      role: "owner",
       joinedAt: "1770000000"
     });
     expect(body.profile).toMatchObject({
       tag: "VDFT",
       name: "Veydrift Union",
+      description: "Discord: https://discord.gg/vdft",
       memberCount: 1
     });
-    expect(body.defenseCoordination).toEqual({
-      acsDefendSupported: true,
-      interceptSupported: true
-    });
+    expect(body.members).toEqual([{ address: player, role: "owner", joinedAt: "1770000000" }]);
   });
 
   test("falls back to compact settlement reads when configured contract is not VeydriftGame", async () => {
@@ -1204,6 +1214,56 @@ describe("Veydrift backend", () => {
         })
       ])
     });
+  });
+
+  test("keeps shipyard state loadable when the deployment does not expose a newer ship id", async () => {
+    const unsupportedShipIdWord = 16n.toString(16).padStart(64, "0");
+    const reader = new VeydriftGameReader(configuredTestConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const [call] = params as [{ data: string; to: string }];
+        const selector = call.data.slice(0, 10);
+
+        if (selector === "0x0ff79fa5") return abiWords(7n) as T;
+        if (selector === "0x181c1bc4") {
+          return abiWords(
+            BigInt(player),
+            2n,
+            44n,
+            9n,
+            211n,
+            1n,
+            9_788n,
+            10_233n,
+            10_584n,
+            1_700_000_000n,
+            5_000n,
+            4_900n,
+            4_800n
+          ) as T;
+        }
+        if (selector === "0x0adbf924") return abiWords(5_000n, 4_900n, 4_800n) as T;
+        if (selector === "0xd9b24865") return abiWords(1n) as T;
+        if (selector === "0xb6f4b7b7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0xe512884c") return abiWords(0n) as T;
+        if (selector === "0x423f9f10") throw new Error("RPC 3: execution reverted");
+        if (selector === "0x57686701" || selector === "0xc4222030") {
+          if (call.data.endsWith(unsupportedShipIdWord)) {
+            throw new Error("RPC 3: execution reverted");
+          }
+          return selector === "0x57686701" ? abiWords(0n) as T : abiWords(2_000n, 2_000n, 0n) as T;
+        }
+
+        throw new Error(`Unexpected call ${call.to} ${selector}`);
+      }
+    });
+
+    const state = await reader.getShipyardState(player);
+
+    expect(state.homePlanetId).toBe("7");
+    expect(state.productionAvailable).toBe(true);
+    expect(state.fleetSlots.active).toBe(0);
+    expect(state.ships.some((ship) => ship.id === 0)).toBe(true);
+    expect(state.ships.some((ship) => ship.id === 16)).toBe(false);
   });
 
   test("hydrates active building queues with the BuildingStarted block timestamp", async () => {
@@ -1429,6 +1489,48 @@ describe("Veydrift backend", () => {
         fleet: "8",
         defense: "6"
       }
+    });
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+  });
+
+  test("serves empty highscore rankings as a successful payload", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => [];
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body.rankings).toEqual({
+      total: [],
+      economy: [],
+      research: [],
+      fleet: [],
+      defense: []
+    });
+  });
+
+  test("returns CORS headers when highscores are unsupported", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: {} as ChainReader
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body).toEqual({
+      error: "highscores_not_supported"
     });
   });
 
