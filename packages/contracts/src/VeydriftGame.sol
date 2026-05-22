@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
-import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
@@ -27,8 +26,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         _planetManagementModule = planetManagementModule;
     }
 
-    function startPlanet() external payable returns (uint256 planetId) {
-        planetId = _startPlanet(msg.sender, msg.value);
+    function startPlanet() external payable returns (uint256) {
+        return _startPlanet(msg.sender, msg.value);
     }
 
     function settleFirstPlanet() external payable returns (FirstPlanet memory settledPlanet) {
@@ -90,7 +89,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (building == Building.InterdimensionalRiftStabilizer && currentLevel != 0) {
             revert LevelTooHigh();
         }
-        if (_usedFields(planetId) >= _planets[planetId].fields) revert FieldCapacityReached();
+        if (building != Building.Terraformer && _usedFields(planetId) >= _planets[planetId].fields)
+        {
+            revert FieldCapacityReached();
+        }
 
         _requireBuildingDependencies(planetId, building);
         _settleResources(planetId);
@@ -367,8 +369,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         return _technologyLevels[player][technology];
     }
 
-    function maxPlanets(address player) public view returns (uint256) {
-        return 1 + _technologyLevels[player][Technology.Astrophysics];
+    function maxPlanets(address) external returns (uint256) {
+        _delegateToPlanetManagementModule();
     }
 
     function coordinateKey(uint16 galaxy, uint16 system, uint8 position)
@@ -406,16 +408,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         return !occupiedCoordinates[coordinateKey(galaxy, system, position)];
     }
 
-    function transportFuelCost(
-        uint256,
-        uint256,
-        uint32 smallCargo,
-        uint32 recycler,
-        uint32 colonyShip
-    ) public pure returns (uint128) {
-        uint256 ships =
-            uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
-        return _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
+    function transportFuelCost(uint256, uint256, uint32, uint32, uint32)
+        external
+        returns (uint128)
+    {
+        _delegateToPlanetManagementModule();
     }
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
@@ -679,6 +676,11 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {
         delete buildingConstructions[planetId];
         _buildingLevels[planetId][construction.building] = construction.targetLevel;
+        if (construction.building == Building.Terraformer) {
+            unchecked {
+                _planets[planetId].fields += 5;
+            }
+        }
         emit BuildingCompleted(planetId, construction.building, construction.targetLevel);
     }
 

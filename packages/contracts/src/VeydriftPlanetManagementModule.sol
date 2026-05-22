@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -61,6 +62,22 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             _coordinateKey(planetRef.galaxy, planetRef.system, planetRef.position)
         ] = false;
         planetCountOf[msg.sender] -= 1;
+    }
+
+    function transportFuelCost(
+        uint256,
+        uint256,
+        uint32 smallCargo,
+        uint32 recycler,
+        uint32 colonyShip
+    ) external pure returns (uint128) {
+        uint256 ships =
+            uint256(smallCargo) + uint256(recycler) + uint256(colonyShip);
+        return uint128(VeydriftAntiRaidPrimitives.missionFuelCost(ships, 0));
+    }
+
+    function maxPlanets(address player) external view returns (uint256) {
+        return 1 + _technologyLevels[player][Technology.Astrophysics];
     }
 
     function _validateColonyCreation(uint256 originPlanetId) private view {
