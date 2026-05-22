@@ -2167,12 +2167,12 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
-        _setShipCount(originPlanetId, Ship.LightFighter, 120);
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 120);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
 
         VeydriftGameStorage.MissionShips memory attackShips;
-        attackShips.lightFighter = 120;
+        attackShips.battleship = 100;
         vm.prank(player);
         uint256 attackMissionId = game.launchFleetMission(
             originPlanetId,
@@ -2260,12 +2260,12 @@ contract VeydriftGameTest is Test {
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         moons.createMoon(targetPlanetId);
-        _setShipCount(originPlanetId, Ship.LightFighter, 120);
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 120);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
 
         VeydriftGameStorage.MissionShips memory attackShips;
-        attackShips.lightFighter = 120;
+        attackShips.battleship = 100;
         vm.prank(player);
         uint256 attackMissionId = game.launchFleetMission(
             originPlanetId,
