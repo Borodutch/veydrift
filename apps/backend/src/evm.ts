@@ -95,6 +95,7 @@ export type FleetMissionVisibility = {
   incoming: FleetMissionSummary[];
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
+  joinableAttacks: FleetMissionSummary[];
 };
 
 export type FleetMissionSummary = {
@@ -108,6 +109,8 @@ export type FleetMissionSummary = {
   returnAt: string;
   fuelCost: string;
   recallCost: string | null;
+  attackGroupId: string | null;
+  joinedAttackMissionIds: string[];
   cargo: Resources;
   ships: Record<string, string>;
   transactionHash: string;
@@ -618,7 +621,14 @@ export class VeydriftGameReader implements ChainReader {
   async getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
     const settlement = await this.getGameSettlement(wallet);
     if (!settlement.homePlanetId) {
-      return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [] };
+      return {
+        wallet,
+        homePlanetId: null,
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: []
+      };
     }
 
     const missionLogs = await this.transport.request<RpcLog[]>("eth_getLogs", [
@@ -632,7 +642,8 @@ export class VeydriftGameReader implements ChainReader {
           fleetMissionShipsTopic,
           fleetMissionRecalledTopic,
           fleetMissionResolvedTopic,
-          fleetMissionReturnExposedTopic
+          fleetMissionReturnExposedTopic,
+          attackMissionJoinedTopic
         ]]
       }
     ]);
@@ -647,7 +658,7 @@ export class VeydriftGameReader implements ChainReader {
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
           && mission.targetPlanetId === homePlanetId
-          && ["Attack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)
           && mission.status === "Outbound"
       ),
       outgoing: summaries.filter((mission) =>
@@ -656,6 +667,12 @@ export class VeydriftGameReader implements ChainReader {
       returning: summaries.filter((mission) =>
         mission.owner.toLowerCase() === walletLower
           && (mission.status === "Returning" || mission.status === "Recalled")
+      ),
+      joinableAttacks: summaries.filter((mission) =>
+        mission.owner.toLowerCase() !== walletLower
+          && mission.targetPlanetId !== homePlanetId
+          && mission.missionType === "Attack"
+          && mission.status === "Outbound"
       )
     };
   }
@@ -1768,6 +1785,42 @@ function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleetMission
   const missions = new Map<string, MutableFleetMissionSummary>();
   for (const log of logs) {
     const topic = topicAt(log.topics, 0);
+    if (topic === attackMissionJoinedTopic) {
+      const attackMissionId = decodeUint(topicAt(log.topics, 1)).toString();
+      const joinedMissionId = decodeUint(topicAt(log.topics, 2)).toString();
+      const attack = missions.get(attackMissionId) ?? {
+        missionId: attackMissionId,
+        cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        ships: {},
+        fuelCost: "0",
+        recallCost: null,
+        attackGroupId: attackMissionId,
+        joinedAttackMissionIds: [],
+        transactionHash: log.transactionHash,
+        blockNumber: BigInt(log.blockNumber).toString()
+      };
+      attack.attackGroupId = attackMissionId;
+      attack.joinedAttackMissionIds = [
+        ...new Set([...(attack.joinedAttackMissionIds ?? []), joinedMissionId])
+      ];
+      missions.set(attackMissionId, attack);
+
+      const joined = missions.get(joinedMissionId) ?? {
+        missionId: joinedMissionId,
+        cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        ships: {},
+        fuelCost: "0",
+        recallCost: null,
+        attackGroupId: attackMissionId,
+        joinedAttackMissionIds: [],
+        transactionHash: log.transactionHash,
+        blockNumber: BigInt(log.blockNumber).toString()
+      };
+      joined.attackGroupId = attackMissionId;
+      missions.set(joinedMissionId, joined);
+      continue;
+    }
+
     const missionId = decodeUint(topicAt(log.topics, 1)).toString();
     const mission = missions.get(missionId) ?? {
       missionId,
@@ -1775,6 +1828,8 @@ function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleetMission
       ships: {},
       fuelCost: "0",
       recallCost: null,
+      attackGroupId: null,
+      joinedAttackMissionIds: [],
       transactionHash: log.transactionHash,
       blockNumber: BigInt(log.blockNumber).toString()
     };
@@ -1847,6 +1902,8 @@ function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mis
       && mission.arrivalAt
       && mission.returnAt
       && mission.fuelCost !== undefined
+      && mission.attackGroupId !== undefined
+      && mission.joinedAttackMissionIds
       && mission.cargo
       && mission.ships
       && mission.transactionHash
@@ -1889,7 +1946,8 @@ const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
-const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack"] as const;
+const attackMissionJoinedTopic = "0xc584e0cc52df45c2a92cc5556e493377d69bfe3e3658d1adb13f27cfcc89b146";
+const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack"] as const;
 const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
 const moonChanceRequestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";
 const moonChanceFinalizedTopic = "0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d76e501b618572e6705d04";

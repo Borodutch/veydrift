@@ -133,6 +133,8 @@ export type FleetMissionSummary = {
   returnAt: string;
   fuelCost: string;
   recallCost: string | null;
+  attackGroupId: string | null;
+  joinedAttackMissionIds: string[];
   cargo: OnChainResources;
   ships: Record<string, string>;
   transactionHash: string;
@@ -145,6 +147,7 @@ export type FleetMissionVisibilityResponse = {
   incoming: FleetMissionSummary[];
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
+  joinableAttacks: FleetMissionSummary[];
 };
 
 export type ChainShipyardState = {
@@ -395,6 +398,7 @@ const GAME_SELECTORS = {
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
   finishResourceWithdrawal: "0xde0f208c",
+  joinAttackMission: "0x28260eb6",
   launchFleetMission: "0x28247df8",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
@@ -526,6 +530,43 @@ export function encodeLaunchFleetMissionCall({
     cargo?.crystal ?? 0,
     cargo?.deuterium ?? 0,
     randomnessRequestId,
+  ]);
+}
+
+export function encodeJoinAttackMissionCall({
+  originPlanetId,
+  attackMissionId,
+  targetPlanetId,
+  ships,
+  cargo,
+}: {
+  originPlanetId: bigint | number | string;
+  attackMissionId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.joinAttackMission, [
+    originPlanetId,
+    attackMissionId,
+    targetPlanetId,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
   ]);
 }
 
@@ -1169,6 +1210,24 @@ export async function sendLaunchFleetMissionTransaction(
         from: account,
         to: contractAddress,
         data: encodeLaunchFleetMissionCall(params)
+      }
+    ]
+  });
+}
+
+export async function sendJoinAttackMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeJoinAttackMissionCall>[0]
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeJoinAttackMissionCall(params)
       }
     ]
   });

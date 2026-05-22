@@ -96,6 +96,18 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
     }
 
+    function joinAttackMission(
+        uint256 originPlanetId,
+        uint256 attackMissionId,
+        uint256 expectedTargetPlanetId,
+        MissionShips calldata ships,
+        Resources calldata cargo
+    ) external returns (uint256 missionId) {
+        return _joinAttackMission(
+            originPlanetId, attackMissionId, expectedTargetPlanetId, ships, cargo
+        );
+    }
+
     function _launchFleetMission(
         uint256 originPlanetId,
         uint256 targetPlanetId,
@@ -121,7 +133,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
         if (!counterplayMission && originPlanetId == targetPlanetId) revert SamePlanet();
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
-        if (missionType == FleetMissionType.MissileAttack) {
+        if (
+            missionType == FleetMissionType.MissileAttack
+                || missionType == FleetMissionType.AcsAttack
+        ) {
             revert InvalidMissionType(missionType);
         }
         if (missionType == FleetMissionType.Attack) {
@@ -231,6 +246,107 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             randomnessRequestId
         );
         emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
+        _emitFleetMissionShips(missionId, ships);
+    }
+
+    function _joinAttackMission(
+        uint256 originPlanetId,
+        uint256 attackMissionId,
+        uint256 expectedTargetPlanetId,
+        MissionShips calldata ships,
+        Resources calldata cargo
+    ) private returns (uint256 missionId) {
+        _requirePlanetOwner(originPlanetId);
+        FleetMission storage attack = _fleetMissions[attackMissionId];
+        if (
+            attack.status != FleetMissionStatus.Outbound
+                || attack.missionType != FleetMissionType.Attack
+        ) {
+            revert InvalidMissionType(FleetMissionType.AcsAttack);
+        }
+        if (attack.targetPlanetId != expectedTargetPlanetId) revert InvalidId();
+        if (originPlanetId == attack.targetPlanetId) revert SamePlanet();
+        if (_planets[attack.targetPlanetId].owner == address(0)) revert NoPlanet();
+        if (_planets[attack.targetPlanetId].owner == msg.sender) {
+            revert CannotJoinOwnAttackTarget();
+        }
+
+        uint64 cutoffAt =
+            attack.arrivalAt - VeydriftAntiRaidPrimitives.ACS_DEFEND_JOIN_CUTOFF_SECONDS;
+        if (_currentTimestamp() >= cutoffAt) revert AttackJoinCutoffPassed(cutoffAt);
+        _enforceAttackProtection(msg.sender, attack.targetPlanetId);
+
+        uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
+            _technologyLevels[msg.sender][Technology.Computer]
+        );
+        if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
+            revert FleetSlotLimitReached(fleetSlots);
+        }
+
+        uint256 shipTotal = _missionShipTotal(ships);
+        if (shipTotal == 0) revert InvalidQuantity();
+        _requireMissionShips(originPlanetId, ships);
+
+        uint256 cargoTotal =
+            uint256(cargo.metal) + uint256(cargo.crystal) + uint256(cargo.deuterium);
+        uint256 capacity = _missionCargoCapacity(ships);
+        if (cargoTotal > capacity) revert CargoCapacityExceeded(capacity, cargoTotal);
+
+        _settleResources(originPlanetId);
+        uint256 travelDistance = _planetDistance(originPlanetId, attack.targetPlanetId);
+        uint128 fuelCost =
+            _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(shipTotal, travelDistance));
+        uint64 departureAt = _currentTimestamp();
+        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(travelDistance);
+        uint64 naturalArrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
+        if (naturalArrivalAt > attack.arrivalAt) revert FleetAlreadyArrived();
+
+        Resources memory debit = Resources({
+            metal: cargo.metal,
+            crystal: cargo.crystal,
+            deuterium: _toUint128(uint256(cargo.deuterium) + fuelCost)
+        });
+        _spend(originPlanetId, debit);
+        _increaseInternalResources(cargo);
+        _debitMissionShips(originPlanetId, ships);
+
+        missionId = nextFleetId++;
+        activeFleetMissionCount[msg.sender] += 1;
+        _fleetMissions[missionId] = FleetMission({
+            status: FleetMissionStatus.Outbound,
+            missionType: FleetMissionType.AcsAttack,
+            owner: msg.sender,
+            originPlanetId: originPlanetId,
+            targetPlanetId: attack.targetPlanetId,
+            departureAt: departureAt,
+            arrivalAt: attack.arrivalAt,
+            returnAt: (uint256(attack.arrivalAt) + travelSeconds).toUint64(),
+            fuelCost: fuelCost,
+            cargo: cargo,
+            ships: ships,
+            randomnessRequestId: attackMissionId
+        });
+        _recordAttack(msg.sender, attack.targetPlanetId);
+        _fleetCounterplayMissions[attackMissionId].push(missionId);
+
+        emit FleetMissionLaunched(
+            missionId,
+            msg.sender,
+            FleetMissionType.AcsAttack,
+            originPlanetId,
+            attack.targetPlanetId,
+            attack.arrivalAt,
+            (uint256(attack.arrivalAt) + travelSeconds).toUint64(),
+            attackMissionId
+        );
+        emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
+        _emitFleetMissionShips(missionId, ships);
+        emit AttackMissionJoined(
+            attackMissionId, missionId, msg.sender, originPlanetId, attack.targetPlanetId
+        );
+    }
+
+    function _emitFleetMissionShips(uint256 missionId, MissionShips calldata ships) private {
         emit FleetMissionShips(
             missionId,
             ships.smallCargo,

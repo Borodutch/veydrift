@@ -9,6 +9,7 @@ import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftSpaceDockSystem} from "../src/VeydriftSpaceDockSystem.sol";
+import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
@@ -1661,6 +1662,231 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             0
         );
+    }
+
+    function testAcsAttackParticipantJoinsAndSplitsLootAndReturnsHome() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        address ally = address(0xA77A);
+        vm.deal(ally, 1 ether);
+        vm.prank(ally);
+        uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 9, 499, 15);
+        _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
+        _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(allyPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(allyPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 4_000, 3_000);
+
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            900
+        );
+        vm.prank(ally);
+        uint256 joinedMissionId = game.joinAttackMission(
+            allyPlanetId,
+            attackMissionId,
+            targetPlanetId,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(arrivalAt);
+        game.resolveFleetMission(attackMissionId);
+
+        (
+            VeydriftGameStorage.FleetMissionStatus attackStatus,,
+            uint64 attackReturnAt,
+            VeydriftGameStorage.Resources memory attackCargo
+        ) = _fleetMission(attackMissionId);
+        (
+            VeydriftGameStorage.FleetMissionStatus joinedStatus,,
+            uint64 joinedReturnAt,
+            VeydriftGameStorage.Resources memory joinedCargo
+        ) = _fleetMission(joinedMissionId);
+        assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(uint8(joinedStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(attackCargo.metal, 2_250);
+        assertEq(attackCargo.crystal, 750);
+        assertEq(attackCargo.deuterium, 500);
+        assertEq(joinedCargo.metal, 2_250);
+        assertEq(joinedCargo.crystal, 750);
+        assertEq(joinedCargo.deuterium, 500);
+
+        vm.warp(joinedReturnAt);
+        game.completeFleetMissionReturn(joinedMissionId);
+        assertEq(game.shipCount(allyPlanetId, Ship.SmallCargo), 1);
+        assertEq(game.planet(allyPlanetId).resources.metal, 12_250);
+
+        vm.warp(attackReturnAt);
+        game.completeFleetMissionReturn(attackMissionId);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
+        assertEq(game.planet(originPlanetId).resources.metal, 12_250);
+    }
+
+    function testAcsAttackRejectsLateJoinMismatchedTargetAndDirectAbuse() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        address ally = address(0xA77A);
+        vm.deal(ally, 1 ether);
+        vm.prank(ally);
+        uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 9, 499, 15);
+        _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
+        _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(allyPlanetId, Ship.SmallCargo, 2);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(allyPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            901
+        );
+
+        vm.prank(ally);
+        vm.expectRevert(VeydriftGameStorage.InvalidId.selector);
+        game.joinAttackMission(
+            allyPlanetId,
+            attackMissionId,
+            targetPlanetId + 1,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+
+        vm.prank(ally);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InvalidMissionType.selector,
+                VeydriftGameStorage.FleetMissionType.AcsAttack
+            )
+        );
+        game.launchFleetMission(
+            allyPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.AcsAttack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(arrivalAt - game.FLEET_RECALL_CUTOFF_SECONDS());
+        vm.prank(ally);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.AttackJoinCutoffPassed.selector,
+                arrivalAt - VeydriftAntiRaidPrimitives.ACS_DEFEND_JOIN_CUTOFF_SECONDS
+            )
+        );
+        game.joinAttackMission(
+            allyPlanetId,
+            attackMissionId,
+            targetPlanetId,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+    }
+
+    function testAcsAttackParticipantCanRecallBeforePrimaryResolves() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        address ally = address(0xA77A);
+        vm.deal(ally, 1 ether);
+        vm.prank(ally);
+        uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 9, 499, 15);
+        _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
+        _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(allyPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(allyPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            902
+        );
+        vm.prank(ally);
+        uint256 joinedMissionId = game.joinAttackMission(
+            allyPlanetId,
+            attackMissionId,
+            targetPlanetId,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+
+        vm.warp(block.timestamp + 90 seconds);
+        vm.prank(ally);
+        game.recallFleetMission(joinedMissionId);
+
+        (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(attackArrivalAt);
+        game.resolveFleetMission(attackMissionId);
+
+        (VeydriftGameStorage.FleetMissionStatus joinedStatus,, uint64 joinedReturnAt,) =
+            _fleetMission(joinedMissionId);
+        assertEq(uint8(joinedStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Recalled));
+        vm.warp(joinedReturnAt);
+        game.completeFleetMissionReturn(joinedMissionId);
+        assertEq(game.shipCount(allyPlanetId, Ship.SmallCargo), 1);
+    }
+
+    function testAcsAttackJoinedFleetContributesBattleStats() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        address ally = address(0xA77A);
+        vm.deal(ally, 1 ether);
+        vm.prank(ally);
+        uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 9, 499, 15);
+        _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
+        _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(allyPlanetId, Ship.Battleship, 100);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 100);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(allyPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            903
+        );
+        VeydriftGameStorage.MissionShips memory joinedShips;
+        joinedShips.battleship = 100;
+        vm.prank(ally);
+        game.joinAttackMission(
+            allyPlanetId,
+            attackMissionId,
+            targetPlanetId,
+            joinedShips,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(arrivalAt);
+        game.resolveFleetMission(attackMissionId);
+
+        assertLt(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 100);
     }
 
     function testAttackBattleDefenderWinDestroysAttackerFleet() public {

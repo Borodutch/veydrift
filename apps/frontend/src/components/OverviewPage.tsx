@@ -42,6 +42,7 @@ interface OverviewPageProps {
   onFinishBuilding?: (() => void) | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
+  onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
   onChainError?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
@@ -64,6 +65,7 @@ export function OverviewPage({
   onFinishBuilding,
   onNavigate,
   onCounterplay,
+  onJoinAttack,
   onChainError,
   fleetVisibility,
   onChainSettlement,
@@ -159,7 +161,7 @@ export function OverviewPage({
       )}
 
       {isWalletConnected && fleetVisibility && (
-        <div className="grid gap-3 lg:grid-cols-3">
+        <div className="grid gap-3 lg:grid-cols-4">
           <MissionPanel
             label="Incoming"
             tone="danger"
@@ -169,6 +171,13 @@ export function OverviewPage({
           />
           <MissionPanel label="Returning" tone="warning" missions={fleetVisibility.returning} now={now} />
           <MissionPanel label="Outbound" tone="neutral" missions={fleetVisibility.outgoing} now={now} />
+          <MissionPanel
+            label="Joinable"
+            tone="neutral"
+            missions={fleetVisibility.joinableAttacks}
+            now={now}
+            onJoinAttack={onJoinAttack}
+          />
         </div>
       )}
 
@@ -322,12 +331,14 @@ function MissionPanel({
   missions,
   now,
   onCounterplay,
+  onJoinAttack,
   tone,
 }: {
   label: string;
   missions: MissionList;
   now: number;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
+  onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
   tone: "danger" | "neutral" | "warning";
 }) {
   const border = tone === "danger"
@@ -357,6 +368,12 @@ function MissionPanel({
               <p className="mt-1 text-[11px] text-slate-400">
                 Arrival {formatDurationUntil(Number(mission.arrivalAt) * 1_000, now)} · Return {formatDurationUntil(Number(mission.returnAt) * 1_000, now)}
               </p>
+              {mission.attackGroupId ? (
+                <p className="mt-1 text-[11px] text-cyan-100/70">
+                  Group #{mission.attackGroupId}
+                  {mission.joinedAttackMissionIds.length > 0 ? ` · ${mission.joinedAttackMissionIds.length} joined` : ""}
+                </p>
+              ) : null}
               {onCounterplay && mission.status === "Outbound" && mission.missionType === "Attack" ? (
                 <div className="mt-2 grid grid-cols-2 gap-1">
                   <button
@@ -374,6 +391,15 @@ function MissionPanel({
                     Intercept
                   </button>
                 </div>
+              ) : null}
+              {onJoinAttack && mission.status === "Outbound" && mission.missionType === "Attack" ? (
+                <button
+                  className="mt-2 w-full rounded border border-cyan-200/20 bg-cyan-300/10 px-2 py-1 text-[11px] font-medium text-cyan-100 hover:bg-cyan-300/15"
+                  onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId)}
+                  type="button"
+                >
+                  Join attack
+                </button>
               ) : null}
             </div>
           ))}

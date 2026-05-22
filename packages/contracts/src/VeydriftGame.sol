@@ -258,6 +258,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
+    function joinAttackMission(uint256, uint256, uint256, MissionShips calldata, Resources calldata)
+        external
+        returns (uint256)
+    {
+        _delegateToGameplayModule();
+    }
+
     function recallFleetMission(uint256) external {
         _delegateToGameplayModule();
     }

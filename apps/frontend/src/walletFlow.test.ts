@@ -7,6 +7,7 @@ import {
   encodeAddressUintCall,
   encodeAddressCall,
   encodeGameCall,
+  encodeJoinAttackMissionCall,
   encodeLaunchFleetMissionCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
@@ -28,6 +29,7 @@ import {
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
   sendCreateColonyTransaction,
+  sendJoinAttackMissionTransaction,
   sendLaunchFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceKickTransaction,
@@ -112,6 +114,12 @@ describe("walletFlow", () => {
       missionType: 3,
       ships,
     });
+    const joinData = encodeJoinAttackMissionCall({
+      originPlanetId: 7,
+      attackMissionId: 12,
+      targetPlanetId: 9,
+      ships,
+    });
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
@@ -125,8 +133,15 @@ describe("walletFlow", () => {
       ships,
     })).resolves.toBe("0xgalaxy1");
     await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10)).resolves.toBe("0xgalaxy2");
+    await expect(sendJoinAttackMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      attackMissionId: 12,
+      targetPlanetId: 9,
+      ships,
+    })).resolves.toBe("0xgalaxy3");
 
     expect(missionData.startsWith("0x28247df8")).toBe(true);
+    expect(joinData.startsWith("0x28260eb6")).toBe(true);
     expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000007");
     expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000009");
     expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");
@@ -145,6 +160,14 @@ describe("walletFlow", () => {
           from: account,
           to: contract,
           data: encodeGameCall("0x71358ab8", [7, 2, 44, 10]),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: joinData,
         }],
       },
     ]);

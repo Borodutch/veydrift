@@ -75,12 +75,11 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
 
         BattleSettlement memory settlement = _runBattle(missionId, mission);
-        uint256 capacity = _missionCargoCapacity(mission.ships);
 
-        if (settlement.outcome == BattleOutcome.AttackerWin && capacity != 0) {
-            Resources memory loot = _raidResources(mission.targetPlanetId, capacity, mission.cargo);
-            mission.cargo = _add(mission.cargo, loot);
+        if (settlement.outcome == BattleOutcome.AttackerWin) {
+            _raidResourcesForAttackGroup(missionId, mission);
         }
+        _returnLinkedMissions(missionId, mission);
 
         bool returning = _missionShipTotal(mission.ships) != 0;
         if (returning) {
@@ -132,15 +131,15 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     {
         settlement.seed = _battleSeed(missionId, mission);
         for (uint8 round = 1; round <= BATTLE_MAX_ROUNDS;) {
-            BattleStats memory attacker = _attackerBattleStats(mission.ships, mission.owner);
+            BattleStats memory attacker = _attackerGroupBattleStats(missionId, mission);
             BattleStats memory defender = _defenderBattleStats(missionId, mission.targetPlanetId);
 
             if (attacker.units == 0 || defender.units == 0) break;
 
             settlement.attackerLosses = _add(
                 settlement.attackerLosses,
-                _applyAttackerLosses(
-                    mission.ships, defender.attack, attacker.durability, settlement.seed, round
+                _applyAttackerGroupLosses(
+                    missionId, mission, defender.attack, attacker.durability, settlement.seed, round
                 )
             );
             settlement.defenderLosses = _add(
@@ -161,7 +160,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             }
         }
 
-        BattleStats memory finalAttacker = _attackerBattleStats(mission.ships, mission.owner);
+        BattleStats memory finalAttacker = _attackerGroupBattleStats(missionId, mission);
         BattleStats memory finalDefender = _defenderBattleStats(missionId, mission.targetPlanetId);
         if (finalAttacker.units != 0 && finalDefender.units == 0) {
             settlement.outcome = BattleOutcome.AttackerWin;
@@ -170,7 +169,27 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         } else {
             settlement.outcome = BattleOutcome.Draw;
         }
-        _returnCounterplayMissions(missionId, mission);
+    }
+
+    function _attackerGroupBattleStats(uint256 attackMissionId, FleetMission storage mission)
+        private
+        view
+        returns (BattleStats memory stats)
+    {
+        stats = _attackerBattleStats(mission.ships, mission.owner);
+        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
+        for (uint256 i = 0; i < linkedMissionIds.length;) {
+            FleetMission storage joined = _fleetMissions[linkedMissionIds[i]];
+            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
+                BattleStats memory joinedStats = _attackerBattleStats(joined.ships, joined.owner);
+                stats.attack += joinedStats.attack;
+                stats.durability += joinedStats.durability;
+                stats.units += joinedStats.units;
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function _attackerBattleStats(MissionShips memory ships, address owner)
@@ -274,7 +293,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 incomingDamage,
         uint256 durability,
         uint256 seed,
-        uint8 round
+        uint8 round,
+        uint8 side
     ) private returns (Resources memory losses) {
         uint256 lossBps = _lossBps(incomingDamage, durability);
         if (lossBps == 0) return losses;
@@ -282,10 +302,36 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
             uint32 count = _missionShipQuantity(ships, ship);
-            uint32 lost = _lossCount(count, lossBps, seed, round, 1, i);
+            uint32 lost = _lossCount(count, lossBps, seed, round, side, i);
             if (lost != 0) {
                 _setMissionShipQuantity(ships, ship, count - lost);
                 losses = _add(losses, _multiply(_shipCost(ship), lost));
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _applyAttackerGroupLosses(
+        uint256 attackMissionId,
+        FleetMission storage mission,
+        uint256 incomingDamage,
+        uint256 durability,
+        uint256 seed,
+        uint8 round
+    ) private returns (Resources memory losses) {
+        losses = _applyAttackerLosses(mission.ships, incomingDamage, durability, seed, round, 1);
+
+        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
+        for (uint256 i = 0; i < linkedMissionIds.length;) {
+            uint256 joinedMissionId = linkedMissionIds[i];
+            FleetMission storage joined = _fleetMissions[joinedMissionId];
+            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
+                losses = _add(
+                    losses,
+                    _applyAttackerLosses(joined.ships, incomingDamage, durability, seed, round, 5)
+                );
             }
             unchecked {
                 ++i;
@@ -371,6 +417,55 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
+    function _returnLinkedMissions(uint256 hostileMissionId, FleetMission storage hostile) private {
+        _returnJoinedAttackMissions(hostileMissionId, hostile);
+        _returnCounterplayMissions(hostileMissionId, hostile);
+    }
+
+    function _returnJoinedAttackMissions(uint256 attackMissionId, FleetMission storage attack)
+        private
+    {
+        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
+        for (uint256 i = 0; i < linkedMissionIds.length;) {
+            uint256 joinedMissionId = linkedMissionIds[i];
+            FleetMission storage joined = _fleetMissions[joinedMissionId];
+            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
+                if (_missionShipTotal(joined.ships) == 0) {
+                    joined.status = FleetMissionStatus.Resolved;
+                    joined.returnAt = uint64(block.timestamp);
+                    activeFleetMissionCount[joined.owner] -= 1;
+                    _decreaseInternalResources(joined.cargo);
+                    joined.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+                } else {
+                    joined.status = FleetMissionStatus.Returning;
+                    joined.returnAt = uint64(
+                        block.timestamp
+                            + VeydriftAntiRaidPrimitives.travelSeconds(
+                                _planetDistance(attack.targetPlanetId, joined.originPlanetId)
+                            )
+                    );
+                    emit FleetMissionReturnExposed(
+                        joinedMissionId,
+                        joined.owner,
+                        FleetMissionStatus.Returning,
+                        joined.originPlanetId,
+                        joined.targetPlanetId,
+                        joined.returnAt,
+                        joined.cargo.metal,
+                        joined.cargo.crystal,
+                        joined.cargo.deuterium
+                    );
+                }
+                emit FleetMissionResolved(
+                    joinedMissionId, msg.sender, joined.missionType, joined.returnAt
+                );
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function _returnCounterplayMissions(uint256 hostileMissionId, FleetMission storage hostile)
         private
     {
@@ -426,6 +521,18 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 || counterplay.missionType == FleetMissionType.Intercept);
     }
 
+    function _isQualifiedJoinedAttack(uint256 attackMissionId, FleetMission storage joined)
+        private
+        view
+        returns (bool)
+    {
+        return joined.status == FleetMissionStatus.Outbound
+            && joined.arrivalAt <= _fleetMissions[attackMissionId].arrivalAt
+            && joined.randomnessRequestId == attackMissionId
+            && joined.targetPlanetId == _fleetMissions[attackMissionId].targetPlanetId
+            && joined.missionType == FleetMissionType.AcsAttack;
+    }
+
     function _recordCombatWreckage(uint256 planetId, Ship ship, uint32 destroyed) private {
         address spaceDockSystem = _spaceDockSystem;
         if (spaceDockSystem == address(0)) return;
@@ -479,14 +586,91 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         else if (ship == Ship.Pathfinder) ships.pathfinder = quantity;
     }
 
-    function _raidResources(uint256 targetPlanetId, uint256 capacity, Resources memory cargo)
+    function _raidResourcesForAttackGroup(uint256 attackMissionId, FleetMission storage mission)
+        private
+    {
+        uint256 totalCapacity = _remainingCargoCapacity(mission.ships, mission.cargo);
+        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
+        for (uint256 i = 0; i < linkedMissionIds.length;) {
+            FleetMission storage joined = _fleetMissions[linkedMissionIds[i]];
+            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
+                totalCapacity += _remainingCargoCapacity(joined.ships, joined.cargo);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        if (totalCapacity == 0) return;
+
+        Resources memory loot = _raidResources(mission.targetPlanetId, totalCapacity);
+        _distributeAttackGroupLoot(attackMissionId, mission, loot, totalCapacity);
+    }
+
+    function _distributeAttackGroupLoot(
+        uint256 attackMissionId,
+        FleetMission storage mission,
+        Resources memory loot,
+        uint256 totalCapacity
+    ) private {
+        Resources memory remaining = loot;
+        uint256 remainingCapacity = totalCapacity;
+        (remaining, remainingCapacity) = _assignLootShare(mission, remaining, remainingCapacity);
+
+        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
+        for (uint256 i = 0; i < linkedMissionIds.length;) {
+            FleetMission storage joined = _fleetMissions[linkedMissionIds[i]];
+            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
+                (remaining, remainingCapacity) =
+                    _assignLootShare(joined, remaining, remainingCapacity);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _assignLootShare(
+        FleetMission storage recipient,
+        Resources memory remaining,
+        uint256 remainingCapacity
+    ) private returns (Resources memory, uint256) {
+        uint256 capacity = _remainingCargoCapacity(recipient.ships, recipient.cargo);
+        if (capacity == 0 || remainingCapacity == 0) return (remaining, remainingCapacity);
+
+        Resources memory share;
+        if (capacity >= remainingCapacity) {
+            share = remaining;
+            remaining = Resources({metal: 0, crystal: 0, deuterium: 0});
+        } else {
+            share = Resources({
+                metal: _toUint128((uint256(remaining.metal) * capacity) / remainingCapacity),
+                crystal: _toUint128((uint256(remaining.crystal) * capacity) / remainingCapacity),
+                deuterium: _toUint128((uint256(remaining.deuterium) * capacity) / remainingCapacity)
+            });
+            remaining.metal -= share.metal;
+            remaining.crystal -= share.crystal;
+            remaining.deuterium -= share.deuterium;
+        }
+
+        recipient.cargo = _add(recipient.cargo, share);
+        remainingCapacity = capacity >= remainingCapacity ? 0 : remainingCapacity - capacity;
+        return (remaining, remainingCapacity);
+    }
+
+    function _remainingCargoCapacity(MissionShips memory ships, Resources memory cargo)
+        private
+        pure
+        returns (uint256)
+    {
+        uint256 capacity = _missionCargoCapacity(ships);
+        uint256 used = uint256(cargo.metal) + cargo.crystal + cargo.deuterium;
+        return capacity > used ? capacity - used : 0;
+    }
+
+    function _raidResources(uint256 targetPlanetId, uint256 capacity)
         private
         returns (Resources memory raided)
     {
-        uint256 cargoUsed = uint256(cargo.metal) + cargo.crystal + cargo.deuterium;
-        if (cargoUsed >= capacity) return raided;
-        capacity -= cargoUsed;
-
         Resources storage target = _planets[targetPlanetId].resources;
         (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = _storageCaps(targetPlanetId);
         uint128 metal = _lootable(target.metal, metalCap, capacity);
