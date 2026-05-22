@@ -1917,6 +1917,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onCounterplay={handleCounterplay}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
+        onResolveMission={handleResolveMission}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
         planet={planet}

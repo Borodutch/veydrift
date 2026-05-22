@@ -6,6 +6,8 @@ export type BackendConfig = {
   deploymentMode: DeploymentMode;
   gameContractAddress?: `0x${string}`;
   indexFromBlock: bigint;
+  missionResolutionEnabled: boolean;
+  missionResolverAddress?: `0x${string}`;
   moonContractAddress?: `0x${string}`;
   randomnessEngineAddress?: `0x${string}`;
   resourceTokenAddresses: ResourceTokenAddresses;
@@ -39,6 +41,8 @@ export type SafeConfigSummary = {
   gameContractConfigured: boolean;
   hasRpcUrl: boolean;
   moonContractConfigured: boolean;
+  missionResolutionEnabled: boolean;
+  missionResolverConfigured: boolean;
   randomnessEngineConfigured: boolean;
   resourceTokensConfigured: {
     crystal: boolean;
@@ -90,6 +94,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS",
     problems
   );
+  const missionResolverAddress = parseAddress(
+    env.VEYDRIFT_MISSION_RESOLVER_ADDRESS,
+    "VEYDRIFT_MISSION_RESOLVER_ADDRESS",
+    problems
+  );
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
   const crystalTokenAddress = parseAddress(
     env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS,
@@ -129,6 +138,8 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       deploymentMode,
       ...(gameContractAddress ? { gameContractAddress } : {}),
       indexFromBlock,
+      missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress),
+      ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(moonContractAddress ? { moonContractAddress } : {}),
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
       resourceTokenAddresses,
@@ -150,6 +161,8 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     gameContractConfigured: Boolean(config.gameContractAddress),
     hasRpcUrl: Boolean(config.rpcUrl),
     moonContractConfigured: Boolean(config.moonContractAddress),
+    missionResolutionEnabled: config.missionResolutionEnabled,
+    missionResolverConfigured: Boolean(config.missionResolverAddress),
     randomnessEngineConfigured: Boolean(config.randomnessEngineAddress),
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),

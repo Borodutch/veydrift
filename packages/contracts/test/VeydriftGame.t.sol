@@ -1285,7 +1285,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
 
         vm.prank(player);
-        game.launchFleetMission(
+        uint256 secondMissionId = game.launchFleetMission(
             originPlanetId,
             targetPlanetId,
             VeydriftGameStorage.FleetMissionType.Attack,
@@ -1311,6 +1311,7 @@ contract VeydriftGameTest is Test {
         vm.warp(arrivalAt);
         game.resolveFleetMission(missionId);
         game.resolveFleetMission(missionId);
+        game.resolveFleetMission(secondMissionId);
 
         (status,, returnAt,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
@@ -1319,6 +1320,81 @@ contract VeydriftGameTest is Test {
         assertEq(game.activeFleetMissionCount(player), 1);
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 2);
         assertGt(game.planet(originPlanetId).resources.metal, 0);
+    }
+
+    function testDueUnresolvedAttackBlocksOnlyInvolvedStateUntilPublicResolution() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        address unrelated = address(0xCAFE);
+        vm.deal(unrelated, 1 ether);
+
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setTechnologyLevel(defender, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(targetPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(defender);
+        uint256 defenderColonyId = game.createColonyAtNextSlot(targetPlanetId, 160);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        vm.prank(defender);
+        game.renamePlanet(targetPlanetId, "still reactive");
+
+        vm.warp(arrivalAt);
+        bytes memory pendingResolutionError =
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, arrivalAt);
+
+        vm.prank(defender);
+        vm.expectRevert(pendingResolutionError);
+        game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
+
+        vm.prank(defender);
+        vm.expectRevert(pendingResolutionError);
+        game.startResearch(targetPlanetId, Technology.Energy);
+
+        vm.prank(defender);
+        vm.expectRevert(pendingResolutionError);
+        game.startShipProduction(targetPlanetId, Ship.LightFighter, 1);
+
+        vm.prank(defender);
+        vm.expectRevert(pendingResolutionError);
+        game.launchFleetMission(
+            targetPlanetId,
+            defenderColonyId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 1, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        vm.prank(player);
+        vm.expectRevert(pendingResolutionError);
+        game.recallFleetMission(missionId);
+
+        vm.prank(unrelated);
+        uint256 unrelatedPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setResources(unrelatedPlanetId, 10_000, 10_000, 10_000);
+        vm.prank(unrelated);
+        game.startBuildingUpgrade(unrelatedPlanetId, Building.MetalMine);
+
+        vm.prank(unrelated);
+        game.resolveFleetMission(missionId);
+        game.resolveFleetMission(missionId);
+
+        vm.prank(defender);
+        game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
     }
 
     function testFleetMissionStoresTimingAndDebitsFuelForMixedFleet() public {

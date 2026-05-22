@@ -159,6 +159,7 @@ const readerConfig: BackendConfig = {
   deploymentMode: "test",
   gameContractAddress: "0x1111111111111111111111111111111111111111",
   indexFromBlock: 100n,
+  missionResolutionEnabled: false,
   resourceTokenAddresses: {},
   rpcSource: "custom-url",
   rpcUrl: "https://example.invalid/rpc",

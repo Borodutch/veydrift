@@ -859,6 +859,31 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("submits VeydriftGame mission resolution transactions", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xresolve";
+    });
+
+    await expect(
+      sendResolveFleetMissionTransaction(provider, account, contract, "42")
+    ).resolves.toBe("0xresolve");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0xde09e7cf", [42])
+          }
+        ]
+      }
+    ]);
+  });
+
   test("submits alliance roster transactions", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {

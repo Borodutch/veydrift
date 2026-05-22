@@ -29,6 +29,7 @@ const configuredTestConfig: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
   indexFromBlock: 100n,
+  missionResolutionEnabled: false,
   resourceTokenAddresses: {
     crystal: "0x6666666666666666666666666666666666666666",
     deuterium: "0x7777777777777777777777777777777777777777",
@@ -612,6 +613,8 @@ describe("Veydrift backend", () => {
         deploymentMode: "local",
         hasRpcUrl: false,
         indexFromBlock: "0",
+        missionResolutionEnabled: false,
+        missionResolverConfigured: false,
         resourceTokensConfigured: {
           crystal: false,
           deuterium: false,
@@ -629,6 +632,7 @@ describe("Veydrift backend", () => {
       configured: false,
       chainSync: null,
       indexer: null,
+      missionResolution: null,
       rpc: null,
       ok: true,
       service: "veydrift-backend"

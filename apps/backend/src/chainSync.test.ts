@@ -13,6 +13,7 @@ const config: BackendConfig = {
   deploymentMode: "test",
   gameContractAddress: "0x3333333333333333333333333333333333333333",
   indexFromBlock: 100n,
+  missionResolutionEnabled: false,
   resourceTokenAddresses: {},
   rpcSource: "custom-url",
   rpcUrl: "https://example.invalid/rpc",

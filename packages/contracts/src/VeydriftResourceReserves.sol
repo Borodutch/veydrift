@@ -133,6 +133,16 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         _requireResourceReserve(Resource.Deuterium, required.deuterium, increase.deuterium);
     }
 
+    function _requireNoPendingMissionResolutionForPlanet(uint256 planetId) internal view {
+        uint256 missionId = _pendingMissionResolutionForPlanet(planetId);
+        if (missionId != 0) revert FleetMissionNotResolved(_fleetMissions[missionId].arrivalAt);
+    }
+
+    function _requireNoPendingMissionResolutionForPlayer(address player) internal view {
+        uint256 missionId = _pendingMissionResolutionForPlayer(player);
+        if (missionId != 0) revert FleetMissionNotResolved(_fleetMissions[missionId].arrivalAt);
+    }
+
     function _requireResourceReserve(Resource resource, uint128 currentRequired, uint128 increase)
         internal
         view
@@ -193,5 +203,75 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
 
     function _min(uint256 a, uint256 b) internal pure returns (uint256) {
         return a < b ? a : b;
+    }
+
+    function _pendingMissionResolutionForPlanet(uint256 planetId) private view returns (uint256) {
+        for (uint256 missionId = 1; missionId < nextFleetId; missionId++) {
+            FleetMission storage mission = _fleetMissions[missionId];
+            if (!_isPendingResolutionMission(mission)) continue;
+            if (mission.originPlanetId == planetId || mission.targetPlanetId == planetId) {
+                return missionId;
+            }
+            if (_pendingMissionResolutionTouchesCounterplayPlanet(missionId, planetId)) {
+                return missionId;
+            }
+        }
+        return 0;
+    }
+
+    function _pendingMissionResolutionForPlayer(address player) private view returns (uint256) {
+        for (uint256 missionId = 1; missionId < nextFleetId; missionId++) {
+            FleetMission storage mission = _fleetMissions[missionId];
+            if (!_isPendingResolutionMission(mission)) continue;
+            if (mission.owner == player || _planets[mission.targetPlanetId].owner == player) {
+                return missionId;
+            }
+            if (_pendingMissionResolutionTouchesCounterplayPlayer(missionId, player)) {
+                return missionId;
+            }
+        }
+        return 0;
+    }
+
+    function _pendingMissionResolutionTouchesCounterplayPlanet(uint256 missionId, uint256 planetId)
+        private
+        view
+        returns (bool)
+    {
+        uint256[] storage counterplayMissions = _fleetCounterplayMissions[missionId];
+        for (uint256 index = 0; index < counterplayMissions.length; index++) {
+            FleetMission storage counterplay = _fleetMissions[counterplayMissions[index]];
+            if (counterplay.originPlanetId == planetId || counterplay.targetPlanetId == planetId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function _pendingMissionResolutionTouchesCounterplayPlayer(uint256 missionId, address player)
+        private
+        view
+        returns (bool)
+    {
+        uint256[] storage counterplayMissions = _fleetCounterplayMissions[missionId];
+        for (uint256 index = 0; index < counterplayMissions.length; index++) {
+            FleetMission storage counterplay = _fleetMissions[counterplayMissions[index]];
+            if (counterplay.owner == player || _planets[counterplay.targetPlanetId].owner == player)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function _isPendingResolutionMission(FleetMission storage mission)
+        internal
+        view
+        returns (bool)
+    {
+        return mission.status == FleetMissionStatus.Outbound
+            && (mission.missionType == FleetMissionType.Attack
+                || mission.missionType == FleetMissionType.Harvest)
+            && block.timestamp >= mission.arrivalAt;
     }
 }

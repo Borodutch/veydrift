@@ -44,6 +44,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
+        _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         _validateShipProduction(planetId, ship, quantity);
         _settleResources(planetId);
 
@@ -69,6 +71,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function finishShipProduction(uint256 planetId) external {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         ShipQueue memory queue = shipQueues[planetId];
         if (!queue.active) revert QueueInactive();
         if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
@@ -77,6 +80,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint32 total = _shipCounts[planetId][queue.ship] + queue.quantity;
         _shipCounts[planetId][queue.ship] = total;
         emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
+    }
+
+    function finishDefenseProduction(uint256 planetId) external {
+        _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
+        DefenseQueue memory queue = defenseQueues[planetId];
+        if (!queue.active) revert QueueInactive();
+        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
+
+        delete defenseQueues[planetId];
+        uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
+        _defenseCounts[planetId][queue.defense] = total;
+        emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
     }
 
     function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
@@ -121,6 +137,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
         if (!counterplayMission && originPlanetId == targetPlanetId) revert SamePlanet();
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         if (missionType == FleetMissionType.MissileAttack) {
             revert InvalidMissionType(missionType);
         }
@@ -258,6 +276,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (mission.status != FleetMissionStatus.Outbound) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
+        _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
         if (_currentTimestamp() >= mission.arrivalAt) revert FleetAlreadyArrived();
         uint64 recallDeadline = mission.arrivalAt - FLEET_RECALL_CUTOFF_SECONDS;
         if (_currentTimestamp() > recallDeadline) revert FleetRecallCutoffPassed(recallDeadline);
@@ -342,6 +362,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         ) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
+        _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         if (_currentTimestamp() < mission.returnAt) revert FleetNotArrived(mission.returnAt);
 
         _planets[mission.originPlanetId].resources =
