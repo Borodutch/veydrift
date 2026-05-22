@@ -731,6 +731,36 @@ const shipCargoCapacityByKey: Record<ShipKey, number> = {
   crawler: 0,
 };
 
+const shipBattleStatsByKey: Record<ShipKey, { attack: number; shield: number; hull: number }> = {
+  smallCargo: { attack: 5, shield: 10, hull: 400 },
+  lightFighter: { attack: 50, shield: 10, hull: 400 },
+  recycler: { attack: 1, shield: 10, hull: 1_600 },
+  colonyShip: { attack: 50, shield: 100, hull: 3_000 },
+  largeCargo: { attack: 5, shield: 25, hull: 1_200 },
+  heavyFighter: { attack: 150, shield: 25, hull: 1_000 },
+  cruiser: { attack: 400, shield: 50, hull: 2_700 },
+  battleship: { attack: 1_000, shield: 200, hull: 6_000 },
+  bomber: { attack: 1_000, shield: 500, hull: 7_500 },
+  solarSatellite: { attack: 1, shield: 1, hull: 200 },
+  destroyer: { attack: 2_000, shield: 500, hull: 11_000 },
+  deathstar: { attack: 200_000, shield: 50_000, hull: 900_000 },
+  battlecruiser: { attack: 700, shield: 400, hull: 7_000 },
+  reaper: { attack: 2_800, shield: 700, hull: 14_000 },
+  pathfinder: { attack: 200, shield: 100, hull: 2_300 },
+  crawler: { attack: 1, shield: 1, hull: 400 },
+};
+
+const defenseBattleStatsByKey: Partial<Record<DefenseKey, { attack: number; shield: number; hull: number }>> = {
+  rocketLauncher: { attack: 80, shield: 20, hull: 200 },
+  lightLaser: { attack: 100, shield: 25, hull: 200 },
+  heavyLaser: { attack: 250, shield: 100, hull: 800 },
+  smallShieldDome: { attack: 1, shield: 2_000, hull: 2_000 },
+  gaussCannon: { attack: 1_100, shield: 200, hull: 3_500 },
+  ionCannon: { attack: 150, shield: 500, hull: 800 },
+  plasmaTurret: { attack: 3_000, shield: 300, hull: 10_000 },
+  largeShieldDome: { attack: 1, shield: 10_000, hull: 10_000 },
+};
+
 const fleetMissionShipKeys = new Set<ShipKey>([
   "smallCargo",
   "lightFighter",
@@ -749,10 +779,10 @@ const fleetMissionShipKeys = new Set<ShipKey>([
 ]);
 
 export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatBlock {
-  const structuralValue = resourceTotal(ship.baseCost);
+  const stats = shipBattleStatsByKey[ship.key];
   const notes = [
     "Mission fuel is distance and ship-count based; there is no separate per-ship fuel stat yet.",
-    "Rapid-fire and separate shield points are not part of the current Veydrift battle module.",
+    "Battle resolution uses six OGame-style rounds with shields, hull explosion checks, tech scaling, and rapid-fire where cataloged.",
   ];
 
   if (!fleetMissionShipKeys.has(ship.key)) {
@@ -763,13 +793,18 @@ export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatB
     rows: [
       {
         label: "Attack",
-        value: Math.max(1, Math.floor(structuralValue / 20)),
+        value: stats.attack,
         hint: "Scaled by Weapons Technology.",
       },
       {
+        label: "Shield",
+        value: stats.shield,
+        hint: "Scaled by Shielding Technology and refreshed each battle round.",
+      },
+      {
         label: "Hull",
-        value: Math.floor(structuralValue / 10),
-        hint: "Scaled by Armor and Shielding Technology in battle durability.",
+        value: stats.hull,
+        hint: "Scaled by Armor Technology for hull damage and explosion checks.",
       },
       {
         label: "Cargo",
@@ -784,7 +819,7 @@ export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatB
 export function defenseCombatStats(defense: (typeof defenseCatalog)[number]): CombatStatBlock {
   const battlefieldDefense = defense.id <= 7;
   const notes = battlefieldDefense
-    ? ["Rapid-fire and separate shield points are not part of the current Veydrift battle module."]
+    ? ["Battle resolution uses six OGame-style rounds with shields, hull explosion checks, tech scaling, and rapid-fire where cataloged."]
     : ["Missile attack and interception rules are separate from current fleet battle defense stats."];
 
   if (defense.key === "smallShieldDome" || defense.key === "largeShieldDome") {
@@ -809,21 +844,24 @@ export function defenseCombatStats(defense: (typeof defenseCatalog)[number]): Co
     };
   }
 
-  const structuralValue = resourceTotal(defense.baseCost);
+  const stats = defenseBattleStatsByKey[defense.key]!;
 
   return {
     rows: [
       {
         label: "Attack",
-        value: defense.key === "smallShieldDome" || defense.key === "largeShieldDome"
-          ? 1
-          : Math.max(1, Math.floor(structuralValue / 20)),
+        value: stats.attack,
         hint: "Scaled by Weapons Technology.",
       },
       {
+        label: "Shield",
+        value: stats.shield,
+        hint: "Scaled by Shielding Technology and refreshed each battle round.",
+      },
+      {
         label: "Hull",
-        value: Math.max(1, Math.floor(structuralValue / 10)),
-        hint: "Scaled by Armor and Shielding Technology in battle durability.",
+        value: stats.hull,
+        hint: "Scaled by Armor Technology for hull damage and explosion checks.",
       },
     ],
     notes,
@@ -1718,10 +1756,6 @@ function resourceEntries(resources: Resources): Array<[keyof Resources, number]>
     ["crystal", resources.crystal],
     ["deuterium", resources.deuterium],
   ];
-}
-
-function resourceTotal(resources: Resources): number {
-  return resources.metal + resources.crystal + resources.deuterium;
 }
 
 function multiply(resources: Resources, quantity: number): Resources {

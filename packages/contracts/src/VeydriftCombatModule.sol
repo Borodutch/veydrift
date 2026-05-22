@@ -175,10 +175,16 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
             if (attacker.units == 0 || defender.units == 0) break;
 
+            MissionShips memory attackerRoundShips = mission.ships;
             settlement.attackerLosses = _add(
                 settlement.attackerLosses,
                 _applyAttackerLosses(
-                    mission.ships, defender.attack, attacker.durability, settlement.seed, round
+                    mission.ships,
+                    mission.owner,
+                    missionId,
+                    mission.targetPlanetId,
+                    settlement.seed,
+                    round
                 )
             );
             settlement.defenderLosses = _add(
@@ -186,8 +192,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 _applyDefenderLosses(
                     missionId,
                     mission.targetPlanetId,
-                    attacker.attack,
-                    defender.durability,
+                    attackerRoundShips,
+                    mission.owner,
                     settlement.seed,
                     round
                 )
@@ -290,8 +296,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint16 armor
     ) private pure {
         stats.units += count;
-        stats.attack += _combatScaled(_shipAttack(ship), weapons) * count;
-        stats.durability += _combatScaled(_shipHull(ship), armor + shielding) * count;
+        stats.attack += _combatScaled(VeydriftCatalog.shipBattleAttack(ship), weapons) * count;
+        stats.durability += (_combatScaled(VeydriftCatalog.shipBattleHull(ship), armor)
+                + _combatScaled(VeydriftCatalog.shipBattleShield(ship), shielding)) * count;
     }
 
     function _addDefenseStats(
@@ -303,27 +310,316 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint16 armor
     ) private pure {
         stats.units += count;
-        stats.attack += _combatScaled(_defenseAttack(defense), weapons) * count;
-        stats.durability += _combatScaled(_defenseHull(defense), armor + shielding) * count;
+        stats.attack += _combatScaled(VeydriftCatalog.defenseBattleAttack(defense), weapons) * count;
+        stats.durability += (_combatScaled(VeydriftCatalog.defenseBattleHull(defense), armor)
+                + _combatScaled(VeydriftCatalog.defenseBattleShield(defense), shielding)) * count;
     }
 
     function _applyAttackerLosses(
         MissionShips storage ships,
-        uint256 incomingDamage,
-        uint256 durability,
+        address attackerOwner,
+        uint256 hostileMissionId,
+        uint256 targetPlanetId,
         uint256 seed,
         uint8 round
     ) private returns (Resources memory losses) {
-        uint256 lossBps = _lossBps(incomingDamage, durability);
-        if (lossBps == 0) return losses;
-
-        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+        address defender = _planets[targetPlanetId].owner;
+        uint16 weapons = _technologyLevels[defender][Technology.Weapons];
+        for (uint8 i = 0; i <= MAX_SHIP_ID;) {
             Ship ship = Ship(i);
-            uint32 count = _missionShipQuantity(ships, ship);
-            uint32 lost = _lossCount(count, lossBps, seed, round, 1, i);
-            if (lost != 0) {
-                _setMissionShipQuantity(ships, ship, count - lost);
-                losses = _add(losses, _multiply(_shipCost(ship), lost));
+            uint32 count = _shipCounts[targetPlanetId][ship];
+            if (count != 0) {
+                losses = _add(
+                    losses,
+                    _fireShipAtAttackers(
+                        ships, attackerOwner, ship, count, weapons, seed, round, 1, i
+                    )
+                );
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
+            Defense defense = Defense(i);
+            uint32 count = _defenseCounts[targetPlanetId][defense];
+            if (count != 0) {
+                losses = _add(
+                    losses,
+                    _fireDefenseAtAttackers(
+                        ships, attackerOwner, defense, count, weapons, seed, round, 2, i
+                    )
+                );
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        uint256[] storage counterplayMissionIds = _fleetCounterplayMissions[hostileMissionId];
+        for (uint256 i = 0; i < counterplayMissionIds.length;) {
+            uint256 counterplayMissionId = counterplayMissionIds[i];
+            FleetMission storage counterplay = _fleetMissions[counterplayMissionId];
+            if (_isQualifiedCounterplay(hostileMissionId, counterplay)) {
+                uint16 allyWeapons = _technologyLevels[counterplay.owner][Technology.Weapons];
+                for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
+                    Ship ship = Ship(shipId);
+                    uint32 count = _missionShipQuantity(counterplay.ships, ship);
+                    if (count != 0) {
+                        losses = _add(
+                            losses,
+                            _fireShipAtAttackers(
+                                ships,
+                                attackerOwner,
+                                ship,
+                                count,
+                                allyWeapons,
+                                seed,
+                                round,
+                                3,
+                                shipId
+                            )
+                        );
+                    }
+                    unchecked {
+                        ++shipId;
+                    }
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _fireShipAtAttackers(
+        MissionShips storage targets,
+        address targetOwner,
+        Ship firingShip,
+        uint32 firingCount,
+        uint16 firingWeapons,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private returns (Resources memory losses) {
+        uint256 groups = _missionShipGroupCount(targets);
+        if (groups == 0) return losses;
+
+        Ship targetShip = _missionShipByOrdinal(
+            targets, uint256(keccak256(abi.encode(seed, round, side, unit))) % groups
+        );
+        uint32 targetCount = _missionShipQuantity(targets, targetShip);
+        uint32 lost = _classicShipLossCount(
+            targetShip,
+            targetCount,
+            uint256(firingCount) * VeydriftCatalog.shipRapidfireAgainstShip(firingShip, targetShip),
+            _combatScaled(VeydriftCatalog.shipBattleAttack(firingShip), firingWeapons),
+            targetOwner,
+            seed,
+            round,
+            side,
+            unit
+        );
+        if (lost == 0) return losses;
+
+        _setMissionShipQuantity(targets, targetShip, targetCount - lost);
+        return _multiply(_shipCost(targetShip), lost);
+    }
+
+    function _fireDefenseAtAttackers(
+        MissionShips storage targets,
+        address targetOwner,
+        Defense firingDefense,
+        uint32 firingCount,
+        uint16 firingWeapons,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private returns (Resources memory losses) {
+        uint256 groups = _missionShipGroupCount(targets);
+        if (groups == 0) return losses;
+
+        Ship targetShip = _missionShipByOrdinal(
+            targets, uint256(keccak256(abi.encode(seed, round, side, unit))) % groups
+        );
+        uint32 targetCount = _missionShipQuantity(targets, targetShip);
+        uint32 lost = _classicShipLossCount(
+            targetShip,
+            targetCount,
+            firingCount,
+            _combatScaled(VeydriftCatalog.defenseBattleAttack(firingDefense), firingWeapons),
+            targetOwner,
+            seed,
+            round,
+            side,
+            unit
+        );
+        if (lost == 0) return losses;
+
+        _setMissionShipQuantity(targets, targetShip, targetCount - lost);
+        return _multiply(_shipCost(targetShip), lost);
+    }
+
+    function _fireShipAtDefenders(
+        uint256 hostileMissionId,
+        uint256 planetId,
+        Ship firingShip,
+        uint32 firingCount,
+        uint16 firingWeapons,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private returns (Resources memory losses) {
+        uint256 groups = _defenderGroupCount(hostileMissionId, planetId);
+        if (groups == 0) return losses;
+
+        uint256 ordinal = uint256(keccak256(abi.encode(seed, round, side, unit))) % groups;
+        uint256 attack = _combatScaled(VeydriftCatalog.shipBattleAttack(firingShip), firingWeapons);
+        return _applyShipFireToDefenderTarget(
+            hostileMissionId,
+            planetId,
+            firingShip,
+            firingCount,
+            attack,
+            ordinal,
+            seed,
+            round,
+            side,
+            unit
+        );
+    }
+
+    function _applyShipFireToDefenderTarget(
+        uint256 hostileMissionId,
+        uint256 planetId,
+        Ship firingShip,
+        uint32 firingCount,
+        uint256 attack,
+        uint256 ordinal,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private returns (Resources memory losses) {
+        for (uint8 i = 0; i <= MAX_SHIP_ID;) {
+            Ship ship = Ship(i);
+            uint32 count = _shipCounts[planetId][ship];
+            if (count != 0) {
+                if (ordinal == 0) {
+                    uint32 lost = _classicPlanetShipLossCount(
+                        planetId,
+                        ship,
+                        count,
+                        uint256(firingCount)
+                            * VeydriftCatalog.shipRapidfireAgainstShip(firingShip, ship),
+                        attack,
+                        seed,
+                        round,
+                        side,
+                        unit
+                    );
+                    if (lost != 0) {
+                        _shipCounts[planetId][ship] = count - lost;
+                        _recordCombatWreckage(planetId, ship, lost);
+                        return _multiply(_shipCost(ship), lost);
+                    }
+                    return losses;
+                }
+                unchecked {
+                    --ordinal;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
+            Defense defense = Defense(i);
+            uint32 count = _defenseCounts[planetId][defense];
+            if (count != 0) {
+                if (ordinal == 0) {
+                    uint32 lost = _classicDefenseLossCount(
+                        planetId,
+                        defense,
+                        count,
+                        uint256(firingCount)
+                            * VeydriftCatalog.shipRapidfireAgainstDefense(firingShip, defense),
+                        attack,
+                        seed,
+                        round,
+                        side,
+                        unit
+                    );
+                    if (lost != 0) {
+                        _defenseCounts[planetId][defense] = count - lost;
+                        return _multiply(_defenseCost(defense), lost);
+                    }
+                    return losses;
+                }
+                unchecked {
+                    --ordinal;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        return _applyShipFireToCounterplayTarget(
+            hostileMissionId, firingShip, firingCount, attack, ordinal, seed, round, side, unit
+        );
+    }
+
+    function _applyShipFireToCounterplayTarget(
+        uint256 hostileMissionId,
+        Ship firingShip,
+        uint32 firingCount,
+        uint256 attack,
+        uint256 ordinal,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private returns (Resources memory losses) {
+        uint256[] storage counterplayMissionIds = _fleetCounterplayMissions[hostileMissionId];
+        for (uint256 i = 0; i < counterplayMissionIds.length;) {
+            uint256 counterplayMissionId = counterplayMissionIds[i];
+            FleetMission storage counterplay = _fleetMissions[counterplayMissionId];
+            if (_isQualifiedCounterplay(hostileMissionId, counterplay)) {
+                for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
+                    Ship targetShip = Ship(shipId);
+                    uint32 count = _missionShipQuantity(counterplay.ships, targetShip);
+                    if (count != 0) {
+                        if (ordinal == 0) {
+                            uint32 lost = _classicShipLossCount(
+                                targetShip,
+                                count,
+                                uint256(firingCount)
+                                    * VeydriftCatalog.shipRapidfireAgainstShip(
+                                        firingShip, targetShip
+                                    ),
+                                attack,
+                                counterplay.owner,
+                                seed,
+                                round,
+                                side,
+                                unit
+                            );
+                            if (lost != 0) {
+                                _setMissionShipQuantity(counterplay.ships, targetShip, count - lost);
+                                return _multiply(_shipCost(targetShip), lost);
+                            }
+                            return losses;
+                        }
+                        unchecked {
+                            --ordinal;
+                        }
+                    }
+                    unchecked {
+                        ++shipId;
+                    }
+                }
             }
             unchecked {
                 ++i;
@@ -334,70 +630,191 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     function _applyDefenderLosses(
         uint256 hostileMissionId,
         uint256 planetId,
-        uint256 incomingDamage,
-        uint256 durability,
+        MissionShips memory attackerRoundShips,
+        address attackerOwner,
         uint256 seed,
         uint8 round
     ) private returns (Resources memory losses) {
-        uint256 lossBps = _lossBps(incomingDamage, durability);
-        if (lossBps == 0) return losses;
-
-        for (uint8 i = 0; i <= MAX_SHIP_ID;) {
+        uint16 weapons = _technologyLevels[attackerOwner][Technology.Weapons];
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            uint32 count = _shipCounts[planetId][ship];
-            uint32 lost = _lossCount(count, lossBps, seed, round, 2, i);
-            if (lost != 0) {
-                _shipCounts[planetId][ship] = count - lost;
-                losses = _add(losses, _multiply(_shipCost(ship), lost));
-                _recordCombatWreckage(planetId, ship, lost);
+            uint32 count = _missionShipQuantity(attackerRoundShips, ship);
+            if (count != 0) {
+                losses = _add(
+                    losses,
+                    _fireShipAtDefenders(
+                        hostileMissionId, planetId, ship, count, weapons, seed, round, 4, i
+                    )
+                );
             }
             unchecked {
                 ++i;
             }
         }
-        for (uint8 i = 0; i <= MAX_DEFENSE_ID;) {
-            Defense defense = Defense(i);
-            uint32 count = _defenseCounts[planetId][defense];
-            if (i <= uint8(Defense.LargeShieldDome)) {
-                uint32 lost = _lossCount(count, lossBps, seed, round, 3, i);
-                if (lost != 0) {
-                    _defenseCounts[planetId][defense] = count - lost;
-                    losses = _add(losses, _multiply(_defenseCost(defense), lost));
+    }
+
+    function _classicPlanetShipLossCount(
+        uint256 planetId,
+        Ship ship,
+        uint32 count,
+        uint256 shots,
+        uint256 attack,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private view returns (uint32) {
+        address owner = _planets[planetId].owner;
+        return _classicShipLossCount(ship, count, shots, attack, owner, seed, round, side, unit);
+    }
+
+    function _classicShipLossCount(
+        Ship ship,
+        uint32 count,
+        uint256 shots,
+        uint256 attack,
+        address owner,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private view returns (uint32) {
+        uint16 shielding = _technologyLevels[owner][Technology.Shielding];
+        uint16 armor = _technologyLevels[owner][Technology.Armor];
+        return _classicLossCount(
+            count,
+            shots,
+            attack,
+            _combatScaled(VeydriftCatalog.shipBattleShield(ship), shielding),
+            _combatScaled(VeydriftCatalog.shipBattleHull(ship), armor),
+            seed,
+            round,
+            side,
+            unit
+        );
+    }
+
+    function _classicDefenseLossCount(
+        uint256 planetId,
+        Defense defense,
+        uint32 count,
+        uint256 shots,
+        uint256 attack,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private view returns (uint32) {
+        address owner = _planets[planetId].owner;
+        uint16 shielding = _technologyLevels[owner][Technology.Shielding];
+        uint16 armor = _technologyLevels[owner][Technology.Armor];
+        return _classicLossCount(
+            count,
+            shots,
+            attack,
+            _combatScaled(VeydriftCatalog.defenseBattleShield(defense), shielding),
+            _combatScaled(VeydriftCatalog.defenseBattleHull(defense), armor),
+            seed,
+            round,
+            side,
+            unit
+        );
+    }
+
+    function _classicLossCount(
+        uint32 count,
+        uint256 shots,
+        uint256 attack,
+        uint256 shield,
+        uint256 hull,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private pure returns (uint32) {
+        if (count == 0 || shots == 0 || attack == 0 || hull == 0) return 0;
+
+        uint256 targeted = shots < count ? shots : count;
+        uint256 shotsPerTarget = (shots + targeted - 1) / targeted;
+        uint256 damage = attack * shotsPerTarget;
+        if (damage <= shield || damage <= shield / 100) return 0;
+
+        uint256 hullDamage = damage - shield;
+        // targeted is capped by count, which is already uint32.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (hullDamage >= hull) return uint32(targeted);
+
+        uint256 damageBps = (hullDamage * BPS) / hull;
+        if (damageBps <= 3_000) return 0;
+
+        uint256 scaled = targeted * damageBps;
+        // scaled / BPS is bounded by targeted, which is capped by uint32 count.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint32 lost = uint32(scaled / BPS);
+        if (uint256(keccak256(abi.encode(seed, round, side, unit, shots))) % BPS < scaled % BPS) {
+            lost += 1;
+        }
+        // targeted is capped by count, which is already uint32.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return lost > targeted ? uint32(targeted) : lost;
+    }
+
+    function _missionShipGroupCount(MissionShips storage ships)
+        private
+        pure
+        returns (uint256 groups)
+    {
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            if (_missionShipQuantity(ships, Ship(i)) != 0) groups += 1;
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _missionShipByOrdinal(MissionShips storage ships, uint256 ordinal)
+        private
+        pure
+        returns (Ship)
+    {
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            if (_missionShipQuantity(ships, ship) != 0) {
+                if (ordinal == 0) return ship;
+                unchecked {
+                    --ordinal;
                 }
             }
             unchecked {
                 ++i;
             }
         }
-        losses = _add(
-            losses,
-            _applyCounterplayLosses(hostileMissionId, incomingDamage, durability, seed, round)
-        );
+        return Ship.SmallCargo;
     }
 
-    function _applyCounterplayLosses(
-        uint256 hostileMissionId,
-        uint256 incomingDamage,
-        uint256 durability,
-        uint256 seed,
-        uint8 round
-    ) private returns (Resources memory losses) {
-        uint256 lossBps = _lossBps(incomingDamage, durability);
-        if (lossBps == 0) return losses;
-
+    function _defenderGroupCount(uint256 hostileMissionId, uint256 planetId)
+        private
+        view
+        returns (uint256 groups)
+    {
+        for (uint8 i = 0; i <= MAX_SHIP_ID;) {
+            if (_shipCounts[planetId][Ship(i)] != 0) groups += 1;
+            unchecked {
+                ++i;
+            }
+        }
+        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
+            if (_defenseCounts[planetId][Defense(i)] != 0) groups += 1;
+            unchecked {
+                ++i;
+            }
+        }
         uint256[] storage counterplayMissionIds = _fleetCounterplayMissions[hostileMissionId];
         for (uint256 i = 0; i < counterplayMissionIds.length;) {
-            uint256 counterplayMissionId = counterplayMissionIds[i];
-            FleetMission storage counterplay = _fleetMissions[counterplayMissionId];
+            FleetMission storage counterplay = _fleetMissions[counterplayMissionIds[i]];
             if (_isQualifiedCounterplay(hostileMissionId, counterplay)) {
                 for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
-                    Ship ship = Ship(shipId);
-                    uint32 count = _missionShipQuantity(counterplay.ships, ship);
-                    uint32 lost = _lossCount(count, lossBps, seed, round, 4, shipId);
-                    if (lost != 0) {
-                        _setMissionShipQuantity(counterplay.ships, ship, count - lost);
-                        losses = _add(losses, _multiply(_shipCost(ship), lost));
-                    }
+                    if (_missionShipQuantity(counterplay.ships, Ship(shipId)) != 0) groups += 1;
                     unchecked {
                         ++shipId;
                     }
@@ -607,33 +1024,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         return _toUint128(_min(loot, capacity));
     }
 
-    function _lossBps(uint256 incomingDamage, uint256 durability) private pure returns (uint256) {
-        if (incomingDamage == 0 || durability == 0) return 0;
-        uint256 scaled = (incomingDamage * BPS) / durability;
-        return scaled > BPS ? BPS : scaled;
-    }
-
-    function _lossCount(
-        uint32 count,
-        uint256 lossBps,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint8 unit
-    ) private pure returns (uint32) {
-        if (count == 0 || lossBps == 0) return 0;
-        if (lossBps >= BPS) return count;
-
-        uint256 scaled = uint256(count) * lossBps;
-        // The quotient is bounded by count because lossBps is below BPS.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint32 lost = uint32(scaled / BPS);
-        if (uint256(keccak256(abi.encode(seed, round, side, unit))) % BPS < scaled % BPS) {
-            lost += 1;
-        }
-        return lost > count ? count : lost;
-    }
-
     function _combatScaled(uint256 value, uint16 technologyLevel) private pure returns (uint256) {
         return (value * (BPS + uint256(technologyLevel) * 1_000)) / BPS;
     }
@@ -694,28 +1084,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (ship == Ship.Reaper) return ships.reaper;
         if (ship == Ship.Pathfinder) return ships.pathfinder;
         return 0;
-    }
-
-    function _shipAttack(Ship ship) private pure returns (uint256) {
-        uint256 attack = VeydriftCatalog.shipStructuralValue(ship) / 20;
-        return attack == 0 ? 1 : attack;
-    }
-
-    function _shipHull(Ship ship) private pure returns (uint256) {
-        return VeydriftCatalog.shipStructuralValue(ship) / 10;
-    }
-
-    function _defenseAttack(Defense defense) private pure returns (uint256) {
-        if (VeydriftCatalog.isShieldDome(defense)) return 1;
-        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.defenseCost(defense);
-        uint256 attack = (uint256(metal) + crystal + deuterium) / 20;
-        return attack == 0 ? 1 : attack;
-    }
-
-    function _defenseHull(Defense defense) private pure returns (uint256) {
-        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.defenseCost(defense);
-        uint256 hull = (uint256(metal) + crystal + deuterium) / 10;
-        return hull == 0 ? 1 : hull;
     }
 
     function _shipCost(Ship ship) private pure returns (Resources memory) {

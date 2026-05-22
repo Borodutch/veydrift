@@ -16,7 +16,8 @@ describe("combat stat info controls", () => {
     expect(ariaLabels(control)).toContain("Open Light Fighter combat stats");
     expect(text).toContain("Battle stats");
     expect(text).toContain("Attack");
-    expect(text).toContain("200");
+    expect(text).toContain("50");
+    expect(text).toContain("Shield");
     expect(text).toContain("Hull");
     expect(text).toContain("400");
     expect(text).toContain("Cargo");
@@ -30,7 +31,7 @@ describe("combat stat info controls", () => {
     expect(visibleText(CombatStatsInfoButton({
       label: rocketLauncher.label,
       stats: defenseCombatStats(rocketLauncher),
-    }))).toContain("100");
+    }))).toContain("80");
     expect(visibleText(CombatStatsInfoButton({
       label: interplanetaryMissile.label,
       stats: defenseCombatStats(interplanetaryMissile),
