@@ -505,17 +505,16 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour)
     {
         Planet storage planetRef = _planets[planetId];
-        if (planetRef.owner == address(0)) revert NoPlanet();
         return VeydriftFormulas.productionPerHour(
             _buildingLevels[planetId][Building.MetalMine],
             _buildingLevels[planetId][Building.CrystalMine],
             _buildingLevels[planetId][Building.DeuteriumSynthesizer],
             _buildingLevels[planetId][Building.SolarPlant],
             _buildingLevels[planetId][Building.FusionReactor],
+            _technologyLevels[planetRef.owner][Technology.Energy],
             planetRef.metalMultiplierBps,
             planetRef.crystalMultiplierBps,
-            planetRef.deuteriumMultiplierBps,
-            BPS
+            planetRef.deuteriumMultiplierBps
         );
     }
 

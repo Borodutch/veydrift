@@ -163,6 +163,7 @@ export type InfrastructureState = {
   storageCaps: Resources | null;
   protectedResources: Resources | null;
   raidableResources: Resources | null;
+  technologyLevels: Record<string, number>;
   buildings: Array<{
     id: number;
     level: number;
@@ -675,6 +676,7 @@ export class VeydriftGameReader implements ChainReader {
         storageCaps: null,
         protectedResources: null,
         raidableResources: null,
+        technologyLevels: {},
         buildings: [],
         queue: null
       };
@@ -691,6 +693,7 @@ export class VeydriftGameReader implements ChainReader {
         storageCaps: null,
         protectedResources: null,
         raidableResources: null,
+        technologyLevels: {},
         buildings: Array.from({ length: buildingCount }, (_, id) => ({
           id,
           level: 0,
@@ -709,7 +712,8 @@ export class VeydriftGameReader implements ChainReader {
       protectedResources,
       raidableResources,
       queue,
-      buildings
+      buildings,
+      technologyLevels
     ] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readResources("0x9ec5e0d5", planetId),
@@ -718,7 +722,8 @@ export class VeydriftGameReader implements ChainReader {
       this.readOptionalResources("0x222a58f5", planetId),
       this.readOptionalResources("0x1da1f692", planetId),
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
-      this.readBuildingRows(planetId)
+      this.readBuildingRows(planetId),
+      this.readTechnologyLevels(wallet)
     ]);
 
     return {
@@ -731,6 +736,7 @@ export class VeydriftGameReader implements ChainReader {
       storageCaps,
       protectedResources,
       raidableResources,
+      technologyLevels,
       buildings,
       queue
     };
@@ -1925,21 +1931,28 @@ export function riftRequirements(
       key: "roboticsFactory",
       label: "Robotics Factory",
       currentLevel: roboticsLevel,
-      requiredLevel: 2
+      requiredLevel: 4
     },
     {
       kind: "building",
       key: "researchLab",
       label: "Research Lab",
       currentLevel: researchLabLevel,
-      requiredLevel: 1
+      requiredLevel: 2
     },
     {
       kind: "technology",
       key: "energy",
       label: "Energy Technology",
       currentLevel: technologyLevels["0"] ?? 0,
-      requiredLevel: 2
+      requiredLevel: 5
+    },
+    {
+      kind: "technology",
+      key: "hyperspace",
+      label: "Hyperspace Technology",
+      currentLevel: technologyLevels["9"] ?? 0,
+      requiredLevel: 1
     },
   ];
 }

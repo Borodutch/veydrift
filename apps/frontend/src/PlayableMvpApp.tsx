@@ -716,13 +716,20 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   ]);
   const rates = useMemo(() => {
     const production = infrastructureChainState?.productionPerHour;
-    if (!production) return productionPerHour(settledState.buildings, planetProductionProfile);
+    if (!production) {
+      return productionPerHour(settledState.buildings, planetProductionProfile, settledState.research.energy);
+    }
     return {
       metal: Number(production.metal),
       crystal: Number(production.crystal),
       deuterium: Number(production.deuterium),
     };
-  }, [infrastructureChainState?.productionPerHour, planetProductionProfile, settledState.buildings]);
+  }, [
+    infrastructureChainState?.productionPerHour,
+    planetProductionProfile,
+    settledState.buildings,
+    settledState.research.energy,
+  ]);
   const caps = useMemo(() => {
     const nextCaps = infrastructureChainState?.storageCaps;
     if (!nextCaps) return storageCaps(settledState.buildings);
@@ -804,13 +811,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     return energyBalanceFromChain(infrastructureChainState.energyBalance)
-      ?? energyBalance(settledState.buildings);
+      ?? energyBalance(settledState.buildings, settledState.research.energy);
   }, [
     infrastructureChainState,
     infrastructureError,
     infrastructureLoading,
     isWalletConnected,
     settledState.buildings,
+    settledState.research.energy,
   ]);
 
   useEffect(() => {

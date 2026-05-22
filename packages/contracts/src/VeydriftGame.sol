@@ -417,8 +417,6 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function previewResources(uint256 planetId) public view returns (Resources memory resources) {
         Planet storage planetRef = _planets[planetId];
-        if (planetRef.owner == address(0)) revert NoPlanet();
-
         resources = planetRef.resources;
         uint256 elapsed = uint256(_currentTimestamp()) - planetRef.lastSettledAt;
         if (elapsed == 0) return resources;
@@ -440,17 +438,16 @@ contract VeydriftGame is VeydriftResourceReserves {
         returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour)
     {
         Planet storage planetRef = _planets[planetId];
-        if (planetRef.owner == address(0)) revert NoPlanet();
         return VeydriftFormulas.productionPerHour(
             _buildingLevels[planetId][Building.MetalMine],
             _buildingLevels[planetId][Building.CrystalMine],
             _buildingLevels[planetId][Building.DeuteriumSynthesizer],
             _buildingLevels[planetId][Building.SolarPlant],
             _buildingLevels[planetId][Building.FusionReactor],
+            _technologyLevels[planetRef.owner][Technology.Energy],
             planetRef.metalMultiplierBps,
             planetRef.crystalMultiplierBps,
-            planetRef.deuteriumMultiplierBps,
-            BPS
+            planetRef.deuteriumMultiplierBps
         );
     }
 
@@ -459,13 +456,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         view
         returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps)
     {
+        Planet storage planetRef = _planets[planetId];
         return VeydriftFormulas.energyBalance(
             _buildingLevels[planetId][Building.MetalMine],
             _buildingLevels[planetId][Building.CrystalMine],
             _buildingLevels[planetId][Building.DeuteriumSynthesizer],
             _buildingLevels[planetId][Building.SolarPlant],
             _buildingLevels[planetId][Building.FusionReactor],
-            BPS
+            _technologyLevels[planetRef.owner][Technology.Energy]
         );
     }
 

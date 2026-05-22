@@ -5,6 +5,7 @@ import {
   buildingRequirementsFor,
   canAfford,
   energyBalance,
+  fusionReactorDeuteriumConsumption,
   productionCapacityPerHour,
   storageCaps,
   unmetBuildingRequirement,
@@ -52,6 +53,7 @@ export type BuildingLevelInfoRow = {
   effect?: string;
   energyProduced?: number;
   energyRequired?: number;
+  deuteriumConsumed?: number;
   level: number;
   next: boolean;
   production?: {
@@ -66,6 +68,7 @@ export type BuildingLevelInfoRow = {
 
 export type BuildingLevelInfoColumns = {
   effect: boolean;
+  deuteriumConsumed: boolean;
   energyProduced: boolean;
   energyRequired: boolean;
   production: boolean;
@@ -140,6 +143,7 @@ export function buildingLevelInfoRows(
   key: BuildingKey,
   profile?: PlanetProductionProfile | undefined,
   maxLevel = MAX_BUILDING_LEVEL,
+  energyTechnologyLevel = 0,
 ): BuildingLevelInfoRow[] {
   const currentLevel = buildings[key];
   const cappedMaxLevel = Math.max(1, maxLevel);
@@ -168,8 +172,12 @@ export function buildingLevelInfoRows(
       return row;
     }
 
-    if (key === "solarPlant") {
-      row.energyProduced = energyBalance(rowBuildings).produced;
+    if (key === "solarPlant" || key === "fusionReactor") {
+      const energy = energyBalance(rowBuildings, energyTechnologyLevel);
+      row.energyProduced = energy.produced;
+      if (key === "fusionReactor") {
+        row.deuteriumConsumed = fusionReactorDeuteriumConsumption(level);
+      }
       return row;
     }
 
@@ -189,6 +197,7 @@ export function buildingLevelInfoRows(
 
 export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): BuildingLevelInfoColumns {
   return {
+    deuteriumConsumed: rows.some((row) => row.deuteriumConsumed !== undefined),
     effect: rows.some((row) => row.effect !== undefined),
     energyProduced: rows.some((row) => row.energyProduced !== undefined),
     energyRequired: rows.some((row) => row.energyRequired !== undefined),
@@ -214,10 +223,14 @@ function formatBuildingRequirement(requirement: ReturnType<typeof buildingRequir
 export function buildingEnergyDetail(
   buildings: Record<BuildingKey, number>,
   key: BuildingKey,
+  energyTechnologyLevel = 0,
 ): BuildingEnergyDetail {
-  if (key === "solarPlant") {
-    const current = energyBalance(buildings).produced;
-    const next = energyBalance({ ...buildings, solarPlant: buildings.solarPlant + 1 }).produced;
+  if (key === "solarPlant" || key === "fusionReactor") {
+    const current = energyBalance(buildings, energyTechnologyLevel).produced;
+    const next = energyBalance(
+      { ...buildings, [key]: buildings[key] + 1 },
+      energyTechnologyLevel,
+    ).produced;
     return {
       kind: "produces",
       current,

@@ -166,6 +166,7 @@ export type PlayableState = {
 };
 
 export type EnergyBalance = {
+  deuteriumConsumed: number;
   produced: number;
   required: number;
   scaleBps: number;
@@ -187,9 +188,12 @@ export type BuildingEffectMetrics =
     }
   | {
       kind: "energy";
+      currentDeuteriumConsumed: number;
       currentProduced: number;
+      deltaDeuteriumConsumed: number;
       nextProduced: number;
       deltaProduced: number;
+      nextDeuteriumConsumed: number;
       required: number;
     }
   | {
@@ -975,15 +979,16 @@ export function createInitialPlayableState(now = Date.now()): PlayableState {
 export function productionPerHour(
   buildings: Record<BuildingKey, number>,
   profile: PlanetProductionProfile = PLANET,
+  energyTechnologyLevel = 0,
 ): Resources {
-  const energy = energyBalance(buildings);
+  const energy = energyBalance(buildings, energyTechnologyLevel);
 
   const capacity = productionCapacityPerHour(buildings, profile);
 
   return {
     metal: scaleByBps(capacity.metal, energy.scaleBps),
     crystal: scaleByBps(capacity.crystal, energy.scaleBps),
-    deuterium: scaleByBps(capacity.deuterium, energy.scaleBps),
+    deuterium: scaleByBps(Math.max(0, capacity.deuterium - energy.deuteriumConsumed), energy.scaleBps),
   };
 }
 
@@ -998,15 +1003,20 @@ export function productionCapacityPerHour(
   };
 }
 
-export function energyBalance(buildings: Record<BuildingKey, number>): EnergyBalance {
+export function energyBalance(
+  buildings: Record<BuildingKey, number>,
+  energyTechnologyLevel = 0,
+): EnergyBalance {
   const required = (
     scaledLevelValue(10, buildings.metalMine)
     + scaledLevelValue(10, buildings.crystalMine)
     + scaledLevelValue(20, buildings.deuteriumSynthesizer)
   );
-  const produced = scaledLevelValue(20, buildings.solarPlant);
+  const produced = scaledLevelValue(20, buildings.solarPlant)
+    + fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel);
 
   return {
+    deuteriumConsumed: fusionReactorDeuteriumConsumption(buildings.fusionReactor),
     produced,
     required,
     scaleBps: required === 0 || produced >= required
@@ -1039,6 +1049,7 @@ export function buildingEffectMetrics(
   buildings: Record<BuildingKey, number>,
   key: BuildingKey,
   profile: PlanetProductionProfile = PLANET,
+  energyTechnologyLevel = 0,
 ): BuildingEffectMetrics {
   const nextBuildings = {
     ...buildings,
@@ -1059,15 +1070,18 @@ export function buildingEffectMetrics(
     };
   }
 
-  if (key === "solarPlant") {
-    const current = energyBalance(buildings);
-    const next = energyBalance(nextBuildings);
+  if (key === "solarPlant" || key === "fusionReactor") {
+    const current = energyBalance(buildings, energyTechnologyLevel);
+    const next = energyBalance(nextBuildings, energyTechnologyLevel);
 
     return {
       kind: "energy",
+      currentDeuteriumConsumed: current.deuteriumConsumed,
       currentProduced: current.produced,
-      nextProduced: next.produced,
+      deltaDeuteriumConsumed: next.deuteriumConsumed - current.deuteriumConsumed,
       deltaProduced: next.produced - current.produced,
+      nextDeuteriumConsumed: next.deuteriumConsumed,
+      nextProduced: next.produced,
       required: current.required,
     };
   }
@@ -1182,7 +1196,7 @@ export function unmetResearchRequirement(
     }
 
     if (requirement.type === "energy") {
-      return energyBalance(state.buildings).produced < requirement.produced;
+      return energyBalance(state.buildings, state.research.energy).produced < requirement.produced;
     }
 
     return state.research[requirement.key] < requirement.level;
@@ -1372,12 +1386,26 @@ function buildingCostFactor(key: BuildingKey): [number, number] {
     return [16, 10];
   }
 
+  if (key === "fusionReactor") {
+    return [18, 10];
+  }
+
   return [2, 1];
 }
 
 function scaledLevelValue(base: number, level: number): number {
   if (level === 0) return 0;
   return Math.floor((base * level * (11 ** level)) / (10 ** level));
+}
+
+export function fusionReactorEnergyProduction(level: number, energyTechnologyLevel: number): number {
+  if (level === 0) return 0;
+  return Math.floor((30 * level * ((105 + energyTechnologyLevel) ** level)) / (100 ** level));
+}
+
+export function fusionReactorDeuteriumConsumption(level: number): number {
+  if (level === 0) return 0;
+  return Math.ceil((10 * level * (11 ** level)) / (10 ** level));
 }
 
 function scaleByFactor(value: number, exponent: number, numerator: number, denominator: number): number {
@@ -1444,6 +1472,26 @@ const STORAGE_CAPS = [
   292_924_545_000,
   536_987_950_000,
   984_403_885_000,
+  1_804_604_750_000,
+  3_308_193_270_000,
+  6_064_564_940_000,
+  11_117_533_015_000,
+  20_380_611_235_000,
+  37_361_644_330_000,
+  68_491_197_375_000,
+  125_557_753_210_000,
+  230_171_905_210_000,
+  421_950_095_435_000,
+  773_517_006_225_000,
+  1_418_007_876_745_000,
+  2_599_485_625_175_000,
+  4_765_365_289_085_000,
+  8_735_846_091_420_000,
+  16_014_513_537_450_000,
+  29_357_733_773_850_000,
+  53_818_464_752_040_000,
+  98_659_766_131_065_000,
+  180_862_636_975_685_000,
 ];
 
 function storageCap(level: number): number {
