@@ -77,21 +77,28 @@ describe("Rift requirement projection", () => {
         key: "roboticsFactory",
         label: "Robotics Factory",
         currentLevel: 0,
-        requiredLevel: 2
+        requiredLevel: 4
       },
       {
         kind: "building",
         key: "researchLab",
         label: "Research Lab",
         currentLevel: 0,
-        requiredLevel: 1
+        requiredLevel: 2
       },
       {
         kind: "technology",
         key: "energy",
         label: "Energy Technology",
         currentLevel: 0,
-        requiredLevel: 2
+        requiredLevel: 5
+      },
+      {
+        kind: "technology",
+        key: "hyperspace",
+        label: "Hyperspace Technology",
+        currentLevel: 0,
+        requiredLevel: 1
       }
     ]);
   });
@@ -207,6 +214,9 @@ class MockChainReader implements ChainReader {
         metal: "4000",
         crystal: "3900",
         deuterium: "3800"
+      },
+      technologyLevels: {
+        "0": 3
       },
       buildings: [
         {
@@ -951,6 +961,7 @@ describe("Veydrift backend", () => {
         }
         if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;
         if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0xe512884c") return abiWords(0n) as T;
 
         throw new Error(`Unexpected individual call ${selector}`);
       },

@@ -5,6 +5,7 @@ import {
   createInitialPlayableState,
   researchCatalog,
   type BuildingKey,
+  type EnergyBalance,
   type PlayableState,
   type Resources,
 } from "./playableMvp";
@@ -33,6 +34,12 @@ export function infrastructurePlayableState(
   return {
     ...state,
     buildings: buildingLevels(infrastructureState),
+    research: Object.fromEntries(
+      researchCatalog.map((research) => [
+        research.key,
+        infrastructureState.technologyLevels?.[research.id.toString()] ?? 0,
+      ]),
+    ) as PlayableState["research"],
     resources: toResources(infrastructureState.resources) ?? state.resources,
     queue: buildingQueueForDisplay(infrastructureState, now) ?? undefined,
   };
@@ -96,9 +103,10 @@ export function resourcesFromChain(value: ChainInfrastructureState["resources"])
 
 export function energyBalanceFromChain(
   value: ChainInfrastructureState["energyBalance"],
-): { produced: number; required: number; scaleBps: number } | undefined {
+): EnergyBalance | undefined {
   if (!value) return undefined;
   return {
+    deuteriumConsumed: 0,
     produced: Number(value.produced),
     required: Number(value.required),
     scaleBps: Number(value.scaleBps),

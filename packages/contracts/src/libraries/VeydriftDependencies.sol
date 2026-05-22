@@ -24,14 +24,14 @@ library VeydriftDependencies {
         if (building == Building.NaniteFactory && roboticsFactoryLevel < 10) {
             revert MissingDependency("ROBOTICS_FACTORY_10");
         }
-        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 2) {
-            revert MissingDependency("ROBOTICS_FACTORY_2");
+        if (building == Building.InterdimensionalRiftStabilizer && roboticsFactoryLevel < 4) {
+            revert MissingDependency("ROBOTICS_FACTORY_4");
         }
-        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 1) {
-            revert MissingDependency("RESEARCH_LAB_1");
+        if (building == Building.InterdimensionalRiftStabilizer && researchLabLevel < 2) {
+            revert MissingDependency("RESEARCH_LAB_2");
         }
-        if (building == Building.InterdimensionalRiftStabilizer && energyLevel < 2) {
-            revert MissingDependency("ENERGY_2");
+        if (building == Building.InterdimensionalRiftStabilizer && energyLevel < 5) {
+            revert MissingDependency("ENERGY_5");
         }
     }
 

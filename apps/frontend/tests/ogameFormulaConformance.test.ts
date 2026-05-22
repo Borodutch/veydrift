@@ -6,6 +6,8 @@ import {
   createInitialPlayableState,
   defenseCatalog,
   energyBalance,
+  fusionReactorDeuteriumConsumption,
+  fusionReactorEnergyProduction,
   missingUnlockRequirements,
   productionCapacityPerHour,
   productionPerHour,
@@ -35,6 +37,7 @@ describe("vanilla OGame formula conformance", () => {
     };
 
     expect(energyBalance(buildings)).toEqual({
+      deuteriumConsumed: 0,
       produced: 753,
       required: 217,
       scaleBps: 10_000,
@@ -64,6 +67,37 @@ describe("vanilla OGame formula conformance", () => {
       crystal: 75_000,
       deuterium: 5_355_000,
     });
+    expect(storageCaps({ ...buildings, deuteriumTank: 50 }).deuterium)
+      .toBe(180_862_636_975_685_000);
+  });
+
+  test("uses vanilla Fusion Reactor energy-tech scaling and deuterium draw", () => {
+    const state = createInitialPlayableState();
+    const buildings = {
+      ...state.buildings,
+      deuteriumSynthesizer: 3,
+      fusionReactor: 2,
+    };
+    const profile = {
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 13_040,
+    };
+
+    expect(energyBalance(buildings, 3)).toEqual({
+      deuteriumConsumed: 25,
+      produced: 69,
+      required: 79,
+      scaleBps: 8_734,
+    });
+    expect(fusionReactorEnergyProduction(1, 3)).toBe(32);
+    expect(fusionReactorDeuteriumConsumption(1)).toBe(11);
+    expect(fusionReactorDeuteriumConsumption(2)).toBe(25);
+    expect(productionPerHour(buildings, profile, 3)).toEqual({
+      metal: 0,
+      crystal: 0,
+      deuterium: 21,
+    });
   });
 
   test("uses vanilla per-building cost growth factors", () => {
@@ -88,6 +122,11 @@ describe("vanilla OGame formula conformance", () => {
       metal: 2_883,
       crystal: 1_153,
       deuterium: 0,
+    });
+    expect(costAt(state.buildings, "fusionReactor", 1)).toEqual({
+      metal: 1_620,
+      crystal: 648,
+      deuterium: 324,
     });
     expect(costAt(state.buildings, "roboticsFactory", 1)).toEqual({
       metal: 800,
