@@ -172,6 +172,120 @@ library VeydriftCatalog {
         return uint256(metal) + crystal + deuterium;
     }
 
+    function shipBattleAttack(Ship ship) public pure returns (uint256) {
+        if (ship == Ship.SmallCargo) return 5;
+        if (ship == Ship.LightFighter) return 50;
+        if (ship == Ship.Recycler) return 1;
+        if (ship == Ship.ColonyShip) return 50;
+        if (ship == Ship.LargeCargo) return 5;
+        if (ship == Ship.HeavyFighter) return 150;
+        if (ship == Ship.Cruiser) return 400;
+        if (ship == Ship.Battleship) return 1_000;
+        if (ship == Ship.Bomber) return 1_000;
+        if (ship == Ship.SolarSatellite) return 1;
+        if (ship == Ship.Destroyer) return 2_000;
+        if (ship == Ship.Deathstar) return 200_000;
+        if (ship == Ship.Battlecruiser) return 700;
+        if (ship == Ship.Reaper) return 2_800;
+        if (ship == Ship.Pathfinder) return 200;
+        if (ship == Ship.Crawler) return 1;
+        revert InvalidId();
+    }
+
+    function shipBattleShield(Ship ship) public pure returns (uint256) {
+        if (ship == Ship.SmallCargo) return 10;
+        if (ship == Ship.LightFighter) return 10;
+        if (ship == Ship.Recycler) return 10;
+        if (ship == Ship.ColonyShip) return 100;
+        if (ship == Ship.LargeCargo) return 25;
+        if (ship == Ship.HeavyFighter) return 25;
+        if (ship == Ship.Cruiser) return 50;
+        if (ship == Ship.Battleship) return 200;
+        if (ship == Ship.Bomber) return 500;
+        if (ship == Ship.SolarSatellite) return 1;
+        if (ship == Ship.Destroyer) return 500;
+        if (ship == Ship.Deathstar) return 50_000;
+        if (ship == Ship.Battlecruiser) return 400;
+        if (ship == Ship.Reaper) return 700;
+        if (ship == Ship.Pathfinder) return 100;
+        if (ship == Ship.Crawler) return 1;
+        revert InvalidId();
+    }
+
+    function shipBattleHull(Ship ship) public pure returns (uint256) {
+        (uint128 metal, uint128 crystal,) = shipCost(ship);
+        return (uint256(metal) + crystal) / 10;
+    }
+
+    function defenseBattleAttack(Defense defense) public pure returns (uint256) {
+        if (defense == Defense.RocketLauncher) return 80;
+        if (defense == Defense.LightLaser) return 100;
+        if (defense == Defense.HeavyLaser) return 250;
+        if (defense == Defense.SmallShieldDome) return 1;
+        if (defense == Defense.GaussCannon) return 1_100;
+        if (defense == Defense.IonCannon) return 150;
+        if (defense == Defense.PlasmaTurret) return 3_000;
+        if (defense == Defense.LargeShieldDome) return 1;
+        revert InvalidId();
+    }
+
+    function defenseBattleShield(Defense defense) public pure returns (uint256) {
+        if (defense == Defense.RocketLauncher) return 20;
+        if (defense == Defense.LightLaser) return 25;
+        if (defense == Defense.HeavyLaser) return 100;
+        if (defense == Defense.SmallShieldDome) return 2_000;
+        if (defense == Defense.GaussCannon) return 200;
+        if (defense == Defense.IonCannon) return 500;
+        if (defense == Defense.PlasmaTurret) return 300;
+        if (defense == Defense.LargeShieldDome) return 10_000;
+        revert InvalidId();
+    }
+
+    function defenseBattleHull(Defense defense) public pure returns (uint256) {
+        (uint128 metal, uint128 crystal,) = defenseCost(defense);
+        return (uint256(metal) + crystal) / 10;
+    }
+
+    function shipRapidfireAgainstShip(Ship attacker, Ship defender) public pure returns (uint8) {
+        if (attacker == Ship.Cruiser && defender == Ship.LightFighter) return 6;
+        if (
+            attacker == Ship.Destroyer
+                && (defender == Ship.SmallCargo || defender == Ship.LargeCargo)
+        ) {
+            return 3;
+        }
+        if (attacker == Ship.Destroyer && defender == Ship.Battlecruiser) return 2;
+        if (attacker == Ship.Battlecruiser && defender == Ship.SmallCargo) return 3;
+        if (attacker == Ship.Battlecruiser && defender == Ship.LargeCargo) return 4;
+        if (
+            attacker == Ship.Battlecruiser
+                && (defender == Ship.HeavyFighter || defender == Ship.Cruiser)
+        ) return 4;
+        if (attacker == Ship.Battlecruiser && defender == Ship.Battleship) return 7;
+        if (attacker == Ship.Reaper && defender == Ship.Destroyer) return 2;
+        if (attacker == Ship.Reaper && defender == Ship.Deathstar) return 10;
+        if (attacker == Ship.Pathfinder && defender == Ship.Recycler) return 3;
+        return 1;
+    }
+
+    function shipRapidfireAgainstDefense(Ship attacker, Defense defender)
+        public
+        pure
+        returns (uint8)
+    {
+        if (attacker == Ship.Cruiser && defender == Defense.RocketLauncher) return 10;
+        if (attacker == Ship.Bomber && defender == Defense.RocketLauncher) return 20;
+        if (attacker == Ship.Bomber && defender == Defense.LightLaser) return 20;
+        if (
+            attacker == Ship.Bomber
+                && (defender == Defense.HeavyLaser || defender == Defense.IonCannon)
+        ) return 10;
+        if (attacker == Ship.Destroyer && defender == Defense.LightLaser) return 10;
+        if (attacker == Ship.Deathstar) return 200;
+        if (attacker == Ship.Reaper && defender == Defense.PlasmaTurret) return 2;
+        return 1;
+    }
+
     function spaceDockRepairBps(uint16 spaceDockLevel) public pure returns (uint16) {
         if (spaceDockLevel == 0) return 0;
         uint16 bps = 2_000 + (spaceDockLevel * 100);
