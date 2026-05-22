@@ -22,7 +22,6 @@ export type MissionShipKey =
   | "heavyFighter"
   | "cruiser"
   | "battleship"
-  | "espionageProbe"
   | "bomber"
   | "destroyer"
   | "deathstar"
@@ -69,7 +68,6 @@ export const emptyMissionShips = (): MissionShips => ({
   heavyFighter: 0,
   cruiser: 0,
   battleship: 0,
-  espionageProbe: 0,
   bomber: 0,
   destroyer: 0,
   deathstar: 0,
@@ -337,11 +335,10 @@ const shipContractIds: Record<MissionShipKey, number> = {
   heavyFighter: 5,
   cruiser: 6,
   battleship: 7,
-  espionageProbe: 8,
-  bomber: 9,
-  destroyer: 11,
-  deathstar: 12,
-  battlecruiser: 13,
-  reaper: 14,
-  pathfinder: 15,
+  bomber: 8,
+  destroyer: 10,
+  deathstar: 11,
+  battlecruiser: 12,
+  reaper: 13,
+  pathfinder: 14,
 };

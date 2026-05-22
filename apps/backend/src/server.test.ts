@@ -1217,7 +1217,7 @@ describe("Veydrift backend", () => {
   });
 
   test("keeps shipyard state loadable when the deployment does not expose a newer ship id", async () => {
-    const unsupportedShipIdWord = 16n.toString(16).padStart(64, "0");
+    const unsupportedShipIdWord = 15n.toString(16).padStart(64, "0");
     const reader = new VeydriftGameReader(configuredTestConfig, {
       async request<T>(_method: string, params: unknown[]): Promise<T> {
         const [call] = params as [{ data: string; to: string }];
@@ -1263,7 +1263,7 @@ describe("Veydrift backend", () => {
     expect(state.productionAvailable).toBe(true);
     expect(state.fleetSlots.active).toBe(0);
     expect(state.ships.some((ship) => ship.id === 0)).toBe(true);
-    expect(state.ships.some((ship) => ship.id === 16)).toBe(false);
+    expect(state.ships.some((ship) => ship.id === 15)).toBe(false);
   });
 
   test("hydrates active building queues with the BuildingStarted block timestamp", async () => {

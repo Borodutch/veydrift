@@ -6,6 +6,8 @@ solc_version = "0.8.28"
 optimizer = true
 optimizer_runs = 1
 via_ir = true
+cbor_metadata = false
+bytecode_hash = "none"
 
 [rpc_endpoints]
 base_sepolia = "${BASE_SEPOLIA_RPC_URL}"

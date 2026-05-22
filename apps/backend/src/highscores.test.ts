@@ -28,7 +28,7 @@ describe("highscore formulas", () => {
       technologies: [
         { id: 0, level: 1 },
         { id: 5, level: 2 },
-        { id: 13, level: 2 },
+        { id: 12, level: 2 },
       ],
     });
 

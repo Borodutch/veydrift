@@ -218,14 +218,14 @@ Ships:
 | 5 | HeavyFighter |
 | 6 | Cruiser |
 | 7 | Battleship |
-| 8 | RemovedShipSlot |
-| 9 | Bomber |
-| 10 | SolarSatellite |
-| 11 | Destroyer |
-| 12 | Deathstar |
-| 13 | Battlecruiser |
-| 14 | Reaper |
-| 15 | Pathfinder |
+| 8 | Bomber |
+| 9 | SolarSatellite |
+| 10 | Destroyer |
+| 11 | Deathstar |
+| 12 | Battlecruiser |
+| 13 | Reaper |
+| 14 | Pathfinder |
+| 15 | Crawler |
 
 Technologies:
 
@@ -235,18 +235,17 @@ Technologies:
 | 1 | Laser |
 | 2 | Ion |
 | 3 | CombustionDrive |
-| 4 | RemovedTechnology |
-| 5 | Computer |
-| 6 | Weapons |
-| 7 | Shielding |
-| 8 | Armor |
-| 9 | Hyperspace |
-| 10 | ImpulseDrive |
-| 11 | HyperspaceDrive |
-| 12 | Plasma |
-| 13 | Astrophysics |
-| 14 | IntergalacticResearchNetwork |
-| 15 | Graviton |
+| 4 | Computer |
+| 5 | Weapons |
+| 6 | Shielding |
+| 7 | Armor |
+| 8 | Hyperspace |
+| 9 | ImpulseDrive |
+| 10 | HyperspaceDrive |
+| 11 | Plasma |
+| 12 | Astrophysics |
+| 13 | IntergalacticResearchNetwork |
+| 14 | Graviton |
 
 Resources:
 

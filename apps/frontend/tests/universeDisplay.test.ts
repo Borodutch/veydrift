@@ -8,7 +8,7 @@ import {
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
-import { galaxyActionsForSlot } from "../src/galaxyActions";
+import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
   formatGalaxyHeatLabel,
@@ -224,7 +224,6 @@ describe("tester universe display data", () => {
         { id: 0, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 3, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
-        { id: 8, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } },
       ],
       queue: null,
       wallet: "0x1111111111111111111111111111111111111111",
@@ -287,7 +286,9 @@ describe("tester universe display data", () => {
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
     ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
-    expect(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships.espionageProbe).toBe(0);
+    expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
+      Object.keys(emptyMissionShips())
+    );
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {
