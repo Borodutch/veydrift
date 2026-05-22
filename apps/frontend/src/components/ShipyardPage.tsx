@@ -107,14 +107,15 @@ export function ShipyardPage({
               .filter((ship) => ship.group === group)
               .map((ship) => {
                 const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
-                const owned = productionAvailable ? chainShip?.count : undefined;
-                const baseCost = productionAvailable ? toResources(chainShip?.cost) : undefined;
+                const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
+                const owned = productionAvailable && chainShip ? chainShip.count : undefined;
+                const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
                 const quantity = quantities[ship.key] ?? 1;
                 const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
                 const durationSeconds = baseCost
                   ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
                   : undefined;
-                const missing = getMissingRequirements(ship, shipyardState);
+                const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
                 const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
                 const blockedReason = getBlockedReason({
                   affordable,
@@ -123,6 +124,7 @@ export function ShipyardPage({
                   missing,
                   queueActive: Boolean(queue),
                   resources,
+                  shipUnavailable,
                   shipyardState,
                 });
                 const disabled = Boolean(blockedReason) || actionState.status === "pending";
@@ -327,13 +329,14 @@ export function getMissingRequirements(
   });
 }
 
-function getBlockedReason({
+export function getBlockedReason({
   affordable,
   canTransact,
   hasPlanet,
   missing,
   queueActive,
   resources,
+  shipUnavailable,
   shipyardState,
 }: {
   affordable: boolean;
@@ -342,11 +345,13 @@ function getBlockedReason({
   missing: string[];
   queueActive: boolean;
   resources: Resources | undefined;
+  shipUnavailable: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!shipyardState) return "Waiting for chain state";
   if (shipyardState.productionAvailable === false) return "Ship production unavailable";
+  if (shipUnavailable) return "Ship unavailable on current deployment";
   if (!hasPlanet) return "No game planet";
   if (queueActive) return "Queue active";
   if (missing.length > 0) return missing[0];
