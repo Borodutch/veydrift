@@ -2,6 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -29,6 +31,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function renamePlanet(uint256 planetId, string calldata name) external {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         uint256 length = bytes(name).length;
         if (length == 0 || length > 32) revert InvalidPlanetName();
 
@@ -37,6 +40,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function abandonPlanet(uint256 planetId) external {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         if (homePlanetOf[msg.sender] == planetId) revert CannotAbandonHomePlanet();
         if (
             buildingConstructions[planetId].active || defenseQueues[planetId].active
@@ -65,6 +69,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
 
@@ -79,6 +84,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         external
     {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
         _requireReserveResource(resource);
@@ -103,6 +109,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     function finishMarketResourceWithdrawal(Resource resource) external {
         ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
         if (!withdrawal.active) revert WithdrawalInactive(resource);
+        _requireNoPendingMissionResolutionForPlanet(withdrawal.planetId);
         if (_currentTimestamp() < withdrawal.unlocksAt) {
             revert WithdrawalNotReady(withdrawal.unlocksAt);
         }
@@ -124,8 +131,49 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         );
     }
 
+    function startResearch(uint256 planetId, Technology technology) external {
+        _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlayer(msg.sender);
+        if (researchQueues[msg.sender].active) revert QueueActive();
+
+        uint16 currentLevel = _technologyLevels[msg.sender][technology];
+        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
+
+        _settleResources(planetId);
+        _requireResearchDependencies(planetId, msg.sender, technology, currentLevel);
+
+        Resources memory cost = _researchCost(msg.sender, technology);
+        _spend(planetId, cost);
+
+        uint64 readyAt = uint64(uint256(_currentTimestamp()) + _researchDuration(planetId, cost));
+        uint16 targetLevel = currentLevel + 1;
+        researchQueues[msg.sender] = ResearchQueue({
+            active: true,
+            technology: technology,
+            targetLevel: targetLevel,
+            readyAt: readyAt,
+            cost: cost
+        });
+
+        emit ResearchQueued(
+            msg.sender, technology, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
+        );
+    }
+
+    function finishResearch() external {
+        _requireNoPendingMissionResolutionForPlayer(msg.sender);
+        ResearchQueue memory queue = researchQueues[msg.sender];
+        if (!queue.active) revert QueueInactive();
+        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
+
+        delete researchQueues[msg.sender];
+        _technologyLevels[msg.sender][queue.technology] = queue.targetLevel;
+        emit ResearchCompleted(msg.sender, queue.technology, queue.targetLevel);
+    }
+
     function _validateColonyCreation(uint256 originPlanetId) private view {
         _requirePlanetOwner(originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         uint256 limit = 1 + _technologyLevels[msg.sender][Technology.Astrophysics];
         if (planetCountOf[msg.sender] >= limit) revert PlanetLimitReached(limit);
         _requireShips(originPlanetId, Ship.ColonyShip, 1);
@@ -262,6 +310,16 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         revert InvalidResource(resource);
     }
 
+    function _researchCost(address player, Technology technology)
+        private
+        view
+        returns (Resources memory)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) =
+            VeydriftCatalog.researchCost(technology, _technologyLevels[player][technology]);
+        return Resources(metal, crystal, deuterium);
+    }
+
     function _productionPerHour(uint256 planetId)
         private
         view
@@ -278,6 +336,64 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             planetRef.metalMultiplierBps,
             planetRef.crystalMultiplierBps,
             planetRef.deuteriumMultiplierBps
+        );
+    }
+
+    function _researchDuration(uint256 planetId, Resources memory cost)
+        private
+        view
+        returns (uint256)
+    {
+        return VeydriftFormulas.researchDuration(
+            _buildingLevels[planetId][Building.ResearchLab],
+            cost.metal,
+            cost.crystal,
+            cost.deuterium,
+            MIN_QUEUE_SECONDS
+        );
+    }
+
+    function _requireResearchDependencies(
+        uint256 planetId,
+        address player,
+        Technology technology,
+        uint16 currentLevel
+    ) private view {
+        VeydriftDependencies.requireResearch(
+            technology,
+            _buildingLevels[planetId][Building.ResearchLab],
+            _technologyLevels[player][Technology.Energy],
+            _technologyLevels[player][Technology.Laser],
+            _technologyLevels[player][Technology.Ion],
+            _technologyLevels[player][Technology.Hyperspace],
+            _technologyLevels[player][Technology.ImpulseDrive],
+            _technologyLevels[player][Technology.Computer],
+            _technologyLevels[player][Technology.Shielding]
+        );
+
+        uint256 energyRequirement =
+            VeydriftCatalog.researchEnergyRequirement(technology, currentLevel);
+        if (energyRequirement == 0) return;
+
+        (uint256 producedEnergy,,) = _energyBalance(planetId);
+        if (producedEnergy < energyRequirement) {
+            revert MissingDependency("GRAVITON_ENERGY");
+        }
+    }
+
+    function _energyBalance(uint256 planetId)
+        private
+        view
+        returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps)
+    {
+        Planet storage planetRef = _planets[planetId];
+        return VeydriftFormulas.energyBalance(
+            _buildingLevels[planetId][Building.MetalMine],
+            _buildingLevels[planetId][Building.CrystalMine],
+            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
+            _buildingLevels[planetId][Building.SolarPlant],
+            _buildingLevels[planetId][Building.FusionReactor],
+            _technologyLevels[planetRef.owner][Technology.Energy]
         );
     }
 

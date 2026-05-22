@@ -137,6 +137,7 @@ export type FleetMissionSummary = {
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
+  needsResolution?: boolean;
 };
 
 export type FleetMissionVisibilityResponse = {
@@ -423,13 +424,13 @@ const GAME_SELECTORS = {
   finishResourceWithdrawal: "0xde0f208c",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
   launchFleetMission: "0x28247df8",
+  resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
   renamePlanet: "0xa74c0906",
   requestResourceWithdrawal: "0x62a10a46",
   recallFleetMission: "0x1cbc460c",
-  resolveFleetMission: "0xde09e7cf",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"

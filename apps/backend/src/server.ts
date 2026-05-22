@@ -5,6 +5,7 @@ import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigPr
 import { assertAddress, type ChainReader, type MoonChanceReportEvent, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
 import { highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent } from "./indexer";
+import { MissionResolutionService } from "./missionResolution";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -61,6 +62,7 @@ export type ServerDependencies = {
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
+  missionResolver?: MissionResolutionService;
   indexer?: SettlementIndexer;
 };
 
@@ -79,8 +81,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const chainSync =
     dependencies.chainSync ??
     (loaded.problems.length === 0 ? new ChainSyncService(loaded.config, indexer) : undefined);
+  const resolutionReader = rawChainReader?.listResolvableFleetMissions
+    ? { listResolvableFleetMissions: rawChainReader.listResolvableFleetMissions.bind(rawChainReader) }
+    : undefined;
+  const missionResolver =
+    dependencies.missionResolver ??
+    (loaded.problems.length === 0 && resolutionReader
+      ? new MissionResolutionService(loaded.config, resolutionReader)
+      : undefined);
 
   chainSync?.start();
+  missionResolver?.start();
   if (cacheReader) {
     chainSync?.addListener((event) => {
       if (event.kind === "chain-event") {
@@ -107,6 +118,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
           chainSync: chainSync?.snapshot() ?? null,
+          missionResolution: missionResolver?.snapshot() ?? null,
           indexer: indexer?.snapshot() ?? null,
           rpc: chainReader?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,

@@ -69,13 +69,11 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function settlePlanet(uint256 planetId) external {
-        _requirePlanetOwner(planetId);
-        _settleResources(planetId);
+        _collectPlanetResources(planetId);
     }
 
     function collectResources(uint256 planetId) external {
-        _requirePlanetOwner(planetId);
-        _settleResources(planetId);
+        _collectPlanetResources(planetId);
     }
 
     function startBuildingUpgrade(uint256 planetId, Building building) external {
@@ -149,17 +147,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
-    function finishDefenseProduction(uint256 planetId) external {
-        _requirePlanetOwner(planetId);
-        DefenseQueue memory queue = defenseQueues[planetId];
-        if (!queue.active) revert QueueInactive();
-        uint64 currentTime = uint64(block.timestamp);
-        if (currentTime < queue.readyAt) revert QueueNotReady(queue.readyAt);
-
-        delete defenseQueues[planetId];
-        uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
-        _defenseCounts[planetId][queue.defense] = total;
-        emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
+    function finishDefenseProduction(uint256) external {
+        _delegateToGameplayModule();
     }
 
     function startShipProduction(uint256, Ship, uint32) external {
@@ -170,45 +159,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToGameplayModule();
     }
 
-    function startResearch(uint256 planetId, Technology technology) external {
-        _requirePlanetOwner(planetId);
-        if (researchQueues[msg.sender].active) revert QueueActive();
-
-        uint16 currentLevel = _technologyLevels[msg.sender][technology];
-        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
-
-        _settleResources(planetId);
-        _requireResearchDependencies(planetId, msg.sender, technology, currentLevel);
-
-        Resources memory cost = researchCost(msg.sender, technology);
-        _spend(planetId, cost);
-
-        uint64 readyAt = uint64(block.timestamp + _researchDuration(planetId, cost));
-        uint16 targetLevel = currentLevel + 1;
-        researchQueues[msg.sender] = ResearchQueue({
-            active: true,
-            technology: technology,
-            targetLevel: targetLevel,
-            readyAt: readyAt,
-            cost: cost
-        });
-
-        emit ResearchQueued(
-            msg.sender, technology, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
-        );
+    function startResearch(uint256, Technology) external {
+        _delegateToPlanetManagementModule();
     }
 
     function finishResearch() external {
-        ResearchQueue memory queue = researchQueues[msg.sender];
-        if (!queue.active) revert QueueInactive();
-        uint64 currentTime = uint64(block.timestamp);
-        if (currentTime < queue.readyAt) {
-            revert QueueNotReady(queue.readyAt);
-        }
-
-        delete researchQueues[msg.sender];
-        _technologyLevels[msg.sender][queue.technology] = queue.targetLevel;
-        emit ResearchCompleted(msg.sender, queue.technology, queue.targetLevel);
+        _delegateToPlanetManagementModule();
     }
 
     function setMoonSystem(address nextMoonSystem) external onlyOwner {
@@ -616,6 +572,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _settleResources(uint256 planetId) private {
+        for (uint256 missionId = 1; missionId < nextFleetId; missionId++) {
+            FleetMission storage mission = _fleetMissions[missionId];
+            if (
+                _isPendingResolutionMission(mission)
+                    && (mission.originPlanetId == planetId || mission.targetPlanetId == planetId)
+            ) {
+                revert FleetMissionNotResolved(mission.arrivalAt);
+            }
+        }
         uint64 currentTime = uint64(block.timestamp);
         BuildingConstruction memory construction = buildingConstructions[planetId];
         if (construction.active && currentTime >= construction.readyAt) {
@@ -626,6 +591,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
 
         _settleResourcesUntil(planetId, currentTime);
+    }
+
+    function _collectPlanetResources(uint256 planetId) private {
+        _requirePlanetOwner(planetId);
+        _settleResources(planetId);
     }
 
     function _settleResourcesUntil(uint256 planetId, uint64 settledAt) private {
@@ -695,48 +665,6 @@ contract VeydriftGame is VeydriftResourceReserves {
             quantity,
             MIN_QUEUE_SECONDS
         );
-    }
-
-    function _researchDuration(uint256 planetId, Resources memory cost)
-        private
-        view
-        returns (uint256)
-    {
-        return VeydriftFormulas.researchDuration(
-            _buildingLevels[planetId][Building.ResearchLab],
-            cost.metal,
-            cost.crystal,
-            cost.deuterium,
-            MIN_QUEUE_SECONDS
-        );
-    }
-
-    function _requireResearchDependencies(
-        uint256 planetId,
-        address player,
-        Technology technology,
-        uint16 currentLevel
-    ) private view {
-        VeydriftDependencies.requireResearch(
-            technology,
-            _buildingLevels[planetId][Building.ResearchLab],
-            _technologyLevels[player][Technology.Energy],
-            _technologyLevels[player][Technology.Laser],
-            _technologyLevels[player][Technology.Ion],
-            _technologyLevels[player][Technology.Hyperspace],
-            _technologyLevels[player][Technology.ImpulseDrive],
-            _technologyLevels[player][Technology.Computer],
-            _technologyLevels[player][Technology.Shielding]
-        );
-
-        uint256 energyRequirement =
-            VeydriftCatalog.researchEnergyRequirement(technology, currentLevel);
-        if (energyRequirement == 0) return;
-
-        (uint256 producedEnergy,,) = energyBalance(planetId);
-        if (producedEnergy < energyRequirement) {
-            revert MissingDependency("GRAVITON_ENERGY");
-        }
     }
 
     function _requireDefenseDependencies(uint256 planetId, Defense defense) private view {

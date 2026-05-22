@@ -112,7 +112,13 @@ export type FleetMissionSummary = {
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
+  needsResolution: boolean;
 };
+
+export type ResolvableFleetMission = Pick<
+  FleetMissionSummary,
+  "arrivalAt" | "missionId" | "missionType" | "originPlanetId" | "targetPlanetId"
+>;
 
 export type ShipyardState = {
   wallet: Address;
@@ -370,6 +376,7 @@ export interface ChainReader {
   getAllianceState(wallet: Address): Promise<AllianceState>;
   getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
+  listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
@@ -652,25 +659,9 @@ export class VeydriftGameReader implements ChainReader {
       return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [] };
     }
 
-    const missionLogs = await this.getLogs(
-      {
-        address: this.gameContractAddress,
-        fromBlock: toQuantity(this.indexFromBlock),
-        toBlock: "latest",
-        topics: [[
-          fleetMissionLaunchedTopic,
-          fleetMissionCargoTopic,
-          fleetMissionShipsTopic,
-          fleetMissionRecalledTopic,
-          fleetMissionResolvedTopic,
-          fleetMissionReturnExposedTopic
-        ]]
-      }
-    );
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(planets.planets.map((planet) => planet.planetId));
-    const missions = decodeFleetMissionLogs(missionLogs);
-    const summaries = [...missions.values()].filter(isCompleteFleetMissionSummary);
+    const summaries = await this.readFleetMissionSummaries();
 
     return {
       wallet,
@@ -689,6 +680,22 @@ export class VeydriftGameReader implements ChainReader {
           && (mission.status === "Returning" || mission.status === "Recalled")
       )
     };
+  }
+
+  async listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
+    const summaries = await this.readFleetMissionSummaries();
+    return summaries
+      .filter((mission) =>
+        mission.needsResolution
+          && (mission.missionType === "Attack" || mission.missionType === "Harvest")
+      )
+      .map(({ arrivalAt, missionId, missionType, originPlanetId, targetPlanetId }) => ({
+        arrivalAt,
+        missionId,
+        missionType,
+        originPlanetId,
+        targetPlanetId
+      }));
   }
 
   async getInfrastructureState(wallet: Address, selectedPlanetId?: bigint): Promise<InfrastructureState> {
@@ -1858,6 +1865,30 @@ export class VeydriftGameReader implements ChainReader {
     return this.callContract(this.settlementContractAddress, selector, args);
   }
 
+  private async readFleetMissionSummaries(): Promise<FleetMissionSummary[]> {
+    const missionLogs = await this.getLogs({
+      address: this.gameContractAddress,
+      fromBlock: toQuantity(this.indexFromBlock),
+      toBlock: "latest",
+      topics: [[
+        fleetMissionLaunchedTopic,
+        fleetMissionCargoTopic,
+        fleetMissionShipsTopic,
+        fleetMissionRecalledTopic,
+        fleetMissionResolvedTopic,
+        fleetMissionReturnExposedTopic
+      ]]
+    });
+    const missions = decodeFleetMissionLogs(missionLogs);
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    return [...missions.values()]
+      .filter(isCompleteFleetMissionSummary)
+      .map((mission) => ({
+        ...mission,
+        needsResolution: mission.status === "Outbound" && Number(mission.arrivalAt) <= nowSeconds
+      }));
+  }
+
   private async callContract(contractAddress: Address, selector: string, args: string[]): Promise<string> {
     return this.transport.request<string>("eth_call", [
       {
@@ -1904,6 +1935,7 @@ function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleetMission
       ships: {},
       fuelCost: "0",
       recallCost: null,
+      needsResolution: false,
       transactionHash: log.transactionHash,
       blockNumber: BigInt(log.blockNumber).toString()
     };
@@ -1980,6 +2012,7 @@ function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mis
       && mission.ships
       && mission.transactionHash
       && mission.blockNumber
+      && mission.needsResolution !== undefined
   );
 }
 
