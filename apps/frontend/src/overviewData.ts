@@ -18,6 +18,9 @@ const RESOURCE_DISPLAY_MAX = 999_999_999_999n;
 
 export type ChainLoadStatus = "local" | "loading" | "ready" | "error";
 
+export const overviewQueueItemLabelClassName = "break-words text-xs font-semibold leading-snug text-white";
+export const overviewQueueItemRemainingClassName = "text-[10px] leading-none text-slate-400";
+
 export type PlanetStatDisplay = {
   fields: string;
   temperature: string;
