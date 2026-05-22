@@ -120,11 +120,13 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             targetPlanetId = hostile.targetPlanetId;
         }
         if (!counterplayMission && originPlanetId == targetPlanetId) revert SamePlanet();
-        if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+        address targetOwner = _planets[targetPlanetId].owner;
+        if (targetOwner == address(0)) revert NoPlanet();
         if (missionType == FleetMissionType.MissileAttack) {
             revert InvalidMissionType(missionType);
         }
         if (missionType == FleetMissionType.Attack) {
+            if (targetOwner == msg.sender) revert SelfAttack();
             _enforceAttackProtection(msg.sender, targetPlanetId);
         }
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
