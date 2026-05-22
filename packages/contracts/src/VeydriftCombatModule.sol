@@ -52,6 +52,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (originPlanetId == targetPlanetId) revert SamePlanet();
         Planet storage target = _planets[targetPlanetId];
         if (target.owner == address(0)) revert NoPlanet();
+        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
 
         uint256 range = _interplanetaryMissileRange(msg.sender);

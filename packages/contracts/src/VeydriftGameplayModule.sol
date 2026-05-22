@@ -44,6 +44,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
+        _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         _validateShipProduction(planetId, ship, quantity);
         _settleResources(planetId);
 
@@ -69,6 +71,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function finishShipProduction(uint256 planetId) external {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         ShipQueue memory queue = shipQueues[planetId];
         if (!queue.active) revert QueueInactive();
         if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
@@ -77,6 +80,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint32 total = _shipCounts[planetId][queue.ship] + queue.quantity;
         _shipCounts[planetId][queue.ship] = total;
         emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
+    }
+
+    function finishDefenseProduction(uint256 planetId) external {
+        _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
+        DefenseQueue memory queue = defenseQueues[planetId];
+        if (!queue.active) revert QueueInactive();
+        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
+
+        delete defenseQueues[planetId];
+        uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
+        _defenseCounts[planetId][queue.defense] = total;
+        emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
     }
 
     function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
@@ -133,6 +149,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
         if (!counterplayMission && originPlanetId == targetPlanetId) revert SamePlanet();
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         if (
             missionType == FleetMissionType.MissileAttack
                 || missionType == FleetMissionType.AcsAttack
@@ -265,6 +283,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             revert InvalidMissionType(FleetMissionType.AcsAttack);
         }
         if (attack.targetPlanetId != expectedTargetPlanetId) revert InvalidId();
+        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(attack.targetPlanetId);
 
         uint64 cutoffAt =
             attack.arrivalAt - VeydriftAntiRaidPrimitives.ACS_DEFEND_JOIN_CUTOFF_SECONDS;
@@ -324,6 +344,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         });
         _fleetCounterplayMissions[attackMissionId].push(missionId);
 
+        emit AttackMissionJoined(
+            attackMissionId, missionId, msg.sender, originPlanetId, attack.targetPlanetId
+        );
         emit FleetMissionLaunched(
             missionId,
             msg.sender,
@@ -366,6 +389,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (mission.status != FleetMissionStatus.Outbound) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
+        _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
         if (_currentTimestamp() >= mission.arrivalAt) revert FleetAlreadyArrived();
         uint64 recallDeadline = mission.arrivalAt - FLEET_RECALL_CUTOFF_SECONDS;
         if (_currentTimestamp() > recallDeadline) revert FleetRecallCutoffPassed(recallDeadline);
@@ -442,51 +467,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
     }
 
-    function completeFleetMissionReturn(uint256 missionId) external {
-        FleetMission storage mission = _fleetMissions[missionId];
-        if (
-            mission.status != FleetMissionStatus.Returning
-                && mission.status != FleetMissionStatus.Recalled
-        ) {
-            revert FleetMissionNotResolved(mission.returnAt);
-        }
-        if (_currentTimestamp() < mission.returnAt) revert FleetNotArrived(mission.returnAt);
-
-        _planets[mission.originPlanetId].resources =
-            _add(_planets[mission.originPlanetId].resources, mission.cargo);
-        _creditMissionShips(mission.originPlanetId, mission.ships);
-        mission.status = FleetMissionStatus.Returned;
-        activeFleetMissionCount[mission.owner] -= 1;
-        emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
-    }
-
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
         _delegateToCombatModule();
-    }
-
-    function protectedResources(uint256 planetId) external view returns (Resources memory) {
-        return _protectedResources(planetId);
-    }
-
-    function raidableResources(uint256 planetId) external view returns (Resources memory) {
-        Resources memory protected = _protectedResources(planetId);
-        return _unprotectedResources(_planets[planetId].resources, protected);
-    }
-
-    function maxRaidLoot(uint256 planetId, uint256 cargoCapacity)
-        external
-        view
-        returns (Resources memory)
-    {
-        Resources memory protected = _protectedResources(planetId);
-        return _selectRaidLoot(
-            _unprotectedResources(_planets[planetId].resources, protected), cargoCapacity
-        );
-    }
-
-    function debrisField(uint256 planetId) external view returns (uint128 metal, uint128 crystal) {
-        DebrisField storage field = _debrisFields[planetId];
-        return (field.metal, field.crystal);
     }
 
     function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
@@ -659,6 +641,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
         address defender = _attackDefender(targetPlanetId);
+        if (defender == attacker) revert SelfAttack();
         AttackBlockReason reason = _attackBlockReason(
             attacker,
             defender,
@@ -829,49 +812,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (ship == Ship.Reaper) return ships.reaper;
         if (ship == Ship.Pathfinder) return ships.pathfinder;
         return 0;
-    }
-
-    function _protectedResources(uint256 planetId) private view returns (Resources memory) {
-        (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = _storageCaps(planetId);
-        return Resources({
-            metal: _toUint128((uint256(metalCap) * RAID_PROTECTED_STORAGE_BPS) / BPS),
-            crystal: _toUint128((uint256(crystalCap) * RAID_PROTECTED_STORAGE_BPS) / BPS),
-            deuterium: _toUint128((uint256(deuteriumCap) * RAID_PROTECTED_STORAGE_BPS) / BPS)
-        });
-    }
-
-    function _unprotectedResources(Resources storage resources, Resources memory protected)
-        private
-        view
-        returns (Resources memory)
-    {
-        return Resources({
-            metal: resources.metal > protected.metal ? resources.metal - protected.metal : 0,
-            crystal: resources.crystal > protected.crystal
-                ? resources.crystal - protected.crystal
-                : 0,
-            deuterium: resources.deuterium > protected.deuterium
-                ? resources.deuterium - protected.deuterium
-                : 0
-        });
-    }
-
-    function _selectRaidLoot(Resources memory unprotected, uint256 capacity)
-        private
-        pure
-        returns (Resources memory)
-    {
-        uint128 metalCap = _toUint128((uint256(unprotected.metal) * RAID_LOOT_BPS) / BPS);
-        uint128 metal = _toUint128(_min(metalCap, capacity));
-        capacity -= metal;
-
-        uint128 crystalCap = _toUint128((uint256(unprotected.crystal) * RAID_LOOT_BPS) / BPS);
-        uint128 crystal = _toUint128(_min(crystalCap, capacity));
-        capacity -= crystal;
-
-        uint128 deuteriumCap = _toUint128((uint256(unprotected.deuterium) * RAID_LOOT_BPS) / BPS);
-        uint128 deuterium = _toUint128(_min(deuteriumCap, capacity));
-        return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
     }
 
     function _totalUserScore(address player) private view returns (uint256 score) {

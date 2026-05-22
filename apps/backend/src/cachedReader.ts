@@ -19,6 +19,7 @@ import type {
   ShipyardState,
   WalletSettlement
 } from "./evm";
+import type { HighscoreEntry } from "./highscores";
 
 type CacheEntry<T> = {
   expiresAt: number;
@@ -89,6 +90,18 @@ export class CachedChainReader implements ChainReader {
     return this.cached(
       `attack-protection:${wallet.toLowerCase()}:${targetPlanetId.toString()}`,
       () => this.inner.getAttackProtectionStatus(wallet, targetPlanetId)
+    );
+  }
+
+  getHighscoreForWallet(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry> {
+    if (!this.inner.getHighscoreForWallet) {
+      return Promise.reject(new Error("Highscores are not supported by the wrapped chain reader."));
+    }
+
+    const planetScope = planetIds?.length ? planetIds.join(",") : "indexed";
+    return this.cached(
+      `highscore:${wallet.toLowerCase()}:${planetScope}`,
+      () => this.inner.getHighscoreForWallet!(wallet, planetIds)
     );
   }
 

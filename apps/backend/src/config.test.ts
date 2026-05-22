@@ -34,4 +34,26 @@ describe("backend config", () => {
       wsRpcUrl: "wss://base-sepolia.g.alchemy.com/v2/secret-key"
     });
   });
+
+  test("enables the public mission resolver only for test deployments with a resolver address", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_DEPLOYMENT_MODE: "test",
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_MISSION_RESOLVER_ADDRESS: "0x4444444444444444444444444444444444444444",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config).toMatchObject({
+      missionResolutionEnabled: true,
+      missionResolverAddress: "0x4444444444444444444444444444444444444444"
+    });
+
+    expect(loadBackendConfig({
+      VEYDRIFT_DEPLOYMENT_MODE: "production",
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_MISSION_RESOLVER_ADDRESS: "0x4444444444444444444444444444444444444444",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    }).config.missionResolutionEnabled).toBe(false);
+  });
 });

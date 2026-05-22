@@ -5,6 +5,7 @@ import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigPr
 import { assertAddress, type ChainReader, type MoonChanceReportEvent, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
 import { highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent } from "./indexer";
+import { MissionResolutionService } from "./missionResolution";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -33,6 +34,16 @@ type RuntimeConfig = {
   apiUrl: string;
   chainId: number;
   contractAddress: string | null;
+  featureSupport: {
+    allianceConfigured: boolean;
+    gameConfigured: boolean;
+    highscoresEndpoint: boolean;
+    moonConfigured: boolean;
+    randomnessConfigured: boolean;
+    researchEndpoint: boolean;
+    resourceTokensConfigured: boolean;
+    settlementConfigured: boolean;
+  };
   gameContractAddress: string | null;
   graphqlUrl: string;
   moonContractAddress: string | null;
@@ -51,6 +62,7 @@ export type ServerDependencies = {
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
+  missionResolver?: MissionResolutionService;
   indexer?: SettlementIndexer;
 };
 
@@ -69,8 +81,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const chainSync =
     dependencies.chainSync ??
     (loaded.problems.length === 0 ? new ChainSyncService(loaded.config, indexer) : undefined);
+  const resolutionReader = rawChainReader?.listResolvableFleetMissions
+    ? { listResolvableFleetMissions: rawChainReader.listResolvableFleetMissions.bind(rawChainReader) }
+    : undefined;
+  const missionResolver =
+    dependencies.missionResolver ??
+    (loaded.problems.length === 0 && resolutionReader
+      ? new MissionResolutionService(loaded.config, resolutionReader)
+      : undefined);
 
   chainSync?.start();
+  missionResolver?.start();
   if (cacheReader) {
     chainSync?.addListener((event) => {
       if (event.kind === "chain-event") {
@@ -97,6 +118,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
           chainSync: chainSync?.snapshot() ?? null,
+          missionResolution: missionResolver?.snapshot() ?? null,
           indexer: indexer?.snapshot() ?? null,
           rpc: chainReader?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
@@ -641,6 +663,20 @@ function getRuntimeConfig(): RuntimeConfig {
     apiUrl,
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
     contractAddress,
+    featureSupport: {
+      allianceConfigured: Boolean(allianceContractAddress),
+      gameConfigured: Boolean(gameContractAddress),
+      highscoresEndpoint: true,
+      moonConfigured: Boolean(moonContractAddress),
+      randomnessConfigured: Boolean(randomnessEngineAddress),
+      researchEndpoint: true,
+      resourceTokensConfigured: Boolean(
+        resourceTokenAddresses.metal
+          && resourceTokenAddresses.crystal
+          && resourceTokenAddresses.deuterium
+      ),
+      settlementConfigured: Boolean(contractAddress)
+    },
     gameContractAddress,
     graphqlUrl,
     moonContractAddress,

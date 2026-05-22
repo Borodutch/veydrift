@@ -2,6 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -29,6 +31,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function renamePlanet(uint256 planetId, string calldata name) external {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         uint256 length = bytes(name).length;
         if (length == 0 || length > 32) revert InvalidPlanetName();
 
@@ -37,6 +40,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function abandonPlanet(uint256 planetId) external {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         if (homePlanetOf[msg.sender] == planetId) revert CannotAbandonHomePlanet();
         if (
             buildingConstructions[planetId].active || defenseQueues[planetId].active
@@ -65,6 +69,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
 
@@ -79,6 +84,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         external
     {
         _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
         _requireReserveResource(resource);
@@ -103,6 +109,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     function finishMarketResourceWithdrawal(Resource resource) external {
         ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
         if (!withdrawal.active) revert WithdrawalInactive(resource);
+        _requireNoPendingMissionResolutionForPlanet(withdrawal.planetId);
         if (_currentTimestamp() < withdrawal.unlocksAt) {
             revert WithdrawalNotReady(withdrawal.unlocksAt);
         }
@@ -124,8 +131,93 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         );
     }
 
+    function protectedResources(uint256 planetId) external view returns (Resources memory) {
+        return _protectedResources(planetId);
+    }
+
+    function raidableResources(uint256 planetId) external view returns (Resources memory) {
+        Resources memory protected = _protectedResources(planetId);
+        return _unprotectedResources(_planets[planetId].resources, protected);
+    }
+
+    function maxRaidLoot(uint256 planetId, uint256 cargoCapacity)
+        external
+        view
+        returns (Resources memory)
+    {
+        Resources memory protected = _protectedResources(planetId);
+        return _selectRaidLoot(
+            _unprotectedResources(_planets[planetId].resources, protected), cargoCapacity
+        );
+    }
+
+    function debrisField(uint256 planetId) external view returns (uint128 metal, uint128 crystal) {
+        DebrisField storage field = _debrisFields[planetId];
+        return (field.metal, field.crystal);
+    }
+
+    function completeFleetMissionReturn(uint256 missionId) external {
+        FleetMission storage mission = _fleetMissions[missionId];
+        if (
+            mission.status != FleetMissionStatus.Returning
+                && mission.status != FleetMissionStatus.Recalled
+        ) {
+            revert FleetMissionNotResolved(mission.returnAt);
+        }
+        _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
+        if (_currentTimestamp() < mission.returnAt) revert FleetNotArrived(mission.returnAt);
+
+        _planets[mission.originPlanetId].resources =
+            _add(_planets[mission.originPlanetId].resources, mission.cargo);
+        _creditMissionShips(mission.originPlanetId, mission.ships);
+        mission.status = FleetMissionStatus.Returned;
+        activeFleetMissionCount[mission.owner] -= 1;
+        emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
+    }
+
+    function startResearch(uint256 planetId, Technology technology) external {
+        _requirePlanetOwner(planetId);
+        _requireNoPendingMissionResolutionForPlayer(msg.sender);
+        if (researchQueues[msg.sender].active) revert QueueActive();
+
+        uint16 currentLevel = _technologyLevels[msg.sender][technology];
+        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
+
+        _settleResources(planetId);
+        _requireResearchDependencies(planetId, msg.sender, technology, currentLevel);
+
+        Resources memory cost = _researchCost(msg.sender, technology);
+        _spend(planetId, cost);
+
+        uint64 readyAt = uint64(uint256(_currentTimestamp()) + _researchDuration(planetId, cost));
+        uint16 targetLevel = currentLevel + 1;
+        researchQueues[msg.sender] = ResearchQueue({
+            active: true,
+            technology: technology,
+            targetLevel: targetLevel,
+            readyAt: readyAt,
+            cost: cost
+        });
+
+        emit ResearchQueued(
+            msg.sender, technology, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
+        );
+    }
+
+    function finishResearch() external {
+        _requireNoPendingMissionResolutionForPlayer(msg.sender);
+        ResearchQueue memory queue = researchQueues[msg.sender];
+        if (!queue.active) revert QueueInactive();
+        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
+
+        delete researchQueues[msg.sender];
+        _technologyLevels[msg.sender][queue.technology] = queue.targetLevel;
+        emit ResearchCompleted(msg.sender, queue.technology, queue.targetLevel);
+    }
+
     function _validateColonyCreation(uint256 originPlanetId) private view {
         _requirePlanetOwner(originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         uint256 limit = 1 + _technologyLevels[msg.sender][Technology.Astrophysics];
         if (planetCountOf[msg.sender] >= limit) revert PlanetLimitReached(limit);
         _requireShips(originPlanetId, Ship.ColonyShip, 1);
@@ -262,6 +354,16 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         revert InvalidResource(resource);
     }
 
+    function _researchCost(address player, Technology technology)
+        private
+        view
+        returns (Resources memory)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) =
+            VeydriftCatalog.researchCost(technology, _technologyLevels[player][technology]);
+        return Resources(metal, crystal, deuterium);
+    }
+
     function _productionPerHour(uint256 planetId)
         private
         view
@@ -278,6 +380,64 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             planetRef.metalMultiplierBps,
             planetRef.crystalMultiplierBps,
             planetRef.deuteriumMultiplierBps
+        );
+    }
+
+    function _researchDuration(uint256 planetId, Resources memory cost)
+        private
+        view
+        returns (uint256)
+    {
+        return VeydriftFormulas.researchDuration(
+            _buildingLevels[planetId][Building.ResearchLab],
+            cost.metal,
+            cost.crystal,
+            cost.deuterium,
+            MIN_QUEUE_SECONDS
+        );
+    }
+
+    function _requireResearchDependencies(
+        uint256 planetId,
+        address player,
+        Technology technology,
+        uint16 currentLevel
+    ) private view {
+        VeydriftDependencies.requireResearch(
+            technology,
+            _buildingLevels[planetId][Building.ResearchLab],
+            _technologyLevels[player][Technology.Energy],
+            _technologyLevels[player][Technology.Laser],
+            _technologyLevels[player][Technology.Ion],
+            _technologyLevels[player][Technology.Hyperspace],
+            _technologyLevels[player][Technology.ImpulseDrive],
+            _technologyLevels[player][Technology.Computer],
+            _technologyLevels[player][Technology.Shielding]
+        );
+
+        uint256 energyRequirement =
+            VeydriftCatalog.researchEnergyRequirement(technology, currentLevel);
+        if (energyRequirement == 0) return;
+
+        (uint256 producedEnergy,,) = _energyBalance(planetId);
+        if (producedEnergy < energyRequirement) {
+            revert MissingDependency("GRAVITON_ENERGY");
+        }
+    }
+
+    function _energyBalance(uint256 planetId)
+        private
+        view
+        returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps)
+    {
+        Planet storage planetRef = _planets[planetId];
+        return VeydriftFormulas.energyBalance(
+            _buildingLevels[planetId][Building.MetalMine],
+            _buildingLevels[planetId][Building.CrystalMine],
+            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
+            _buildingLevels[planetId][Building.SolarPlant],
+            _buildingLevels[planetId][Building.FusionReactor],
+            _technologyLevels[planetRef.owner][Technology.Energy]
         );
     }
 
@@ -310,6 +470,66 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             _buildingLevels[planetId][Building.CrystalStorage],
             _buildingLevels[planetId][Building.DeuteriumTank]
         );
+    }
+
+    function _protectedResources(uint256 planetId) private view returns (Resources memory) {
+        (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = _storageCaps(planetId);
+        return Resources({
+            metal: _toUint128((uint256(metalCap) * RAID_PROTECTED_STORAGE_BPS) / BPS),
+            crystal: _toUint128((uint256(crystalCap) * RAID_PROTECTED_STORAGE_BPS) / BPS),
+            deuterium: _toUint128((uint256(deuteriumCap) * RAID_PROTECTED_STORAGE_BPS) / BPS)
+        });
+    }
+
+    function _unprotectedResources(Resources storage resources, Resources memory protected)
+        private
+        view
+        returns (Resources memory)
+    {
+        return Resources({
+            metal: resources.metal > protected.metal ? resources.metal - protected.metal : 0,
+            crystal: resources.crystal > protected.crystal
+                ? resources.crystal - protected.crystal
+                : 0,
+            deuterium: resources.deuterium > protected.deuterium
+                ? resources.deuterium - protected.deuterium
+                : 0
+        });
+    }
+
+    function _selectRaidLoot(Resources memory unprotected, uint256 capacity)
+        private
+        pure
+        returns (Resources memory)
+    {
+        uint128 metalCap = _toUint128((uint256(unprotected.metal) * RAID_LOOT_BPS) / BPS);
+        uint128 metal = _toUint128(_min(metalCap, capacity));
+        capacity -= metal;
+
+        uint128 crystalCap = _toUint128((uint256(unprotected.crystal) * RAID_LOOT_BPS) / BPS);
+        uint128 crystal = _toUint128(_min(crystalCap, capacity));
+        capacity -= crystal;
+
+        uint128 deuteriumCap = _toUint128((uint256(unprotected.deuterium) * RAID_LOOT_BPS) / BPS);
+        uint128 deuterium = _toUint128(_min(deuteriumCap, capacity));
+        return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
+    }
+
+    function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
+        _shipCounts[planetId][Ship.SmallCargo] += ships.smallCargo;
+        _shipCounts[planetId][Ship.LightFighter] += ships.lightFighter;
+        _shipCounts[planetId][Ship.Recycler] += ships.recycler;
+        _shipCounts[planetId][Ship.ColonyShip] += ships.colonyShip;
+        _shipCounts[planetId][Ship.LargeCargo] += ships.largeCargo;
+        _shipCounts[planetId][Ship.HeavyFighter] += ships.heavyFighter;
+        _shipCounts[planetId][Ship.Cruiser] += ships.cruiser;
+        _shipCounts[planetId][Ship.Battleship] += ships.battleship;
+        _shipCounts[planetId][Ship.Bomber] += ships.bomber;
+        _shipCounts[planetId][Ship.Destroyer] += ships.destroyer;
+        _shipCounts[planetId][Ship.Deathstar] += ships.deathstar;
+        _shipCounts[planetId][Ship.Battlecruiser] += ships.battlecruiser;
+        _shipCounts[planetId][Ship.Reaper] += ships.reaper;
+        _shipCounts[planetId][Ship.Pathfinder] += ships.pathfinder;
     }
 
     function _addWithCap(uint128 current, uint128 addition, uint128 cap)

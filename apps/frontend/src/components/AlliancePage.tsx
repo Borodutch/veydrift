@@ -1,6 +1,6 @@
 import { Crown, RefreshCw, UserCog, Users } from "lucide-preact";
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { AllianceRole, ChainAllianceState } from "../walletFlow";
 import { shortAddress } from "../walletFlow";
 
@@ -10,6 +10,9 @@ type AllianceActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
+type DirectoryEntry = ChainAllianceState["directory"][number];
+type RosterMember = ChainAllianceState["members"][number];
+
 interface AlliancePageProps {
   actionState: AllianceActionState;
   allianceState: ChainAllianceState | null;
@@ -17,11 +20,15 @@ interface AlliancePageProps {
   error?: string | undefined;
   loading: boolean;
   onAcceptInvite: (allianceId: string) => void;
+  onApproveJoinRequest: (playerAddress: string) => void;
+  onCancelJoinRequest: (allianceId: string) => void;
   onCreate: (tag: string, name: string, description: string) => void;
   onInvite: (playerAddress: string) => void;
+  onJoinRequest: (allianceId: string) => void;
   onKick: (playerAddress: string) => void;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onUpdateProfile: (tag: string, name: string, description: string) => void;
 }
 
 export function AlliancePage({
@@ -31,184 +38,455 @@ export function AlliancePage({
   error,
   loading,
   onAcceptInvite,
+  onApproveJoinRequest,
+  onCancelJoinRequest,
   onCreate,
   onInvite,
+  onJoinRequest,
   onKick,
   onRefresh,
   onSetRole,
+  onUpdateProfile,
 }: AlliancePageProps) {
   const [tag, setTag] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [profileTag, setProfileTag] = useState("");
+  const [profileName, setProfileName] = useState("");
+  const [profileDescription, setProfileDescription] = useState("");
   const [inviteAddress, setInviteAddress] = useState("");
-  const [inviteAllianceId, setInviteAllianceId] = useState("");
-  const [manageAddress, setManageAddress] = useState("");
 
   const profile = allianceState?.profile;
-  const isMember = Boolean(profile && allianceState?.membership.allianceId !== "0");
   const role = allianceState?.membership.role ?? "none";
-  const canManage = role === "owner" || role === "officer";
-  const canManageOfficers = role === "owner";
+  const isMember = Boolean(profile && allianceState?.membership.allianceId !== "0");
+  const isOwner = role === "owner";
+  const canManageMembers = role === "owner" || role === "officer";
   const disabled = !canTransact || loading || actionState.status === "pending";
-  const selectedMember = allianceState?.members.find((member) => member.address.toLowerCase() === manageAddress.trim().toLowerCase());
-  const canKickSelected = canManage && Boolean(selectedMember) && selectedMember?.role === "member";
-  const ownerCanManageSelected = canManageOfficers && Boolean(selectedMember) && selectedMember?.role !== "owner";
+  const officers = allianceState?.members.filter((member) => member.role === "owner" || member.role === "officer") ?? [];
+  const members = allianceState?.members.filter((member) => member.role === "member") ?? [];
+  const currentAllianceId = allianceState?.membership.allianceId ?? "0";
+
+  useEffect(() => {
+    setProfileTag(profile?.tag ?? "");
+    setProfileName(profile?.name ?? "");
+    setProfileDescription(profile?.description ?? "");
+  }, [profile?.tag, profile?.name, profile?.description]);
 
   return (
     <section className="min-h-0 overflow-auto bg-[#080d16]">
-      <div className="mx-auto grid w-full max-w-6xl gap-4 p-4 lg:grid-cols-[1fr_360px]">
-        <div className="space-y-4">
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
-            <div>
-              <h1 className="text-xl font-semibold text-white">Alliance</h1>
-              <p className="mt-1 text-sm text-slate-400">
-                {profile ? `${profile.tag} - ${profile.name}` : "On-chain alliance identity, roster, and coordination link."}
-              </p>
-            </div>
-            <button className="icon-button" onClick={onRefresh} type="button" disabled={loading} title="Refresh alliance state">
-              <RefreshCw size={16} />
-            </button>
-          </header>
-
-          {error ? <Notice tone="error">{error}</Notice> : null}
-          {allianceState?.allianceAvailable === false ? (
-            <Notice>{allianceState.unavailableReason ?? "Alliance contract is not configured."}</Notice>
-          ) : null}
-          {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
-
-          <div className="grid gap-3 md:grid-cols-3">
-            <Metric icon={Users} label="Members" value={profile ? String(profile.memberCount) : "0"} />
-            <Metric icon={Crown} label="Role" value={role} />
-            <Metric icon={UserCog} label="Officers" value={String(allianceState?.members.filter((member) => member.role === "officer").length ?? 0)} />
+      <div className="mx-auto w-full max-w-6xl space-y-4 p-4">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+          <div>
+            <h1 className="text-xl font-semibold text-white">Alliance</h1>
+            <p className="mt-1 text-sm text-slate-400">
+              {profile ? `${profile.tag} - ${profile.name}` : "Create, join, and browse public alliances."}
+            </p>
           </div>
+          <button className="icon-button" onClick={onRefresh} type="button" disabled={loading} title="Refresh alliance state">
+            <RefreshCw size={16} />
+          </button>
+        </header>
 
-          {profile ? (
-            <div className="rounded border border-white/10 bg-white/[0.03] p-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Readout label="Alliance ID" value={allianceState?.membership.allianceId ?? "0"} />
-                <Readout label="Owner" value={shortAddress(profile.owner)} />
-                <Readout label="Description / Link" value={profile.description || "None"} />
-                <Readout label="Created" value={profile.createdAt} />
-              </div>
-            </div>
-          ) : (
-            <div className="rounded border border-white/10 bg-white/[0.03] p-4">
-              <h2 className="text-sm font-semibold text-white">Create Alliance</h2>
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                <TextField label="Tag" value={tag} onInput={setTag} placeholder="VDFT" />
-                <TextField label="Name" value={name} onInput={setName} placeholder="Veydrift Union" />
-                <TextField label="Description / Link" value={description} onInput={setDescription} placeholder="Discord: https://..." />
-              </div>
-              <button
-                className="mt-4 rounded bg-cyan-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled || !tag.trim() || !name.trim()}
-                onClick={() => onCreate(tag.trim(), name.trim(), description.trim())}
-                type="button"
-              >
-                Create Alliance
-              </button>
-            </div>
-          )}
+        {error ? <Notice tone="error">{error}</Notice> : null}
+        {allianceState?.allianceAvailable === false ? (
+          <Notice>{allianceState.unavailableReason ?? "Alliance contract is not configured."}</Notice>
+        ) : null}
+        {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <Metric icon={Users} label="Members" value={profile ? String(profile.memberCount) : "0"} />
+          <Metric icon={Crown} label="Role" value={roleLabel(role)} />
+          <Metric icon={UserCog} label="Officers" value={String(officers.length)} />
         </div>
 
-        <aside className="space-y-4">
-          <Panel title="Roles">
-            <div className="space-y-2 text-sm text-slate-300">
-              <p>Owner: invites or approves members, kicks members, and adds or removes officers.</p>
-              <p>Officers: invite or approve members and kick members.</p>
-              <p>Members: appear on the roster and use the alliance link for coordination outside Veydrift.</p>
-            </div>
-          </Panel>
-
-          <Panel title="Member Management">
-            <TextField label="Wallet" value={inviteAddress} onInput={setInviteAddress} placeholder="0x..." />
-            <button
-              className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={disabled || !isMember || !canManage || !inviteAddress.trim()}
-              onClick={() => onInvite(inviteAddress.trim())}
-              type="button"
-            >
-              Invite Member
-            </button>
-          </Panel>
-
-          <Panel title="Accept Invitation">
-            <TextField label="Alliance ID" value={inviteAllianceId} onInput={setInviteAllianceId} placeholder="1" />
-            <button
-              className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={disabled || isMember || !inviteAllianceId.trim()}
-              onClick={() => onAcceptInvite(inviteAllianceId.trim())}
-              type="button"
-            >
-              Accept Invite
-            </button>
-          </Panel>
-
-          <Panel title="Roster Actions">
-            <div className="grid gap-3">
-              <TextField label="Member Wallet" value={manageAddress} onInput={setManageAddress} placeholder="0x..." />
-            </div>
-            <div className="mt-3 grid gap-2">
-              <button
-                className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled || !canManageOfficers || selectedMember?.role !== "member"}
-                onClick={() => onSetRole(manageAddress.trim(), "officer")}
-                type="button"
-              >
-                Make Officer
-              </button>
-              <button
-                className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled || !canManageOfficers || selectedMember?.role !== "officer"}
-                onClick={() => onSetRole(manageAddress.trim(), "member")}
-                type="button"
-              >
-                Make Member
-              </button>
-              <button
-                className="rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled || !(canKickSelected || ownerCanManageSelected)}
-                onClick={() => onKick(manageAddress.trim())}
-                type="button"
-              >
-                Kick
-              </button>
-            </div>
-          </Panel>
-        </aside>
-
-        {profile ? (
-          <div className="lg:col-span-2">
-            <Panel title="Roster">
-              {allianceState?.members.length ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[520px] text-left text-sm">
-                    <thead className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                      <tr>
-                        <th className="py-2 pr-3 font-medium">Wallet</th>
-                        <th className="py-2 pr-3 font-medium">Role</th>
-                        <th className="py-2 font-medium">Joined</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/10 text-slate-200">
-                      {allianceState.members.map((member) => (
-                        <tr key={member.address}>
-                          <td className="py-2 pr-3 font-mono">{shortAddress(member.address)}</td>
-                          <td className="py-2 pr-3 capitalize">{roleLabel(member.role)}</td>
-                          <td className="py-2 font-mono text-slate-400">{member.joinedAt}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        {!isMember ? (
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-4">
+              <Panel title="Create Alliance">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <TextField label="Tag" value={tag} onInput={setTag} placeholder="VDFT" />
+                  <TextField label="Name" value={name} onInput={setName} placeholder="Veydrift Union" />
                 </div>
-              ) : (
-                <p className="text-sm text-slate-400">No roster entries returned yet.</p>
-              )}
-            </Panel>
+                <div className="mt-3">
+                  <TextArea label="Description" value={description} onInput={setDescription} placeholder="Coordination notes, public charter, or Discord link" />
+                </div>
+                <button
+                  className="mt-4 rounded bg-cyan-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={disabled || !tag.trim() || !name.trim()}
+                  onClick={() => onCreate(tag.trim(), name.trim(), description.trim())}
+                  type="button"
+                >
+                  Create Alliance
+                </button>
+              </Panel>
+
+              <AllianceDirectory
+                alliances={allianceState?.directory ?? []}
+                disabled={disabled}
+                isMember={false}
+                pendingJoinRequests={allianceState?.pendingJoinRequests ?? []}
+                onCancelJoinRequest={onCancelJoinRequest}
+                onJoinRequest={onJoinRequest}
+              />
+            </div>
+
+            <PendingInvites
+              disabled={disabled}
+              invites={allianceState?.pendingInvites ?? []}
+              directory={allianceState?.directory ?? []}
+              onAcceptInvite={onAcceptInvite}
+            />
           </div>
-        ) : null}
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-4">
+              {profile ? (
+                <Panel title="Alliance Info">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Readout label="Tag" value={profile.tag} />
+                    <Readout label="Name" value={profile.name} />
+                    <Readout label="Alliance ID" value={currentAllianceId} />
+                    <Readout label="Owner" value={shortAddress(profile.owner)} />
+                    <Readout label="Created" value={profile.createdAt} />
+                  </div>
+                  <div className="mt-4">
+                    <Readout label="Description" value={profile.description || "None"} />
+                  </div>
+                </Panel>
+              ) : null}
+
+              {isOwner ? (
+                <Panel title="Alliance Management">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <TextField label="Tag" value={profileTag} onInput={setProfileTag} placeholder="VDFT" />
+                    <TextField label="Name" value={profileName} onInput={setProfileName} placeholder="Veydrift Union" />
+                  </div>
+                  <div className="mt-3">
+                    <TextArea label="Description" value={profileDescription} onInput={setProfileDescription} placeholder="Public alliance description" />
+                  </div>
+                  <button
+                    className="mt-4 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled || !profileTag.trim() || !profileName.trim()}
+                    onClick={() => onUpdateProfile(profileTag.trim(), profileName.trim(), profileDescription.trim())}
+                    type="button"
+                  >
+                    Update Profile
+                  </button>
+                </Panel>
+              ) : null}
+
+              <RosterSection
+                canManageMembers={canManageMembers}
+                disabled={disabled}
+                isOwner={isOwner}
+                members={members}
+                officers={officers}
+                viewer={allianceState?.wallet}
+                onKick={onKick}
+                onSetRole={onSetRole}
+              />
+
+              <AllianceDirectory
+                alliances={allianceState?.directory ?? []}
+                disabled={disabled}
+                isMember
+                pendingJoinRequests={[]}
+                onCancelJoinRequest={onCancelJoinRequest}
+                onJoinRequest={onJoinRequest}
+              />
+            </div>
+
+            <div className="space-y-4">
+              {canManageMembers ? (
+                <Panel title="Member Management">
+                  <TextField label="Wallet" value={inviteAddress} onInput={setInviteAddress} placeholder="0x..." />
+                  <button
+                    className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled || !inviteAddress.trim()}
+                    onClick={() => onInvite(inviteAddress.trim())}
+                    type="button"
+                  >
+                    Invite Member
+                  </button>
+                </Panel>
+              ) : null}
+
+              {canManageMembers ? (
+                <JoinRequests
+                  disabled={disabled}
+                  requests={allianceState?.allianceJoinRequests ?? []}
+                  onApproveJoinRequest={onApproveJoinRequest}
+                />
+              ) : null}
+
+              <Panel title="Roles">
+                <div className="space-y-2 text-sm text-slate-300">
+                  <p>Owner: profile editing, officer management, invitations, applications, and member removal.</p>
+                  <p>Officers: invitations, application approvals, and member removal.</p>
+                  <p>Members: roster access and alliance coordination.</p>
+                </div>
+              </Panel>
+            </div>
+          </div>
+        )}
       </div>
     </section>
+  );
+}
+
+function AllianceDirectory({
+  alliances,
+  disabled,
+  isMember,
+  pendingJoinRequests,
+  onCancelJoinRequest,
+  onJoinRequest,
+}: {
+  alliances: DirectoryEntry[];
+  disabled: boolean;
+  isMember: boolean;
+  pendingJoinRequests: ChainAllianceState["pendingJoinRequests"];
+  onCancelJoinRequest: (allianceId: string) => void;
+  onJoinRequest: (allianceId: string) => void;
+}) {
+  const pendingIds = new Set(pendingJoinRequests.map((request) => request.allianceId));
+
+  return (
+    <Panel title="Alliance Directory">
+      {alliances.length ? (
+        <div className="grid gap-3">
+          {alliances.map((alliance) => {
+            const pending = pendingIds.has(alliance.allianceId);
+            return (
+              <div className="rounded border border-white/10 bg-black/20 p-3" key={alliance.allianceId}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-white">{alliance.tag} - {alliance.name}</p>
+                    <p className="mt-1 text-sm text-slate-400">{alliance.description || "No public description."}</p>
+                  </div>
+                  {!isMember ? (
+                    <button
+                      className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={disabled}
+                      onClick={() => pending ? onCancelJoinRequest(alliance.allianceId) : onJoinRequest(alliance.allianceId)}
+                      type="button"
+                    >
+                      {pending ? "Cancel Request" : "Request Join"}
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid gap-2 text-xs uppercase tracking-[0.14em] text-slate-500 sm:grid-cols-3">
+                  <span>ID {alliance.allianceId}</span>
+                  <span>{alliance.memberCount} members</span>
+                  <span>Owner {shortAddress(alliance.owner)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-sm text-slate-400">No public alliances found yet.</p>
+      )}
+    </Panel>
+  );
+}
+
+function PendingInvites({
+  directory,
+  disabled,
+  invites,
+  onAcceptInvite,
+}: {
+  directory: DirectoryEntry[];
+  disabled: boolean;
+  invites: ChainAllianceState["pendingInvites"];
+  onAcceptInvite: (allianceId: string) => void;
+}) {
+  return (
+    <Panel title="Invitations">
+      {invites.length ? (
+        <div className="space-y-3">
+          {invites.map((invite) => {
+            const alliance = directory.find((entry) => entry.allianceId === invite.allianceId);
+            return (
+              <div className="rounded border border-white/10 bg-black/20 p-3" key={invite.allianceId}>
+                <p className="text-sm font-semibold text-white">{alliance ? `${alliance.tag} - ${alliance.name}` : `Alliance #${invite.allianceId}`}</p>
+                <p className="mt-1 text-sm text-slate-400">Invited by {shortAddress(invite.inviter)}</p>
+                <button
+                  className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={disabled}
+                  onClick={() => onAcceptInvite(invite.allianceId)}
+                  type="button"
+                >
+                  Accept Invite
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-sm text-slate-400">No pending invitations.</p>
+      )}
+    </Panel>
+  );
+}
+
+function JoinRequests({
+  disabled,
+  requests,
+  onApproveJoinRequest,
+}: {
+  disabled: boolean;
+  requests: ChainAllianceState["allianceJoinRequests"];
+  onApproveJoinRequest: (playerAddress: string) => void;
+}) {
+  return (
+    <Panel title="Join Applications">
+      {requests.length ? (
+        <div className="space-y-3">
+          {requests.map((request) => (
+            <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
+              <p className="font-mono text-sm text-white">{shortAddress(request.requester)}</p>
+              <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {request.requestedAt}</p>
+              <button
+                className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled}
+                onClick={() => onApproveJoinRequest(request.requester)}
+                type="button"
+              >
+                Approve Member
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-slate-400">No pending applications.</p>
+      )}
+    </Panel>
+  );
+}
+
+function RosterSection({
+  canManageMembers,
+  disabled,
+  isOwner,
+  members,
+  officers,
+  viewer,
+  onKick,
+  onSetRole,
+}: {
+  canManageMembers: boolean;
+  disabled: boolean;
+  isOwner: boolean;
+  members: RosterMember[];
+  officers: RosterMember[];
+  viewer?: string | undefined;
+  onKick: (playerAddress: string) => void;
+  onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+}) {
+  return (
+    <Panel title="Roster">
+      <RosterTable
+        canManageMembers={canManageMembers}
+        disabled={disabled}
+        isOwner={isOwner}
+        rows={officers}
+        title="Officers"
+        viewer={viewer}
+        onKick={onKick}
+        onSetRole={onSetRole}
+      />
+      <div className="mt-4">
+        <RosterTable
+          canManageMembers={canManageMembers}
+          disabled={disabled}
+          isOwner={isOwner}
+          rows={members}
+          title="Members"
+          viewer={viewer}
+          onKick={onKick}
+          onSetRole={onSetRole}
+        />
+      </div>
+    </Panel>
+  );
+}
+
+function RosterTable({
+  canManageMembers,
+  disabled,
+  isOwner,
+  rows,
+  title,
+  viewer,
+  onKick,
+  onSetRole,
+}: {
+  canManageMembers: boolean;
+  disabled: boolean;
+  isOwner: boolean;
+  rows: RosterMember[];
+  title: string;
+  viewer?: string | undefined;
+  onKick: (playerAddress: string) => void;
+  onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+}) {
+  return (
+    <div>
+      <h3 className="text-xs uppercase tracking-[0.14em] text-slate-500">{title}</h3>
+      {rows.length ? (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[520px] text-left text-sm">
+            <thead className="text-xs uppercase tracking-[0.14em] text-slate-500">
+              <tr>
+                <th className="py-2 pr-3 font-medium">Wallet</th>
+                <th className="py-2 pr-3 font-medium">Role</th>
+                <th className="py-2 pr-3 font-medium">Joined</th>
+                {canManageMembers ? <th className="py-2 font-medium">Actions</th> : null}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/10 text-slate-200">
+              {rows.map((member) => {
+                const isViewer = viewer?.toLowerCase() === member.address.toLowerCase();
+                const canKick = canManageMembers && member.role === "member";
+                const ownerCanChangeRole = isOwner && member.role !== "owner";
+                return (
+                  <tr key={member.address}>
+                    <td className="py-2 pr-3 font-mono">{shortAddress(member.address)}</td>
+                    <td className="py-2 pr-3 capitalize">{roleLabel(member.role)}</td>
+                    <td className="py-2 pr-3 font-mono text-slate-400">{member.joinedAt}</td>
+                    {canManageMembers ? (
+                      <td className="py-2">
+                        <div className="flex flex-wrap gap-2">
+                          {ownerCanChangeRole && member.role === "member" ? (
+                            <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "officer")} type="button">
+                              Make Officer
+                            </button>
+                          ) : null}
+                          {ownerCanChangeRole && member.role === "officer" ? (
+                            <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "member")} type="button">
+                              Make Member
+                            </button>
+                          ) : null}
+                          {(canKick || (isOwner && member.role === "officer")) && !isViewer ? (
+                            <button className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50" disabled={disabled} onClick={() => onKick(member.address)} type="button">
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-slate-400">No {title.toLowerCase()} found.</p>
+      )}
+    </div>
   );
 }
 
@@ -244,7 +522,7 @@ function Readout({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</p>
-      <p className="mt-1 break-all font-mono text-sm text-slate-200">{value}</p>
+      <p className="mt-1 break-all text-sm text-slate-200">{value}</p>
     </div>
   );
 }
@@ -260,6 +538,25 @@ function TextField({ label, onInput, placeholder, value }: {
       <span className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</span>
       <input
         className="mt-1 w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
+        onInput={(event) => onInput(event.currentTarget.value)}
+        placeholder={placeholder}
+        value={value}
+      />
+    </label>
+  );
+}
+
+function TextArea({ label, onInput, placeholder, value }: {
+  label: string;
+  onInput: (value: string) => void;
+  placeholder: string;
+  value: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</span>
+      <textarea
+        className="mt-1 min-h-24 w-full resize-y rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
         onInput={(event) => onInput(event.currentTarget.value)}
         placeholder={placeholder}
         value={value}

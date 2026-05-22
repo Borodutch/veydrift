@@ -104,9 +104,13 @@ import {
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
   sendAcceptAllianceInviteTransaction,
+  sendAllianceJoinRequestTransaction,
   sendAllianceKickTransaction,
   sendAllianceInviteTransaction,
+  sendAllianceProfileTransaction,
   sendAllianceRoleTransaction,
+  sendApproveAllianceJoinRequestTransaction,
+  sendCancelAllianceJoinRequestTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
@@ -1295,6 +1299,23 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleUpdateAllianceProfile = useCallback((tag: string, name: string, description: string) => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance profile update", () => sendAllianceProfileTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      tag,
+      name,
+      description,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
   const handleAcceptAllianceInvite = useCallback((allianceId: string) => {
     if (!provider || !account || !allianceContract) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
@@ -1308,6 +1329,49 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       allianceId,
     ));
   }, [account, allianceContract, provider, runAllianceTransaction]);
+
+  const handleRequestAllianceJoin = useCallback((allianceId: string) => {
+    if (!provider || !account || !allianceContract) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance join request", () => sendAllianceJoinRequestTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceId,
+    ));
+  }, [account, allianceContract, provider, runAllianceTransaction]);
+
+  const handleCancelAllianceJoinRequest = useCallback((allianceId: string) => {
+    if (!provider || !account || !allianceContract) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance join request cancellation", () => sendCancelAllianceJoinRequestTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceId,
+    ));
+  }, [account, allianceContract, provider, runAllianceTransaction]);
+
+  const handleApproveAllianceJoinRequest = useCallback((playerAddress: string) => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance join approval", () => sendApproveAllianceJoinRequestTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddress,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleKickAllianceMember = useCallback((playerAddress: string) => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
@@ -1882,11 +1946,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           error={allianceError}
           loading={allianceLoading}
           onAcceptInvite={handleAcceptAllianceInvite}
+          onApproveJoinRequest={handleApproveAllianceJoinRequest}
+          onCancelJoinRequest={handleCancelAllianceJoinRequest}
           onCreate={handleCreateAlliance}
+          onJoinRequest={handleRequestAllianceJoin}
           onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}
+          onUpdateProfile={handleUpdateAllianceProfile}
         />
       );
     }
@@ -1945,6 +2013,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onJoinAttack={handleJoinAttack}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
+        onResolveMission={handleResolveMission}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
         planet={planet}

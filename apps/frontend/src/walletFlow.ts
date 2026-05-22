@@ -139,6 +139,7 @@ export type FleetMissionSummary = {
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
+  needsResolution?: boolean;
 };
 
 export type FleetMissionVisibilityResponse = {
@@ -328,6 +329,31 @@ export type ChainAllianceState = {
     createdAt: string;
     memberCount: number;
   } | null;
+  directory: Array<{
+    allianceId: string;
+    active: boolean;
+    tag: string;
+    name: string;
+    description: string;
+    owner: string;
+    createdAt: string;
+    memberCount: number;
+  }>;
+  pendingInvites: Array<{
+    allianceId: string;
+    inviter: string;
+    invitedAt: string;
+  }>;
+  pendingJoinRequests: Array<{
+    allianceId: string;
+    requester: string;
+    requestedAt: string;
+  }>;
+  allianceJoinRequests: Array<{
+    allianceId: string;
+    requester: string;
+    requestedAt: string;
+  }>;
   members: Array<{
     address: string;
     role: AllianceRole;
@@ -402,21 +428,25 @@ const GAME_SELECTORS = {
   joinAttackMission: "0x28260eb6",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
   launchFleetMission: "0x28247df8",
+  resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
   renamePlanet: "0xa74c0906",
   requestResourceWithdrawal: "0x62a10a46",
   recallFleetMission: "0x1cbc460c",
-  resolveFleetMission: "0xde09e7cf",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
 } as const;
 const ALLIANCE_SELECTORS = {
   createAlliance: "0x944cde0e",
+  updateAllianceProfile: "0x3fd0e7a5",
   inviteMember: "0x9e6d6830",
   acceptInvite: "0xbf8e9176",
+  requestJoinAlliance: "0xbc46277a",
+  cancelJoinRequest: "0xc5c4bdcc",
+  approveJoinRequest: "0x8ff388c7",
   kickMember: "0xbd0e667c",
   setMemberRole: "0xbfbb73f1"
 } as const;
@@ -599,6 +629,19 @@ export function encodeStringTripleCall(selector: string, values: [string, string
   let offset = 32n * BigInt(values.length);
   for (const value of values) {
     const encoded = encodeAbiString(value);
+    heads.push(offset.toString(16).padStart(64, "0"));
+    tails.push(encoded);
+    offset += BigInt(encoded.length / 2);
+  }
+  return `${selector}${heads.join("")}${tails.join("")}`;
+}
+
+export function encodeUintStringTripleCall(selector: string, value: bigint | number | string, values: [string, string, string]): string {
+  const heads = [BigInt(value).toString(16).padStart(64, "0")];
+  const tails: string[] = [];
+  let offset = 32n * BigInt(values.length + 1);
+  for (const item of values) {
+    const encoded = encodeAbiString(item);
     heads.push(offset.toString(16).padStart(64, "0"));
     tails.push(encoded);
     offset += BigInt(encoded.length / 2);
@@ -999,6 +1042,27 @@ export async function sendAllianceInviteTransaction(
   });
 }
 
+export async function sendAllianceProfileTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  tag: string,
+  name: string,
+  description: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintStringTripleCall(ALLIANCE_SELECTORS.updateAllianceProfile, allianceId, [tag, name, description])
+      }
+    ]
+  });
+}
+
 export async function sendAcceptAllianceInviteTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -1012,6 +1076,61 @@ export async function sendAcceptAllianceInviteTransaction(
         from: account,
         to: contractAddress,
         data: encodeUintCall(ALLIANCE_SELECTORS.acceptInvite, allianceId)
+      }
+    ]
+  });
+}
+
+export async function sendAllianceJoinRequestTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintCall(ALLIANCE_SELECTORS.requestJoinAlliance, allianceId)
+      }
+    ]
+  });
+}
+
+export async function sendCancelAllianceJoinRequestTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintCall(ALLIANCE_SELECTORS.cancelJoinRequest, allianceId)
+      }
+    ]
+  });
+}
+
+export async function sendApproveAllianceJoinRequestTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintAddressCall(ALLIANCE_SELECTORS.approveJoinRequest, allianceId, playerAddress)
       }
     ]
   });

@@ -43,6 +43,7 @@ interface OverviewPageProps {
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
   onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
+  onResolveMission?: ((missionId: string) => void) | undefined;
   onChainError?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
@@ -66,6 +67,7 @@ export function OverviewPage({
   onNavigate,
   onCounterplay,
   onJoinAttack,
+  onResolveMission,
   onChainError,
   fleetVisibility,
   onChainSettlement,
@@ -168,15 +170,17 @@ export function OverviewPage({
             missions={fleetVisibility.incoming}
             now={now}
             onCounterplay={onCounterplay}
+            onResolveMission={onResolveMission}
           />
-          <MissionPanel label="Returning" tone="warning" missions={fleetVisibility.returning} now={now} />
-          <MissionPanel label="Outbound" tone="neutral" missions={fleetVisibility.outgoing} now={now} />
+          <MissionPanel label="Returning" tone="warning" missions={fleetVisibility.returning} now={now} onResolveMission={onResolveMission} />
+          <MissionPanel label="Outbound" tone="neutral" missions={fleetVisibility.outgoing} now={now} onResolveMission={onResolveMission} />
           <MissionPanel
             label="Joinable"
             tone="neutral"
             missions={fleetVisibility.joinableAttacks}
             now={now}
             onJoinAttack={onJoinAttack}
+            onResolveMission={onResolveMission}
           />
         </div>
       )}
@@ -332,6 +336,7 @@ function MissionPanel({
   now,
   onCounterplay,
   onJoinAttack,
+  onResolveMission,
   tone,
 }: {
   label: string;
@@ -339,6 +344,7 @@ function MissionPanel({
   now: number;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
   onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
+  onResolveMission?: ((missionId: string) => void) | undefined;
   tone: "danger" | "neutral" | "warning";
 }) {
   const border = tone === "danger"
@@ -399,6 +405,15 @@ function MissionPanel({
                   type="button"
                 >
                   Join attack
+                </button>
+              ) : null}
+              {onResolveMission && mission.needsResolution ? (
+                <button
+                  className="mt-2 w-full rounded border border-lime-200/25 bg-lime-300/10 px-2 py-1 text-[11px] font-medium text-lime-100 hover:bg-lime-300/15"
+                  onClick={() => onResolveMission(mission.missionId)}
+                  type="button"
+                >
+                  Resolve now
                 </button>
               ) : null}
             </div>
