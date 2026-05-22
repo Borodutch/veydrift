@@ -261,23 +261,26 @@ export type AllianceState = {
   unavailableReason?: string;
   membership: {
     allianceId: string;
-    role: "none" | "member" | "officer" | "leader";
+    role: AllianceRoleName;
     joinedAt: string;
   };
   profile: {
     active: boolean;
     tag: string;
     name: string;
-    metadataURI: string;
-    founder: Address;
+    description: string;
+    owner: Address;
     createdAt: string;
     memberCount: number;
   } | null;
-  defenseCoordination: {
-    acsDefendSupported: boolean;
-    interceptSupported: boolean;
-  };
+  members: Array<{
+    address: Address;
+    role: AllianceRoleName;
+    joinedAt: string;
+  }>;
 };
+
+type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
 export type AttackBlockReason = "none" | "bashing_limit" | "score_protection";
 
@@ -1067,7 +1070,7 @@ export class VeydriftGameReader implements ChainReader {
       unavailableReason: reason,
       membership: { allianceId: "0", role: "none", joinedAt: "0" },
       profile: null,
-      defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+      members: []
     });
 
     if (!this.allianceContractAddress) {
@@ -1086,12 +1089,19 @@ export class VeydriftGameReader implements ChainReader {
         allianceAvailable: true,
         membership: { allianceId: "0", role, joinedAt },
         profile: null,
-        defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+        members: []
       };
     }
 
     const profileWords = splitWords(
       await this.callContract(this.allianceContractAddress, "0x79c76adf", [encodeUint(allianceId)])
+    );
+    const memberAddresses = decodeAddressArray(
+      await this.callContract(this.allianceContractAddress, "0x2a1ef311", [encodeUint(allianceId)])
+    );
+    const memberMemberships = await this.batchCallContract(
+      this.allianceContractAddress,
+      memberAddresses.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
     );
     return {
       wallet,
@@ -1101,12 +1111,19 @@ export class VeydriftGameReader implements ChainReader {
         active: decodeBoolWord(wordAt(profileWords, 0)),
         tag: decodeString(profileWords, 1),
         name: decodeString(profileWords, 2),
-        metadataURI: decodeString(profileWords, 3),
-        founder: decodeAddressWord(wordAt(profileWords, 4)),
+        description: decodeString(profileWords, 3),
+        owner: decodeAddressWord(wordAt(profileWords, 4)),
         createdAt: decodeUintWord(wordAt(profileWords, 5)).toString(),
         memberCount: Number(decodeUintWord(wordAt(profileWords, 6)))
       },
-      defenseCoordination: { acsDefendSupported: true, interceptSupported: true }
+      members: memberAddresses.map((address, index) => {
+        const words = splitWords(memberMemberships[index] ?? "0x");
+        return {
+          address,
+          role: allianceRoleName(Number(decodeUintWord(wordAt(words, 1)))),
+          joinedAt: decodeUintWord(wordAt(words, 2)).toString()
+        };
+      })
     };
   }
 
@@ -2178,6 +2195,13 @@ function decodeString(words: string[], headIndex: number): string {
   return new TextDecoder().decode(hexToBytes(hex.slice(0, length * 2)));
 }
 
+function decodeAddressArray(hex: string): Address[] {
+  const words = splitWords(hex);
+  const offset = Number(decodeUintWord(wordAt(words, 0))) / 32;
+  const length = Number(decodeUintWord(wordAt(words, offset)));
+  return Array.from({ length }, (_, index) => decodeAddressWord(wordAt(words, offset + 1 + index)));
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let index = 0; index < bytes.length; index += 1) {
@@ -2186,10 +2210,10 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-function allianceRoleName(role: number): AllianceState["membership"]["role"] {
+function allianceRoleName(role: number): AllianceRoleName {
   if (role === 1) return "member";
   if (role === 2) return "officer";
-  if (role === 3) return "leader";
+  if (role === 3) return "owner";
   return "none";
 }
 

@@ -312,23 +312,26 @@ export type ChainAllianceState = {
   unavailableReason?: string;
   membership: {
     allianceId: string;
-    role: "none" | "member" | "officer" | "leader";
+    role: AllianceRole;
     joinedAt: string;
   };
   profile: {
     active: boolean;
     tag: string;
     name: string;
-    metadataURI: string;
-    founder: string;
+    description: string;
+    owner: string;
     createdAt: string;
     memberCount: number;
   } | null;
-  defenseCoordination: {
-    acsDefendSupported: boolean;
-    interceptSupported: boolean;
-  };
+  members: Array<{
+    address: string;
+    role: AllianceRole;
+    joinedAt: string;
+  }>;
 };
+
+export type AllianceRole = "none" | "member" | "officer" | "owner";
 
 export type HighscoreCategory = "total" | "economy" | "research" | "fleet" | "defense";
 
@@ -405,7 +408,8 @@ const ALLIANCE_SELECTORS = {
   createAlliance: "0x944cde0e",
   inviteMember: "0x9e6d6830",
   acceptInvite: "0xbf8e9176",
-  openDefenseIntent: "0x56f919e7"
+  kickMember: "0xbd0e667c",
+  setMemberRole: "0xbfbb73f1"
 } as const;
 const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
@@ -540,6 +544,14 @@ export function encodeStringTripleCall(selector: string, values: [string, string
 
 export function encodeAddressUintCall(selector: string, address: string, value: bigint | number | string): string {
   return `${selector}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${BigInt(value).toString(16).padStart(64, "0")}`;
+}
+
+export function encodeUintAddressCall(selector: string, value: bigint | number | string, address: string): string {
+  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+}
+
+export function encodeUintAddressUintCall(selector: string, value: bigint | number | string, address: string, role: bigint | number | string): string {
+  return `${encodeUintAddressCall(selector, value, address)}${BigInt(role).toString(16).padStart(64, "0")}`;
 }
 
 function encodeAbiString(value: string): string {
@@ -890,7 +902,7 @@ export async function sendCreateAllianceTransaction(
   contractAddress: string,
   tag: string,
   name: string,
-  metadataURI: string
+  description: string
 ): Promise<string> {
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -898,7 +910,7 @@ export async function sendCreateAllianceTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, metadataURI])
+        data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, description])
       }
     ]
   });
@@ -923,12 +935,11 @@ export async function sendAllianceInviteTransaction(
   });
 }
 
-export async function sendOpenDefenseIntentTransaction(
+export async function sendAcceptAllianceInviteTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  defenderPlanetId: string,
-  hostileMissionId: string
+  allianceId: string
 ): Promise<string> {
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -936,7 +947,46 @@ export async function sendOpenDefenseIntentTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeGameCall(ALLIANCE_SELECTORS.openDefenseIntent, [defenderPlanetId, hostileMissionId])
+        data: encodeUintCall(ALLIANCE_SELECTORS.acceptInvite, allianceId)
+      }
+    ]
+  });
+}
+
+export async function sendAllianceKickTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintAddressCall(ALLIANCE_SELECTORS.kickMember, allianceId, playerAddress)
+      }
+    ]
+  });
+}
+
+export async function sendAllianceRoleTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string,
+  role: "member" | "officer"
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
       }
     ]
   });
