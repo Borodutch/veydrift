@@ -35,9 +35,13 @@ import {
   sendRecallFleetMissionTransaction,
   sendResolveFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
+  sendAllianceJoinRequestTransaction,
   sendAllianceKickTransaction,
   sendAllianceInviteTransaction,
+  sendAllianceProfileTransaction,
   sendAllianceRoleTransaction,
+  sendApproveAllianceJoinRequestTransaction,
+  sendCancelAllianceJoinRequestTransaction,
   sendCreateAllianceTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendSettlementTransaction,
@@ -906,6 +910,18 @@ describe("walletFlow", () => {
     await expect(
       sendAllianceRoleTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333", "officer")
     ).resolves.toBe("0xalliance5");
+    await expect(
+      sendAllianceProfileTransaction(provider, account, contract, "1", "VDF", "Veydrift Directorate", "Line 1\nLine 2")
+    ).resolves.toBe("0xalliance6");
+    await expect(
+      sendAllianceJoinRequestTransaction(provider, account, contract, "1")
+    ).resolves.toBe("0xalliance7");
+    await expect(
+      sendCancelAllianceJoinRequestTransaction(provider, account, contract, "1")
+    ).resolves.toBe("0xalliance8");
+    await expect(
+      sendApproveAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+    ).resolves.toBe("0xalliance9");
 
     expect(requests[0]).toMatchObject({
       method: "eth_sendTransaction",
@@ -949,6 +965,39 @@ describe("walletFlow", () => {
           from: account,
           to: contract,
           data: `0xbfbb73f1${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}${"2".padStart(64, "0")}`
+        }
+      ]
+    });
+    expect((requests[5] as { params: Array<{ data: string }> }).params[0]?.data.startsWith(
+      `0x3fd0e7a5${"1".padStart(64, "0")}`
+    )).toBe(true);
+    expect(requests[6]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: encodeUintCall("0xbc46277a", 1)
+        }
+      ]
+    });
+    expect(requests[7]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: encodeUintCall("0xc5c4bdcc", 1)
+        }
+      ]
+    });
+    expect(requests[8]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: `0x8ff388c7${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}`
         }
       ]
     });

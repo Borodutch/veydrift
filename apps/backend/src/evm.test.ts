@@ -115,6 +115,42 @@ describe("moon chance report event decoding", () => {
       })
     ]);
   });
+
+  test("chunks log queries when the RPC enforces a small block range", async () => {
+    const calls: Array<{ method: string; params: unknown[] }> = [];
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          calls.push({ method, params });
+          if (calls.length === 1) {
+            throw new Error("RPC -32602: query exceeds max block range 2000");
+          }
+          if (method === "eth_blockNumber") {
+            return "0x1000" as T;
+          }
+          return [] as T;
+        }
+      }
+    );
+
+    await expect(reader.listSettledPlanetEvents(100n, "latest")).resolves.toEqual([]);
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "eth_getLogs",
+      "eth_blockNumber",
+      "eth_getLogs",
+      "eth_getLogs"
+    ]);
+    expect(calls[2]?.params).toEqual([
+      {
+        address: readerConfig.gameContractAddress,
+        fromBlock: "0x64",
+        toBlock: "0x833",
+        topics: expect.any(Array)
+      }
+    ]);
+  });
 });
 
 describe("fleet mission visibility", () => {

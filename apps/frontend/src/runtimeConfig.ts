@@ -3,6 +3,16 @@ export type RuntimeConfig = {
   apiUrl: string;
   chainId: number;
   contractAddress: string | null;
+  featureSupport?: {
+    allianceConfigured: boolean;
+    gameConfigured: boolean;
+    highscoresEndpoint: boolean;
+    moonConfigured: boolean;
+    randomnessConfigured: boolean;
+    researchEndpoint: boolean;
+    resourceTokensConfigured: boolean;
+    settlementConfigured: boolean;
+  };
   gameContractAddress: string | null;
   graphqlUrl: string;
   network: string;
