@@ -1,5 +1,5 @@
 import { isPlanetSlotPopulated, parsePlanetSlot } from "@veydrift/universe";
-import type { DebrisField, OccupiedPlanet, Planet, PlanetType, Resources } from "../types";
+import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, Resources } from "../types";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
   "scorching-molten": "/assets/game/style-pass/generated/planets/scorching-molten.webp",
@@ -93,6 +93,7 @@ type ApiPlanet = {
     metal: string | number;
     crystal: string | number;
   } | null;
+  moonChance?: MoonChanceReport | null;
 };
 
 export type SettlementPlanetIdentity = {
@@ -232,6 +233,7 @@ function planetFromApi(planet: ApiPlanet): Planet {
     alliance: null,
     occupiedBy,
     debrisField: debrisFieldFromApi(planet.debrisField),
+    moonChance: moonChanceFromApi(planet.moonChance),
     resources: resourcesFromMultipliers(planet),
     temperature: { min: temperature - 20, max: temperature + 20 },
     diameter: Math.max(5_000, fields * 72),
@@ -252,6 +254,11 @@ function debrisFieldFromApi(debrisField: ApiPlanet["debrisField"]): DebrisField 
     metal: Number.isFinite(metal) ? metal : 0,
     crystal: Number.isFinite(crystal) ? crystal : 0,
   };
+}
+
+function moonChanceFromApi(moonChance: ApiPlanet["moonChance"]): MoonChanceReport | null {
+  if (!moonChance?.battleId || !moonChance.targetPlanetId || !moonChance.status) return null;
+  return moonChance;
 }
 
 function resourcesFromMultipliers(planet: ApiPlanet): Resources {
@@ -299,6 +306,7 @@ function planetFromCoordinates(galaxy: number, system: number, position: number)
     alliance: null,
     occupiedBy: null,
     debrisField: null,
+    moonChance: null,
     resources: generateResources(type),
     temperature,
     diameter,
