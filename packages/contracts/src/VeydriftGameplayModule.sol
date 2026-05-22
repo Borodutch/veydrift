@@ -355,6 +355,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _requirePlanetOwner(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
+        _requireReserveResource(resource);
         if (resourceWithdrawals[msg.sender][resource].active) revert WithdrawalActive(resource);
 
         _settleResources(planetId);
@@ -451,9 +452,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _requireRiftUnlocked(uint256 planetId) private view {
-        _requireReserveResource(Resource.Metal);
-        _requireReserveResource(Resource.Crystal);
-        _requireReserveResource(Resource.Deuterium);
         if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] == 0) {
             revert RiftStabilizerRequired(planetId);
         }
@@ -468,12 +466,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint64 currentTime = _currentTimestamp();
         Planet storage planetRef = _planets[planetId];
         if (currentTime <= planetRef.lastSettledAt) {
-            emit PlanetSettled(
-                planetId,
-                planetRef.resources.metal,
-                planetRef.resources.crystal,
-                planetRef.resources.deuterium
-            );
             return;
         }
 
@@ -491,12 +483,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _increaseInternalResources(added);
         planetRef.resources = _add(planetRef.resources, added);
         planetRef.lastSettledAt = currentTime;
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
     }
 
     function _productionPerHour(uint256 planetId)
@@ -575,15 +561,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         pure
         returns (Resources memory)
     {
-        if (resource == Resource.Metal) {
-            return Resources({metal: amount, crystal: 0, deuterium: 0});
-        }
-        if (resource == Resource.Crystal) {
-            return Resources({metal: 0, crystal: amount, deuterium: 0});
-        }
-        if (resource == Resource.Deuterium) {
-            return Resources({metal: 0, crystal: 0, deuterium: amount});
-        }
+        if (resource == Resource.Metal) return Resources(amount, 0, 0);
+        if (resource == Resource.Crystal) return Resources(0, amount, 0);
+        if (resource == Resource.Deuterium) return Resources(0, 0, amount);
         revert InvalidResource(resource);
     }
 
@@ -723,10 +703,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _requireMissionShips(uint256 planetId, MissionShips memory ships) private view {
-        if (ships.removedShipSlot != 0) revert InvalidQuantity();
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _requireShips(planetId, ship, quantity);
             }
@@ -739,7 +718,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _debitMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _shipCounts[planetId][ship] -= quantity;
             }
@@ -752,7 +731,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            if (ship != Ship.RemovedShipSlot && ship != Ship.SolarSatellite) {
+            if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) _shipCounts[planetId][ship] += quantity;
             }

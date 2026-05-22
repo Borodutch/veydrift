@@ -455,7 +455,7 @@ export const shipCatalog: Array<{
   },
   {
     key: "bomber",
-    id: 9,
+    id: 8,
     label: "Bomber",
     group: "combat",
     baseCost: { metal: 50_000, crystal: 25_000, deuterium: 15_000 },
@@ -468,7 +468,7 @@ export const shipCatalog: Array<{
   },
   {
     key: "solarSatellite",
-    id: 10,
+    id: 9,
     label: "Solar Satellite",
     group: "special",
     baseCost: { metal: 0, crystal: 2_000, deuterium: 500 },
@@ -479,7 +479,7 @@ export const shipCatalog: Array<{
   },
   {
     key: "destroyer",
-    id: 11,
+    id: 10,
     label: "Destroyer",
     group: "combat",
     baseCost: { metal: 60_000, crystal: 50_000, deuterium: 15_000 },
@@ -492,7 +492,7 @@ export const shipCatalog: Array<{
   },
   {
     key: "deathstar",
-    id: 12,
+    id: 11,
     label: "Dreadstar",
     group: "special",
     baseCost: { metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 },
@@ -506,7 +506,7 @@ export const shipCatalog: Array<{
   },
   {
     key: "battlecruiser",
-    id: 13,
+    id: 12,
     label: "Battlecruiser",
     group: "combat",
     baseCost: { metal: 30_000, crystal: 40_000, deuterium: 15_000 },
@@ -520,7 +520,7 @@ export const shipCatalog: Array<{
   },
   {
     key: "reaper",
-    id: 14,
+    id: 13,
     label: "Reaper",
     group: "combat",
     baseCost: { metal: 85_000, crystal: 55_000, deuterium: 20_000 },
@@ -535,7 +535,7 @@ export const shipCatalog: Array<{
   },
   {
     key: "pathfinder",
-    id: 15,
+    id: 14,
     label: "Pathfinder",
     group: "special",
     baseCost: { metal: 8_000, crystal: 15_000, deuterium: 8_000 },
@@ -548,7 +548,7 @@ export const shipCatalog: Array<{
   },
   {
     key: "crawler",
-    id: 16,
+    id: 15,
     label: "Crawler",
     group: "special",
     baseCost: { metal: 2_000, crystal: 2_000, deuterium: 1_000 },
@@ -869,7 +869,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "hyperspace",
-    id: 9,
+    id: 8,
     label: "Hyperspace Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 4_000, deuterium: 2_000 },
@@ -882,7 +882,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "plasma",
-    id: 12,
+    id: 11,
     label: "Plasma Technology",
     lane: "Advanced",
     baseCost: { metal: 2_000, crystal: 4_000, deuterium: 1_000 },
@@ -908,7 +908,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "impulseDrive",
-    id: 10,
+    id: 9,
     label: "Impulse Drive",
     lane: "Drive",
     baseCost: { metal: 2_000, crystal: 4_000, deuterium: 600 },
@@ -920,7 +920,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "hyperspaceDrive",
-    id: 11,
+    id: 10,
     label: "Hyperspace Drive",
     lane: "Drive",
     baseCost: { metal: 10_000, crystal: 20_000, deuterium: 6_000 },
@@ -932,7 +932,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "computer",
-    id: 5,
+    id: 4,
     label: "Computer Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 400, deuterium: 600 },
@@ -941,7 +941,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "astrophysics",
-    id: 13,
+    id: 12,
     label: "Astrophysics",
     lane: "Advanced",
     baseCost: { metal: 4_000, crystal: 8_000, deuterium: 4_000 },
@@ -953,7 +953,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "intergalacticResearchNetwork",
-    id: 14,
+    id: 13,
     label: "Intergalactic Research Network",
     lane: "Advanced",
     baseCost: { metal: 240_000, crystal: 400_000, deuterium: 160_000 },
@@ -966,7 +966,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "graviton",
-    id: 15,
+    id: 14,
     label: "Graviton Technology",
     lane: "Advanced",
     baseCost: { metal: 0, crystal: 0, deuterium: 0 },
@@ -978,7 +978,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "weapons",
-    id: 6,
+    id: 5,
     label: "Weapons Technology",
     lane: "Combat",
     baseCost: { metal: 800, crystal: 200, deuterium: 0 },
@@ -987,7 +987,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "shielding",
-    id: 7,
+    id: 6,
     label: "Shielding Technology",
     lane: "Combat",
     baseCost: { metal: 200, crystal: 600, deuterium: 0 },
@@ -999,7 +999,7 @@ export const researchCatalog: Array<{
   },
   {
     key: "armor",
-    id: 8,
+    id: 7,
     label: "Armor Technology",
     lane: "Combat",
     baseCost: { metal: 1_000, crystal: 0, deuterium: 0 },

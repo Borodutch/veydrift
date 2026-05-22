@@ -867,7 +867,7 @@ export class VeydriftGameReader implements ChainReader {
       resources,
       fleetSlots: {
         active: Number(activeFleetMissions ?? 0n),
-        limit: 1 + (technologyLevels["5"] ?? 0)
+        limit: 1 + (technologyLevels["4"] ?? 0)
       },
       shipyardLevel: Number(shipyardLevel),
       naniteLevel: Number(naniteLevel),
@@ -1865,8 +1865,8 @@ function missionStatusLabel(value: bigint): string {
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
 const buildingCount = 16;
 const defenseCount = 10;
-const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16];
-const supportedTechnologyIds = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const riftBuildingId = 15;
 const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
 const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [
