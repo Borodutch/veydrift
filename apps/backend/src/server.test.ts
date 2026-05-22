@@ -487,22 +487,19 @@ class MockChainReader implements ChainReader {
       allianceAvailable: true,
       membership: {
         allianceId: "1",
-        role: "leader",
+        role: "owner",
         joinedAt: "1770000000"
       },
       profile: {
         active: true,
         tag: "VDFT",
         name: "Veydrift Union",
-        metadataURI: "ipfs://union",
-        founder: wallet,
+        description: "Discord: https://discord.gg/vdft",
+        owner: wallet,
         createdAt: "1770000000",
         memberCount: 1
       },
-      defenseCoordination: {
-        acsDefendSupported: true,
-        interceptSupported: true
-      }
+      members: [{ address: wallet, role: "owner", joinedAt: "1770000000" }]
     };
   }
 
@@ -1081,18 +1078,16 @@ describe("Veydrift backend", () => {
     expect(body.allianceAvailable).toBe(true);
     expect(body.membership).toEqual({
       allianceId: "1",
-      role: "leader",
+      role: "owner",
       joinedAt: "1770000000"
     });
     expect(body.profile).toMatchObject({
       tag: "VDFT",
       name: "Veydrift Union",
+      description: "Discord: https://discord.gg/vdft",
       memberCount: 1
     });
-    expect(body.defenseCoordination).toEqual({
-      acsDefendSupported: true,
-      interceptSupported: true
-    });
+    expect(body.members).toEqual([{ address: player, role: "owner", joinedAt: "1770000000" }]);
   });
 
   test("falls back to compact settlement reads when configured contract is not VeydriftGame", async () => {

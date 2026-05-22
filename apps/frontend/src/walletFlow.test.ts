@@ -29,9 +29,11 @@ import {
   sendFinishResearchTransaction,
   sendCreateColonyTransaction,
   sendLaunchFleetMissionTransaction,
+  sendAcceptAllianceInviteTransaction,
+  sendAllianceKickTransaction,
   sendAllianceInviteTransaction,
+  sendAllianceRoleTransaction,
   sendCreateAllianceTransaction,
-  sendOpenDefenseIntentTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
@@ -748,7 +750,7 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("submits alliance foundation transactions", async () => {
+  test("submits alliance roster transactions", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
@@ -756,14 +758,20 @@ describe("walletFlow", () => {
     });
 
     await expect(
-      sendCreateAllianceTransaction(provider, account, contract, "VDFT", "Veydrift Union", "ipfs://union")
+      sendCreateAllianceTransaction(provider, account, contract, "VDFT", "Veydrift Union", "Discord: https://discord.gg/vdft")
     ).resolves.toBe("0xalliance1");
     await expect(
       sendAllianceInviteTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
     ).resolves.toBe("0xalliance2");
     await expect(
-      sendOpenDefenseIntentTransaction(provider, account, contract, "7", "42")
+      sendAcceptAllianceInviteTransaction(provider, account, contract, "1")
     ).resolves.toBe("0xalliance3");
+    await expect(
+      sendAllianceKickTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+    ).resolves.toBe("0xalliance4");
+    await expect(
+      sendAllianceRoleTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333", "officer")
+    ).resolves.toBe("0xalliance5");
 
     expect(requests[0]).toMatchObject({
       method: "eth_sendTransaction",
@@ -786,7 +794,27 @@ describe("walletFlow", () => {
         {
           from: account,
           to: contract,
-          data: encodeGameCall("0x56f919e7", [7, 42])
+          data: encodeUintCall("0xbf8e9176", 1)
+        }
+      ]
+    });
+    expect(requests[3]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: `0xbd0e667c${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}`
+        }
+      ]
+    });
+    expect(requests[4]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: `0xbfbb73f1${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}${"2".padStart(64, "0")}`
         }
       ]
     });
