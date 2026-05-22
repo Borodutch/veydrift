@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
-import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 /// @notice Delegatecall target for colony and planet metadata/destruction paths.
 contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
@@ -61,6 +61,67 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             _coordinateKey(planetRef.galaxy, planetRef.system, planetRef.position)
         ] = false;
         planetCountOf[msg.sender] -= 1;
+    }
+
+    function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
+        _requirePlanetOwner(planetId);
+        _requireRiftUnlocked(planetId);
+        if (amount == 0) revert InvalidQuantity();
+
+        _transferReserveIn(resource, amount);
+        Resources memory resourceAmount = _resourceAmount(resource, amount);
+        _planets[planetId].resources = _add(_planets[planetId].resources, resourceAmount);
+        _increaseInternalResources(resourceAmount);
+        emit MarketResourceDeposited(msg.sender, planetId, resource, amount);
+    }
+
+    function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
+        external
+    {
+        _requirePlanetOwner(planetId);
+        _requireRiftUnlocked(planetId);
+        if (amount == 0) revert InvalidQuantity();
+        _requireReserveResource(resource);
+        if (resourceWithdrawals[msg.sender][resource].active) revert WithdrawalActive(resource);
+
+        _settleResources(planetId);
+        Resources memory resourceAmount = _resourceAmount(resource, amount);
+        _spend(planetId, resourceAmount);
+        _lockedWithdrawalResources = _add(_lockedWithdrawalResources, resourceAmount);
+
+        uint64 unlocksAt = uint64(_currentTimestamp() + MARKET_WITHDRAWAL_DELAY);
+        resourceWithdrawals[msg.sender][resource] = ResourceWithdrawal({
+            active: true,
+            planetId: planetId,
+            resource: resource,
+            amount: amount,
+            unlocksAt: unlocksAt
+        });
+        emit MarketResourceWithdrawalRequested(msg.sender, planetId, resource, amount, unlocksAt);
+    }
+
+    function finishMarketResourceWithdrawal(Resource resource) external {
+        ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
+        if (!withdrawal.active) revert WithdrawalInactive(resource);
+        if (_currentTimestamp() < withdrawal.unlocksAt) {
+            revert WithdrawalNotReady(withdrawal.unlocksAt);
+        }
+
+        delete resourceWithdrawals[msg.sender][resource];
+        Resources memory amount = _resourceAmount(resource, withdrawal.amount);
+        _lockedWithdrawalResources = Resources({
+            metal: _lockedWithdrawalResources.metal - amount.metal,
+            crystal: _lockedWithdrawalResources.crystal - amount.crystal,
+            deuterium: _lockedWithdrawalResources.deuterium - amount.deuterium
+        });
+        if (!_requireReserveResource(resource).transfer(msg.sender, withdrawal.amount)) {
+            revert ResourceTransferFailed(
+                resource, address(_resourceTokens[resource]), withdrawal.amount
+            );
+        }
+        emit MarketResourceWithdrawalFinished(
+            msg.sender, withdrawal.planetId, resource, withdrawal.amount
+        );
     }
 
     function _validateColonyCreation(uint256 originPlanetId) private view {
@@ -142,6 +203,12 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (planetRef.owner != msg.sender) revert NotPlanetOwner();
     }
 
+    function _requireRiftUnlocked(uint256 planetId) private view {
+        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] == 0) {
+            revert RiftStabilizerRequired(planetId);
+        }
+    }
+
     function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private view {
         uint32 available = _shipCounts[planetId][ship];
         if (available < quantity) revert InsufficientShips(ship, available, quantity);
@@ -151,12 +218,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         uint64 currentTime = _currentTimestamp();
         Planet storage planetRef = _planets[planetId];
         if (currentTime <= planetRef.lastSettledAt) {
-            emit PlanetSettled(
-                planetId,
-                planetRef.resources.metal,
-                planetRef.resources.crystal,
-                planetRef.resources.deuterium
-            );
             return;
         }
 
@@ -174,12 +235,31 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _increaseInternalResources(added);
         planetRef.resources = _add(planetRef.resources, added);
         planetRef.lastSettledAt = currentTime;
-        emit PlanetSettled(
-            planetId,
-            planetRef.resources.metal,
-            planetRef.resources.crystal,
-            planetRef.resources.deuterium
-        );
+    }
+
+    function _spend(uint256 planetId, Resources memory cost) private {
+        Resources storage available = _planets[planetId].resources;
+        if (
+            available.metal < cost.metal || available.crystal < cost.crystal
+                || available.deuterium < cost.deuterium
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        }
+        available.metal -= cost.metal;
+        available.crystal -= cost.crystal;
+        available.deuterium -= cost.deuterium;
+        _decreaseInternalResources(cost);
+    }
+
+    function _resourceAmount(Resource resource, uint128 amount)
+        private
+        pure
+        returns (Resources memory)
+    {
+        if (resource == Resource.Metal) return Resources(amount, 0, 0);
+        if (resource == Resource.Crystal) return Resources(0, amount, 0);
+        if (resource == Resource.Deuterium) return Resources(0, 0, amount);
+        revert InvalidResource(resource);
     }
 
     function _productionPerHour(uint256 planetId)

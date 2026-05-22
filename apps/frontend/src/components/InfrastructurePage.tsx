@@ -50,7 +50,7 @@ const buildingDescriptions: Record<BuildingKey, string> = {
   fusionReactor: "Converts deuterium into supplemental power once the required energy research path is available.",
   naniteFactory: "Advanced automation for high-tier construction and later production-speed upgrades.",
   terraformer: "Expands usable planetary fields after nanite construction and high energy research are available.",
-  allianceDepot: "A core OGame facility kept in catalog parity; alliance logistics behavior is not active in this MVP.",
+  allianceDepot: "Supplies deuterium from the defended planet to cover friendly ACS defense holding fuel.",
   missileSilo: "Stores anti-ballistic and interplanetary missiles and gates missile production.",
   interdimensionalRiftStabilizer: "Custom Veydrift facility for later resource-token withdrawal and rift mechanics.",
 };
@@ -869,6 +869,13 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       next: `${formatNumber(effect.nextSlots)} slots`,
       value: `${formatNumber(effect.currentSlots)} slots`,
     });
+  } else if (effect.kind === "allianceDepot") {
+    rows.push({
+      delta: `${formatSigned(effect.deltaSupport)} Deut.`,
+      label: "ACS support capacity",
+      next: `${formatNumber(effect.nextSupport)} Deut.`,
+      value: `${formatNumber(effect.currentSupport)} Deut.`,
+    });
   } else if (effect.kind === "constructionSpeed") {
     rows.push({
       delta: `+${formatNumber(effect.relativeImprovementPercent)}% faster than current`,
@@ -946,6 +953,10 @@ function compactEffect(effect: BuildingEffectMetrics): string {
 
   if (effect.kind === "missileSilo") {
     return `${formatNumber(effect.currentSlots)} slots`;
+  }
+
+  if (effect.kind === "allianceDepot") {
+    return `${formatNumber(effect.currentSupport)} Deut.`;
   }
 
   if (effect.kind === "shipyard") {

@@ -279,15 +279,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function depositMarketResource(uint256, Resource, uint128) external {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function requestMarketResourceWithdrawal(uint256, Resource, uint128) external {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function finishMarketResourceWithdrawal(Resource) external {
-        _delegateToGameplayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function planet(uint256 planetId) external view returns (Planet memory) {
