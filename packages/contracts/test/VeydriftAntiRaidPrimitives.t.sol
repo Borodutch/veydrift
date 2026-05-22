@@ -10,6 +10,7 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
         assertEq(VeydriftAntiRaidPrimitives.fleetSlotLimit(7), 8);
         assertEq(VeydriftAntiRaidPrimitives.travelSeconds(42), 5 minutes + 42);
         assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(3, 0), 3);
+        assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(3, 33), 3);
         assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(3, 20_000), 9);
         assertEq(VeydriftAntiRaidPrimitives.recallReturnSeconds(12), 60);
         assertEq(VeydriftAntiRaidPrimitives.recallReturnSeconds(90), 90);

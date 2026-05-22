@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
+  fleetMissionDistance,
+  fleetMissionFuelCost,
+  fleetMissionShipCount,
+  fleetMissionTravelSeconds,
+} from "../fleetMissionRules";
+import type { MissionShips } from "../galaxyActions";
+import {
   formatPlanetType,
   generateSystem,
   GALAXY_COUNT,
@@ -21,8 +28,6 @@ import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
-const MISSION_SPEED_BPS = 10_000;
-const MIN_FLEET_TRAVEL_SECONDS = 300;
 const SMALL_CARGO_CAPACITY = 5_000;
 const SMALL_CARGO_SHIP_ID = 0;
 
@@ -38,6 +43,7 @@ export type GalaxyMissionPlanner = {
     limit: number;
   } | undefined;
   resources?: MissionResources | undefined;
+  missionShips?: Partial<MissionShips> | undefined;
   ships?: Array<{ id: number; count: number }> | undefined;
   now?: number | undefined;
 };
@@ -421,8 +427,9 @@ export function estimateGalaxyMissionPreview({
   if (!homeCoords || !planner) return undefined;
   const fleetSlots = planner.fleetSlots ?? { active: 0, limit: 1 };
   const smallCargoCount = planner.ships?.find((ship) => ship.id === SMALL_CARGO_SHIP_ID)?.count ?? 0;
+  const missionShipCount = planner.missionShips ? fleetMissionShipCount(planner.missionShips) : 1;
   const travelSeconds = galaxyMissionTravelSeconds(homeCoords, target);
-  const fuelCost = galaxyMissionFuelCost(homeCoords, target, 1);
+  const fuelCost = galaxyMissionFuelCost(homeCoords, target, missionShipCount);
   const arrivalAt = now + travelSeconds * 1_000;
   const returnAt = arrivalAt + travelSeconds * 1_000;
   let blockedReason: string | undefined;
@@ -448,21 +455,11 @@ export function estimateGalaxyMissionPreview({
 }
 
 export function galaxyMissionTravelSeconds(origin: Coordinates, target: Coordinates): number {
-  const distance = galaxyMissionDistance(origin, target);
-  return MIN_FLEET_TRAVEL_SECONDS + Math.ceil((distance * 10_000) / MISSION_SPEED_BPS);
+  return fleetMissionTravelSeconds(fleetMissionDistance(origin, target));
 }
 
 export function galaxyMissionFuelCost(origin: Coordinates, target: Coordinates, shipCount: number): number {
-  if (shipCount <= 0) return 0;
-  const distance = Math.max(galaxyMissionDistance(origin, target), 1);
-  const scaledFuel = Math.floor((shipCount * distance * MISSION_SPEED_BPS) / (10_000 * 1_000));
-  return Math.max(scaledFuel, shipCount);
-}
-
-function galaxyMissionDistance(origin: Coordinates, target: Coordinates): number {
-  return Math.abs(origin.galaxy - target.galaxy) * SYSTEM_COUNT * POSITION_COUNT
-    + Math.abs(origin.system - target.system) * POSITION_COUNT
-    + Math.abs(origin.position - target.position);
+  return fleetMissionFuelCost(shipCount, fleetMissionDistance(origin, target));
 }
 
 function GalaxySlot({

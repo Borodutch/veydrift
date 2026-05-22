@@ -1087,6 +1087,49 @@ contract VeydriftGameTest is Test {
         assertGt(game.planet(originPlanetId).resources.metal, 0);
     }
 
+    function testFleetMissionStoresTimingAndDebitsFuelForMixedFleet() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setShipCount(originPlanetId, Ship.LightFighter, 3);
+        _setShipCount(originPlanetId, Ship.LargeCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 5_000, 4_000, 3_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 2;
+        ships.lightFighter = 3;
+        ships.largeCargo = 1;
+
+        uint256 distance = _planetDistanceForTest(originPlanetId, targetPlanetId);
+        uint256 expectedTravelSeconds = 5 minutes + distance;
+        uint128 expectedFuelCost = uint128(6 + (6 * distance) / 10_000);
+        VeydriftGameStorage.Resources memory cargo =
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 11});
+
+        uint256 departureAt = block.timestamp;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            cargo,
+            0
+        );
+
+        (,,,,, uint64 storedDepartureAt, uint64 arrivalAt, uint64 returnAt, uint128 fuelCost,,) =
+            game.fleetMission(missionId);
+
+        assertEq(storedDepartureAt, departureAt);
+        assertEq(arrivalAt, departureAt + expectedTravelSeconds);
+        assertEq(returnAt, arrivalAt + expectedTravelSeconds);
+        assertEq(fuelCost, expectedFuelCost);
+        assertEq(game.planet(originPlanetId).resources.deuterium, 10_000 - expectedFuelCost - 11);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
+        assertEq(game.shipCount(originPlanetId, Ship.LightFighter), 0);
+        assertEq(game.shipCount(originPlanetId, Ship.LargeCargo), 0);
+    }
+
     function testGenericFleetMissionRecallAndRaidReturn() public {
         address defender = address(0xDEF);
         vm.deal(defender, 1 ether);
@@ -2211,6 +2254,26 @@ contract VeydriftGameTest is Test {
         )
     {
         (status,,,,,, arrivalAt, returnAt,, cargo,) = game.fleetMission(missionId);
+    }
+
+    function _planetDistanceForTest(uint256 originPlanetId, uint256 destinationPlanetId)
+        internal
+        view
+        returns (uint256)
+    {
+        VeydriftGameStorage.Planet memory origin = game.planet(originPlanetId);
+        VeydriftGameStorage.Planet memory destination = game.planet(destinationPlanetId);
+        uint256 galaxyDistance = origin.galaxy > destination.galaxy
+            ? uint256(origin.galaxy - destination.galaxy)
+            : uint256(destination.galaxy - origin.galaxy);
+        uint256 systemDistance = origin.system > destination.system
+            ? uint256(origin.system - destination.system)
+            : uint256(destination.system - origin.system);
+        uint256 positionDistance = origin.position > destination.position
+            ? uint256(origin.position - destination.position)
+            : uint256(destination.position - origin.position);
+        return galaxyDistance * uint256(game.MAX_SYSTEM()) * uint256(game.MAX_POSITION())
+            + systemDistance * uint256(game.MAX_POSITION()) + positionDistance;
     }
 
     function _packResourcesHead(uint128 metal, uint128 crystal) internal pure returns (bytes32) {
