@@ -12,6 +12,7 @@ import { ResearchPage, type ResearchActionState } from "./components/ResearchPag
 import { ShipyardPage } from "./components/ShipyardPage";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
+import { MissionControlPage } from "./components/MissionControlPage";
 import { RankingsPage } from "./components/RankingsPage";
 import {
   buildingKeyForContractId,
@@ -81,12 +82,15 @@ import {
   sendApproveResourceTokenTransaction,
   sendCollectResourcesTransaction,
   sendFinishBuildingUpgradeTransaction,
+  sendCompleteFleetMissionReturnTransaction,
   sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
   sendLaunchFleetMissionTransaction,
+  sendRecallFleetMissionTransaction,
+  sendResolveFleetMissionTransaction,
   sendDepositResourceTransaction,
   sendRenamePlanetTransaction,
   sendRequestResourceWithdrawalTransaction,
@@ -133,6 +137,7 @@ type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
 type RiftActionState = ShipyardActionState;
 type PlanetActionState = ShipyardActionState;
+type MissionActionState = ShipyardActionState;
 
 export function displayHomeCoordinates(
   homePlanet: Coordinates | undefined,
@@ -281,6 +286,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
   const [planetAction, setPlanetAction] = useState<PlanetActionState>({ status: "idle" });
+  const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -1516,6 +1522,89 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
 
+  const runMissionTransaction = useCallback((label: string, request: () => Promise<string>) => {
+    if (!provider || !account || !gameContract) {
+      setMissionAction({ status: "error", label: "Wallet or game contract is unavailable." });
+      return;
+    }
+
+    setMissionAction({ status: "pending", label: `${label}: waiting for wallet confirmation.` });
+    request()
+      .then(async (txHash) => {
+        setMissionAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+        await waitForReceipt(provider, txHash);
+        await refreshOnChainState();
+        setMissionAction({ status: "success", label: `${label} confirmed.` });
+      })
+      .catch((error) => {
+        console.error(error);
+        setMissionAction({
+          status: "error",
+          label: error instanceof Error ? error.message : `${label} transaction failed.`,
+        });
+      });
+  }, [account, gameContract, provider, refreshOnChainState]);
+
+  const handleRecallMission = useCallback((missionId: string) => {
+    if (!provider || !account || !gameContract) {
+      setMissionAction({ status: "error", label: "Wallet or game contract is unavailable." });
+      return;
+    }
+
+    runMissionTransaction(`Recall mission #${missionId}`, () =>
+      sendRecallFleetMissionTransaction(provider, account, gameContract, missionId)
+    );
+  }, [account, gameContract, provider, runMissionTransaction]);
+
+  const handleResolveMission = useCallback((missionId: string) => {
+    if (!provider || !account || !gameContract) {
+      setMissionAction({ status: "error", label: "Wallet or game contract is unavailable." });
+      return;
+    }
+
+    runMissionTransaction(`Resolve mission #${missionId}`, () =>
+      sendResolveFleetMissionTransaction(provider, account, gameContract, missionId)
+    );
+  }, [account, gameContract, provider, runMissionTransaction]);
+
+  const handleCompleteMissionReturn = useCallback((missionId: string) => {
+    if (!provider || !account || !gameContract) {
+      setMissionAction({ status: "error", label: "Wallet or game contract is unavailable." });
+      return;
+    }
+
+    runMissionTransaction(`Complete return #${missionId}`, () =>
+      sendCompleteFleetMissionReturnTransaction(provider, account, gameContract, missionId)
+    );
+  }, [account, gameContract, provider, runMissionTransaction]);
+
+  const handleMissionCounterplay = useCallback((missionId: string, mode: "acsDefend" | "intercept") => {
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setMissionAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    const ships = selectCounterplayShips(shipyardState);
+    if (!ships) {
+      setMissionAction({ status: "error", label: "No ships available for counterplay." });
+      return;
+    }
+
+    runMissionTransaction(mode === "acsDefend" ? `ACS defend #${missionId}` : `Intercept #${missionId}`, () =>
+      sendLaunchFleetMissionTransaction(
+        provider,
+        account,
+        gameContract,
+        {
+          originPlanetId: onChainSettlement.homePlanetId ?? "0",
+          targetPlanetId: missionId,
+          missionType: missionTypeId(mode),
+          ships,
+        },
+      )
+    );
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState]);
+
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
     setSelectedCoords(undefined);
@@ -1630,6 +1719,24 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           loading={moonLoading}
           moonState={moonState}
           onRefresh={refreshInfrastructureState}
+        />
+      );
+    }
+
+    if (page === "mission-control") {
+      return (
+        <MissionControlPage
+          actionState={missionAction}
+          canTransact={Boolean(provider && account && gameContract)}
+          fleetVisibility={fleetVisibility}
+          loading={isWalletConnected && onChainStatus === "loading"}
+          now={now}
+          onCompleteReturn={handleCompleteMissionReturn}
+          onCounterplay={handleMissionCounterplay}
+          onNavigateGalaxy={() => handleNavigate("galaxy")}
+          onRecall={handleRecallMission}
+          onRefresh={() => void refreshOnChainState()}
+          onResolve={handleResolveMission}
         />
       );
     }
