@@ -64,13 +64,15 @@ const planet: PlanetState = {
 
 describe("Rift requirement projection", () => {
   test("matches the current Interdimensional Rift Stabilizer build dependencies", () => {
-    expect(riftRequirements(0, 0, 0, {})).toEqual([
+    expect(riftRequirements(false, 0, 0, {})).toEqual([
       {
         kind: "building",
         key: "interdimensionalRiftStabilizer",
         label: "Interdimensional Rift Stabilizer",
         currentLevel: 0,
-        requiredLevel: 1
+        requiredLevel: 1,
+        binary: true,
+        built: false
       },
       {
         kind: "building",
@@ -463,7 +465,9 @@ class MockChainReader implements ChainReader {
           key: "interdimensionalRiftStabilizer",
           label: "Interdimensional Rift Stabilizer",
           currentLevel: 1,
-          requiredLevel: 1
+          requiredLevel: 1,
+          binary: true,
+          built: true
         }
       ],
       resources: [

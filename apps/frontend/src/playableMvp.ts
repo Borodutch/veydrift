@@ -43,6 +43,10 @@ export const buildingContractIds: Record<BuildingKey, number> = {
   interdimensionalRiftStabilizer: 15,
 };
 
+export function isBinaryBuilding(key: BuildingKey): boolean {
+  return key === "interdimensionalRiftStabilizer";
+}
+
 export type ShipKey =
   | "smallCargo"
   | "lightFighter"
@@ -234,6 +238,7 @@ export type BuildingEffectMetrics =
       currentLevel: number;
       nextLevel: number;
       label: string;
+      binary?: boolean;
     };
 
 export const buildingCatalog: Array<{
@@ -1279,6 +1284,16 @@ export function buildingEffectMetrics(
     };
   }
 
+  if (key === "interdimensionalRiftStabilizer") {
+    return {
+      kind: "facility",
+      currentLevel: buildings[key],
+      nextLevel: 1,
+      label: "Rift bridge",
+      binary: true,
+    };
+  }
+
   return {
     kind: "facility",
     currentLevel: buildings[key],
@@ -1515,6 +1530,10 @@ function scaleResearchCost(cost: Resources, currentLevel: number, factor: 2 | 1.
 }
 
 function scaleBuildingCost(cost: Resources, key: BuildingKey, currentLevel: number): Resources {
+  if (isBinaryBuilding(key)) {
+    return cost;
+  }
+
   const [numerator, denominator] = buildingCostFactor(key);
 
   return {
