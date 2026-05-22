@@ -496,7 +496,7 @@ export function ActiveBuildingQueueDetail({
             {isSelectedBuilding ? "Construction in progress" : "Active construction"}
           </p>
           <p className="mt-1 text-xs leading-5 text-amber-200/85">
-            {queueLabel} is upgrading{isSelectedBuilding ? "." : "; the selected building is waiting for this queue."}
+            {queueLabel} is upgrading.
           </p>
         </div>
         <span className="shrink-0 rounded bg-black/20 px-2 py-1 text-xs font-semibold text-amber-100">
