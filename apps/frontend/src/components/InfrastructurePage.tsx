@@ -579,6 +579,7 @@ export function BuildingLevelInfoModal({
               <tr>
                 <LevelInfoHeader className="min-w-28">Level</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
+                <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>
                 {columns.production && <LevelInfoHeader className="min-w-40">Production</LevelInfoHeader>}
                 {columns.storage && <LevelInfoHeader className="min-w-40">Storage</LevelInfoHeader>}
                 {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
@@ -606,6 +607,7 @@ export function BuildingLevelInfoModal({
                     </span>
                   </LevelInfoCell>
                   <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
+                  <LevelInfoCell>{formatDuration(row.durationSeconds)}</LevelInfoCell>
                   {columns.production && (
                     <LevelInfoCell>
                       {row.production
