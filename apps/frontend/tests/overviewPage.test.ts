@@ -98,7 +98,7 @@ describe("overview queue progress display", () => {
       remaining: "8m 20s",
       startedAt: 1_700_000_000_000,
     })).toEqual({
-      animated: false,
+      animated: true,
       durationMs: 1_000_000,
       elapsedMs: 500_000,
       progress: 0.5,
@@ -113,7 +113,7 @@ describe("overview queue progress display", () => {
       remaining: "16m 40s",
       startedAt: 1_700_000_000_000,
     })).toEqual({
-      animated: false,
+      animated: true,
       durationMs: 1_000_000,
       elapsedMs: 0,
       progress: 0,
@@ -128,7 +128,7 @@ describe("overview queue progress display", () => {
       remaining: "4m 10s",
       startedAt: 1_700_000_000_000,
     })).toMatchObject({
-      animated: false,
+      animated: true,
       progress: 0.75,
     });
   });
@@ -137,6 +137,21 @@ describe("overview queue progress display", () => {
     expect(queueProgressFillState({
       now: 1_700_001_000_000,
       progress: 1,
+      readyAt: 1_700_001_000_000,
+      remaining: "Ready",
+      startedAt: 1_700_000_000_000,
+    })).toEqual({
+      animated: false,
+      durationMs: 1_000_000,
+      elapsedMs: 1_000_000,
+      progress: 1,
+    });
+  });
+
+  test("stops canonical queue animation once elapsed time reaches readyAt", () => {
+    expect(queueProgressFillState({
+      now: 1_700_001_010_000,
+      progress: 0.95,
       readyAt: 1_700_001_000_000,
       remaining: "Ready",
       startedAt: 1_700_000_000_000,
