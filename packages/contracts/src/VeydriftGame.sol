@@ -90,7 +90,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (building == Building.InterdimensionalRiftStabilizer && currentLevel != 0) {
             revert LevelTooHigh();
         }
-        if (building != Building.Terraformer && _usedFields(planetId) >= _planets[planetId].fields) {
+        if (building != Building.Terraformer && _usedFields(planetId) >= _planets[planetId].fields)
+        {
             revert FieldCapacityReached();
         }
 
