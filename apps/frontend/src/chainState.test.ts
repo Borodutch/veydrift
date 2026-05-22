@@ -62,6 +62,7 @@ describe("chainState", () => {
       required: "100",
       scaleBps: "6000",
     })).toEqual({
+      deuteriumConsumed: 0,
       produced: 60,
       required: 100,
       scaleBps: 6000,

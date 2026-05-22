@@ -9,6 +9,7 @@ library VeydriftFormulas {
     using SafeCast for uint256;
 
     error LevelTooHigh();
+    uint16 private constant BPS = 10_000;
 
     function planetMultipliers(int16 temperature, uint16 fields)
         public
@@ -28,27 +29,28 @@ library VeydriftFormulas {
         uint256 deuteriumLevel,
         uint256 solarLevel,
         uint256 fusionLevel,
+        uint256 energyTechnologyLevel,
         uint16 metalMultiplierBps,
         uint16 crystalMultiplierBps,
-        uint16 deuteriumMultiplierBps,
-        uint16 bps
+        uint16 deuteriumMultiplierBps
     ) public pure returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) {
-        (, uint256 requiredEnergy, uint256 energyScale) =
-            energyBalance(metalLevel, crystalLevel, deuteriumLevel, solarLevel, fusionLevel, bps);
+        (, uint256 requiredEnergy, uint256 energyScale) = energyBalance(
+            metalLevel, crystalLevel, deuteriumLevel, solarLevel, fusionLevel, energyTechnologyLevel
+        );
 
-        metalPerHour = _scaleByBps(_scaledLevelValue(30, metalLevel), metalMultiplierBps, bps);
-        crystalPerHour = _scaleByBps(_scaledLevelValue(20, crystalLevel), crystalMultiplierBps, bps);
+        metalPerHour = _scaleByBps(_scaledLevelValue(30, metalLevel), metalMultiplierBps, BPS);
+        crystalPerHour = _scaleByBps(_scaledLevelValue(20, crystalLevel), crystalMultiplierBps, BPS);
         deuteriumPerHour =
-            _scaleByBps(_scaledLevelValue(10, deuteriumLevel), deuteriumMultiplierBps, bps);
-        uint256 fusionDeuteriumPerHour = _scaledLevelValue(10, fusionLevel);
+            _scaleByBps(_scaledLevelValue(10, deuteriumLevel), deuteriumMultiplierBps, BPS);
+        uint256 fusionDeuteriumPerHour = fusionReactorDeuteriumConsumption(fusionLevel);
         deuteriumPerHour = deuteriumPerHour > fusionDeuteriumPerHour
             ? deuteriumPerHour - fusionDeuteriumPerHour
             : 0;
 
         if (requiredEnergy != 0) {
-            metalPerHour = _scaleByBps(metalPerHour, energyScale, bps);
-            crystalPerHour = _scaleByBps(crystalPerHour, energyScale, bps);
-            deuteriumPerHour = _scaleByBps(deuteriumPerHour, energyScale, bps);
+            metalPerHour = _scaleByBps(metalPerHour, energyScale, BPS);
+            crystalPerHour = _scaleByBps(crystalPerHour, energyScale, BPS);
+            deuteriumPerHour = _scaleByBps(deuteriumPerHour, energyScale, BPS);
         }
     }
 
@@ -58,19 +60,31 @@ library VeydriftFormulas {
         uint256 deuteriumLevel,
         uint256 solarLevel,
         uint256 fusionLevel,
-        uint16 bps
+        uint256 energyTechnologyLevel
     ) public pure returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) {
         requiredEnergy = _scaledLevelValue(10, metalLevel) + _scaledLevelValue(10, crystalLevel)
             + _scaledLevelValue(20, deuteriumLevel);
         producedEnergy = _scaledLevelValue(20, solarLevel)
-            + _scaledLevelValueWithFactor(30, fusionLevel, 105, 100);
+            + fusionReactorEnergyProduction(fusionLevel, energyTechnologyLevel);
         // OGame-style shortage factor: full production when energy is sufficient,
         // otherwise floor(produced / required) in basis points. Settlement uses
         // the building state for each elapsed segment, so later power upgrades do
         // not retroactively improve already-settled shortage periods.
         energyScaleBps = requiredEnergy == 0 || producedEnergy >= requiredEnergy
-            ? bps
-            : (producedEnergy * bps) / requiredEnergy;
+            ? BPS
+            : (producedEnergy * BPS) / requiredEnergy;
+    }
+
+    function fusionReactorEnergyProduction(uint256 fusionLevel, uint256 energyTechnologyLevel)
+        public
+        pure
+        returns (uint256)
+    {
+        return _scaledLevelValueWithFactor(30, fusionLevel, 105 + energyTechnologyLevel, 100);
+    }
+
+    function fusionReactorDeuteriumConsumption(uint256 fusionLevel) public pure returns (uint256) {
+        return _scaledLevelValueCeil(10, fusionLevel);
     }
 
     function storageCaps(uint256 metalStorage, uint256 crystalStorage, uint256 deuteriumTank)
@@ -140,6 +154,12 @@ library VeydriftFormulas {
 
     function _scaledLevelValue(uint256 base, uint256 level) private pure returns (uint256) {
         return _scaledLevelValueWithFactor(base, level, 11, 10);
+    }
+
+    function _scaledLevelValueCeil(uint256 base, uint256 level) private pure returns (uint256) {
+        if (level == 0) return 0;
+        uint256 denominator = 10 ** level;
+        return ((base * level * (11 ** level)) + denominator - 1) / denominator;
     }
 
     function _scaledLevelValueWithFactor(
