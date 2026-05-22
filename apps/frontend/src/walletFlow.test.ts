@@ -10,6 +10,7 @@ import {
   encodeLaunchFleetMissionCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
+  fetchHighscores,
   fetchInfrastructureState,
   fetchWalletQueues,
   getInjectedProvider,
@@ -823,13 +824,13 @@ describe("walletFlow", () => {
     const originalFetch = globalThis.fetch;
     const calls: Array<{ url: string; init: unknown }> = [];
 
-    globalThis.fetch = (async (input, init) => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       calls.push({ url: String(input), init });
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "content-type": "application/json" },
         status: 200,
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     try {
       await fetchWalletQueues("https://api.example.test///", account);
@@ -854,6 +855,77 @@ describe("walletFlow", () => {
         },
       },
     ]);
+  });
+
+  test("fetches empty highscores as a valid rankings payload", async () => {
+    const originalFetch = globalThis.fetch;
+    const rankings = {
+      generatedAt: "2026-05-22T00:00:00.000Z",
+      formula: {
+        pointsDivisor: "1000",
+        summary: "Classic score"
+      },
+      rankings: {
+        total: [],
+        economy: [],
+        research: [],
+        fleet: [],
+        defense: []
+      }
+    };
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe("https://api.example.test/highscores?limit=100");
+      expect(init).toEqual({
+        headers: { accept: "application/json" },
+      });
+      return new Response(JSON.stringify(rankings), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchHighscores("https://api.example.test///")).resolves.toEqual(rankings);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("explains highscore API unavailability instead of exposing generic HTTP errors", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ error: "highscores_not_supported" }),
+      {
+        headers: { "content-type": "application/json" },
+        status: 503,
+      }
+    )) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
+        "Rankings are temporarily unavailable because the deployed game API does not support highscores yet. Retry after the backend redeploys."
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("explains highscore network and CORS failures instead of exposing Failed to fetch", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
+        "Rankings are temporarily unavailable because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry."
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

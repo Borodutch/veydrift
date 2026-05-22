@@ -645,7 +645,7 @@ function requireHighscoreReader(chainReader: ChainReader | undefined, problems: 
         error: "highscores_not_supported"
       },
       {
-        headers: jsonHeaders,
+        headers: corsHeaders,
         status: 503
       }
     );
@@ -698,7 +698,7 @@ function unavailableResponse(problems: ConfigProblem[]): Response {
       problems
     },
     {
-      headers: jsonHeaders,
+      headers: corsHeaders,
       status: 503
     }
   );
@@ -710,7 +710,7 @@ function errorResponse(error: unknown, status: number): Response {
       error: error instanceof Error ? error.message : "Request failed."
     },
     {
-      headers: jsonHeaders,
+      headers: corsHeaders,
       status
     }
   );
