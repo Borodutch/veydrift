@@ -1032,10 +1032,136 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.resolveFleetMission(missionId);
 
-        (status,,,) = _fleetMission(missionId);
-        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        uint64 returnAt;
+        (status,, returnAt,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
         assertEq(game.planet(colonyPlanetId).resources.metal, 100);
-        assertEq(game.shipCount(colonyPlanetId, Ship.SmallCargo), 1);
+        assertEq(game.shipCount(colonyPlanetId, Ship.SmallCargo), 0);
+
+        vm.warp(returnAt);
+        vm.prank(player);
+        game.completeFleetMissionReturn(missionId);
+
+        (status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
+    }
+
+    function testResourceSavingLaunchesBeforeIncomingAttackAndCannotBeLooted() public {
+        address defender = address(0xDEF);
+        vm.deal(defender, 1 ether);
+        vm.prank(player);
+        uint256 attackerPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(defender);
+        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(defender, Technology.Astrophysics, 1);
+        _setShipCount(targetPlanetId, Ship.ColonyShip, 1);
+
+        vm.prank(defender);
+        uint256 safeColonyId = game.createColonyAtNextSlot(targetPlanetId, 162);
+
+        _setShipCount(attackerPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 1);
+        _setResources(attackerPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 0, 10_000);
+
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            attackerPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            162
+        );
+        (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
+
+        vm.prank(defender);
+        uint256 saveMissionId = game.launchFleetMission(
+            targetPlanetId,
+            safeColonyId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 4_000, crystal: 0, deuterium: 0}),
+            0
+        );
+        assertEq(game.planet(targetPlanetId).resources.metal, 6_000);
+
+        vm.warp(attackArrivalAt);
+        game.resolveFleetMission(attackMissionId);
+
+        (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(attackMissionId);
+        assertEq(attackCargo.metal, 2_500);
+        assertEq(game.planet(targetPlanetId).resources.metal, 3_500);
+
+        (, uint64 saveArrivalAt, uint64 saveReturnAt,) = _fleetMission(saveMissionId);
+        uint64 currentTestTime = attackArrivalAt;
+        if (currentTestTime < saveArrivalAt) {
+            vm.warp(saveArrivalAt);
+            currentTestTime = saveArrivalAt;
+        }
+        game.resolveFleetMission(saveMissionId);
+        assertEq(game.planet(safeColonyId).resources.metal, 4_000);
+        assertEq(game.shipCount(safeColonyId, Ship.SmallCargo), 0);
+
+        if (currentTestTime < saveReturnAt) vm.warp(saveReturnAt);
+        vm.prank(defender);
+        game.completeFleetMissionReturn(saveMissionId);
+        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), 1);
+    }
+
+    function testTransportDirectCallsCannotOverspendCargoOrBypassFuel() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(originPlanetId, 163);
+
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setResources(originPlanetId, 6_000, 0, 10_000);
+
+        vm.prank(player);
+        game.launchFleetMission(
+            originPlanetId,
+            colonyPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 4_000, crystal: 0, deuterium: 0}),
+            0
+        );
+        assertEq(game.planet(originPlanetId).resources.metal, 2_000);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientResources.selector, 2_000, 0, 9_998
+            )
+        );
+        game.launchFleetMission(
+            originPlanetId,
+            colonyPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 2_500, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        _setResources(originPlanetId, 0, 0, 0);
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.InsufficientResources.selector, 0, 0, 0)
+        );
+        game.launchFleetMission(
+            originPlanetId,
+            colonyPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
     }
 
     function testRenamePlanetIsContractBackedAndOwnerGated() public {

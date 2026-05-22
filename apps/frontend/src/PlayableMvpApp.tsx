@@ -66,6 +66,11 @@ import {
   type MissionShips,
 } from "./galaxyActions";
 import {
+  fleetMissionDistance,
+  fleetMissionFuelCost,
+  fleetMissionShipCount,
+} from "./fleetMissionRules";
+import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchDefenseState,
@@ -114,6 +119,7 @@ import {
   type ChainShipyardState,
   type Eip1193Provider,
   type FleetMissionVisibilityResponse,
+  type OnChainResources,
   type PendingWithdrawal,
   type ManagedPlanetResponse,
   type PlanetSummary,
@@ -187,6 +193,44 @@ function selectCounterplayShips(shipyardState: ChainShipyardState | null): Missi
     }
   }
   return null;
+}
+
+const missionCargoCapacity = (ships: Partial<MissionShips> | undefined): number => {
+  if (!ships) return 0;
+  return (ships.smallCargo ?? 0) * 5_000
+    + (ships.largeCargo ?? 0) * 25_000
+    + (ships.recycler ?? 0) * 20_000
+    + (ships.colonyShip ?? 0) * 7_500
+    + (ships.pathfinder ?? 0) * 12_000
+    + (ships.lightFighter ?? 0) * 50;
+};
+
+function transportCargoForSelectedPlanet(
+  planet: ManagedPlanetResponse | undefined,
+  ships: MissionShips,
+  target: Coordinates,
+): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
+  if (!planet?.resources) return undefined;
+
+  let remaining = missionCargoCapacity(ships);
+  if (remaining <= 0) return undefined;
+
+  const metal = Math.min(safeResourceNumber(planet.resources.metal) ?? 0, remaining);
+  remaining -= metal;
+  const crystal = Math.min(safeResourceNumber(planet.resources.crystal) ?? 0, remaining);
+  remaining -= crystal;
+
+  const distance = fleetMissionDistance(planet, target);
+  const fuelCost = fleetMissionFuelCost(fleetMissionShipCount(ships), distance);
+  const deuteriumAvailable = Math.max(0, (safeResourceNumber(planet.resources.deuterium) ?? 0) - fuelCost);
+  const deuterium = Math.min(deuteriumAvailable, remaining);
+
+  if (metal === 0 && crystal === 0 && deuterium === 0) return undefined;
+  return {
+    metal: String(metal),
+    crystal: String(crystal),
+    deuterium: String(deuterium),
+  };
 }
 
 async function loadWalletPlanetSyncSnapshot(
@@ -324,6 +368,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     [onChainSettlement?.homePlanetId, selectedPlanetId, walletPlanets]
   );
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlement?.homePlanetId ?? undefined;
+  const activePlanetCoords = selectedManagedPlanet
+    ? {
+        galaxy: selectedManagedPlanet.galaxy,
+        system: selectedManagedPlanet.system,
+        position: selectedManagedPlanet.position,
+      }
+    : homeCoords;
   const homeCoordinateLabel = useMemo(
     () => displayHomeCoordinates(homePlanetIdentity, homeCoords, planet?.coordinates),
     [
@@ -1462,8 +1513,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
     if (!action.enabled) return;
-    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
-      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+    const originPlanetId = activePlanetId ?? onChainSettlement?.homePlanetId;
+    if (!provider || !account || !gameContract || !originPlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or origin planet is unavailable." });
       return;
     }
 
@@ -1472,7 +1524,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         provider,
         account,
         gameContract,
-        onChainSettlement.homePlanetId ?? "0",
+        originPlanetId,
         coords.galaxy,
         coords.system,
         coords.position,
@@ -1492,7 +1544,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         account,
         gameContract,
         {
-          originPlanetId: onChainSettlement.homePlanetId ?? "0",
+          originPlanetId,
           targetPlanetId,
           primaryTargetId: action.primaryTargetId,
           quantity: action.quantity,
@@ -1506,13 +1558,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       account,
       gameContract,
       {
-        originPlanetId: onChainSettlement.homePlanetId ?? "0",
+        originPlanetId,
         targetPlanetId,
         missionType: missionTypeId(action.mission),
         ships: action.ships,
+        cargo: action.kind === "transport"
+          ? transportCargoForSelectedPlanet(selectedManagedPlanet, action.ships, coords)
+          : undefined,
       },
     ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction]);
+  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, selectedManagedPlanet]);
 
   const handleCounterplay = useCallback((hostileMissionId: string, mode: "acsDefend" | "intercept") => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -1685,8 +1740,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
           galaxy={galaxyNav.galaxy}
-          homeCoords={homeCoords}
-          homePlanetId={onChainSettlement?.homePlanetId}
+          homeCoords={activePlanetCoords}
+          homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
           defenseState={defenseState}
           shipyardState={shipyardState}
