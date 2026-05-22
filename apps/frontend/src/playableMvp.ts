@@ -214,6 +214,12 @@ export type BuildingEffectMetrics =
       deltaSlots: number;
     }
   | {
+      kind: "allianceDepot";
+      currentSupport: number;
+      nextSupport: number;
+      deltaSupport: number;
+    }
+  | {
       kind: "constructionSpeed";
       currentFactor: number;
       nextFactor: number;
@@ -1252,6 +1258,18 @@ export function buildingEffectMetrics(
     };
   }
 
+  if (key === "allianceDepot") {
+    const currentSupport = allianceDepotSupportCapacity(buildings.allianceDepot);
+    const nextSupport = allianceDepotSupportCapacity(nextBuildings.allianceDepot);
+
+    return {
+      kind: "allianceDepot",
+      currentSupport,
+      nextSupport,
+      deltaSupport: nextSupport - currentSupport,
+    };
+  }
+
   if (key === "roboticsFactory") {
     const currentFactor = buildings.roboticsFactory + 1;
     const nextFactor = nextBuildings.roboticsFactory + 1;
@@ -1304,6 +1322,10 @@ export function buildingEffectMetrics(
 
 export function missileSiloCapacity(level: number): number {
   return level * 10;
+}
+
+export function allianceDepotSupportCapacity(level: number): number {
+  return level * 20_000;
 }
 
 export function researchCost(

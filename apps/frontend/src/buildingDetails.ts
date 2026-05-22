@@ -5,6 +5,7 @@ import {
   buildingRequirementsFor,
   canAfford,
   energyBalance,
+  allianceDepotSupportCapacity,
   isBinaryBuilding,
   fusionReactorDeuteriumConsumption,
   missileSiloCapacity,
@@ -368,6 +369,10 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
 
   if (key === "missileSilo") {
     return `${formatNumber(missileSiloCapacity(level))} missile slots`;
+  }
+
+  if (key === "allianceDepot") {
+    return `${formatNumber(allianceDepotSupportCapacity(level))} Deut. support`;
   }
 
   if (key === "interdimensionalRiftStabilizer") {
