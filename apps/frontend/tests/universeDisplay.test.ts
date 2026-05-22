@@ -244,11 +244,25 @@ describe("tester universe display data", () => {
       queue: null,
       wallet: "0x1111111111111111111111111111111111111111",
     };
+    const defenseState = {
+      homePlanetId: "7",
+      productionAvailable: true,
+      resources: null,
+      shipyardLevel: 1,
+      missileSiloLevel: 4,
+      technologyLevels: {},
+      defenses: [
+        { id: 9, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+      wallet: "0x1111111111111111111111111111111111111111",
+    };
 
     const enemyActions = galaxyActionsForSlot({
       account: "0x1111111111111111111111111111111111111111",
       homePlanetId: "7",
       planet: enemy,
+      defenseState,
       shipyardState,
     });
     const ownActions = galaxyActionsForSlot({
@@ -290,6 +304,12 @@ describe("tester universe display data", () => {
       "Missile",
     ]);
     expect(enemyActions.find((action) => action.kind === "attack")?.enabled).toBe(true);
+    expect(enemyActions.find((action) => action.kind === "missileAttack")).toMatchObject({
+      enabled: true,
+      mode: "missile",
+      primaryTargetId: 0,
+      quantity: 1,
+    });
     expect(enemyActions.find((action) => action.kind === "harvest")).toMatchObject({
       enabled: false,
       reason: "Debris fields are not live on this deployment yet.",
@@ -305,6 +325,20 @@ describe("tester universe display data", () => {
     expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
       Object.keys(emptyMissionShips())
     );
+
+    expect(galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: enemy,
+      defenseState: {
+        ...defenseState,
+        defenses: [{ id: 9, count: 0, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      },
+      shipyardState,
+    }).find((action) => action.kind === "missileAttack")).toMatchObject({
+      enabled: false,
+      reason: "Requires an interplanetary missile on your active planet.",
+    });
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {

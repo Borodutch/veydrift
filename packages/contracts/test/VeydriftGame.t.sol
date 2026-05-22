@@ -835,7 +835,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testInterplanetaryMissileAttackConsumesSilosInterceptionAndDestroysDefense() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
         _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 5);
         _setDefenseCount(targetPlanetId, Defense.AntiBallisticMissile, 2);
         _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
@@ -856,14 +856,111 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 20);
     }
 
+    function testInterplanetaryMissileAttackAllowsPartialInterceptionWithoutNegativeDefense()
+        public
+    {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 8);
+        _setDefenseCount(targetPlanetId, Defense.AntiBallisticMissile, 3);
+        _setDefenseCount(targetPlanetId, Defense.PlasmaTurret, 2);
+
+        vm.expectEmit(true, true, true, true, address(game));
+        emit InterplanetaryMissileAttack(
+            player, originPlanetId, targetPlanetId, Defense.PlasmaTurret, 8, 3, 5, 2
+        );
+        vm.prank(player);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.PlasmaTurret, 8
+        );
+
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.PlasmaTurret), 0);
+    }
+
     function testInterplanetaryMissileAttackRejectsInsufficientInventory() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
 
         _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
         vm.prank(player);
         vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
         game.launchInterplanetaryMissileAttack(
             originPlanetId, targetPlanetId, Defense.RocketLauncher, 2
+        );
+    }
+
+    function testInterplanetaryMissileAttackRejectsMissileInventoryAsTarget() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 2);
+        _setDefenseCount(targetPlanetId, Defense.AntiBallisticMissile, 1);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InvalidMissileTarget.selector, Defense.AntiBallisticMissile
+            )
+        );
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.AntiBallisticMissile, 1
+        );
+    }
+
+    function testInterplanetaryMissileAttackRejectsOutOfRangeTarget() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _setPlanetCoordinates(originPlanetId, 1, 1, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 6, 8);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InterplanetaryMissileOutOfRange.selector, 1, 6, 4
+            )
+        );
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+    }
+
+    function testInterplanetaryMissileAttackRejectsCrossGalaxyTarget() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 2, 100, 8);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 10);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InterplanetaryMissileOutOfRange.selector, 100, 100, 49
+            )
+        );
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+    }
+
+    function testInterplanetaryMissileAttackEnforcesDirectCallerEligibility() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedMissileAttackPlanets();
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+
+        vm.prank(defender);
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.SamePlanet.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, originPlanetId, Defense.RocketLauncher, 1
+        );
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.NoPlanet.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId + 1, Defense.RocketLauncher, 1
         );
     }
 
@@ -2490,6 +2587,16 @@ contract VeydriftGameTest is Test {
         originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         targetPlanetId = game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _seedMissileAttackPlanets()
+        internal
+        returns (uint256 originPlanetId, uint256 targetPlanetId, address defender)
+    {
+        (originPlanetId, targetPlanetId, defender) = _seedAttackPlanets();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 104, 8);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 1);
     }
 
     function _createAlliance(address leader) internal returns (uint256 allianceId) {

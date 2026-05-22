@@ -280,6 +280,8 @@ abstract contract VeydriftGameStorage {
     error UnsupportedGameplayModule();
     error DefenseLimitReached(Defense defense);
     error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
+    error InvalidMissileTarget(Defense defense);
+    error InterplanetaryMissileOutOfRange(uint16 originSystem, uint16 targetSystem, uint256 range);
     error AttackBashingLimitReached();
     error AttackScoreProtection();
     error InvalidPlanetName();

@@ -396,6 +396,7 @@ const GAME_SELECTORS = {
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
   finishResourceWithdrawal: "0xde0f208c",
+  launchInterplanetaryMissileAttack: "0xa72cd29a",
   launchFleetMission: "0x28247df8",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
@@ -529,6 +530,25 @@ export function encodeLaunchFleetMissionCall({
     cargo?.crystal ?? 0,
     cargo?.deuterium ?? 0,
     randomnessRequestId,
+  ]);
+}
+
+export function encodeLaunchInterplanetaryMissileAttackCall({
+  originPlanetId,
+  targetPlanetId,
+  primaryTargetId,
+  quantity,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  primaryTargetId: bigint | number | string;
+  quantity: bigint | number | string;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.launchInterplanetaryMissileAttack, [
+    originPlanetId,
+    targetPlanetId,
+    primaryTargetId,
+    quantity,
   ]);
 }
 
@@ -1172,6 +1192,24 @@ export async function sendLaunchFleetMissionTransaction(
         from: account,
         to: contractAddress,
         data: encodeLaunchFleetMissionCall(params)
+      }
+    ]
+  });
+}
+
+export async function sendLaunchInterplanetaryMissileAttackTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchInterplanetaryMissileAttackCall>[0]
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeLaunchInterplanetaryMissileAttackCall(params)
       }
     ]
   });
