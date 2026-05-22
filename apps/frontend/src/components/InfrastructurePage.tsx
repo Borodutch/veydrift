@@ -516,7 +516,7 @@ export function ActiveBuildingQueueDetail({
             {isSelectedBuilding ? "Construction in progress" : "Active construction"}
           </p>
           <p className="mt-1 text-xs leading-5 text-amber-200/85">
-            {queueLabel} is upgrading{isSelectedBuilding ? "." : "; the selected building is waiting for this queue."}
+            {queueLabel} is upgrading.
           </p>
         </div>
         <span className="shrink-0 rounded bg-black/20 px-2 py-1 text-xs font-semibold text-amber-100">
@@ -921,10 +921,9 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (energy.kind === "requires") {
     rows.push({
-      ...(energy.delta !== 0 ? { delta: `(${formatSigned(energy.delta)})` } : {}),
+      ...(energy.delta !== 0 ? { delta: formatSigned(energy.delta) } : {}),
       label: "Energy required",
       next: `${formatNumber(energy.next)} required`,
-      tone: "warning",
       value: `${formatNumber(energy.current)} required`,
     });
   }
