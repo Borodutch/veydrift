@@ -372,6 +372,13 @@ export type RpcLog = {
   data: string;
 };
 
+type RpcLogFilter = {
+  address: Address;
+  fromBlock: string;
+  toBlock: string;
+  topics: Array<string | string[] | null>;
+};
+
 export type RpcBlock = {
   timestamp: string;
 };
@@ -620,7 +627,7 @@ export class VeydriftGameReader implements ChainReader {
       return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [] };
     }
 
-    const missionLogs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+    const missionLogs = await this.getLogs(
       {
         address: this.gameContractAddress,
         fromBlock: toQuantity(this.indexFromBlock),
@@ -634,7 +641,7 @@ export class VeydriftGameReader implements ChainReader {
           fleetMissionReturnExposedTopic
         ]]
       }
-    ]);
+    );
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(planets.planets.map((planet) => planet.planetId));
     const missions = decodeFleetMissionLogs(missionLogs);
@@ -1180,14 +1187,14 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
-    const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+    const logs = await this.getLogs(
       {
         address: this.gameContractAddress,
         fromBlock: toQuantity(fromBlock),
         toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
         topics: [[planetStartedTopic, colonyCreatedTopic]]
       }
-    ]);
+    );
 
     return logs.map((log) => decodeSettledPlanetLog(log));
   }
@@ -1198,7 +1205,7 @@ export class VeydriftGameReader implements ChainReader {
   ): Promise<MoonChanceReportEvent[]> {
     if (!this.moonContractAddress) return [];
 
-    const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+    const logs = await this.getLogs(
       {
         address: this.moonContractAddress,
         fromBlock: toQuantity(fromBlock),
@@ -1209,20 +1216,20 @@ export class VeydriftGameReader implements ChainReader {
           moonChanceSkippedExistingMoonTopic
         ]]
       }
-    ]);
+    );
 
     return logs.map((log) => decodeMoonChanceReportLog(log));
   }
 
   async listDebrisFieldEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<DebrisFieldEvent[]> {
-    const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+    const logs = await this.getLogs(
       {
         address: this.gameContractAddress,
         fromBlock: toQuantity(fromBlock),
         toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
         topics: [[debrisFieldUpdatedTopic]]
       }
-    ]);
+    );
 
     return logs.map((log) => decodeDebrisFieldLog(log));
   }
@@ -1280,7 +1287,7 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     try {
-      const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+      const logs = await this.getLogs(
         {
           address: this.gameContractAddress,
           fromBlock: toQuantity(this.indexFromBlock),
@@ -1291,7 +1298,7 @@ export class VeydriftGameReader implements ChainReader {
             toTopic(BigInt(queue.itemId))
           ]
         }
-      ]);
+      );
       const matchingLog = logs
         .slice()
         .reverse()
@@ -1307,6 +1314,34 @@ export class VeydriftGameReader implements ChainReader {
       console.error(error);
       return null;
     }
+  }
+
+  private async getLogs(filter: RpcLogFilter): Promise<RpcLog[]> {
+    try {
+      return await this.transport.request<RpcLog[]>("eth_getLogs", [filter]);
+    } catch (error) {
+      if (!shouldChunkLogQuery(error)) {
+        throw error;
+      }
+    }
+
+    const fromBlock = decodeUint(filter.fromBlock);
+    const toBlock = filter.toBlock === "latest"
+      ? decodeUint(await this.transport.request<string>("eth_blockNumber", []))
+      : decodeUint(filter.toBlock);
+    if (toBlock < fromBlock) return [];
+
+    const logs: RpcLog[] = [];
+    const maxChunkSpan = 1_999n;
+    for (let start = fromBlock; start <= toBlock; start += maxChunkSpan + 1n) {
+      const end = start + maxChunkSpan > toBlock ? toBlock : start + maxChunkSpan;
+      logs.push(...await this.transport.request<RpcLog[]>("eth_getLogs", [{
+        ...filter,
+        fromBlock: toQuantity(start),
+        toBlock: toQuantity(end)
+      }]));
+    }
+    return logs;
   }
 
   private async readResearchQueue(wallet: Address): Promise<QueueState> {
@@ -2253,4 +2288,8 @@ function zeroResources(): Resources {
 
 function isRpcRevert(error: unknown): boolean {
   return error instanceof Error && /execution reverted|revert|missing revert data/i.test(error.message);
+}
+
+function shouldChunkLogQuery(error: unknown): boolean {
+  return error instanceof Error && /max block range|block range|too many blocks|RPC HTTP 400/i.test(error.message);
 }
