@@ -389,6 +389,7 @@ const START_PLANET_SELECTOR = "0xf45f1f18";
 const START_PRICE_SELECTOR = "0xf1a9af89";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
+  completeFleetMissionReturn: "0xc2472852",
   collectResources: "0xdb43284d",
   createColony: "0x71358ab8",
   depositResource: "0x25819e15",
@@ -402,6 +403,8 @@ const GAME_SELECTORS = {
   finishResearch: "0xba2fbdc8",
   renamePlanet: "0xa74c0906",
   requestResourceWithdrawal: "0x62a10a46",
+  recallFleetMission: "0x1cbc460c",
+  resolveFleetMission: "0xde09e7cf",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
@@ -1207,6 +1210,60 @@ export async function sendLaunchInterplanetaryMissileAttackTransaction(
         from: account,
         to: contractAddress,
         data: encodeLaunchInterplanetaryMissileAttackCall(params)
+      }
+    ]
+  });
+}
+
+export async function sendRecallFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.recallFleetMission, [missionId])
+      }
+    ]
+  });
+}
+
+export async function sendResolveFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId])
+      }
+    ]
+  });
+}
+
+export async function sendCompleteFleetMissionReturnTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId])
       }
     ]
   });

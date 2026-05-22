@@ -2,9 +2,9 @@ import { generateSystem } from "@veydrift/universe";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
-import { assertAddress, type ChainReader, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
+import { assertAddress, type ChainReader, type MoonChanceReportEvent, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
 import { highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
-import { SettlementIndexer, type IndexedDebrisFieldEvent } from "./indexer";
+import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent } from "./indexer";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -37,6 +37,7 @@ type RuntimeConfig = {
   graphqlUrl: string;
   moonContractAddress: string | null;
   network: string;
+  randomnessEngineAddress: string | null;
   resourceTokenAddresses: {
     crystal: string | null;
     deuterium: string | null;
@@ -415,6 +416,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           field
         ])
       );
+      const moonChance = new Map(
+        (indexer?.moonChanceReportsInSystem(galaxy, system) ?? []).map((report) => [
+          report.position,
+          report
+        ])
+      );
 
       return Response.json(
         {
@@ -429,7 +436,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           ).map((planet) => ({
             ...planet,
             occupiedBy: occupiedPlanetRef(occupied.get(planet.position)),
-            debrisField: debrisFieldRef(debris.get(planet.position))
+            debrisField: debrisFieldRef(debris.get(planet.position)),
+            moonChance: moonChanceReportRef(moonChance.get(planet.position))
           }))
         },
         {
@@ -465,6 +473,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   field
                 ])
               );
+              const moonChance = new Map(
+                (indexer?.moonChanceReportsInSystem(galaxy, system) ?? []).map((report) => [
+                  report.position,
+                  report
+                ])
+              );
               const snapshot = systemSnapshot(
                 loaded.config.chainId,
                 universeContractAddress(loaded.config),
@@ -484,7 +498,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                 ).map((planet) => ({
                   ...planet,
                   occupiedBy: occupiedPlanetRef(occupied.get(planet.position)),
-                  debrisField: debrisFieldRef(debris.get(planet.position))
+                  debrisField: debrisFieldRef(debris.get(planet.position)),
+                  moonChance: moonChanceReportRef(moonChance.get(planet.position))
                 }))
               };
             })
@@ -586,6 +601,20 @@ function debrisFieldRef(field: IndexedDebrisFieldEvent | undefined): { metal: st
   return field ? field.resources : null;
 }
 
+function moonChanceReportRef(report: IndexedMoonChanceReportEvent | undefined): (MoonChanceReportEvent & { status: string }) | null {
+  if (!report) return null;
+  return {
+    ...report,
+    status: moonChanceStatus(report)
+  };
+}
+
+function moonChanceStatus(report: MoonChanceReportEvent): string {
+  if (report.eventName === "MoonChanceRequested") return "pending";
+  if (report.eventName === "MoonChanceSkippedExistingMoon") return "existing_moon_skipped";
+  return report.moonCreated ? "created" : "not_created";
+}
+
 function getRuntimeConfig(): RuntimeConfig {
   const apiUrl = process.env.VEYDRIFT_PUBLIC_API_URL ?? "https://api-test.veydrift.com";
   const graphqlUrl = process.env.VEYDRIFT_PUBLIC_GRAPHQL_URL ?? `${apiUrl}/graphql`;
@@ -599,6 +628,7 @@ function getRuntimeConfig(): RuntimeConfig {
     process.env.VEYDRIFT_CONTRACT_ADDRESS ??
     null;
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
+  const randomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS ?? null;
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
@@ -615,6 +645,7 @@ function getRuntimeConfig(): RuntimeConfig {
     graphqlUrl,
     moonContractAddress,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
+    randomnessEngineAddress,
     resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
   };

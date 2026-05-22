@@ -12,6 +12,7 @@ import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
   formatGalaxyHeatLabel,
+  formatMoonChanceLabel,
   formatMissionPreview,
   formatGalaxyOccupancySource,
   formatGalaxyOccupancySummary,
@@ -127,6 +128,21 @@ describe("tester universe display data", () => {
       "Preview system",
     ]);
     expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
+  });
+
+  test("formats moon chance status for galaxy rows", () => {
+    expect(formatMoonChanceLabel({
+      battleId: "42",
+      targetPlanetId: "7",
+      status: "pending",
+      chanceBps: 1500,
+    })).toBe("Moon chance 15% pending");
+    expect(formatMoonChanceLabel({
+      battleId: "43",
+      targetPlanetId: "7",
+      status: "created",
+      moonDiameterKm: 7000,
+    })).toBe("Moon created 7,000 km");
   });
 
   test("galaxy heat label is derived from the orbital temperature range", () => {

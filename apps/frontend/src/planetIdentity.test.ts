@@ -113,6 +113,38 @@ describe("planet identity", () => {
     });
   });
 
+  test("preserves API moon chance reports on galaxy planets", () => {
+    const [systemPlanet] = planetsFromSystemResponse({
+      galaxy: 6,
+      system: 407,
+      planets: [
+        {
+          key: "6:407:15",
+          galaxy: 6,
+          system: 407,
+          position: 15,
+          moonChance: {
+            battleId: "42",
+            targetPlanetId: "2",
+            status: "pending",
+            outcomeId: "5",
+            chanceBps: 1200,
+            metalDebris: "900000",
+            crystalDebris: "300000",
+            randomnessRequestId: "8",
+          },
+        },
+      ],
+    });
+
+    expect(systemPlanet?.moonChance).toMatchObject({
+      battleId: "42",
+      chanceBps: 1200,
+      status: "pending",
+      targetPlanetId: "2",
+    });
+  });
+
   test("uses canonical home coordinates for shell chrome instead of stale settlement props", () => {
     const home = planetFromSettlementPlanet({
       ...settlementPlanet,
