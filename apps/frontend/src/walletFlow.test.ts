@@ -20,6 +20,7 @@ import {
   readSettlementFundingState,
   readSettlementState,
   sendCollectResourcesTransaction,
+  sendCompleteFleetMissionReturnTransaction,
   sendApproveResourceTokenTransaction,
   sendDepositResourceTransaction,
   sendFinishDefenseProductionTransaction,
@@ -29,6 +30,8 @@ import {
   sendFinishResearchTransaction,
   sendCreateColonyTransaction,
   sendLaunchFleetMissionTransaction,
+  sendRecallFleetMissionTransaction,
+  sendResolveFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceKickTransaction,
   sendAllianceInviteTransaction,
@@ -188,6 +191,45 @@ describe("walletFlow", () => {
           101, 202, 303, 404,
         ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
     );
+  });
+
+  test("encodes fleet lifecycle resolver transactions", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0xfleet${requests.length}`;
+    });
+
+    await expect(sendRecallFleetMissionTransaction(provider, account, contract, "11")).resolves.toBe("0xfleet1");
+    await expect(sendResolveFleetMissionTransaction(provider, account, contract, "12")).resolves.toBe("0xfleet2");
+    await expect(sendCompleteFleetMissionReturnTransaction(provider, account, contract, "13")).resolves.toBe("0xfleet3");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x1cbc460c", ["11"]),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0xde09e7cf", ["12"]),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0xc2472852", ["13"]),
+        }],
+      },
+    ]);
   });
 
   test("parses Rift token input as 6-decimal base units", () => {

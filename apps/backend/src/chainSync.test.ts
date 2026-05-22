@@ -55,6 +55,7 @@ describe("ChainSyncService", () => {
     const indexer = new SettlementIndexer(
       {
         async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
         async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
       },
       100n
