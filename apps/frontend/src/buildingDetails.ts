@@ -5,6 +5,7 @@ import {
   buildingRequirementsFor,
   canAfford,
   energyBalance,
+  missileSiloCapacity,
   productionCapacityPerHour,
   storageCaps,
   unmetBuildingRequirement,
@@ -331,6 +332,10 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
 
   if (key === "researchLab") {
     return `x${formatNumber(level + 1)} research speed`;
+  }
+
+  if (key === "missileSilo") {
+    return `${formatNumber(missileSiloCapacity(level))} missile slots`;
   }
 
   if (key === "interdimensionalRiftStabilizer") {

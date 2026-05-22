@@ -12,6 +12,7 @@ import {
   defenseCatalog,
   energyBalance,
   hasCollectableResources,
+  missileSiloCapacity,
   productionCapacityPerHour,
   productionPerHour,
   researchCatalog,
@@ -370,10 +371,12 @@ describe("playable MVP contract display helpers", () => {
       metalMine: 1,
       solarPlant: 2,
       metalStorage: 1,
+      missileSilo: 3,
     };
 
     const mineEffect = buildingEffectMetrics(buildings, "metalMine");
     const storageEffect = buildingEffectMetrics(buildings, "metalStorage");
+    const missileSiloEffect = buildingEffectMetrics(buildings, "missileSilo");
 
     expect(mineEffect.kind).toBe("production");
     if (mineEffect.kind === "production") {
@@ -382,12 +385,20 @@ describe("playable MVP contract display helpers", () => {
       expect(mineEffect.deltaPerHour).toBeGreaterThan(0);
     }
 
-      expect(storageEffect.kind).toBe("storage");
+    expect(storageEffect.kind).toBe("storage");
     if (storageEffect.kind === "storage") {
       expect(storageEffect.resource).toBe("metal");
       expect(storageEffect.currentCapacity).toBe(storageCaps(buildings).metal);
       expect(storageEffect.deltaCapacity).toBe(20_000);
     }
+
+    expect(missileSiloCapacity(3)).toBe(30);
+    expect(missileSiloEffect).toEqual({
+      kind: "missileSilo",
+      currentSlots: 30,
+      nextSlots: 40,
+      deltaSlots: 10,
+    });
   });
 
   test("uses settled planet multipliers for infrastructure production effects", () => {

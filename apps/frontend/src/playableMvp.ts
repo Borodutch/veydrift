@@ -200,6 +200,12 @@ export type BuildingEffectMetrics =
       deltaCapacity: number;
     }
   | {
+      kind: "missileSilo";
+      currentSlots: number;
+      nextSlots: number;
+      deltaSlots: number;
+    }
+  | {
       kind: "constructionSpeed";
       currentFactor: number;
       nextFactor: number;
@@ -1086,6 +1092,18 @@ export function buildingEffectMetrics(
     };
   }
 
+  if (key === "missileSilo") {
+    const currentSlots = missileSiloCapacity(buildings.missileSilo);
+    const nextSlots = missileSiloCapacity(nextBuildings.missileSilo);
+
+    return {
+      kind: "missileSilo",
+      currentSlots,
+      nextSlots,
+      deltaSlots: nextSlots - currentSlots,
+    };
+  }
+
   if (key === "roboticsFactory") {
     const currentFactor = buildings.roboticsFactory + 1;
     const nextFactor = nextBuildings.roboticsFactory + 1;
@@ -1124,6 +1142,10 @@ export function buildingEffectMetrics(
     nextLevel: nextBuildings[key],
     label: "Catalog facility",
   };
+}
+
+export function missileSiloCapacity(level: number): number {
+  return level * 10;
 }
 
 export function researchCost(

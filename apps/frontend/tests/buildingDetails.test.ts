@@ -246,4 +246,31 @@ describe("building detail helpers", () => {
       storage: { resource: "metal", capacity: 20_000 },
     });
   });
+
+  test("builds Missile Silo rows with OGame missile slot capacity", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        missileSilo: 1,
+      },
+    };
+    const rows = buildingLevelInfoRows(state.buildings, "missileSilo", undefined, 4);
+
+    expect(buildingLevelInfoColumns(rows)).toEqual({
+      effect: true,
+      energyProduced: false,
+      energyRequired: false,
+      production: false,
+      storage: false,
+    });
+    expect(rows.map(({ effect, level }) => ({ effect, level }))).toEqual([
+      { effect: "10 missile slots", level: 1 },
+      { effect: "20 missile slots", level: 2 },
+      { effect: "30 missile slots", level: 3 },
+      { effect: "40 missile slots", level: 4 },
+    ]);
+    expect(rows[0]).toMatchObject({ current: true, next: false });
+    expect(rows[1]).toMatchObject({ current: false, next: true });
+  });
 });
