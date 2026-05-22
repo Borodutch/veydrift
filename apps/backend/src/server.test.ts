@@ -566,7 +566,22 @@ class MockChainReader implements ChainReader {
   }
 
   async listMoonChanceReportEvents(): Promise<MoonChanceReportEvent[]> {
-    return [];
+    return [
+      {
+        eventName: "MoonChanceRequested",
+        transactionHash: "0xghi",
+        blockNumber: "125",
+        battleId: "42",
+        targetPlanetId: planet.planetId,
+        outcomeId: "5",
+        defender: player,
+        metalDebris: "90000",
+        crystalDebris: "10000",
+        chanceBps: 100,
+        randomnessRequestId: "8",
+        purposeHash: `0x${"abc".padStart(64, "0")}`
+      }
+    ];
   }
 
   async listDebrisFieldEvents(): Promise<DebrisFieldEvent[]> {
@@ -609,6 +624,7 @@ describe("Veydrift backend", () => {
         resourceTokenAddressesConfigured: false,
         settlementContractConfigured: false,
         moonContractConfigured: false,
+        randomnessEngineConfigured: false,
         gameContractConfigured: false
       },
       configured: false,
@@ -633,6 +649,7 @@ describe("Veydrift backend", () => {
       graphqlUrl: "https://api-test.veydrift.com/graphql",
       moonContractAddress: null,
       network: "Base Sepolia",
+      randomnessEngineAddress: null,
       resourceTokenAddresses: {
         crystal: null,
         deuterium: null,
@@ -648,6 +665,7 @@ describe("Veydrift backend", () => {
     const previousGameOverrideAddress = process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS;
     const previousSettlementAddress = process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS;
     const previousMoonAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS;
+    const previousRandomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS;
     const previousAllianceAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS;
     const previousMetalTokenAddress = process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
     const previousCrystalTokenAddress = process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS;
@@ -656,6 +674,7 @@ describe("Veydrift backend", () => {
     process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS = "0x4444444444444444444444444444444444444444";
     process.env.VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS = "0x1111111111111111111111111111111111111111";
     process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS = "0x2222222222222222222222222222222222222222";
+    process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS = "0x8888888888888888888888888888888888888888";
     process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS = "0x9999999999999999999999999999999999999999";
     process.env.VEYDRIFT_METAL_TOKEN_ADDRESS = "0x5555555555555555555555555555555555555555";
     process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS = "0x6666666666666666666666666666666666666666";
@@ -669,6 +688,7 @@ describe("Veydrift backend", () => {
         gameContractAddress: "0x4444444444444444444444444444444444444444",
         allianceContractAddress: "0x9999999999999999999999999999999999999999",
         moonContractAddress: "0x2222222222222222222222222222222222222222",
+        randomnessEngineAddress: "0x8888888888888888888888888888888888888888",
         resourceTokenAddresses: {
           crystal: "0x6666666666666666666666666666666666666666",
           deuterium: "0x7777777777777777777777777777777777777777",
@@ -703,6 +723,11 @@ describe("Veydrift backend", () => {
         delete process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS;
       } else {
         process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS = previousMoonAddress;
+      }
+      if (previousRandomnessEngineAddress === undefined) {
+        delete process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS = previousRandomnessEngineAddress;
       }
       if (previousMetalTokenAddress === undefined) {
         delete process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
@@ -745,6 +770,7 @@ describe("Veydrift backend", () => {
             graphqlUrl: "https://api-test.veydrift.com/graphql",
             moonContractAddress: null,
             network: "Base Sepolia",
+            randomnessEngineAddress: null,
             resourceTokenAddresses: {
               crystal: null,
               deuterium: null,
@@ -780,6 +806,8 @@ describe("Veydrift backend", () => {
         hasWsRpcUrl: false,
         resourceTokenAddressesConfigured: true,
         settlementContractConfigured: true,
+        moonContractConfigured: false,
+        randomnessEngineConfigured: false,
         gameContractConfigured: true
       }
     });
@@ -1440,6 +1468,7 @@ describe("Veydrift backend", () => {
     );
     await expect(rebuild.json()).resolves.toMatchObject({
       indexedDebrisFields: 1,
+      indexedMoonChanceReports: 1,
       indexedPlanets: 1,
       fromBlock: "100"
     });
@@ -1457,6 +1486,12 @@ describe("Veydrift backend", () => {
       debrisField: {
         metal: "27000",
         crystal: "9000"
+      },
+      moonChance: {
+        battleId: "42",
+        chanceBps: 100,
+        status: "pending",
+        targetPlanetId: "7"
       }
     });
     expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");

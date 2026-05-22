@@ -19,7 +19,7 @@ import {
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
-import type { ChainShipyardState } from "../walletFlow";
+import type { ChainDefenseState, ChainShipyardState } from "../walletFlow";
 import {
   galaxyActionsForSlot,
   type GalaxyAction,
@@ -82,6 +82,7 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
+  defenseState?: ChainDefenseState | null | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
@@ -97,6 +98,7 @@ export function GalaxyView({
   homeCoords,
   homePlanetId,
   homePlanet,
+  defenseState = null,
   shipyardState = null,
   onAction,
   onSelectPlanet,
@@ -220,6 +222,7 @@ export function GalaxyView({
   const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
   const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
   const debrisCount = planets.filter((planet) => planet.debrisField).length;
+  const moonChanceCount = planets.filter((planet) => planet.moonChance).length;
   const emptyCount = POSITION_COUNT - planets.length;
   const occupiedSummary = formatGalaxyOccupancySummary(occupiedCount);
   const occupancySource = formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem));
@@ -279,6 +282,12 @@ export function GalaxyView({
                 <span>{debrisCount} debris</span>
               </>
             ) : null}
+            {moonChanceCount > 0 ? (
+              <>
+                <span className="text-slate-700">/</span>
+                <span>{moonChanceCount} moon chance</span>
+              </>
+            ) : null}
           </div>
           {occupancySource ? (
             <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
@@ -323,6 +332,7 @@ export function GalaxyView({
                   homePlanetId={homePlanetId}
                   planet={planet}
                   position={pos}
+                  defenseState={defenseState}
                   shipyardState={shipyardState}
                   system={system}
                 />
@@ -472,6 +482,7 @@ function GalaxySlot({
   homeCoords,
   homePlanetId,
   isHome,
+  defenseState,
   shipyardState,
   onAction,
   attackProtection,
@@ -486,6 +497,7 @@ function GalaxySlot({
   homeCoords: Coordinates | undefined;
   homePlanetId: string | null | undefined;
   isHome: boolean;
+  defenseState: ChainDefenseState | null;
   shipyardState: ChainShipyardState | null;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   attackProtection: AttackProtectionStatus | undefined;
@@ -500,6 +512,7 @@ function GalaxySlot({
     homePlanetId,
     isOrigin: isHome,
     planet,
+    defenseState,
     shipyardState,
   });
 
@@ -550,6 +563,7 @@ function GalaxySlot({
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
+  const moonChanceLabel = formatMoonChanceLabel(planet.moonChance);
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
 
   return (
@@ -616,6 +630,12 @@ function GalaxySlot({
               <>
                 <span className="text-slate-700">/</span>
                 <span className="text-amber-200">{debrisLabel}</span>
+              </>
+            ) : null}
+            {moonChanceLabel ? (
+              <>
+                <span className="text-slate-700">/</span>
+                <span className="text-cyan-200">{moonChanceLabel}</span>
               </>
             ) : null}
           </div>
@@ -696,6 +716,17 @@ export function formatAttackBlockReason(status: AttackProtectionStatus | undefin
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit";
   if (status.blockedReason === "score_protection") return "Attack blocked by score protection";
   return "Attack blocked";
+}
+
+export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string | null {
+  if (!moonChance) return null;
+  const chance = typeof moonChance.chanceBps === "number"
+    ? ` ${(moonChance.chanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
+    : "";
+  if (moonChance.status === "pending") return `Moon chance${chance} pending`;
+  if (moonChance.status === "created") return `Moon created${moonChance.moonDiameterKm ? ` ${moonChance.moonDiameterKm.toLocaleString()} km` : ""}`;
+  if (moonChance.status === "not_created") return `Moon chance${chance} missed`;
+  return "Existing moon skipped";
 }
 
 function formatMissionClock(timestamp: number): string {

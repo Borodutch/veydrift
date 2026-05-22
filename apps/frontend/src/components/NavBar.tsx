@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Factory, FlaskConical, Moon, Orbit, Radar, Rocket, Shield, Trophy, Users } from "lucide-preact";
+import { ArrowLeftRight, Factory, FlaskConical, Moon, Orbit, Radar, Rocket, SatelliteDish, Shield, Trophy, Users } from "lucide-preact";
 
 import { shortAddress } from "../walletFlow";
 
@@ -9,6 +9,7 @@ export type Page =
   | "defenses"
   | "research"
   | "shipyard"
+  | "mission-control"
   | "moon"
   | "alliance"
   | "rift"
@@ -29,6 +30,7 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "defenses", label: "Defenses", mobileLabel: "Defense", icon: Shield },
   { key: "research", label: "Research", mobileLabel: "Research", icon: FlaskConical },
   { key: "shipyard", label: "Shipyard", mobileLabel: "Shipyard", icon: Rocket },
+  { key: "mission-control", label: "Mission Control", mobileLabel: "Mission", icon: SatelliteDish },
   { key: "moon", label: "Moon", mobileLabel: "Moon", icon: Moon },
   { key: "alliance", label: "Alliance", mobileLabel: "Ally", icon: Users },
   { key: "rift", label: "Rift", mobileLabel: "Rift", icon: ArrowLeftRight },

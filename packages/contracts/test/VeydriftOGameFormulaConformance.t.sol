@@ -137,6 +137,37 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         VeydriftDependencies.requireDefense(Defense.GaussCannon, 6, 0, 6, 0, 0, 3, 1, 0, 0);
     }
 
+    function testVanillaOGameCombatStatsAndRapidfire() public pure {
+        assertEq(VeydriftCatalog.shipBattleAttack(Ship.SmallCargo), 5);
+        assertEq(VeydriftCatalog.shipBattleShield(Ship.SmallCargo), 10);
+        assertEq(VeydriftCatalog.shipBattleHull(Ship.SmallCargo), 400);
+        assertEq(VeydriftCatalog.shipBattleAttack(Ship.Cruiser), 400);
+        assertEq(VeydriftCatalog.shipBattleShield(Ship.Cruiser), 50);
+        assertEq(VeydriftCatalog.shipBattleHull(Ship.Cruiser), 2_700);
+        assertEq(VeydriftCatalog.shipBattleAttack(Ship.Destroyer), 2_000);
+        assertEq(VeydriftCatalog.shipBattleShield(Ship.Destroyer), 500);
+        assertEq(VeydriftCatalog.shipBattleHull(Ship.Destroyer), 11_000);
+        assertEq(VeydriftCatalog.shipBattleAttack(Ship.Deathstar), 200_000);
+        assertEq(VeydriftCatalog.shipBattleShield(Ship.Deathstar), 50_000);
+        assertEq(VeydriftCatalog.shipBattleHull(Ship.Deathstar), 900_000);
+
+        assertEq(VeydriftCatalog.defenseBattleAttack(Defense.RocketLauncher), 80);
+        assertEq(VeydriftCatalog.defenseBattleShield(Defense.RocketLauncher), 20);
+        assertEq(VeydriftCatalog.defenseBattleHull(Defense.RocketLauncher), 200);
+        assertEq(VeydriftCatalog.defenseBattleAttack(Defense.LargeShieldDome), 1);
+        assertEq(VeydriftCatalog.defenseBattleShield(Defense.LargeShieldDome), 10_000);
+        assertEq(VeydriftCatalog.defenseBattleHull(Defense.LargeShieldDome), 10_000);
+
+        assertEq(
+            VeydriftCatalog.shipRapidfireAgainstDefense(Ship.Cruiser, Defense.RocketLauncher), 10
+        );
+        assertEq(VeydriftCatalog.shipRapidfireAgainstShip(Ship.Battlecruiser, Ship.Battleship), 7);
+        assertEq(VeydriftCatalog.shipRapidfireAgainstShip(Ship.Destroyer, Ship.Battlecruiser), 2);
+        assertEq(
+            VeydriftCatalog.shipRapidfireAgainstDefense(Ship.SmallCargo, Defense.RocketLauncher), 1
+        );
+    }
+
     function testVanillaOGameResearchCostsAndRequirements() public {
         _assertResearch(Technology.Energy, 0, 800, 400);
         _assertResearch(Technology.HyperspaceDrive, 10_000, 20_000, 6_000);

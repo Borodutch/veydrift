@@ -265,11 +265,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             revert InvalidMissionType(FleetMissionType.AcsAttack);
         }
         if (attack.targetPlanetId != expectedTargetPlanetId) revert InvalidId();
-        if (originPlanetId == attack.targetPlanetId) revert SamePlanet();
-        if (_planets[attack.targetPlanetId].owner == address(0)) revert NoPlanet();
-        if (_planets[attack.targetPlanetId].owner == msg.sender) {
-            revert CannotJoinOwnAttackTarget();
-        }
 
         uint64 cutoffAt =
             attack.arrivalAt - VeydriftAntiRaidPrimitives.ACS_DEFEND_JOIN_CUTOFF_SECONDS;
@@ -310,6 +305,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _increaseInternalResources(cargo);
         _debitMissionShips(originPlanetId, ships);
 
+        uint64 returnAt = (uint256(attack.arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
@@ -320,13 +316,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             targetPlanetId: attack.targetPlanetId,
             departureAt: departureAt,
             arrivalAt: attack.arrivalAt,
-            returnAt: (uint256(attack.arrivalAt) + travelSeconds).toUint64(),
+            returnAt: returnAt,
             fuelCost: fuelCost,
             cargo: cargo,
             ships: ships,
             randomnessRequestId: attackMissionId
         });
-        _recordAttack(msg.sender, attack.targetPlanetId);
         _fleetCounterplayMissions[attackMissionId].push(missionId);
 
         emit FleetMissionLaunched(
@@ -336,14 +331,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             originPlanetId,
             attack.targetPlanetId,
             attack.arrivalAt,
-            (uint256(attack.arrivalAt) + travelSeconds).toUint64(),
+            returnAt,
             attackMissionId
         );
         emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
         _emitFleetMissionShips(missionId, ships);
-        emit AttackMissionJoined(
-            attackMissionId, missionId, msg.sender, originPlanetId, attack.targetPlanetId
-        );
     }
 
     function _emitFleetMissionShips(uint256 missionId, MissionShips calldata ships) private {
@@ -410,10 +402,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
         _settleResources(mission.targetPlanetId);
-        if (
-            mission.missionType == FleetMissionType.Transport
-                || mission.missionType == FleetMissionType.Deploy
-        ) {
+        if (mission.missionType == FleetMissionType.Transport) {
+            _planets[mission.targetPlanetId].resources =
+                _add(_planets[mission.targetPlanetId].resources, mission.cargo);
+            mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+            mission.status = FleetMissionStatus.Returning;
+        } else if (mission.missionType == FleetMissionType.Deploy) {
             _planets[mission.targetPlanetId].resources =
                 _add(_planets[mission.targetPlanetId].resources, mission.cargo);
             _creditMissionShips(mission.targetPlanetId, mission.ships);

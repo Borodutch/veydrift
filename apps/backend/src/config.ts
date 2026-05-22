@@ -7,6 +7,7 @@ export type BackendConfig = {
   gameContractAddress?: `0x${string}`;
   indexFromBlock: bigint;
   moonContractAddress?: `0x${string}`;
+  randomnessEngineAddress?: `0x${string}`;
   resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
@@ -38,6 +39,7 @@ export type SafeConfigSummary = {
   gameContractConfigured: boolean;
   hasRpcUrl: boolean;
   moonContractConfigured: boolean;
+  randomnessEngineConfigured: boolean;
   resourceTokensConfigured: {
     crystal: boolean;
     deuterium: boolean;
@@ -83,6 +85,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_MOON_CONTRACT_ADDRESS",
     problems
   );
+  const randomnessEngineAddress = parseAddress(
+    env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS,
+    "VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS",
+    problems
+  );
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
   const crystalTokenAddress = parseAddress(
     env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS,
@@ -123,6 +130,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(gameContractAddress ? { gameContractAddress } : {}),
       indexFromBlock,
       ...(moonContractAddress ? { moonContractAddress } : {}),
+      ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
@@ -142,6 +150,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     gameContractConfigured: Boolean(config.gameContractAddress),
     hasRpcUrl: Boolean(config.rpcUrl),
     moonContractConfigured: Boolean(config.moonContractAddress),
+    randomnessEngineConfigured: Boolean(config.randomnessEngineAddress),
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),
       deuterium: Boolean(config.resourceTokenAddresses.deuterium),
