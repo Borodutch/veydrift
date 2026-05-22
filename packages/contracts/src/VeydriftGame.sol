@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
@@ -13,8 +12,6 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 /// @notice Deployable Base Sepolia test MVP for first-planet settlement and resource-token wiring.
 /// @dev Advanced gameplay entrypoints stay in the ABI and fail explicitly until they are split into modules.
 contract VeydriftGame is VeydriftResourceReserves {
-    using SafeCast for uint256;
-
     address private immutable _gameplayModule;
     address private immutable _planetManagementModule;
 
@@ -90,7 +87,9 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (building == Building.InterdimensionalRiftStabilizer && currentLevel != 0) {
             revert LevelTooHigh();
         }
-        if (_usedFields(planetId) >= _planets[planetId].fields) revert FieldCapacityReached();
+        if (_usedFields(planetId) >= _planets[planetId].fields) {
+            if (building != Building.Terraformer) revert FieldCapacityReached();
+        }
 
         _requireBuildingDependencies(planetId, building);
         _settleResources(planetId);
@@ -98,7 +97,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources memory cost = buildingUpgradeCost(planetId, building);
         _spend(planetId, cost);
 
-        uint64 readyAt = (block.timestamp + _buildingDuration(planetId, cost)).toUint64();
+        uint64 readyAt = uint64(block.timestamp + _buildingDuration(planetId, cost));
         uint16 targetLevel = currentLevel + 1;
         buildingConstructions[planetId] = BuildingConstruction({
             active: true, building: building, targetLevel: targetLevel, readyAt: readyAt, cost: cost
@@ -134,8 +133,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources memory totalCost = _multiply(unitCost, quantity);
         _spend(planetId, totalCost);
 
-        uint64 readyAt =
-            (block.timestamp + _defenseDuration(planetId, unitCost, quantity)).toUint64();
+        uint64 readyAt = uint64(block.timestamp + _defenseDuration(planetId, unitCost, quantity));
         defenseQueues[planetId] = DefenseQueue({
             active: true, defense: defense, quantity: quantity, readyAt: readyAt, cost: totalCost
         });
@@ -185,7 +183,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources memory cost = researchCost(msg.sender, technology);
         _spend(planetId, cost);
 
-        uint64 readyAt = (block.timestamp + _researchDuration(planetId, cost)).toUint64();
+        uint64 readyAt = uint64(block.timestamp + _researchDuration(planetId, cost));
         uint16 targetLevel = currentLevel + 1;
         researchQueues[msg.sender] = ResearchQueue({
             active: true,
@@ -658,9 +656,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {
+        Building building = construction.building;
         delete buildingConstructions[planetId];
-        _buildingLevels[planetId][construction.building] = construction.targetLevel;
-        emit BuildingCompleted(planetId, construction.building, construction.targetLevel);
+        _buildingLevels[planetId][building] = construction.targetLevel;
+        if (building == Building.Terraformer) {
+            unchecked {
+                _planets[planetId].fields += 5;
+            }
+        }
+        emit BuildingCompleted(planetId, building, construction.targetLevel);
     }
 
     function _buildingDuration(uint256 planetId, Resources memory cost)
