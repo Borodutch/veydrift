@@ -76,7 +76,6 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
-  missionPlanner?: GalaxyMissionPlanner | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
@@ -92,7 +91,6 @@ export function GalaxyView({
   homeCoords,
   homePlanetId,
   homePlanet,
-  missionPlanner,
   shipyardState = null,
   onAction,
   onSelectPlanet,
@@ -213,11 +211,12 @@ export function GalaxyView({
   for (const p of planets) planetByPosition.set(p.position, p);
 
   const positions = Array.from({ length: POSITION_COUNT }, (_, i) => i + 1);
+  const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
   const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
   const debrisCount = planets.filter((planet) => planet.debrisField).length;
   const emptyCount = POSITION_COUNT - planets.length;
   const occupiedSummary = formatGalaxyOccupancySummary(occupiedCount);
-  const occupancySourceLabel = formatGalaxyOccupancySource(source);
+  const occupancySource = formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem));
 
   return (
     <div className="grid gap-4">
@@ -275,9 +274,9 @@ export function GalaxyView({
               </>
             ) : null}
           </div>
-          {occupancySourceLabel ? (
+          {occupancySource ? (
             <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
-              {occupancySourceLabel}
+              {occupancySource}
             </span>
           ) : null}
         </div>
@@ -309,8 +308,6 @@ export function GalaxyView({
                   galaxy={galaxy}
                   isHome={isHome}
                   key={pos}
-                  missionPlanner={missionPlanner}
-                  missionHomeCoords={homeCoords}
                   account={account}
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
@@ -397,10 +394,12 @@ export function formatGalaxyOccupancySummary(occupiedCount: number): string {
 }
 
 export function formatGalaxyOccupancySource(
-  source: "api" | "fallback" | "loading"
-): string | null {
+  source: "api" | "fallback" | "loading",
+  hasHomePlanet: boolean
+): string | undefined {
   if (source === "loading") return "Loading";
-  return source === "fallback" ? "Preview system" : null;
+  if (hasHomePlanet || source === "api") return undefined;
+  return "Preview system";
 }
 
 export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): string {
@@ -473,8 +472,6 @@ function GalaxySlot({
   system,
   position,
   planet,
-  missionPlanner,
-  missionHomeCoords,
   homeCoords,
   homePlanetId,
   isHome,
@@ -489,8 +486,6 @@ function GalaxySlot({
   system: number;
   position: number;
   planet: Planet | undefined;
-  missionPlanner: GalaxyMissionPlanner | undefined;
-  missionHomeCoords: Coordinates | undefined;
   homeCoords: Coordinates | undefined;
   homePlanetId: string | null | undefined;
   isHome: boolean;
@@ -558,11 +553,6 @@ function GalaxySlot({
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
-  const missionPreview = estimateGalaxyMissionPreview({
-    homeCoords: missionHomeCoords,
-    planner: missionPlanner,
-    target: { galaxy, system, position },
-  });
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
 
   return (
@@ -632,11 +622,6 @@ function GalaxySlot({
               </>
             ) : null}
           </div>
-          {missionPreview ? (
-            <div className={`mt-1 text-xs ${missionPreview.blockedReason ? "text-amber-200/80" : "text-cyan-100/80"}`}>
-              {formatMissionPreview(missionPreview)}
-            </div>
-          ) : null}
         </div>
       </button>
 

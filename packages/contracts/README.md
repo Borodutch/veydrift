@@ -138,17 +138,16 @@ Moon chance:
 
 Alliances:
 
-- `VeydriftAllianceSystem` is a standalone canonical alliance authority linked to
-  `VeydriftGame` for settled-player, planet-owner, and hostile-mission context.
-- Players with a settled planet can create alliances with public tag/name/metadata,
-  invite members, accept invites, promote officers/leaders, kick members, and leave.
+- `VeydriftAllianceSystem` is a standalone canonical alliance roster and public
+  profile authority linked to `VeydriftGame` for settled-player checks.
+- Players with a settled planet can create alliances with public tag, name, and
+  short description/link fields. The creator is the single owner.
+- Alliance roles are owner, officer, and member. Owners and officers can invite
+  members; owners and officers can kick members; owners can add or remove
+  officers. Officers cannot remove the owner or other officers.
 - Diplomacy state covers ally, non-aggression, and war flags. Attack-limit tickets
   can query `attackLimitAllianceContext(attacker, defender)` for same-alliance,
   war, bashing, and score-protection exceptions.
-- ACS foundations are exposed through `openDefenseIntent(...)`,
-  `canCoordinateDefense(...)`, and `hostileMissionVisibilityContext(...)`.
-  `VeydriftGame` calls `canCoordinateDefense(...)` before accepting ACS defend or intercept
-  counterplay for an inbound hostile attack.
 
 Indexer-facing events:
 

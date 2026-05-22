@@ -114,20 +114,17 @@ describe("tester universe display data", () => {
     const labels = [
       formatGalaxyOccupancySummary(0),
       formatGalaxyOccupancySummary(3),
-      formatGalaxyOccupancySource("api"),
-      formatGalaxyOccupancySource("fallback"),
-      formatGalaxyOccupancySource("loading"),
-    ];
+      formatGalaxyOccupancySource("api", false),
+      formatGalaxyOccupancySource("fallback", false),
+      formatGalaxyOccupancySource("api", true),
+    ].filter((label): label is string => Boolean(label));
 
     expect(labels).toEqual([
       "No occupants",
       "3 occupied",
-      null,
       "Preview system",
-      "Loading",
     ]);
-    expect(labels.filter(Boolean).join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data)\b/i);
-    expect(labels.filter(Boolean).join(" ")).not.toMatch(/\b(Home planet shown|Current system)\b/);
+    expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
   });
 
   test("galaxy heat label is derived from the orbital temperature range", () => {
@@ -240,6 +237,17 @@ describe("tester universe display data", () => {
       planet: undefined,
       shipyardState,
     });
+    const noCargoActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: own,
+      shipyardState: {
+        ...shipyardState,
+        ships: [
+          { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        ],
+      },
+    });
 
     expect(enemyActions.map((action) => action.label)).toEqual([
       "Attack",
@@ -256,6 +264,10 @@ describe("tester universe display data", () => {
     expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy"]);
     expect(originActions).toEqual([]);
     expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
+    expect(noCargoActions).toMatchObject([
+      { enabled: false, kind: "transport", reason: "Requires a cargo-capable ship on your home planet." },
+      { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
+    ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
     expect(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships.espionageProbe).toBe(0);
   });
