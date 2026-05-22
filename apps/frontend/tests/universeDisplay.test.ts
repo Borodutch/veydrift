@@ -117,16 +117,14 @@ describe("tester universe display data", () => {
       formatGalaxyOccupancySource("api", false),
       formatGalaxyOccupancySource("fallback", false),
       formatGalaxyOccupancySource("api", true),
-    ];
+    ].filter((label): label is string => Boolean(label));
 
     expect(labels).toEqual([
       "No occupants",
       "3 occupied",
-      "Current system",
       "Preview system",
-      "Home planet shown",
     ]);
-    expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data)\b/i);
+    expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
   });
 
   test("galaxy heat label is derived from the orbital temperature range", () => {

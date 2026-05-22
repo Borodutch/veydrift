@@ -183,6 +183,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 3);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       effect: false,
       energyProduced: false,
       energyRequired: true,
@@ -192,6 +193,7 @@ describe("building detail helpers", () => {
     expect(rows[0]).toMatchObject({
       cost: { metal: 60, crystal: 15, deuterium: 0 },
       current: true,
+      durationSeconds: 108,
       energyRequired: 11,
       level: 1,
       next: false,
@@ -200,6 +202,7 @@ describe("building detail helpers", () => {
     expect(rows[1]).toMatchObject({
       cost: { metal: 90, crystal: 22, deuterium: 0 },
       current: false,
+      durationSeconds: 161,
       energyRequired: 24,
       level: 2,
       next: true,
@@ -211,6 +214,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "solarPlant", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       effect: false,
       energyProduced: true,
       energyRequired: false,
@@ -234,6 +238,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       effect: false,
       energyProduced: false,
       energyRequired: false,
@@ -242,8 +247,53 @@ describe("building detail helpers", () => {
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 1000, crystal: 0, deuterium: 0 },
+      durationSeconds: 1440,
       level: 1,
       storage: { resource: "metal", capacity: 20_000 },
     });
+  });
+
+  test("builds Missile Silo rows with OGame missile slot capacity", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        missileSilo: 1,
+      },
+    };
+    const rows = buildingLevelInfoRows(state.buildings, "missileSilo", undefined, 4);
+
+    expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
+      effect: true,
+      energyProduced: false,
+      energyRequired: false,
+      production: false,
+      storage: false,
+    });
+    expect(rows.map(({ effect, level }) => ({ effect, level }))).toEqual([
+      { effect: "10 missile slots", level: 1 },
+      { effect: "20 missile slots", level: 2 },
+      { effect: "30 missile slots", level: 3 },
+      { effect: "40 missile slots", level: 4 },
+    ]);
+    expect(rows[0]).toMatchObject({ current: true, next: false });
+    expect(rows[1]).toMatchObject({ current: false, next: true });
+  });
+
+  test("builds level table rows with the current construction-time divisor", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        roboticsFactory: 1,
+      },
+    };
+    const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 2);
+
+    expect(rows.map(({ durationSeconds, level }) => ({ durationSeconds, level }))).toEqual([
+      { durationSeconds: 60, level: 1 },
+      { durationSeconds: 80, level: 2 },
+    ]);
   });
 });
