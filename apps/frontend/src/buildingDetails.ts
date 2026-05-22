@@ -6,6 +6,7 @@ import {
   canAfford,
   energyBalance,
   isBinaryBuilding,
+  missileSiloCapacity,
   productionCapacityPerHour,
   storageCaps,
   unmetBuildingRequirement,
@@ -50,6 +51,7 @@ export type BuildingEnergyDetail =
 export type BuildingLevelInfoRow = {
   cost: Resources;
   current: boolean;
+  durationSeconds: number;
   effect?: string;
   energyProduced?: number;
   energyRequired?: number;
@@ -66,6 +68,7 @@ export type BuildingLevelInfoRow = {
 };
 
 export type BuildingLevelInfoColumns = {
+  constructionTime: boolean;
   effect: boolean;
   energyProduced: boolean;
   energyRequired: boolean;
@@ -164,6 +167,7 @@ export function buildingLevelInfoRows(
     const row: BuildingLevelInfoRow = {
       cost,
       current: currentLevel === level,
+      durationSeconds: buildingDurationEstimate(buildings, cost),
       level,
       next: currentLevel + 1 === level,
     };
@@ -202,6 +206,7 @@ export function buildingLevelInfoRows(
 
 export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): BuildingLevelInfoColumns {
   return {
+    constructionTime: rows.some((row) => row.durationSeconds !== undefined),
     effect: rows.some((row) => row.effect !== undefined),
     energyProduced: rows.some((row) => row.energyProduced !== undefined),
     energyRequired: rows.some((row) => row.energyRequired !== undefined),
@@ -345,6 +350,10 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
 
   if (key === "researchLab") {
     return `x${formatNumber(level + 1)} research speed`;
+  }
+
+  if (key === "missileSilo") {
+    return `${formatNumber(missileSiloCapacity(level))} missile slots`;
   }
 
   if (key === "interdimensionalRiftStabilizer") {
