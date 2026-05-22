@@ -33,6 +33,16 @@ type RuntimeConfig = {
   apiUrl: string;
   chainId: number;
   contractAddress: string | null;
+  featureSupport: {
+    allianceConfigured: boolean;
+    gameConfigured: boolean;
+    highscoresEndpoint: boolean;
+    moonConfigured: boolean;
+    randomnessConfigured: boolean;
+    researchEndpoint: boolean;
+    resourceTokensConfigured: boolean;
+    settlementConfigured: boolean;
+  };
   gameContractAddress: string | null;
   graphqlUrl: string;
   moonContractAddress: string | null;
@@ -641,6 +651,20 @@ function getRuntimeConfig(): RuntimeConfig {
     apiUrl,
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
     contractAddress,
+    featureSupport: {
+      allianceConfigured: Boolean(allianceContractAddress),
+      gameConfigured: Boolean(gameContractAddress),
+      highscoresEndpoint: true,
+      moonConfigured: Boolean(moonContractAddress),
+      randomnessConfigured: Boolean(randomnessEngineAddress),
+      researchEndpoint: true,
+      resourceTokensConfigured: Boolean(
+        resourceTokenAddresses.metal
+          && resourceTokenAddresses.crystal
+          && resourceTokenAddresses.deuterium
+      ),
+      settlementConfigured: Boolean(contractAddress)
+    },
     gameContractAddress,
     graphqlUrl,
     moonContractAddress,

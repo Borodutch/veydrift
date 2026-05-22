@@ -174,12 +174,14 @@ describe("playable MVP contract display helpers", () => {
     const solarSatellite = shipCatalog.find((ship) => ship.key === "solarSatellite")!;
 
     expect(shipCombatStats(lightFighter).rows).toEqual([
-      expect.objectContaining({ label: "Attack", value: 200 }),
+      expect.objectContaining({ label: "Attack", value: 50 }),
+      expect.objectContaining({ label: "Shield", value: 10 }),
       expect.objectContaining({ label: "Hull", value: 400 }),
       expect.objectContaining({ label: "Cargo", value: 50 }),
     ]);
     expect(shipCombatStats(battleship).rows).toEqual([
-      expect.objectContaining({ label: "Attack", value: 3_000 }),
+      expect.objectContaining({ label: "Attack", value: 1_000 }),
+      expect.objectContaining({ label: "Shield", value: 200 }),
       expect.objectContaining({ label: "Hull", value: 6_000 }),
       expect.objectContaining({ label: "Cargo", value: 1_500 }),
     ]);
@@ -218,11 +220,13 @@ describe("playable MVP contract display helpers", () => {
     const interplanetaryMissile = defenseCatalog.find((defense) => defense.key === "interplanetaryMissile")!;
 
     expect(defenseCombatStats(rocketLauncher).rows).toEqual([
-      expect.objectContaining({ label: "Attack", value: 100 }),
+      expect.objectContaining({ label: "Attack", value: 80 }),
+      expect.objectContaining({ label: "Shield", value: 20 }),
       expect.objectContaining({ label: "Hull", value: 200 }),
     ]);
     expect(defenseCombatStats(smallShieldDome).rows).toEqual([
       expect.objectContaining({ label: "Attack", value: 1 }),
+      expect.objectContaining({ label: "Shield", value: 2_000 }),
       expect.objectContaining({ label: "Hull", value: 2_000 }),
     ]);
     expect(defenseCombatStats(interplanetaryMissile).rows).toEqual([

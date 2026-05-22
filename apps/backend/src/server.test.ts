@@ -513,6 +513,21 @@ class MockChainReader implements ChainReader {
         createdAt: "1770000000",
         memberCount: 1
       },
+      directory: [
+        {
+          allianceId: "1",
+          active: true,
+          tag: "VDFT",
+          name: "Veydrift Union",
+          description: "Discord: https://discord.gg/vdft",
+          owner: wallet,
+          createdAt: "1770000000",
+          memberCount: 1
+        }
+      ],
+      pendingInvites: [],
+      pendingJoinRequests: [],
+      allianceJoinRequests: [],
       members: [{ address: wallet, role: "owner", joinedAt: "1770000000" }]
     };
   }
@@ -644,6 +659,16 @@ describe("Veydrift backend", () => {
       allianceContractAddress: null,
       chainId: 84532,
       contractAddress: null,
+      featureSupport: {
+        allianceConfigured: false,
+        gameConfigured: false,
+        highscoresEndpoint: true,
+        moonConfigured: false,
+        randomnessConfigured: false,
+        researchEndpoint: true,
+        resourceTokensConfigured: false,
+        settlementConfigured: false
+      },
       gameContractAddress: null,
       graphqlUrl: "https://api-test.veydrift.com/graphql",
       moonContractAddress: null,
@@ -688,6 +713,16 @@ describe("Veydrift backend", () => {
         allianceContractAddress: "0x9999999999999999999999999999999999999999",
         moonContractAddress: "0x2222222222222222222222222222222222222222",
         randomnessEngineAddress: "0x8888888888888888888888888888888888888888",
+        featureSupport: {
+          allianceConfigured: true,
+          gameConfigured: true,
+          highscoresEndpoint: true,
+          moonConfigured: true,
+          randomnessConfigured: true,
+          researchEndpoint: true,
+          resourceTokensConfigured: true,
+          settlementConfigured: true
+        },
         resourceTokenAddresses: {
           crystal: "0x6666666666666666666666666666666666666666",
           deuterium: "0x7777777777777777777777777777777777777777",
@@ -765,6 +800,16 @@ describe("Veydrift backend", () => {
             apiUrl: "https://api-test.veydrift.com",
             chainId: 84532,
             contractAddress: null,
+            featureSupport: {
+              allianceConfigured: false,
+              gameConfigured: false,
+              highscoresEndpoint: true,
+              moonConfigured: false,
+              randomnessConfigured: false,
+              researchEndpoint: true,
+              resourceTokensConfigured: false,
+              settlementConfigured: false
+            },
             gameContractAddress: null,
             graphqlUrl: "https://api-test.veydrift.com/graphql",
             moonContractAddress: null,

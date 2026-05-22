@@ -1227,6 +1227,70 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    function testAttackRejectsSameOwnerTargetPlanet() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(originPlanetId, 8);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.SelfAttack.selector);
+        game.launchFleetMission(
+            originPlanetId,
+            colonyPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+    }
+
+    function testDeployToSameOwnerTargetPlanetStillWorks() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(originPlanetId, 9);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            colonyPlanetId,
+            VeydriftGameStorage.FleetMissionType.Deploy,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (VeydriftGameStorage.FleetMissionStatus status, uint64 arrivalAt,,) =
+            _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
+
+        vm.warp(arrivalAt);
+        vm.prank(player);
+        game.resolveFleetMission(missionId);
+
+        (status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(game.shipCount(colonyPlanetId, Ship.SmallCargo), 1);
+    }
+
     function testRenamePlanetIsContractBackedAndOwnerGated() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
@@ -2168,13 +2232,13 @@ contract VeydriftGameTest is Test {
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
         _setTechnologyLevel(player, Technology.Computer, 2);
-        _setShipCount(originPlanetId, Ship.LightFighter, 40);
+        _setShipCount(originPlanetId, Ship.Destroyer, 1);
         _setShipCount(originPlanetId, Ship.Recycler, 2);
-        _setShipCount(targetPlanetId, Ship.LightFighter, 40);
-        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 200_000, 200_000, 200_000);
 
         VeydriftGameStorage.MissionShips memory attackShips;
-        attackShips.lightFighter = 40;
+        attackShips.destroyer = 1;
         vm.prank(player);
         uint256 attackMissionId = game.launchFleetMission(
             originPlanetId,
@@ -2230,12 +2294,12 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
-        _setShipCount(originPlanetId, Ship.LightFighter, 120);
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 120);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
 
         VeydriftGameStorage.MissionShips memory attackShips;
-        attackShips.lightFighter = 120;
+        attackShips.battleship = 100;
         vm.prank(player);
         uint256 attackMissionId = game.launchFleetMission(
             originPlanetId,
@@ -2323,12 +2387,12 @@ contract VeydriftGameTest is Test {
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         moons.createMoon(targetPlanetId);
-        _setShipCount(originPlanetId, Ship.LightFighter, 120);
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 120);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
 
         VeydriftGameStorage.MissionShips memory attackShips;
-        attackShips.lightFighter = 120;
+        attackShips.battleship = 100;
         vm.prank(player);
         uint256 attackMissionId = game.launchFleetMission(
             originPlanetId,
@@ -2382,9 +2446,9 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
-        _setShipCount(originPlanetId, Ship.LightFighter, 100);
-        _setShipCount(targetPlanetId, Ship.LightFighter, 100);
-        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setShipCount(originPlanetId, Ship.Destroyer, 40);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 40);
+        _setResources(originPlanetId, 5_000_000, 5_000_000, 5_000_000);
         vm.prank(admin);
         spaceDock.setSpaceDockLevel(targetPlanetId, 1);
         vm.prank(admin);
@@ -2393,7 +2457,7 @@ contract VeydriftGameTest is Test {
         game.setSpaceDockSystem(address(spaceDock));
 
         VeydriftGameStorage.MissionShips memory attackShips;
-        attackShips.lightFighter = 100;
+        attackShips.destroyer = 40;
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,

@@ -275,6 +275,31 @@ export type AllianceState = {
     createdAt: string;
     memberCount: number;
   } | null;
+  directory: Array<{
+    allianceId: string;
+    active: boolean;
+    tag: string;
+    name: string;
+    description: string;
+    owner: Address;
+    createdAt: string;
+    memberCount: number;
+  }>;
+  pendingInvites: Array<{
+    allianceId: string;
+    inviter: Address;
+    invitedAt: string;
+  }>;
+  pendingJoinRequests: Array<{
+    allianceId: string;
+    requester: Address;
+    requestedAt: string;
+  }>;
+  allianceJoinRequests: Array<{
+    allianceId: string;
+    requester: Address;
+    requestedAt: string;
+  }>;
   members: Array<{
     address: Address;
     role: AllianceRoleName;
@@ -370,6 +395,13 @@ export type RpcLog = {
   transactionHash: string;
   topics: string[];
   data: string;
+};
+
+type RpcLogFilter = {
+  address: Address;
+  fromBlock: string;
+  toBlock: string;
+  topics: Array<string | string[] | null>;
 };
 
 export type RpcBlock = {
@@ -620,7 +652,7 @@ export class VeydriftGameReader implements ChainReader {
       return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [] };
     }
 
-    const missionLogs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+    const missionLogs = await this.getLogs(
       {
         address: this.gameContractAddress,
         fromBlock: toQuantity(this.indexFromBlock),
@@ -634,7 +666,7 @@ export class VeydriftGameReader implements ChainReader {
           fleetMissionReturnExposedTopic
         ]]
       }
-    ]);
+    );
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(planets.planets.map((planet) => planet.planetId));
     const missions = decodeFleetMissionLogs(missionLogs);
@@ -1070,6 +1102,10 @@ export class VeydriftGameReader implements ChainReader {
       unavailableReason: reason,
       membership: { allianceId: "0", role: "none", joinedAt: "0" },
       profile: null,
+      directory: [],
+      pendingInvites: [],
+      pendingJoinRequests: [],
+      allianceJoinRequests: [],
       members: []
     });
 
@@ -1083,39 +1119,103 @@ export class VeydriftGameReader implements ChainReader {
     const allianceId = decodeUintWord(wordAt(membershipWords, 0));
     const role = allianceRoleName(Number(decodeUintWord(wordAt(membershipWords, 1))));
     const joinedAt = decodeUintWord(wordAt(membershipWords, 2)).toString();
+    const allianceIds = decodeUintArray(await this.callContract(this.allianceContractAddress, "0xf0bab901", []));
+    const profileResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      allianceIds.map((id) => ({ selector: "0x79c76adf", args: [encodeUint(id)] }))
+    );
+    const directory = allianceIds.map((id, index) => decodeAllianceDirectoryEntry(id, splitWords(profileResults[index] ?? "0x")))
+      .filter((entry) => entry.active);
+    const [inviteResults, walletJoinRequestResults] = await Promise.all([
+      this.batchCallContract(
+        this.allianceContractAddress,
+        allianceIds.map((id) => ({ selector: "0xf4d46b3b", args: [encodeAddress(wallet), encodeUint(id)] }))
+      ),
+      this.batchCallContract(
+        this.allianceContractAddress,
+        allianceIds.map((id) => ({ selector: "0xdb132ffb", args: [encodeAddress(wallet), encodeUint(id)] }))
+      )
+    ]);
+    const pendingInvites = allianceIds.flatMap((id, index) => {
+      const words = splitWords(inviteResults[index] ?? "0x");
+      return decodeBoolWord(wordAt(words, 0))
+        ? [{
+          allianceId: id.toString(),
+          inviter: decodeAddressWord(wordAt(words, 2)),
+          invitedAt: decodeUintWord(wordAt(words, 3)).toString()
+        }]
+        : [];
+    });
+    const pendingJoinRequests = allianceIds.flatMap((id, index) => {
+      const words = splitWords(walletJoinRequestResults[index] ?? "0x");
+      return decodeBoolWord(wordAt(words, 0))
+        ? [{
+          allianceId: id.toString(),
+          requester: decodeAddressWord(wordAt(words, 2)),
+          requestedAt: decodeUintWord(wordAt(words, 3)).toString()
+        }]
+        : [];
+    });
+
     if (allianceId === 0n) {
       return {
         wallet,
         allianceAvailable: true,
         membership: { allianceId: "0", role, joinedAt },
         profile: null,
+        directory,
+        pendingInvites,
+        pendingJoinRequests,
+        allianceJoinRequests: [],
         members: []
       };
     }
 
-    const profileWords = splitWords(
-      await this.callContract(this.allianceContractAddress, "0x79c76adf", [encodeUint(allianceId)])
-    );
+    const profile = directory.find((entry) => entry.allianceId === allianceId.toString()) ?? null;
     const memberAddresses = decodeAddressArray(
       await this.callContract(this.allianceContractAddress, "0x2a1ef311", [encodeUint(allianceId)])
     );
-    const memberMemberships = await this.batchCallContract(
-      this.allianceContractAddress,
-      memberAddresses.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
+    const joinRequestAddresses = decodeAddressArray(
+      await this.callContract(this.allianceContractAddress, "0x2953e5ce", [encodeUint(allianceId)])
     );
+    const [memberMemberships, joinRequestResults] = await Promise.all([
+      this.batchCallContract(
+        this.allianceContractAddress,
+        memberAddresses.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
+      ),
+      this.batchCallContract(
+        this.allianceContractAddress,
+        joinRequestAddresses.map((address) => ({ selector: "0xdb132ffb", args: [encodeAddress(address), encodeUint(allianceId)] }))
+      )
+    ]);
+    const allianceJoinRequests = joinRequestAddresses.flatMap((address, index) => {
+      const words = splitWords(joinRequestResults[index] ?? "0x");
+      return decodeBoolWord(wordAt(words, 0))
+        ? [{
+          allianceId: allianceId.toString(),
+          requester: address,
+          requestedAt: decodeUintWord(wordAt(words, 3)).toString()
+        }]
+        : [];
+    });
+
     return {
       wallet,
       allianceAvailable: true,
       membership: { allianceId: allianceId.toString(), role, joinedAt },
-      profile: {
-        active: decodeBoolWord(wordAt(profileWords, 0)),
-        tag: decodeString(profileWords, 1),
-        name: decodeString(profileWords, 2),
-        description: decodeString(profileWords, 3),
-        owner: decodeAddressWord(wordAt(profileWords, 4)),
-        createdAt: decodeUintWord(wordAt(profileWords, 5)).toString(),
-        memberCount: Number(decodeUintWord(wordAt(profileWords, 6)))
-      },
+      profile: profile ? {
+        active: profile.active,
+        tag: profile.tag,
+        name: profile.name,
+        description: profile.description,
+        owner: profile.owner,
+        createdAt: profile.createdAt,
+        memberCount: profile.memberCount
+      } : null,
+      directory,
+      pendingInvites,
+      pendingJoinRequests,
+      allianceJoinRequests,
       members: memberAddresses.map((address, index) => {
         const words = splitWords(memberMemberships[index] ?? "0x");
         return {
@@ -1180,14 +1280,14 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
-    const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+    const logs = await this.getLogs(
       {
         address: this.gameContractAddress,
         fromBlock: toQuantity(fromBlock),
         toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
         topics: [[planetStartedTopic, colonyCreatedTopic]]
       }
-    ]);
+    );
 
     return logs.map((log) => decodeSettledPlanetLog(log));
   }
@@ -1198,7 +1298,7 @@ export class VeydriftGameReader implements ChainReader {
   ): Promise<MoonChanceReportEvent[]> {
     if (!this.moonContractAddress) return [];
 
-    const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+    const logs = await this.getLogs(
       {
         address: this.moonContractAddress,
         fromBlock: toQuantity(fromBlock),
@@ -1209,20 +1309,20 @@ export class VeydriftGameReader implements ChainReader {
           moonChanceSkippedExistingMoonTopic
         ]]
       }
-    ]);
+    );
 
     return logs.map((log) => decodeMoonChanceReportLog(log));
   }
 
   async listDebrisFieldEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<DebrisFieldEvent[]> {
-    const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+    const logs = await this.getLogs(
       {
         address: this.gameContractAddress,
         fromBlock: toQuantity(fromBlock),
         toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
         topics: [[debrisFieldUpdatedTopic]]
       }
-    ]);
+    );
 
     return logs.map((log) => decodeDebrisFieldLog(log));
   }
@@ -1280,7 +1380,7 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     try {
-      const logs = await this.transport.request<RpcLog[]>("eth_getLogs", [
+      const logs = await this.getLogs(
         {
           address: this.gameContractAddress,
           fromBlock: toQuantity(this.indexFromBlock),
@@ -1291,7 +1391,7 @@ export class VeydriftGameReader implements ChainReader {
             toTopic(BigInt(queue.itemId))
           ]
         }
-      ]);
+      );
       const matchingLog = logs
         .slice()
         .reverse()
@@ -1307,6 +1407,34 @@ export class VeydriftGameReader implements ChainReader {
       console.error(error);
       return null;
     }
+  }
+
+  private async getLogs(filter: RpcLogFilter): Promise<RpcLog[]> {
+    try {
+      return await this.transport.request<RpcLog[]>("eth_getLogs", [filter]);
+    } catch (error) {
+      if (!shouldChunkLogQuery(error)) {
+        throw error;
+      }
+    }
+
+    const fromBlock = decodeUint(filter.fromBlock);
+    const toBlock = filter.toBlock === "latest"
+      ? decodeUint(await this.transport.request<string>("eth_blockNumber", []))
+      : decodeUint(filter.toBlock);
+    if (toBlock < fromBlock) return [];
+
+    const logs: RpcLog[] = [];
+    const maxChunkSpan = 1_999n;
+    for (let start = fromBlock; start <= toBlock; start += maxChunkSpan + 1n) {
+      const end = start + maxChunkSpan > toBlock ? toBlock : start + maxChunkSpan;
+      logs.push(...await this.transport.request<RpcLog[]>("eth_getLogs", [{
+        ...filter,
+        fromBlock: toQuantity(start),
+        toBlock: toQuantity(end)
+      }]));
+    }
+    return logs;
   }
 
   private async readResearchQueue(wallet: Address): Promise<QueueState> {
@@ -1744,6 +1872,8 @@ export class VeydriftGameReader implements ChainReader {
     contractAddress: Address,
     calls: Array<{ selector: string; args: string[] }>
   ): Promise<string[]> {
+    if (calls.length === 0) return [];
+
     if (!this.transport.requestBatch) {
       return Promise.all(calls.map((call) => this.callContract(contractAddress, call.selector, call.args)));
     }
@@ -2204,6 +2334,26 @@ function decodeAddressArray(hex: string): Address[] {
   return Array.from({ length }, (_, index) => decodeAddressWord(wordAt(words, offset + 1 + index)));
 }
 
+function decodeUintArray(hex: string): bigint[] {
+  const words = splitWords(hex);
+  const offset = Number(decodeUintWord(wordAt(words, 0))) / 32;
+  const length = Number(decodeUintWord(wordAt(words, offset)));
+  return Array.from({ length }, (_, index) => decodeUintWord(wordAt(words, offset + 1 + index)));
+}
+
+function decodeAllianceDirectoryEntry(allianceId: bigint, words: string[]): AllianceState["directory"][number] {
+  return {
+    allianceId: allianceId.toString(),
+    active: decodeBoolWord(wordAt(words, 0)),
+    tag: decodeString(words, 1),
+    name: decodeString(words, 2),
+    description: decodeString(words, 3),
+    owner: decodeAddressWord(wordAt(words, 4)),
+    createdAt: decodeUintWord(wordAt(words, 5)).toString(),
+    memberCount: Number(decodeUintWord(wordAt(words, 6)))
+  };
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let index = 0; index < bytes.length; index += 1) {
@@ -2253,4 +2403,8 @@ function zeroResources(): Resources {
 
 function isRpcRevert(error: unknown): boolean {
   return error instanceof Error && /execution reverted|revert|missing revert data/i.test(error.message);
+}
+
+function shouldChunkLogQuery(error: unknown): boolean {
+  return error instanceof Error && /max block range|block range|too many blocks|RPC HTTP 400/i.test(error.message);
 }
