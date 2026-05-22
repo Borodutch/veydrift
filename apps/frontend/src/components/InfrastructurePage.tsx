@@ -579,6 +579,7 @@ export function BuildingLevelInfoModal({
               <tr>
                 <LevelInfoHeader className="min-w-28">Level</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
+                <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>
                 {columns.production && <LevelInfoHeader className="min-w-40">Production</LevelInfoHeader>}
                 {columns.storage && <LevelInfoHeader className="min-w-40">Storage</LevelInfoHeader>}
                 {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
@@ -606,6 +607,7 @@ export function BuildingLevelInfoModal({
                     </span>
                   </LevelInfoCell>
                   <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
+                  <LevelInfoCell>{formatDuration(row.durationSeconds)}</LevelInfoCell>
                   {columns.production && (
                     <LevelInfoCell>
                       {row.production
@@ -809,6 +811,13 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       next: `${formatNumber(effect.nextCapacity)} ${shortResourceLabels[effect.resource]}`,
       value: `${formatNumber(effect.currentCapacity)} ${shortResourceLabels[effect.resource]}`,
     });
+  } else if (effect.kind === "missileSilo") {
+    rows.push({
+      delta: `${formatSigned(effect.deltaSlots)} slots`,
+      label: "Missile capacity",
+      next: `${formatNumber(effect.nextSlots)} slots`,
+      value: `${formatNumber(effect.currentSlots)} slots`,
+    });
   } else if (effect.kind === "constructionSpeed") {
     rows.push({
       delta: `+${formatNumber(effect.relativeImprovementPercent)}% faster than current`,
@@ -874,6 +883,10 @@ function compactEffect(effect: BuildingEffectMetrics): string {
 
   if (effect.kind === "storage") {
     return `${formatNumber(effect.currentCapacity)} cap`;
+  }
+
+  if (effect.kind === "missileSilo") {
+    return `${formatNumber(effect.currentSlots)} slots`;
   }
 
   if (effect.kind === "shipyard") {
