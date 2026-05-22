@@ -77,6 +77,14 @@ describe("OGame-style prerequisite gating", () => {
       crystal: 8_000,
       deuterium: 4_000,
     });
+    expect(buildingCost({
+      ...state.buildings,
+      interdimensionalRiftStabilizer: 1,
+    }, "interdimensionalRiftStabilizer")).toEqual({
+      metal: 8_000,
+      crystal: 8_000,
+      deuterium: 4_000,
+    });
     expect(buildingRequirementsFor("interdimensionalRiftStabilizer")).toEqual([
       { type: "building", key: "roboticsFactory", level: 4 },
       { type: "building", key: "researchLab", level: 2 },
