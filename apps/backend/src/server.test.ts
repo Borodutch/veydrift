@@ -513,6 +513,21 @@ class MockChainReader implements ChainReader {
         createdAt: "1770000000",
         memberCount: 1
       },
+      directory: [
+        {
+          allianceId: "1",
+          active: true,
+          tag: "VDFT",
+          name: "Veydrift Union",
+          description: "Discord: https://discord.gg/vdft",
+          owner: wallet,
+          createdAt: "1770000000",
+          memberCount: 1
+        }
+      ],
+      pendingInvites: [],
+      pendingJoinRequests: [],
+      allianceJoinRequests: [],
       members: [{ address: wallet, role: "owner", joinedAt: "1770000000" }]
     };
   }
