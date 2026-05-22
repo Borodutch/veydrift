@@ -1,5 +1,5 @@
 import type { Planet } from "./types";
-import type { ChainShipyardState } from "./walletFlow";
+import type { ChainDefenseState, ChainShipyardState } from "./walletFlow";
 
 export type GalaxyActionKind =
   | "attack"
@@ -43,6 +43,15 @@ export type GalaxyAction =
     }
   | {
       enabled: true;
+      kind: "missileAttack";
+      label: string;
+      mode: "missile";
+      primaryTargetId: number;
+      quantity: number;
+      reason?: undefined;
+    }
+  | {
+      enabled: true;
       kind: "colonize";
       label: string;
       mode: "colonize";
@@ -53,7 +62,7 @@ export type GalaxyAction =
       enabled: false;
       kind: GalaxyActionKind;
       label: string;
-      mode: "mission" | "colonize" | "future";
+      mode: "mission" | "colonize" | "missile" | "future";
       reason: string;
       ships?: MissionShips | undefined;
       mission?: GalaxyMissionKind | undefined;
@@ -81,12 +90,14 @@ export function galaxyActionsForSlot({
   homePlanetId,
   isOrigin = false,
   planet,
+  defenseState,
   shipyardState,
 }: {
   account: string | undefined;
   homePlanetId: string | null | undefined;
   isOrigin?: boolean | undefined;
   planet: Planet | undefined;
+  defenseState?: ChainDefenseState | null | undefined;
   shipyardState: ChainShipyardState | null;
 }): GalaxyAction[] {
   const commonBlocker = baseActionBlocker(account, homePlanetId, shipyardState);
@@ -162,6 +173,7 @@ export function galaxyActionsForSlot({
   }
 
   const attackBlocker = commonBlocker ?? firstAvailableFleetShipBlocker(shipyardState);
+  const missileBlocker = commonBlocker ?? interplanetaryMissileBlocker(defenseState);
 
   return [
     enabledOrDisabled({
@@ -203,11 +215,22 @@ export function galaxyActionsForSlot({
       reason: "Alliance intercept is not implemented yet.",
     },
     {
-      enabled: false,
-      kind: "missileAttack",
-      label: "Missile",
-      mode: "future",
-      reason: "Interplanetary missile attacks are not implemented yet.",
+      ...enabledOrDisabled({
+        blocker: missileBlocker,
+        enabled: {
+          enabled: true,
+          kind: "missileAttack",
+          label: "Missile",
+          mode: "missile",
+          primaryTargetId: 0,
+          quantity: 1,
+        },
+        disabled: {
+          kind: "missileAttack",
+          label: "Missile",
+          mode: "missile",
+        },
+      }),
     },
   ];
 }
@@ -287,6 +310,16 @@ function firstAvailableCargoShips(shipyardState: ChainShipyardState | null): Mis
 function firstAvailableFleetShips(shipyardState: ChainShipyardState | null): MissionShips {
   const ship = firstAvailableFleetShip(shipyardState);
   return ship ? singleShip(ship) : emptyMissionShips();
+}
+
+function interplanetaryMissileBlocker(defenseState: ChainDefenseState | null | undefined): string | undefined {
+  if (!defenseState) return "Defense state is still loading.";
+  if (defenseState.productionAvailable === false) {
+    return defenseState.unavailableReason ?? "Missile actions are unavailable on this deployment.";
+  }
+
+  const interplanetaryMissiles = defenseState.defenses.find((defense) => defense.id === 9)?.count ?? 0;
+  return interplanetaryMissiles > 0 ? undefined : "Requires an interplanetary missile on your active planet.";
 }
 
 function firstAvailableCargoShip(shipyardState: ChainShipyardState | null): MissionShipKey | undefined {

@@ -11,8 +11,19 @@ interface IVeydriftCombatSpaceDock {
     function recordCombatWreckage(uint256 planetId, Ship ship, uint32 destroyed) external;
 }
 
+interface IVeydriftCombatMoonSystem {
+    function requestMoonChanceFromBattle(
+        uint256 battleId,
+        uint256 targetPlanetId,
+        uint128 metalDebris,
+        uint128 crystalDebris
+    ) external returns (uint256 outcomeId, uint256 requestId);
+}
+
 /// @notice Delegatecall target for public-state fleet attack battle resolution.
 contract VeydriftCombatModule is VeydriftResourceReserves {
+    uint256 private constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
+
     struct BattleStats {
         uint256 attack;
         uint256 durability;
@@ -39,7 +50,17 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (origin.owner == address(0)) revert NoPlanet();
         if (origin.owner != msg.sender) revert NotPlanetOwner();
         if (originPlanetId == targetPlanetId) revert SamePlanet();
-        if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+        Planet storage target = _planets[targetPlanetId];
+        if (target.owner == address(0)) revert NoPlanet();
+        if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
+
+        uint256 range = _interplanetaryMissileRange(msg.sender);
+        if (
+            origin.galaxy != target.galaxy
+                || _systemDistanceForMissiles(origin.system, target.system) > range
+        ) {
+            revert InterplanetaryMissileOutOfRange(origin.system, target.system, range);
+        }
 
         uint32 available = _defenseCounts[originPlanetId][Defense.InterplanetaryMissile];
         if (quantity == 0 || available < quantity) revert InvalidQuantity();
@@ -64,6 +85,22 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             hits,
             destroyedPrimary
         );
+    }
+
+    function _interplanetaryMissileRange(address attacker) private view returns (uint256) {
+        uint16 impulseDrive = _technologyLevels[attacker][Technology.ImpulseDrive];
+        if (impulseDrive == 0) return 0;
+        return uint256(impulseDrive) * 5 - 1;
+    }
+
+    function _systemDistanceForMissiles(uint16 originSystem, uint16 targetSystem)
+        private
+        pure
+        returns (uint256)
+    {
+        return originSystem > targetSystem
+            ? uint256(originSystem - targetSystem)
+            : uint256(targetSystem - originSystem);
     }
 
     function resolveFleetMission(uint256 missionId) external {
@@ -124,6 +161,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             settlement.defenderLosses.deuterium
         );
         emit CombatDebrisSignaled(missionId, mission.targetPlanetId, debris.metal, debris.crystal);
+        _requestMoonChanceFromBattle(missionId, mission.targetPlanetId, debris);
     }
 
     function _runBattle(uint256 missionId, FleetMission storage mission)
@@ -438,6 +476,18 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     function _emitDebrisFieldUpdated(uint256 planetId) private {
         DebrisField storage field = _debrisFields[planetId];
         emit DebrisFieldUpdated(planetId, field.metal, field.crystal);
+    }
+
+    function _requestMoonChanceFromBattle(
+        uint256 missionId,
+        uint256 targetPlanetId,
+        Resources memory debris
+    ) private {
+        if (_moonSystem == address(0)) return;
+        if (uint256(debris.metal) + debris.crystal < MOON_CHANCE_DEBRIS_UNIT) return;
+
+        IVeydriftCombatMoonSystem(_moonSystem)
+            .requestMoonChanceFromBattle(missionId, targetPlanetId, debris.metal, debris.crystal);
     }
 
     function _harvestDebris(FleetMission storage mission) private {

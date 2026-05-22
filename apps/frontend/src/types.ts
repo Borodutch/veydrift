@@ -11,6 +11,7 @@ export interface Planet {
   alliance: string | null;
   occupiedBy: OccupiedPlanet | null;
   debrisField: DebrisField | null;
+  moonChance: MoonChanceReport | null;
   resources: Resources;
   temperature: { min: number; max: number };
   diameter: number;
@@ -27,6 +28,22 @@ export interface OccupiedPlanet {
 export interface DebrisField {
   metal: number;
   crystal: number;
+}
+
+export type MoonChanceStatus = "pending" | "created" | "not_created" | "existing_moon_skipped";
+
+export interface MoonChanceReport {
+  battleId: string;
+  targetPlanetId: string;
+  status: MoonChanceStatus;
+  outcomeId?: string;
+  chanceBps?: number;
+  metalDebris?: string;
+  crystalDebris?: string;
+  randomnessRequestId?: string;
+  moonCreated?: boolean;
+  moonFields?: number;
+  moonDiameterKm?: number;
 }
 
 export interface Resources {
