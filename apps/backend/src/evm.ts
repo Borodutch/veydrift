@@ -852,7 +852,7 @@ export class VeydriftGameReader implements ChainReader {
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readTechnologyLevels(wallet),
       this.readShipRows(planetId),
-      this.readUintCall("0x423f9f10", [encodeAddress(wallet)])
+      this.readOptionalUintCall("0x423f9f10", [encodeAddress(wallet)])
     ]);
 
     return {
@@ -861,7 +861,7 @@ export class VeydriftGameReader implements ChainReader {
       productionAvailable: true,
       resources,
       fleetSlots: {
-        active: Number(activeFleetMissions),
+        active: Number(activeFleetMissions ?? 0n),
         limit: 1 + (technologyLevels["5"] ?? 0)
       },
       shipyardLevel: Number(shipyardLevel),
@@ -1317,20 +1317,30 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readShipRows(planetId: bigint): Promise<ShipyardState["ships"]> {
-    return Promise.all(
+    const rows = await Promise.all(
       supportedShipIds.map(async (id) => {
-        const [count, cost] = await Promise.all([
-          this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
-          this.readResources("0xc4222030", BigInt(id))
-        ]);
+        try {
+          const [count, cost] = await Promise.all([
+            this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
+            this.readResources("0xc4222030", BigInt(id))
+          ]);
 
-        return {
-          id,
-          count: Number(count),
-          cost
-        };
+          return {
+            id,
+            count: Number(count),
+            cost
+          };
+        } catch (error) {
+          if (isRpcRevert(error)) {
+            return null;
+          }
+
+          throw error;
+        }
       })
     );
+
+    return rows.filter((row): row is ShipyardState["ships"][number] => row !== null);
   }
 
   private async readDefenseRows(planetId: bigint): Promise<DefenseState["defenses"]> {

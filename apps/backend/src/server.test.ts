@@ -1217,6 +1217,56 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("keeps shipyard state loadable when the deployment does not expose a newer ship id", async () => {
+    const unsupportedShipIdWord = 16n.toString(16).padStart(64, "0");
+    const reader = new VeydriftGameReader(configuredTestConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const [call] = params as [{ data: string; to: string }];
+        const selector = call.data.slice(0, 10);
+
+        if (selector === "0x0ff79fa5") return abiWords(7n) as T;
+        if (selector === "0x181c1bc4") {
+          return abiWords(
+            BigInt(player),
+            2n,
+            44n,
+            9n,
+            211n,
+            1n,
+            9_788n,
+            10_233n,
+            10_584n,
+            1_700_000_000n,
+            5_000n,
+            4_900n,
+            4_800n
+          ) as T;
+        }
+        if (selector === "0x0adbf924") return abiWords(5_000n, 4_900n, 4_800n) as T;
+        if (selector === "0xd9b24865") return abiWords(1n) as T;
+        if (selector === "0xb6f4b7b7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0xe512884c") return abiWords(0n) as T;
+        if (selector === "0x423f9f10") throw new Error("RPC 3: execution reverted");
+        if (selector === "0x57686701" || selector === "0xc4222030") {
+          if (call.data.endsWith(unsupportedShipIdWord)) {
+            throw new Error("RPC 3: execution reverted");
+          }
+          return selector === "0x57686701" ? abiWords(0n) as T : abiWords(2_000n, 2_000n, 0n) as T;
+        }
+
+        throw new Error(`Unexpected call ${call.to} ${selector}`);
+      }
+    });
+
+    const state = await reader.getShipyardState(player);
+
+    expect(state.homePlanetId).toBe("7");
+    expect(state.productionAvailable).toBe(true);
+    expect(state.fleetSlots.active).toBe(0);
+    expect(state.ships.some((ship) => ship.id === 0)).toBe(true);
+    expect(state.ships.some((ship) => ship.id === 16)).toBe(false);
+  });
+
   test("hydrates active building queues with the BuildingStarted block timestamp", async () => {
     const startedAt = 1_700_000_000n;
     const readyAt = 1_700_000_600n;
