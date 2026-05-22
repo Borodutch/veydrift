@@ -183,6 +183,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 3);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       effect: false,
       energyProduced: false,
       energyRequired: true,
@@ -191,6 +192,7 @@ describe("building detail helpers", () => {
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 60, crystal: 15, deuterium: 0 },
+      constructionTimeSeconds: 108,
       current: true,
       energyRequired: 11,
       level: 1,
@@ -199,6 +201,7 @@ describe("building detail helpers", () => {
     });
     expect(rows[1]).toMatchObject({
       cost: { metal: 90, crystal: 22, deuterium: 0 },
+      constructionTimeSeconds: 161,
       current: false,
       energyRequired: 24,
       level: 2,
@@ -211,6 +214,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "solarPlant", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       effect: false,
       energyProduced: true,
       energyRequired: false,
@@ -219,6 +223,7 @@ describe("building detail helpers", () => {
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 75, crystal: 30, deuterium: 0 },
+      constructionTimeSeconds: 151,
       energyProduced: 22,
       level: 1,
       next: true,
@@ -234,6 +239,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       effect: false,
       energyProduced: false,
       energyRequired: false,
@@ -242,8 +248,21 @@ describe("building detail helpers", () => {
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 1000, crystal: 0, deuterium: 0 },
+      constructionTimeSeconds: 1_440,
       level: 1,
       storage: { resource: "metal", capacity: 20_000 },
     });
+  });
+
+  test("adjusts level table construction times with Robotics and Nanite levels", () => {
+    const buildings = {
+      ...createInitialPlayableState(1_000).buildings,
+      roboticsFactory: 1,
+      naniteFactory: 1,
+    };
+
+    const rows = buildingLevelInfoRows(buildings, "metalStorage", undefined, 2);
+
+    expect(rows.map((row) => row.constructionTimeSeconds)).toEqual([360, 720]);
   });
 });

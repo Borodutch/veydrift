@@ -47,6 +47,7 @@ export type BuildingEnergyDetail =
     };
 
 export type BuildingLevelInfoRow = {
+  constructionTimeSeconds: number;
   cost: Resources;
   current: boolean;
   effect?: string;
@@ -65,6 +66,7 @@ export type BuildingLevelInfoRow = {
 };
 
 export type BuildingLevelInfoColumns = {
+  constructionTime: boolean;
   effect: boolean;
   energyProduced: boolean;
   energyRequired: boolean;
@@ -146,9 +148,11 @@ export function buildingLevelInfoRows(
 
   return Array.from({ length: cappedMaxLevel }, (_, index) => {
     const level = index + 1;
+    const preUpgradeBuildings = { ...buildings, [key]: level - 1 };
     const rowBuildings = { ...buildings, [key]: level };
-    const cost = buildingCost({ ...buildings, [key]: level - 1 }, key);
+    const cost = buildingCost(preUpgradeBuildings, key);
     const row: BuildingLevelInfoRow = {
+      constructionTimeSeconds: buildingDurationEstimate(preUpgradeBuildings, cost),
       cost,
       current: currentLevel === level,
       level,
@@ -189,6 +193,7 @@ export function buildingLevelInfoRows(
 
 export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): BuildingLevelInfoColumns {
   return {
+    constructionTime: rows.some((row) => row.constructionTimeSeconds > 0),
     effect: rows.some((row) => row.effect !== undefined),
     energyProduced: rows.some((row) => row.energyProduced !== undefined),
     energyRequired: rows.some((row) => row.energyRequired !== undefined),
