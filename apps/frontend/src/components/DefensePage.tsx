@@ -1,9 +1,10 @@
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { DefenseKey, Resources } from "../playableMvp";
-import { canAfford, defenseCatalog, missingUnlockRequirements } from "../playableMvp";
+import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
 import type { ChainDefenseState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
+import { CombatStatsInfoButton } from "./CombatStatsInfo";
 import { OptimizedImage } from "./OptimizedImage";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -249,7 +250,10 @@ function DefenseTile({
       <div className="min-w-0">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h4 className="text-sm font-semibold text-white">{defense.label}</h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-white">{defense.label}</h4>
+              <CombatStatsInfoButton label={defense.label} stats={defenseCombatStats(defense)} />
+            </div>
             <p className="mt-0.5 text-xs text-slate-400">
               Deployed: {owned === undefined ? "unavailable" : format(owned)}
             </p>
