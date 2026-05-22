@@ -76,7 +76,6 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
-  missionPlanner?: GalaxyMissionPlanner | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
@@ -92,7 +91,6 @@ export function GalaxyView({
   homeCoords,
   homePlanetId,
   homePlanet,
-  missionPlanner,
   shipyardState = null,
   onAction,
   onSelectPlanet,
@@ -310,8 +308,6 @@ export function GalaxyView({
                   galaxy={galaxy}
                   isHome={isHome}
                   key={pos}
-                  missionPlanner={missionPlanner}
-                  missionHomeCoords={homeCoords}
                   account={account}
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
@@ -476,8 +472,6 @@ function GalaxySlot({
   system,
   position,
   planet,
-  missionPlanner,
-  missionHomeCoords,
   homeCoords,
   homePlanetId,
   isHome,
@@ -492,8 +486,6 @@ function GalaxySlot({
   system: number;
   position: number;
   planet: Planet | undefined;
-  missionPlanner: GalaxyMissionPlanner | undefined;
-  missionHomeCoords: Coordinates | undefined;
   homeCoords: Coordinates | undefined;
   homePlanetId: string | null | undefined;
   isHome: boolean;
@@ -561,11 +553,6 @@ function GalaxySlot({
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
-  const missionPreview = estimateGalaxyMissionPreview({
-    homeCoords: missionHomeCoords,
-    planner: missionPlanner,
-    target: { galaxy, system, position },
-  });
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
 
   return (
@@ -635,11 +622,6 @@ function GalaxySlot({
               </>
             ) : null}
           </div>
-          {missionPreview ? (
-            <div className={`mt-1 text-xs ${missionPreview.blockedReason ? "text-amber-200/80" : "text-cyan-100/80"}`}>
-              {formatMissionPreview(missionPreview)}
-            </div>
-          ) : null}
         </div>
       </button>
 
