@@ -809,6 +809,13 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       next: `${formatNumber(effect.nextCapacity)} ${shortResourceLabels[effect.resource]}`,
       value: `${formatNumber(effect.currentCapacity)} ${shortResourceLabels[effect.resource]}`,
     });
+  } else if (effect.kind === "missileSilo") {
+    rows.push({
+      delta: `${formatSigned(effect.deltaSlots)} slots`,
+      label: "Missile capacity",
+      next: `${formatNumber(effect.nextSlots)} slots`,
+      value: `${formatNumber(effect.currentSlots)} slots`,
+    });
   } else if (effect.kind === "constructionSpeed") {
     rows.push({
       delta: `+${formatNumber(effect.relativeImprovementPercent)}% faster than current`,
@@ -874,6 +881,10 @@ function compactEffect(effect: BuildingEffectMetrics): string {
 
   if (effect.kind === "storage") {
     return `${formatNumber(effect.currentCapacity)} cap`;
+  }
+
+  if (effect.kind === "missileSilo") {
+    return `${formatNumber(effect.currentSlots)} slots`;
   }
 
   if (effect.kind === "shipyard") {
