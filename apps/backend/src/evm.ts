@@ -220,6 +220,8 @@ export type RiftRequirement = {
   label: string;
   currentLevel: number | null;
   requiredLevel: number;
+  binary?: boolean;
+  built?: boolean | null;
 };
 
 export type RiftResourceState = {
@@ -1020,22 +1022,21 @@ export class VeydriftGameReader implements ChainReader {
       this.readTechnologyLevels(wallet)
     ]);
 
+    const bridgeBuilt = riftLevel === null ? null : riftLevel > 0n;
     const requirements = riftRequirements(
-      riftLevel === null ? null : Number(riftLevel),
+      bridgeBuilt,
       Number(roboticsLevel),
       Number(researchLabLevel),
       technologyLevels
     );
-    const unlocked = requirements.every((requirement) =>
-      requirement.currentLevel !== null && requirement.currentLevel >= requirement.requiredLevel
-    );
+    const unlocked = bridgeBuilt === true;
     const tokenAddressesConfigured = riftResourceCatalog.every((resource) => this.resourceTokenAddresses[resource.key]);
     const pendingWithdrawals = await this.readRiftWithdrawals(wallet);
     const resources = await this.readRiftResources(wallet, settlement.planet.resources, pendingWithdrawals);
     const unavailableReason = riftLevel === null
       ? "This deployment does not expose the Interdimensional Rift Stabilizer building yet."
       : !unlocked
-        ? "Build the Interdimensional Rift Stabilizer and meet its prerequisites to unlock resource bridging."
+        ? "Build the Interdimensional Rift Stabilizer on this planet to unlock resource bridging."
         : !tokenAddressesConfigured
           ? "Resource token addresses are not configured for this deployment yet."
           : undefined;
@@ -1907,7 +1908,7 @@ function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailabl
 }
 
 export function riftRequirements(
-  riftLevel: number | null,
+  riftBuilt: boolean | null,
   roboticsLevel: number,
   researchLabLevel: number,
   technologyLevels: Record<string, number>
@@ -1917,29 +1918,38 @@ export function riftRequirements(
       kind: "building",
       key: "interdimensionalRiftStabilizer",
       label: "Interdimensional Rift Stabilizer",
-      currentLevel: riftLevel,
-      requiredLevel: 1
+      currentLevel: riftBuilt === null ? null : riftBuilt ? 1 : 0,
+      requiredLevel: 1,
+      binary: true,
+      built: riftBuilt
     },
     {
       kind: "building",
       key: "roboticsFactory",
       label: "Robotics Factory",
       currentLevel: roboticsLevel,
-      requiredLevel: 2
+      requiredLevel: 4
     },
     {
       kind: "building",
       key: "researchLab",
       label: "Research Lab",
       currentLevel: researchLabLevel,
-      requiredLevel: 1
+      requiredLevel: 2
     },
     {
       kind: "technology",
       key: "energy",
       label: "Energy Technology",
       currentLevel: technologyLevels["0"] ?? 0,
-      requiredLevel: 2
+      requiredLevel: 5
+    },
+    {
+      kind: "technology",
+      key: "hyperspace",
+      label: "Hyperspace Technology",
+      currentLevel: technologyLevels["9"] ?? 0,
+      requiredLevel: 1
     },
   ];
 }

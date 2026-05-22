@@ -86,7 +86,9 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (buildingConstructions[planetId].active) revert ConstructionActive();
 
         uint16 currentLevel = _buildingLevels[planetId][building];
-        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
+        if (currentLevel >= (building == Building.InterdimensionalRiftStabilizer ? 1 : MAX_LEVEL)) {
+            revert LevelTooHigh();
+        }
         if (_usedFields(planetId) >= _planets[planetId].fields) revert FieldCapacityReached();
 
         _requireBuildingDependencies(planetId, building);

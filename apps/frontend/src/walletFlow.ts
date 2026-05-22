@@ -253,6 +253,8 @@ export type RiftRequirement = {
   label: string;
   currentLevel: number | null;
   requiredLevel: number;
+  binary?: boolean;
+  built?: boolean | null;
 };
 
 export type RiftResourceState = {
