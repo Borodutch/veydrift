@@ -348,7 +348,6 @@ export interface ChainReader {
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
-  listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -616,8 +615,8 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
-    const settlement = await this.getGameSettlement(wallet);
-    if (!settlement.homePlanetId) {
+    const planets = await this.getWalletPlanets(wallet);
+    if (!planets.homePlanetId) {
       return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [] };
     }
 
@@ -637,16 +636,16 @@ export class VeydriftGameReader implements ChainReader {
       }
     ]);
     const walletLower = wallet.toLowerCase();
-    const homePlanetId = settlement.homePlanetId;
+    const ownedPlanetIds = new Set(planets.planets.map((planet) => planet.planetId));
     const missions = decodeFleetMissionLogs(missionLogs);
     const summaries = [...missions.values()].filter(isCompleteFleetMissionSummary);
 
     return {
       wallet,
-      homePlanetId,
+      homePlanetId: planets.homePlanetId,
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
-          && mission.targetPlanetId === homePlanetId
+          && ownedPlanetIds.has(mission.targetPlanetId)
           && ["Attack", "Intercept", "MissileAttack"].includes(mission.missionType)
           && mission.status === "Outbound"
       ),
