@@ -935,6 +935,22 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("returns service unavailable for transient shipyard RPC rate limits", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new class extends MockChainReader {
+        override async getShipyardState(): Promise<ShipyardState> {
+          throw new Error("RPC HTTP 429");
+        }
+      }()
+    })(new Request(`http://localhost/wallet/${player}/shipyard`));
+
+    await expect(response.json()).resolves.toEqual({
+      error: "RPC HTTP 429"
+    });
+    expect(response.status).toBe(503);
+  });
+
   test("answers defense state from a mocked chain reader", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,

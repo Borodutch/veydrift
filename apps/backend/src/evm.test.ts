@@ -323,6 +323,60 @@ describe("moon chance report event decoding", () => {
       ]
     });
   });
+
+  test("does not expand rate-limited batch calls into sequential RPC bursts", async () => {
+    const wallet = "0x0000000000000000000000000000000000000def" as Address;
+    const individualSelectors: string[] = [];
+    let batchCalls = 0;
+    const abiWords = (...values: bigint[]) => dataWords(values.map(word));
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_call");
+          const [call] = params as [{ data: string }];
+          const selector = call.data.slice(0, 10);
+          individualSelectors.push(selector);
+
+          if (selector === "0x0ff79fa5") return abiWords(7n) as T;
+          if (selector === "0x181c1bc4") {
+            return dataWords([
+              addressWord(wallet),
+              word(2n),
+              word(44n),
+              word(9n),
+              word(211n),
+              word(1n),
+              word(10_000n),
+              word(10_000n),
+              word(10_000n),
+              word(1_700_000_000n),
+              word(5_000n),
+              word(4_900n),
+              word(4_800n)
+            ]) as T;
+          }
+          if (selector === "0x0adbf924") return abiWords(5_000n, 4_900n, 4_800n) as T;
+          if (selector === "0xd9b24865") return abiWords(1n) as T;
+          if (selector === "0xb6f4b7b7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0x423f9f10") return abiWords(0n) as T;
+
+          throw new Error(`Unexpected individual call ${selector}`);
+        },
+        async requestBatch<T>(): Promise<T[]> {
+          batchCalls += 1;
+          throw new Error("RPC HTTP 429");
+        }
+      }
+    );
+
+    await expect(reader.getShipyardState(wallet)).rejects.toThrow("RPC HTTP 429");
+
+    expect(batchCalls).toBeGreaterThan(0);
+    expect(individualSelectors).not.toContain("0x57686701");
+    expect(individualSelectors).not.toContain("0xc4222030");
+    expect(individualSelectors).not.toContain("0xe512884c");
+  });
 });
 
 describe("fleet mission visibility", () => {

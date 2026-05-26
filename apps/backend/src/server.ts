@@ -795,7 +795,7 @@ function unavailableResponse(problems: ConfigProblem[]): Response {
 }
 
 function errorResponse(error: unknown, status: number): Response {
-  const responseStatus = transientRpcError(error) ? 503 : status;
+  const responseStatus = statusForError(error, status);
   return Response.json(
     {
       error: error instanceof Error ? error.message : "Request failed."
@@ -807,9 +807,21 @@ function errorResponse(error: unknown, status: number): Response {
   );
 }
 
-function transientRpcError(error: unknown): boolean {
-  return error instanceof Error
-    && /RPC HTTP (400|413|429|500|502|503|504)|over rate limit|rate limit|too many requests/i.test(error.message);
+function statusForError(error: unknown, fallback: number): number {
+  if (!(error instanceof Error)) return fallback;
+
+  if (isRateLimitedRpcError(error)) return 503;
+  if (isUpstreamRpcError(error)) return 502;
+
+  return fallback;
+}
+
+function isRateLimitedRpcError(error: Error): boolean {
+  return /RPC HTTP (429|503)|over rate limit|rate limit|too many requests/i.test(error.message);
+}
+
+function isUpstreamRpcError(error: Error): boolean {
+  return /^RPC (HTTP \d+|-?\d+:)/i.test(error.message);
 }
 
 function selectedPlanetId(url: URL): bigint | undefined {

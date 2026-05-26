@@ -2634,7 +2634,7 @@ function shouldChunkLogQuery(error: unknown): boolean {
 }
 
 function shouldRetryWithoutBatch(error: unknown): boolean {
-  return error instanceof Error && /RPC HTTP (400|413|429)|over rate limit|rate limit/i.test(error.message);
+  return error instanceof Error && /RPC HTTP (400|413)/i.test(error.message);
 }
 
 function isRetryableRpcHttpStatus(status: number): boolean {
