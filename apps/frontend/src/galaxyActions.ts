@@ -201,20 +201,6 @@ export function galaxyActionsForSlot({
       reason: "Debris fields are not live on this deployment yet.",
     },
     {
-      enabled: false,
-      kind: "acsDefend",
-      label: "ACS Defend",
-      mode: "future",
-      reason: "Alliance defense is not implemented yet.",
-    },
-    {
-      enabled: false,
-      kind: "intercept",
-      label: "Intercept",
-      mode: "future",
-      reason: "Alliance intercept is not implemented yet.",
-    },
-    {
       ...enabledOrDisabled({
         blocker: missileBlocker,
         enabled: {

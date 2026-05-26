@@ -119,6 +119,7 @@ Fleet missions:
 - `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, and intercept mission types. Missile attacks use `launchInterplanetaryMissileAttack(...)`.
 - Departure settles involved planets, enforces fleet slots, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
 - For `AcsDefend` and `Intercept`, the `targetPlanetId` argument is the hostile attack mission id. The contract resolves the actual defended planet from that mission, requires alliance defense permission from `VeydriftAllianceSystem`, and links the launched fleet into the combat module's defender-side battle resolution.
+- Release-slice parity note: Veydrift currently treats ACS defend and intercept as hostile-mission counterplay, launched from indexed inbound attack rows by mission id. They are not Galaxy planet-slot actions and are not a claim of full classic OGame ACS parity.
 - Attack battles use six canonical Veydrift rounds with cataloged attack, shield, and hull values, separate Weapons/Shielding/Armor scaling, shield absorption, hull explosion checks once damage exceeds 30% of hull, deterministic seed-derived target selection, and cataloged rapid-fire multipliers. ACS defending and intercepting fleets join the defender side when they arrive before the hostile attack.
 - For bounded gas, Veydrift resolves combat at the unit-stack level: one deterministic target stack per firing stack, rapid-fire as a catalog multiplier, and no persisted partial hull damage between rounds. This keeps the catalog, round count, shields, tech modifiers, debris, and outcomes aligned with Veydrift combat concepts without claiming byte-for-byte battle-simulator parity for every large mixed fleet.
 - Battle randomness is deterministic from `ATTACK_BATTLE_DOMAIN`, chain id, mission id, attacker, origin, target, and the mission `randomnessRequestId`; the contract emits that seed in `AttackBattleResolved`.
@@ -347,7 +348,7 @@ There is no private state, spy report flow, probe unit, or research path for
 revealing information. VEY-KANEO-196 records this as the formal classic
 espionage and hidden-intel exclusion. Fleet and combat systems should use the
 public counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
-VEY-KANEO-133: visible commitment, recall limits, return exposure, and future
-ACS/intercept rules.
+VEY-KANEO-133: visible commitment, recall limits, return exposure, and
+hostile-mission ACS/intercept counterplay.
 
 The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, missile silo capacity, interplanetary missile interception and defense damage, one active construction or production slot per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.
