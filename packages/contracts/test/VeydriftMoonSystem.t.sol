@@ -89,10 +89,18 @@ contract VeydriftMoonSystemTest is Test {
         vm.deal(player, 1 ether);
     }
 
-    function testMoonCreationAndLunarBaseFields() public {
+    function testDirectPlayerMoonCreationReverts() public {
         uint256 planetId = _startPlanet();
 
         vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, player));
+        moons.createMoon(planetId);
+        assertFalse(moons.moon(planetId).exists);
+    }
+
+    function testAdminMoonCreationAndLunarBaseFields() public {
+        uint256 planetId = _startPlanet();
+
         VeydriftMoonSystem.Moon memory moon = moons.createMoon(planetId);
         assertTrue(moon.exists);
         assertEq(moon.planetId, planetId);
@@ -102,7 +110,6 @@ contract VeydriftMoonSystemTest is Test {
         assertGe(moon.diameterKm, 3_400);
         assertLe(moon.diameterKm, 8_500);
 
-        vm.prank(player);
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftMoonSystem.MoonAlreadyExists.selector, planetId)
         );
@@ -236,8 +243,7 @@ contract VeydriftMoonSystemTest is Test {
         );
         moons.requestMoonChanceFromBattle(80, planetId, 1_000_000, 0);
 
-        vm.prank(player);
-        moons.createMoon(planetId);
+        _createMoon(planetId);
 
         vm.prank(reporter);
         (uint256 outcomeId, uint256 requestId) =
@@ -264,8 +270,7 @@ contract VeydriftMoonSystemTest is Test {
     function testMoonBuildingUpgradeSpendsPlanetResources() public {
         uint256 planetId = _startPlanet();
 
-        vm.prank(player);
-        moons.createMoon(planetId);
+        _createMoon(planetId);
 
         vm.prank(player);
         vm.expectRevert(
@@ -292,8 +297,7 @@ contract VeydriftMoonSystemTest is Test {
     function testSensorPhalanxRequiresLunarBaseAndScansRange() public {
         uint256 planetId = _startPlanet();
 
-        vm.prank(player);
-        moons.createMoon(planetId);
+        _createMoon(planetId);
 
         vm.prank(player);
         vm.expectRevert(
@@ -331,14 +335,12 @@ contract VeydriftMoonSystemTest is Test {
         _setPlanetOwner(secondPlanetId, player);
         _setTechnologyLevel(player, Technology.Hyperspace, 7);
 
-        vm.prank(player);
-        moons.createMoon(planetId);
+        _createMoon(planetId);
         _fundPlanet(planetId, 3_000_000, 5_000_000, 3_000_000);
         _buildMoon(planetId, MoonBuilding.LunarBase);
         _buildMoon(planetId, MoonBuilding.JumpGate);
 
-        vm.prank(player);
-        moons.createMoon(secondPlanetId);
+        _createMoon(secondPlanetId);
         _fundPlanet(secondPlanetId, 3_000_000, 5_000_000, 3_000_000);
         _buildMoon(secondPlanetId, MoonBuilding.LunarBase);
         _buildMoon(secondPlanetId, MoonBuilding.JumpGate);
@@ -359,6 +361,10 @@ contract VeydriftMoonSystemTest is Test {
     function _startPlanet() internal returns (uint256 planetId) {
         vm.prank(player);
         planetId = game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _createMoon(uint256 planetId) internal returns (VeydriftMoonSystem.Moon memory) {
+        return moons.createMoon(planetId);
     }
 
     function _buildMoon(uint256 planetId, MoonBuilding building) internal {
