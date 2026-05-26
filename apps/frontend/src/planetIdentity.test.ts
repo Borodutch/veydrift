@@ -6,7 +6,13 @@ import {
   planetFromSettlementPlanet,
   planetsFromSystemResponse,
 } from "./data/mockUniverse";
-import { displayHomeCoordinates } from "./PlayableMvpApp";
+import {
+  abandonPlanetUnavailableLabel,
+  displayHomeCoordinates,
+  shouldShowAbandonPlanetButton,
+  type PlanetActionState,
+} from "./PlayableMvpApp";
+import type { ManagedPlanetResponse } from "./walletFlow";
 
 const settlementPlanet = {
   planetId: "2",
@@ -20,6 +26,51 @@ const settlementPlanet = {
   crystalMultiplierBps: 10188,
   deuteriumMultiplierBps: 10875,
 };
+
+const idleAction = { status: "idle" } satisfies PlanetActionState;
+
+function managedPlanet(overrides: Partial<ManagedPlanetResponse> = {}): ManagedPlanetResponse {
+  return {
+    planetId: "2",
+    owner: settlementPlanet.owner,
+    name: null,
+    galaxy: 6,
+    system: 407,
+    position: 15,
+    fields: 196,
+    temperature: -55,
+    metalMultiplierBps: 9600,
+    crystalMultiplierBps: 10188,
+    deuteriumMultiplierBps: 10875,
+    lastSettledAt: "0",
+    resources: {
+      metal: "0",
+      crystal: "0",
+      deuterium: "0",
+    },
+    coordinates: "6:407:15",
+    isHomePlanet: false,
+    fieldsUsed: 0,
+    fieldsCapacity: 196,
+    keyLevels: {
+      metalMine: 0,
+      crystalMine: 0,
+      deuteriumSynthesizer: 0,
+      solarPlant: 0,
+      roboticsFactory: 0,
+      shipyard: 0,
+      researchLab: 0,
+      terraformer: 0,
+    },
+    queues: {
+      building: null,
+      defense: null,
+      ship: null,
+    },
+    moon: null,
+    ...overrides,
+  };
+}
 
 describe("planet identity", () => {
   test("uses settlement stats and art family for the home planet identity", () => {
@@ -159,5 +210,37 @@ describe("planet identity", () => {
       { galaxy: 2, system: 246, position: 3 },
       "9:280:15"
     )).toBe("2:246:3");
+  });
+
+  test("hides the abandon action for home planets", () => {
+    const planet = managedPlanet({ isHomePlanet: true });
+
+    expect(shouldShowAbandonPlanetButton(planet, true, idleAction)).toBe(false);
+    expect(abandonPlanetUnavailableLabel(planet, true, idleAction)).toBe("Home planets cannot be abandoned.");
+  });
+
+  test("shows the abandon action only for empty inactive-queue colonies", () => {
+    expect(shouldShowAbandonPlanetButton(managedPlanet(), true, idleAction)).toBe(true);
+
+    expect(shouldShowAbandonPlanetButton(managedPlanet({
+      resources: {
+        metal: "1",
+        crystal: "0",
+        deuterium: "0",
+      },
+    }), true, idleAction)).toBe(false);
+
+    expect(shouldShowAbandonPlanetButton(managedPlanet({
+      queues: {
+        building: {
+          active: true,
+          kind: "building",
+          readyAt: "10",
+          cost: { metal: "0", crystal: "0", deuterium: "0" },
+        },
+        defense: null,
+        ship: null,
+      },
+    }), true, idleAction)).toBe(false);
   });
 });
