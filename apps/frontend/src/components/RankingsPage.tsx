@@ -1,21 +1,18 @@
 import { useEffect, useState } from "preact/hooks";
 import { RotateCw } from "lucide-preact";
-import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscoreResponse } from "../walletFlow";
+import { fetchHighscores, shortAddress, type HighscoreEntry, type HighscoreResponse } from "../walletFlow";
 
 type RankingsPageProps = {
   apiBaseUrl: string | undefined;
 };
 
-const categories: Array<{ key: HighscoreCategory; label: string }> = [
-  { key: "total", label: "Total" },
-  { key: "economy", label: "Economy" },
-  { key: "research", label: "Research" },
-  { key: "fleet", label: "Fleet" },
-  { key: "defense", label: "Defense" },
-];
+export const rankingsColumnLabels = ["Rank", "Commander", "Planets", "Score"] as const;
+
+export function primaryRankingEntries(data: HighscoreResponse | null): HighscoreEntry[] {
+  return data?.rankings.total ?? [];
+}
 
 export function RankingsPage({ apiBaseUrl }: RankingsPageProps) {
-  const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -43,7 +40,7 @@ export function RankingsPage({ apiBaseUrl }: RankingsPageProps) {
     load();
   }, [apiBaseUrl]);
 
-  const entries = data?.rankings[active] ?? [];
+  const entries = primaryRankingEntries(data);
 
   return (
     <section className="space-y-4">
@@ -65,48 +62,13 @@ export function RankingsPage({ apiBaseUrl }: RankingsPageProps) {
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {categories.map((category) => (
-          <button
-            aria-pressed={active === category.key}
-            className={`h-9 rounded border px-3 text-xs font-semibold transition ${
-              active === category.key
-                ? "border-cyan-300/60 bg-cyan-300/10 text-cyan-100"
-                : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
-            }`}
-            key={category.key}
-            onClick={() => setActive(category.key)}
-            type="button"
-          >
-            {category.label}
-          </button>
-        ))}
-      </div>
-
       {error ? (
         <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
           {error}
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
-        <div className="grid grid-cols-[56px_1fr_88px_96px] border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_1fr_100px_120px_120px]">
-          <span>Rank</span>
-          <span>Commander</span>
-          <span className="text-right">Planets</span>
-          <span className="text-right">Score</span>
-          <span className="hidden text-right sm:block">Total</span>
-        </div>
-        {loading ? (
-          <RankingsMessage label="Loading rankings" />
-        ) : entries.length === 0 ? (
-          <RankingsMessage label="No settled commanders indexed yet" />
-        ) : (
-          entries.map((entry) => (
-            <RankingRow active={active} entry={entry} key={`${active}-${entry.wallet}`} />
-          ))
-        )}
-      </div>
+      <RankingsTable entries={entries} loading={loading} />
 
       {data ? (
         <p className="text-xs leading-5 text-slate-500">
@@ -117,9 +79,32 @@ export function RankingsPage({ apiBaseUrl }: RankingsPageProps) {
   );
 }
 
-function RankingRow({ active, entry }: { active: HighscoreCategory; entry: HighscoreEntry }) {
+export function RankingsTable({ entries, loading }: { entries: HighscoreEntry[]; loading: boolean }) {
   return (
-    <div className="grid grid-cols-[56px_1fr_88px_96px] items-center border-b border-white/5 px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_1fr_100px_120px_120px]">
+    <div className="overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
+      <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px]">
+        {rankingsColumnLabels.map((label) => (
+          <span className={label === "Rank" || label === "Commander" ? undefined : "text-right"} key={label}>
+            {label}
+          </span>
+        ))}
+      </div>
+      {loading ? (
+        <RankingsMessage label="Loading rankings" />
+      ) : entries.length === 0 ? (
+        <RankingsMessage label="No settled commanders indexed yet" />
+      ) : (
+        entries.map((entry) => (
+          <RankingRow entry={entry} key={entry.wallet} />
+        ))
+      )}
+    </div>
+  );
+}
+
+function RankingRow({ entry }: { entry: HighscoreEntry }) {
+  return (
+    <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] items-center border-b border-white/5 px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px]">
       <span className="font-mono text-slate-400">#{entry.rank}</span>
       <span className="min-w-0">
         <span className="block truncate font-mono text-slate-100">{shortAddress(entry.wallet)}</span>
@@ -128,8 +113,7 @@ function RankingRow({ active, entry }: { active: HighscoreCategory; entry: Highs
         </span>
       </span>
       <span className="text-right font-mono text-slate-300">{entry.planetCount}</span>
-      <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
-      <span className="hidden text-right font-mono text-slate-400 sm:block">{formatScore(entry.score.total)}</span>
+      <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score.total)}</span>
     </div>
   );
 }
