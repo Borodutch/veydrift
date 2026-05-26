@@ -379,6 +379,8 @@ export interface ChainReader {
   getAllianceState(wallet: Address): Promise<AllianceState>;
   getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
+  getHighscoresForWallets?(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]>;
+  listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
   listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
@@ -390,6 +392,17 @@ export type RpcMetrics = {
   batchRequests: number;
   callsByMethod: Record<string, number>;
   httpRequests: number;
+};
+
+type RpcCacheEntry<T> = {
+  expiresAt: number;
+  value: Promise<T>;
+};
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  reject: (reason: unknown) => void;
+  resolve: (value: T) => void;
 };
 
 type JsonRpcResponse<T> = {
@@ -424,14 +437,34 @@ export class HttpJsonRpcTransport {
     callsByMethod: {},
     httpRequests: 0
   };
+  private readonly cache = new Map<string, RpcCacheEntry<unknown>>();
+  private readonly cacheTtlMs: number;
+  private readonly minRequestIntervalMs: number;
+  private nextRequestAt = 0;
+  private requestQueue: Promise<void> = Promise.resolve();
 
-  constructor(private readonly rpcUrl: string) {}
+  constructor(
+    private readonly rpcUrl: string,
+    options: { cacheTtlMs?: number; minRequestIntervalMs?: number } = {}
+  ) {
+    this.cacheTtlMs = options.cacheTtlMs ?? 2_000;
+    this.minRequestIntervalMs = options.minRequestIntervalMs ?? 300;
+  }
 
   async request<T>(method: string, params: unknown[]): Promise<T> {
     this.countRpc(method);
+    const cacheKey = this.cacheKey(method, params);
+    if (cacheKey) {
+      return this.cached(cacheKey, () => this.requestUncached<T>(method, params));
+    }
+
+    return this.requestUncached<T>(method, params);
+  }
+
+  private async requestUncached<T>(method: string, params: unknown[]): Promise<T> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       this.metrics.httpRequests += 1;
-      const response = await fetch(this.rpcUrl, {
+      const response = await this.fetchRpc({
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -479,11 +512,70 @@ export class HttpJsonRpcTransport {
     for (const request of requests) {
       this.countRpc(request.method);
     }
+    const cacheMisses = new Map<string, {
+      deferred: Deferred<T>;
+      request: { method: string; params: unknown[] };
+    }>();
+    const resultPromises = requests.map((request) => {
+      const cacheKey = this.cacheKey(request.method, request.params);
+      if (!cacheKey) return null;
+
+      const cached = this.cachedValue<T>(cacheKey);
+      if (cached) return cached;
+
+      const existingMiss = cacheMisses.get(cacheKey);
+      if (existingMiss) return existingMiss.deferred.promise;
+
+      const deferred = createDeferred<T>();
+      this.cache.set(cacheKey, {
+        expiresAt: Date.now() + this.cacheTtlMs,
+        value: deferred.promise
+      });
+      cacheMisses.set(cacheKey, { deferred, request });
+      return deferred.promise;
+    });
+    const uncachedRequests = requests
+      .map((request, index) => ({ index, request }))
+      .filter(({ index }) => resultPromises[index] === null);
+
+    if (cacheMisses.size > 0) {
+      const misses = [...cacheMisses.entries()];
+      this.requestBatchUncached<T>(misses.map(([, miss]) => miss.request))
+        .then((results) => {
+          results.forEach((result, index) => {
+            misses[index]?.[1].deferred.resolve(result);
+          });
+        })
+        .catch((error) => {
+          for (const [cacheKey, miss] of misses) {
+            this.cache.delete(cacheKey);
+            miss.deferred.reject(error);
+          }
+        });
+    }
+
+    if (uncachedRequests.length > 0) {
+      const uncachedPromise = this.requestBatchUncached<T>(uncachedRequests.map(({ request }) => request));
+      uncachedRequests.forEach(({ index }, resultIndex) => {
+        resultPromises[index] = uncachedPromise.then((results) => {
+          const result = results[resultIndex];
+          if (result === undefined) {
+            throw new Error("RPC batch response missing item.");
+          }
+          return result;
+        });
+      });
+    }
+
+    return Promise.all(resultPromises as Array<Promise<T>>);
+  }
+
+  private async requestBatchUncached<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       this.metrics.batchRequests += 1;
       this.metrics.httpRequests += 1;
 
-      const response = await fetch(this.rpcUrl, {
+      const response = await this.fetchRpc({
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -504,7 +596,19 @@ export class HttpJsonRpcTransport {
         throw new Error(`RPC HTTP ${response.status}`);
       }
 
-      const bodies = (await response.json()) as Array<JsonRpcResponse<T> & { id?: number }>;
+      const body = await response.json() as JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>;
+      if (!Array.isArray(body)) {
+        if (body.error && isRetryableRpcError(body.error) && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        if (body.error) {
+          throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
+        }
+        throw new Error("RPC batch response missing items.");
+      }
+
+      const bodies = body;
       const retryableError = bodies.find((body) => body.error && isRetryableRpcError(body.error));
       if (retryableError?.error && attempt < 2) {
         await retryDelay(attempt);
@@ -541,6 +645,70 @@ export class HttpJsonRpcTransport {
   private countRpc(method: string): void {
     this.metrics.callsByMethod[method] = (this.metrics.callsByMethod[method] ?? 0) + 1;
   }
+
+  private fetchRpc(init: RequestInit): Promise<Response> {
+    const scheduled = this.requestQueue.then(async () => {
+      const waitMs = Math.max(0, this.nextRequestAt - Date.now());
+      if (waitMs > 0) {
+        await retryDelayMs(waitMs);
+      }
+      this.nextRequestAt = Date.now() + this.minRequestIntervalMs;
+      return fetch(this.rpcUrl, init);
+    });
+    this.requestQueue = scheduled.then(
+      () => undefined,
+      () => undefined
+    );
+    return scheduled;
+  }
+
+  private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const current = this.cachedValue<T>(key);
+    if (current) return current;
+
+    const value = load().catch((error) => {
+      this.cache.delete(key);
+      throw error;
+    });
+    this.cache.set(key, {
+      expiresAt: Date.now() + this.cacheTtlMs,
+      value
+    });
+    return value;
+  }
+
+  private cachedValue<T>(key: string): Promise<T> | null {
+    const current = this.cache.get(key);
+    if (!current) return null;
+    if (current.expiresAt <= Date.now()) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    return current.value as Promise<T>;
+  }
+
+  private cacheKey(method: string, params: unknown[]): string | null {
+    if (!isCacheableRpcMethod(method)) return null;
+    return `${method}:${JSON.stringify(params)}`;
+  }
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
+}
+
+function isCacheableRpcMethod(method: string): boolean {
+  return method === "eth_call"
+    || method === "eth_getLogs"
+    || method === "eth_blockNumber"
+    || method === "eth_getBlockByNumber";
 }
 
 export class VeydriftGameReader implements ChainReader {
@@ -1320,6 +1488,103 @@ export class VeydriftGameReader implements ChainReader {
     });
   }
 
+  async getHighscoresForWallets(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]> {
+    const owners = [...planetsByOwner.keys()].map((owner) => {
+      assertAddress(owner);
+      return owner as Address;
+    });
+    if (owners.length === 0) return [];
+
+    const planetIds = [...new Set([...planetsByOwner.values()].flat().map((planet) => planet.planetId))]
+      .sort((left, right) => Number(BigInt(left) - BigInt(right)));
+
+    const calls = [
+      ...owners.map((owner) => ({
+        selector: "0x0ff79fa5",
+        args: [encodeAddress(owner)]
+      })),
+      ...owners.flatMap((owner) => supportedTechnologyIds.map((id) => ({
+        selector: "0xe512884c",
+        args: [encodeAddress(owner), encodeUint(BigInt(id))]
+      }))),
+      ...planetIds.flatMap((planetId) => Array.from({ length: buildingCount }, (_, id) => ({
+        selector: "0xd9b24865",
+        args: [encodeUint(BigInt(planetId)), encodeUint(BigInt(id))]
+      }))),
+      ...planetIds.flatMap((planetId) => Array.from({ length: defenseCount }, (_, id) => ({
+        selector: "0x836e3a32",
+        args: [encodeUint(BigInt(planetId)), encodeUint(BigInt(id))]
+      }))),
+      ...planetIds.flatMap((planetId) => supportedShipIds.map((id) => ({
+        selector: "0x57686701",
+        args: [encodeUint(BigInt(planetId)), encodeUint(BigInt(id))]
+      })))
+    ];
+    const results = await this.batchCallContract(this.gameContractAddress, calls);
+    let cursor = 0;
+
+    const homePlanetByOwner = new Map(
+      owners.map((owner) => {
+        const homePlanetId = decodeUintWord(wordAt(splitWords(results[cursor++] ?? "0x"), 0));
+        return [owner.toLowerCase(), homePlanetId === 0n ? null : homePlanetId.toString()] as const;
+      })
+    );
+    const technologiesByOwner = new Map<string, Array<{ id: number; level: number }>>();
+    for (const owner of owners) {
+      technologiesByOwner.set(owner.toLowerCase(), supportedTechnologyIds.map((id) => ({
+        id,
+        level: Number(decodeUintWord(wordAt(splitWords(results[cursor++] ?? "0x"), 0)))
+      })));
+    }
+
+    const planetScores = new Map<string, {
+      buildings: Array<{ id: number; level: number }>;
+      defenses: Array<{ id: number; count: number }>;
+      ships: Array<{ id: number; count: number }>;
+    }>();
+    for (const planetId of planetIds) {
+      planetScores.set(planetId, {
+        buildings: Array.from({ length: buildingCount }, (_, id) => ({
+          id,
+          level: Number(decodeUintWord(wordAt(splitWords(results[cursor++] ?? "0x"), 0)))
+        })),
+        defenses: [],
+        ships: []
+      });
+    }
+    for (const planetId of planetIds) {
+      const score = planetScores.get(planetId);
+      if (!score) continue;
+      score.defenses = Array.from({ length: defenseCount }, (_, id) => ({
+        id,
+        count: Number(decodeUintWord(wordAt(splitWords(results[cursor++] ?? "0x"), 0)))
+      }));
+    }
+    for (const planetId of planetIds) {
+      const score = planetScores.get(planetId);
+      if (!score) continue;
+      score.ships = supportedShipIds.map((id) => ({
+        id,
+        count: Number(decodeUintWord(wordAt(splitWords(results[cursor++] ?? "0x"), 0)))
+      }));
+    }
+
+    return owners.map((owner) => {
+      const ownerKey = owner.toLowerCase();
+      const planets = planetsByOwner.get(ownerKey) ?? [];
+      return calculateHighscore({
+        wallet: owner,
+        homePlanetId: homePlanetByOwner.get(ownerKey) ?? null,
+        planetCount: planets.length,
+        planets: planets.flatMap((planet) => {
+          const score = planetScores.get(planet.planetId);
+          return score ? [score] : [];
+        }),
+        technologies: technologiesByOwner.get(ownerKey) ?? []
+      });
+    });
+  }
+
   async listSettledPlanetEvents(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<SettledPlanetEvent[]> {
     const logs = await this.getLogs(
       {
@@ -1331,6 +1596,45 @@ export class VeydriftGameReader implements ChainReader {
     );
 
     return logs.map((log) => decodeSettledPlanetLog(log));
+  }
+
+  async listCurrentPlanets(): Promise<SettledPlanetEvent[]> {
+    const nextPlanetId = await this.readUintCall("0xc16bedad", []);
+    if (nextPlanetId <= 1n) return [];
+
+    const planetIds = Array.from({ length: Number(nextPlanetId - 1n) }, (_, index) => BigInt(index + 1));
+    const results = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x181c1bc4",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    return results.flatMap((result, index) => {
+      const words = splitWords(result);
+      const owner = decodeAddressWord(wordAt(words, 0));
+      if (owner === zeroAddress) return [];
+
+      return [{
+        eventName: "PlanetStarted",
+        transactionHash: "0x",
+        blockNumber: "0",
+        owner,
+        planetId: planetIds[index]!.toString(),
+        name: null,
+        galaxy: Number(decodeUintWord(wordAt(words, 1))),
+        system: Number(decodeUintWord(wordAt(words, 2))),
+        position: Number(decodeUintWord(wordAt(words, 3))),
+        fields: Number(decodeUintWord(wordAt(words, 4))),
+        temperature: Number(decodeSignedWord(wordAt(words, 5))),
+        metalMultiplierBps: Number(decodeUintWord(wordAt(words, 6))),
+        crystalMultiplierBps: Number(decodeUintWord(wordAt(words, 7))),
+        deuteriumMultiplierBps: Number(decodeUintWord(wordAt(words, 8))),
+        lastSettledAt: decodeUintWord(wordAt(words, 9)).toString(),
+        resources: decodeResources(words.slice(10, 13))
+      } satisfies SettledPlanetEvent];
+    });
   }
 
   async listMoonChanceReportEvents(
@@ -2008,6 +2312,13 @@ export class VeydriftGameReader implements ChainReader {
     calls: Array<{ selector: string; args: string[] }>
   ): Promise<string[]> {
     if (calls.length === 0) return [];
+    if (calls.length > maxBatchCallSize) {
+      const results: string[] = [];
+      for (let index = 0; index < calls.length; index += maxBatchCallSize) {
+        results.push(...await this.batchCallContract(contractAddress, calls.slice(index, index + maxBatchCallSize)));
+      }
+      return results;
+    }
 
     const runSequentially = async (): Promise<string[]> => {
       const results: string[] = [];
@@ -2207,6 +2518,7 @@ function missionStatusLabel(value: bigint): string {
 }
 
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
+const maxBatchCallSize = 50;
 const buildingCount = 16;
 const defenseCount = 10;
 const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
@@ -2646,7 +2958,11 @@ function isRetryableRpcError(error: { code: number; message: string }): boolean 
 }
 
 function retryDelay(attempt: number): Promise<void> {
+  return retryDelayMs(300 * (attempt + 1));
+}
+
+function retryDelayMs(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, 300 * (attempt + 1));
+    setTimeout(resolve, milliseconds);
   });
 }

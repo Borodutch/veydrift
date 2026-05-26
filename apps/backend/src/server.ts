@@ -352,7 +352,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         if (indexer?.snapshot().indexedPlanets === 0) {
-          await indexer.rebuild();
+          await indexer.rebuildPlanets();
         }
         const indexedPlanets = indexer?.settledPlanetsByOwner().get(wallet.toLowerCase()) ?? [];
         return Response.json(
@@ -376,16 +376,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 250);
         if (indexer?.snapshot().indexedPlanets === 0) {
-          await indexer.rebuild();
+          await indexer.rebuildPlanets();
         }
         const planetsByOwner: Map<string, SettledPlanetEvent[]> = indexer?.settledPlanetsByOwner() ?? new Map();
-        const entries = [];
-        for (const [owner, planets] of planetsByOwner.entries()) {
-          entries.push(await ready.getHighscoreForWallet(
-            owner as `0x${string}`,
-            planets.map((planet) => planet.planetId)
-          ));
-        }
+        const entries = ready.getHighscoresForWallets
+          ? await ready.getHighscoresForWallets(planetsByOwner)
+          : await highscoreEntriesForOwners(ready, planetsByOwner);
         const rankings = highscoreRankings(entries, limit);
 
         return Response.json(
@@ -586,6 +582,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     );
   };
+}
+
+async function highscoreEntriesForOwners(
+  reader: HighscoreReader,
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
+): Promise<HighscoreEntry[]> {
+  const entries = [];
+  for (const [owner, planets] of planetsByOwner.entries()) {
+    entries.push(await reader.getHighscoreForWallet(
+      owner as `0x${string}`,
+      planets.map((planet) => planet.planetId)
+    ));
+  }
+  return entries;
 }
 
 function includeOccupiedPlanets(
