@@ -10,7 +10,10 @@ const categories: Array<{ key: HighscoreCategory; label: string }> = [
   { key: "total", label: "Total" },
   { key: "economy", label: "Economy" },
   { key: "research", label: "Research" },
-  { key: "fleet", label: "Fleet" },
+  { key: "researchLevels", label: "Research levels" },
+  { key: "military", label: "Military" },
+  { key: "fleet", label: "Fleet value" },
+  { key: "fleetCount", label: "Ships" },
   { key: "defense", label: "Defense" },
 ];
 

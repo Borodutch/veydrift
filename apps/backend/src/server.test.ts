@@ -1664,7 +1664,10 @@ describe("Veydrift backend", () => {
         total: "15",
         economy: "0",
         research: "1",
+        researchLevels: "1",
+        military: "14",
         fleet: "8",
+        fleetCount: "2",
         defense: "6"
       }
     });
@@ -1691,7 +1694,10 @@ describe("Veydrift backend", () => {
       total: [],
       economy: [],
       research: [],
+      researchLevels: [],
+      military: [],
       fleet: [],
+      fleetCount: [],
       defense: []
     });
   });
