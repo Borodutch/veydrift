@@ -30,6 +30,7 @@ import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 const SMALL_CARGO_CAPACITY = 5_000;
 const SMALL_CARGO_SHIP_ID = 0;
+export const PUBLIC_INTEL_SUMMARY_LABEL = "Public intel";
 
 type MissionResources = {
   metal?: number;
@@ -288,6 +289,8 @@ export function GalaxyView({
                 <span>{moonChanceCount} moon chance</span>
               </>
             ) : null}
+            <span className="text-slate-700">/</span>
+            <span>{PUBLIC_INTEL_SUMMARY_LABEL}</span>
           </div>
           {occupancySource ? (
             <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
