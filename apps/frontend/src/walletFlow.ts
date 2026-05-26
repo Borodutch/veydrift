@@ -1933,10 +1933,28 @@ async function fetchWalletJson<T>(
     cache: "no-store",
     headers: { accept: "application/json" },
   });
-  if (!response.ok) throw new Error(`${label} API failed: ${response.status}`);
+  if (!response.ok) {
+    throw new Error(await apiErrorMessage(response, label));
+  }
   return response.json() as Promise<T>;
 }
 
 function withPlanetId(path: string, planetId: string | undefined): string {
-  return planetId ? `${path}?planetId=${encodeURIComponent(planetId)}` : path;
+  return planetId && isContractPlanetId(planetId) ? `${path}?planetId=${encodeURIComponent(planetId)}` : path;
+}
+
+function isContractPlanetId(planetId: string): boolean {
+  return /^[1-9][0-9]*$/.test(planetId);
+}
+
+async function apiErrorMessage(response: Response, label: string): Promise<string> {
+  const fallback = `${label} API failed: ${response.status}`;
+  try {
+    const body = await response.clone().json() as { error?: unknown };
+    return typeof body.error === "string" && body.error.trim()
+      ? `${fallback}: ${body.error}`
+      : fallback;
+  } catch {
+    return fallback;
+  }
 }
