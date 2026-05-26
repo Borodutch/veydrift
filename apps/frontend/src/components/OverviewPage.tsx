@@ -1,5 +1,5 @@
 import type { MainQueueItem, PlayableState, Resources } from "../playableMvp";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   buildingQueueAsset,
   buildingQueueLabel,
@@ -12,6 +12,7 @@ import {
   type ChainLoadStatus,
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
+import { isImageReady } from "../imageLoadState";
 import { formatPlanetType } from "../data/mockUniverse";
 import type { Planet } from "../types";
 import type { FleetMissionVisibilityResponse, PlanetSummary, PlayerQueuesResponse, WalletSettlementResponse } from "../walletFlow";
@@ -106,6 +107,7 @@ export function OverviewPage({
       : undefined
   );
   const [heroImageLoaded, setHeroImageLoaded] = useState(false);
+  const heroImageRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
     if (homePlanet?.image && currentPlanetKey) {
@@ -115,8 +117,8 @@ export function OverviewPage({
 
   const heroImage = overviewHeroImage(homePlanet, isWalletConnected, lastKnownHeroImage, currentPlanetKey);
 
-  useEffect(() => {
-    setHeroImageLoaded(false);
+  useLayoutEffect(() => {
+    setHeroImageLoaded(isImageReady(heroImageRef.current));
   }, [heroImage]);
 
   return (
@@ -132,7 +134,11 @@ export function OverviewPage({
               key={heroImage}
               alt=""
               className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${heroImageLoaded ? "opacity-100" : "opacity-0"}`}
-              onLoad={() => setHeroImageLoaded(true)}
+              imageRef={heroImageRef}
+              loading="eager"
+              onLoad={(event) => {
+                if (isImageReady(event.currentTarget)) setHeroImageLoaded(true);
+              }}
               sizes="hero"
               src={heroImage}
             />
