@@ -195,6 +195,10 @@ contract VeydriftGameTest is Test {
         vm.prank(admin);
         game.setMoonSystem(address(moons));
         vm.prank(admin);
+        game.setRandomnessEngine(address(randomness));
+        vm.prank(admin);
+        randomness.setRequesterAuthorization(address(game), true);
+        vm.prank(admin);
         randomness.setRequesterAuthorization(address(moons), true);
         vm.deal(player, 1 ether);
     }
@@ -1236,6 +1240,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.metal, 6_000);
 
         vm.warp(attackArrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 162);
         game.resolveFleetMission(attackMissionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(attackMissionId);
@@ -1521,6 +1526,8 @@ contract VeydriftGameTest is Test {
         );
 
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 1);
+        _fulfillAttackBattleRandomness(secondMissionId, 2);
         game.resolveFleetMission(missionId);
         game.resolveFleetMission(missionId);
         game.resolveFleetMission(secondMissionId);
@@ -1601,6 +1608,7 @@ contract VeydriftGameTest is Test {
         vm.prank(unrelated);
         game.startBuildingUpgrade(unrelatedPlanetId, Building.MetalMine);
 
+        _fulfillAttackBattleRandomness(missionId, 160);
         vm.prank(unrelated);
         game.resolveFleetMission(missionId);
         game.resolveFleetMission(missionId);
@@ -1701,6 +1709,7 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources memory raidCargo
         ) = _fleetMission(raidMissionId);
         vm.warp(raidArrivalAt);
+        _fulfillAttackBattleRandomness(raidMissionId, 456);
         game.resolveFleetMission(raidMissionId);
         VeydriftGameStorage.FleetMissionStatus raidStatus;
         (raidStatus, raidArrivalAt, raidReturnAt, raidCargo) = _fleetMission(raidMissionId);
@@ -1819,6 +1828,7 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
 
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 1);
         vm.expectEmit(true, true, true, false, address(game));
         emit FleetMissionReturnExposed(
             missionId, player, VeydriftGameStorage.FleetMissionStatus.Returning, 0, 0, 0, 0, 0, 0
@@ -1857,6 +1867,7 @@ contract VeydriftGameTest is Test {
         (VeydriftGameStorage.FleetMissionStatus status, uint64 arrivalAt,,) =
             _fleetMission(missionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 777);
         game.resolveFleetMission(missionId);
 
         VeydriftGameStorage.Resources memory cargo;
@@ -1890,6 +1901,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 778);
         game.resolveFleetMission(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
@@ -1988,6 +2000,7 @@ contract VeydriftGameTest is Test {
 
         (, uint64 arrivalAt,,) = _fleetMission(hostileMissionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(hostileMissionId, 802);
         game.resolveFleetMission(hostileMissionId);
 
         (VeydriftGameStorage.FleetMissionStatus hostileStatus,,,) = _fleetMission(hostileMissionId);
@@ -2093,6 +2106,7 @@ contract VeydriftGameTest is Test {
 
         (, uint64 arrivalAt,,) = _fleetMission(hostileMissionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(hostileMissionId, 803);
         game.resolveFleetMission(hostileMissionId);
 
         (VeydriftGameStorage.FleetMissionStatus hostileStatus,,,) = _fleetMission(hostileMissionId);
@@ -2143,6 +2157,7 @@ contract VeydriftGameTest is Test {
             uint8(pendingCounterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound)
         );
 
+        _fulfillAttackBattleRandomness(hostileMissionId, 805);
         game.resolveFleetMission(hostileMissionId);
         (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
             _fleetMission(counterplayMissionId);
@@ -2224,6 +2239,7 @@ contract VeydriftGameTest is Test {
 
         (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 900);
         game.resolveFleetMission(attackMissionId);
 
         (
@@ -2362,6 +2378,7 @@ contract VeydriftGameTest is Test {
 
         (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(attackArrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 902);
         game.resolveFleetMission(attackMissionId);
 
         (VeydriftGameStorage.FleetMissionStatus joinedStatus,, uint64 joinedReturnAt,) =
@@ -2409,6 +2426,7 @@ contract VeydriftGameTest is Test {
 
         (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 903);
         game.resolveFleetMission(attackMissionId);
 
         assertLt(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 100);
@@ -2435,6 +2453,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 779);
         game.resolveFleetMission(missionId);
 
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
@@ -2465,6 +2484,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 780);
         game.resolveFleetMission(missionId);
 
         VeydriftGameStorage.FleetMissionStatus status;
@@ -2498,6 +2518,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 781);
         game.resolveFleetMission(missionId);
 
         assertLt(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 100);
@@ -2506,7 +2527,7 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
     }
 
-    function testAttackBattleDerivesDeterministicBattleSeedFromOneRequestId() public {
+    function testAttackBattleIgnoresCallerRandomnessRequestIdAndBlocksPendingOracle() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
@@ -2526,21 +2547,27 @@ contract VeydriftGameTest is Test {
             requestId
         );
 
-        uint256 expectedSeed = uint256(
-            keccak256(
-                abi.encode(
-                    game.ATTACK_BATTLE_DOMAIN(),
-                    block.chainid,
-                    missionId,
-                    player,
-                    originPlanetId,
-                    targetPlanetId,
-                    requestId
-                )
-            )
-        );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        (,,,,,,,,,, uint256 actualRequestId) = game.fleetMission(missionId);
+        assertEq(actualRequestId, 1);
+        assertNotEq(actualRequestId, requestId);
+
+        bytes32 expectedPurposeHash =
+            keccak256(abi.encode(game.ATTACK_BATTLE_DOMAIN(), block.chainid, missionId));
+        RandomnessEngine.Request memory request = randomness.request(actualRequestId);
+        assertEq(request.requester, address(game));
+        assertEq(request.purposeHash, expectedPurposeHash);
+
         vm.warp(arrivalAt);
+        vm.expectRevert(
+            abi.encodeWithSelector(RandomnessEngine.PendingRandomness.selector, actualRequestId)
+        );
+        game.resolveFleetMission(missionId);
+
+        uint256 randomWord = 42;
+        vm.prank(fulfiller);
+        randomness.fulfillRandomness(actualRequestId, randomWord);
+        uint256 expectedSeed = randomWord;
         vm.expectEmit(true, true, true, true, address(game));
         emit AttackBattleResolved(
             missionId,
@@ -2640,6 +2667,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(attackArrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 1);
         game.resolveFleetMission(attackMissionId);
 
         (uint128 debrisMetal, uint128 debrisCrystal) = game.debrisField(targetPlanetId);
@@ -2701,6 +2729,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(attackArrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 2);
         game.resolveFleetMission(attackMissionId);
 
         (uint128 debrisMetal, uint128 debrisCrystal) = game.debrisField(targetPlanetId);
@@ -2757,6 +2786,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(attackArrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 3);
         game.resolveFleetMission(attackMissionId);
 
         (uint128 debrisMetal, uint128 debrisCrystal) = game.debrisField(targetPlanetId);
@@ -2775,7 +2805,6 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
-        vm.prank(defender);
         moons.createMoon(targetPlanetId);
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 120);
@@ -2794,6 +2823,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(attackArrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 4);
         game.resolveFleetMission(attackMissionId);
 
         assertEq(
@@ -2859,6 +2889,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 5);
         game.resolveFleetMission(missionId);
 
         assertGt(spaceDock.repairableShipCount(targetPlanetId, Ship.LightFighter), 0);
@@ -2999,6 +3030,7 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 6);
         vm.prank(defender);
         game.resolveFleetMission(missionId);
 
@@ -3362,6 +3394,18 @@ contract VeydriftGameTest is Test {
         )
     {
         (status,,,,,, arrivalAt, returnAt,, cargo,) = game.fleetMission(missionId);
+    }
+
+    function _fulfillAttackBattleRandomness(uint256 missionId, uint256 randomWord) internal {
+        (, VeydriftGameStorage.FleetMissionType missionType,,,,,,,,, uint256 requestId) =
+            game.fleetMission(missionId);
+        if (missionType != VeydriftGameStorage.FleetMissionType.Attack) return;
+
+        RandomnessEngine.Request memory request = randomness.request(requestId);
+        if (request.fulfilledAt != 0) return;
+
+        vm.prank(fulfiller);
+        randomness.fulfillRandomness(requestId, randomWord);
     }
 
     function _planetDistanceForTest(uint256 originPlanetId, uint256 destinationPlanetId)

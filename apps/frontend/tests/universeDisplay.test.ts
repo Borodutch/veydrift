@@ -11,6 +11,7 @@ import { buildingCatalog, shipCatalog } from "../src/playableMvp";
 import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
+  PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
   formatMoonChanceLabel,
   formatMissionPreview,
@@ -322,6 +323,7 @@ describe("tester universe display data", () => {
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
     ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
+    expect(PUBLIC_INTEL_SUMMARY_LABEL).toBe("Public intel");
     expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
       Object.keys(emptyMissionShips())
     );

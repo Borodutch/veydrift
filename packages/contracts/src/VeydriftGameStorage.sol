@@ -233,6 +233,7 @@ abstract contract VeydriftGameStorage {
     mapping(bytes32 playerPairKey => bool enabled) internal _attackProtectionExemptions;
     address internal _allianceSystem;
     mapping(uint256 hostileMissionId => uint256[] missionIds) internal _fleetCounterplayMissions;
+    address internal _randomnessEngine;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -295,6 +296,7 @@ abstract contract VeydriftGameStorage {
     error PlanetHasActiveFleetMissions();
     error AttackJoinCutoffPassed(uint64 cutoffAt);
     error CannotJoinOwnAttackTarget();
+    error RandomnessEngineUnset();
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -446,6 +448,9 @@ abstract contract VeydriftGameStorage {
         uint32 reaper,
         uint32 pathfinder
     );
+    event RandomnessEngineUpdated(
+        address indexed oldRandomnessEngine, address indexed newRandomnessEngine
+    );
     event FleetMissionRecalled(
         uint256 indexed missionId, address indexed owner, uint64 returnAt, uint128 recallCost
     );
@@ -572,6 +577,10 @@ abstract contract VeydriftGameStorage {
         onlyOwner
     {
         _attackProtectionExemptions[_playerPairKey(attacker, defender)] = enabled;
+    }
+
+    function _attackBattlePurposeHash(uint256 missionId) internal view returns (bytes32) {
+        return keccak256(abi.encode(ATTACK_BATTLE_DOMAIN, block.chainid, missionId));
     }
 
     function _playerPairKey(address attacker, address defender) internal pure returns (bytes32) {

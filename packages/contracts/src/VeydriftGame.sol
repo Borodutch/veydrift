@@ -171,6 +171,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         _moonSystem = nextMoonSystem;
     }
 
+    function setRandomnessEngine(address nextRandomnessEngine) external onlyOwner {
+        address oldRandomnessEngine = _randomnessEngine;
+        _randomnessEngine = nextRandomnessEngine;
+        emit RandomnessEngineUpdated(oldRandomnessEngine, nextRandomnessEngine);
+    }
+
     function setSpaceDockSystem(address) external {
         _delegateToPlayModule();
     }
@@ -290,6 +296,10 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function debrisField(uint256) external returns (uint128, uint128) {
         _delegateToPlanetManagementModule();
+    }
+
+    function randomnessEngine() external view returns (address) {
+        return _randomnessEngine;
     }
 
     function activeBuildingConstruction(uint256 planetId)

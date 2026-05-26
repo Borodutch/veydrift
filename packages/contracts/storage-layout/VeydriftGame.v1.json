@@ -185,6 +185,12 @@
       "offset": 0,
       "slot": "32",
       "type": "mapping(uint256 => uint256[])"
+    },
+    {
+      "label": "_randomnessEngine",
+      "offset": 0,
+      "slot": "33",
+      "type": "address"
     }
   ],
   "structs": {

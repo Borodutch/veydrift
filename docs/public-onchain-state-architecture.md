@@ -14,9 +14,11 @@ constraint, not a temporary MVP shortcut.
   they must not hold authoritative hidden game state.
 - Veydrift will not build a privacy, zk, committed-root, private-preimage,
   hidden-state oracle, or fog-of-war roadmap for gameplay state.
-- Veydrift scope excludes espionage. Espionage-named catalog items may remain as
-  legacy IDs or research prerequisites, but there is no probe scan mechanic,
-  hidden enemy-state reveal, or espionage report system to implement.
+- Veydrift scope excludes espionage. VEY-KANEO-196 formalizes this as a product
+  decision rather than a temporary implementation gap. Espionage-named catalog
+  items may remain as legacy IDs or research prerequisites, but there is no
+  probe scan mechanic, hidden enemy-state reveal, or espionage report system to
+  implement.
 
 ## Canonical Public State
 
@@ -114,6 +116,8 @@ is explicit public counterplay:
   return-fleet risk.
 - VEY-KANEO-133 implements interplanetary missile attacks and missile silo
   mechanics.
+- VEY-KANEO-196 records the explicit product decision to exclude classic
+  espionage and hidden-intel parity.
 
 Future fleet and combat work should extend these public mechanics instead of
 adding private state.

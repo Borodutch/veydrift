@@ -36,7 +36,7 @@ describe("MissionControlPage", () => {
     ]);
   });
 
-  test("renders fleet operations from visibility data without unsupported fake actions", () => {
+  test("renders fleet operations from visibility data with explicit espionage exclusion copy", () => {
     const page = MissionControlPage({
       actionState: { status: "idle" },
       canTransact: true,
@@ -63,8 +63,10 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Transport # 9");
     expect(text).toContain("Complete return");
-    expect(text).not.toContain("Espionage");
-    expect(text).not.toContain("Spy");
+    expect(text).toContain("No Spy Reports");
+    expect(text).toContain("Target intel is public contract state");
+    expect(text).not.toContain("Espionage mission");
+    expect(text).not.toContain("Scan mission");
   });
 });
 

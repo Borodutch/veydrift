@@ -55,6 +55,8 @@ contract Deploy is ResourceTokenDeployment {
         game.setResourceTokens(metalToken, crystalToken, deuteriumToken);
         game.setAllianceSystem(allianceSystemAddress);
         game.setMoonSystem(moonSystemAddress);
+        game.setRandomnessEngine(randomnessEngineAddress);
+        randomnessEngine.setRequesterAuthorization(gameAddress, true);
         randomnessEngine.setRequesterAuthorization(moonSystemAddress, true);
         emit VeydriftDeployment(
             gameAddress,

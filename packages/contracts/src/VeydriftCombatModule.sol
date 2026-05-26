@@ -1188,19 +1188,28 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         view
         returns (uint256)
     {
-        return uint256(
-            keccak256(
-                abi.encode(
-                    ATTACK_BATTLE_DOMAIN,
-                    block.chainid,
-                    missionId,
-                    mission.owner,
-                    mission.originPlanetId,
-                    mission.targetPlanetId,
-                    mission.randomnessRequestId
-                )
-            )
+        uint256 randomWord = _consumeAttackBattleRandomness(
+            mission.randomnessRequestId, _attackBattlePurposeHash(missionId)
         );
+        return randomWord;
+    }
+
+    function _consumeAttackBattleRandomness(uint256 requestId, bytes32 purposeHash)
+        private
+        view
+        returns (uint256 randomWord)
+    {
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, 0x38d367a300000000000000000000000000000000000000000000000000000000)
+            mstore(add(ptr, 0x04), requestId)
+            mstore(add(ptr, 0x24), purposeHash)
+            if iszero(staticcall(gas(), sload(_randomnessEngine.slot), ptr, 0x44, ptr, 0x20)) {
+                returndatacopy(ptr, 0, returndatasize())
+                revert(ptr, returndatasize())
+            }
+            randomWord := mload(ptr)
+        }
     }
 
     function _battleDebris(Resources memory attackerLosses, Resources memory defenderLosses)
