@@ -15,7 +15,7 @@ contract VeydriftShipCatalogTest is Test {
     bytes32 private constant DEP_REAPER_ENERGY_5 = "ENERGY_5";
     bytes32 private constant DEP_PATHFINDER_SHIELDING_4 = "SHIELDING_4";
 
-    function testVanillaOGameRepresentativeShipCostsAndCargo() public pure {
+    function testCanonicalVeydriftRepresentativeShipCostsAndCargo() public pure {
         _assertShip(Ship.SmallCargo, 2_000, 2_000, 0, 5_000);
         _assertShip(Ship.LightFighter, 3_000, 1_000, 0, 50);
         _assertShip(Ship.Cruiser, 20_000, 7_000, 2_000, 800);
@@ -26,7 +26,7 @@ contract VeydriftShipCatalogTest is Test {
         _assertShip(Ship.Pathfinder, 8_000, 15_000, 8_000, 12_000);
     }
 
-    function testVanillaOGameRepresentativeShipRequirements() public {
+    function testCanonicalVeydriftRepresentativeShipRequirements() public {
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, DEP_SHIPYARD_2)
         );
@@ -70,7 +70,7 @@ contract VeydriftShipCatalogTest is Test {
         _requireShip(Ship.Pathfinder, 5, 0, 0, 2, 0, 0, 0, 0, 4, 0, 0);
     }
 
-    function testShipDurationUsesOGameShipyardAndNaniteFormula() public pure {
+    function testShipDurationUsesVeydriftShipyardAndNaniteFormula() public pure {
         assertEq(VeydriftFormulas.unitDuration(2, 0, 2_000, 2_000, 0, 1, 60), 1_920);
         assertEq(VeydriftFormulas.unitDuration(7, 0, 45_000, 15_000, 0, 1, 60), 10_800);
         assertEq(VeydriftFormulas.unitDuration(7, 2, 45_000, 15_000, 0, 1, 60), 2_700);

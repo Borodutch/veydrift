@@ -1069,7 +1069,7 @@ describe("walletFlow", () => {
       generatedAt: "2026-05-22T00:00:00.000Z",
       formula: {
         pointsDivisor: "1000",
-        summary: "Classic score"
+        summary: "Veydrift score"
       },
       rankings: {
         total: [],

@@ -66,7 +66,7 @@ library VeydriftFormulas {
             + _scaledLevelValue(20, deuteriumLevel);
         producedEnergy = _scaledLevelValue(20, solarLevel)
             + fusionReactorEnergyProduction(fusionLevel, energyTechnologyLevel);
-        // OGame-style shortage factor: full production when energy is sufficient,
+        // Veydrift shortage factor: full production when energy is sufficient,
         // otherwise floor(produced / required) in basis points. Settlement uses
         // the building state for each elapsed segment, so later power upgrades do
         // not retroactively improve already-settled shortage periods.

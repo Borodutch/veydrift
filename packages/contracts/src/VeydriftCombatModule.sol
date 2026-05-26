@@ -423,7 +423,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             targets, uint256(keccak256(abi.encode(seed, round, side, unit))) % groups
         );
         uint32 targetCount = _missionShipQuantity(targets, targetShip);
-        uint32 lost = _classicShipLossCount(
+        uint32 lost = _deterministicShipLossCount(
             targetShip,
             targetCount,
             uint256(firingCount) * VeydriftCatalog.shipRapidfireAgainstShip(firingShip, targetShip),
@@ -458,7 +458,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             targets, uint256(keccak256(abi.encode(seed, round, side, unit))) % groups
         );
         uint32 targetCount = _missionShipQuantity(targets, targetShip);
-        uint32 lost = _classicShipLossCount(
+        uint32 lost = _deterministicShipLossCount(
             targetShip,
             targetCount,
             firingCount,
@@ -522,7 +522,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             uint32 count = _shipCounts[planetId][ship];
             if (count != 0) {
                 if (ordinal == 0) {
-                    uint32 lost = _classicPlanetShipLossCount(
+                    uint32 lost = _deterministicPlanetShipLossCount(
                         planetId,
                         ship,
                         count,
@@ -554,7 +554,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             uint32 count = _defenseCounts[planetId][defense];
             if (count != 0) {
                 if (ordinal == 0) {
-                    uint32 lost = _classicDefenseLossCount(
+                    uint32 lost = _deterministicDefenseLossCount(
                         planetId,
                         defense,
                         count,
@@ -606,7 +606,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     uint32 count = _missionShipQuantity(counterplay.ships, targetShip);
                     if (count != 0) {
                         if (ordinal == 0) {
-                            uint32 lost = _classicShipLossCount(
+                            uint32 lost = _deterministicShipLossCount(
                                 targetShip,
                                 count,
                                 uint256(firingCount)
@@ -730,7 +730,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
-    function _classicPlanetShipLossCount(
+    function _deterministicPlanetShipLossCount(
         uint256 planetId,
         Ship ship,
         uint32 count,
@@ -742,10 +742,11 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 unit
     ) private view returns (uint32) {
         address owner = _planets[planetId].owner;
-        return _classicShipLossCount(ship, count, shots, attack, owner, seed, round, side, unit);
+        return
+            _deterministicShipLossCount(ship, count, shots, attack, owner, seed, round, side, unit);
     }
 
-    function _classicShipLossCount(
+    function _deterministicShipLossCount(
         Ship ship,
         uint32 count,
         uint256 shots,
@@ -758,7 +759,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     ) private view returns (uint32) {
         uint16 shielding = _technologyLevels[owner][Technology.Shielding];
         uint16 armor = _technologyLevels[owner][Technology.Armor];
-        return _classicLossCount(
+        return _deterministicLossCount(
             count,
             shots,
             attack,
@@ -771,7 +772,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         );
     }
 
-    function _classicDefenseLossCount(
+    function _deterministicDefenseLossCount(
         uint256 planetId,
         Defense defense,
         uint32 count,
@@ -785,7 +786,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         address owner = _planets[planetId].owner;
         uint16 shielding = _technologyLevels[owner][Technology.Shielding];
         uint16 armor = _technologyLevels[owner][Technology.Armor];
-        return _classicLossCount(
+        return _deterministicLossCount(
             count,
             shots,
             attack,
@@ -798,7 +799,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         );
     }
 
-    function _classicLossCount(
+    function _deterministicLossCount(
         uint32 count,
         uint256 shots,
         uint256 attack,

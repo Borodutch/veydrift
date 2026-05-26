@@ -15,7 +15,7 @@ galaxyId:systemId:slot
 
 - `galaxyId` is a non-negative integer.
 - `systemId` is a positive integer within that galaxy.
-- `slot` is the OGame-style planet position from `1` through `15`.
+- `slot` is the Veydrift planet position from `1` through `15`.
 
 IDs are generated from domain-separated strings:
 
@@ -30,7 +30,7 @@ global list or mutable counter.
 ## Determinism
 
 Canonical values are derived with a 64-bit FNV-1a hash implemented with
-JavaScript `BigInt`. Ranges are selected with integer modulo math. OGame's
+JavaScript `BigInt`. Ranges are selected with integer modulo math. Veydrift's
 deuterium formula is represented in basis points:
 
 ```text
@@ -40,12 +40,12 @@ deuteriumFormulaBps = 12800 - 20 * maxTemperatureC
 That is the integer form of `10 * L * 1.1^L * (-0.002 * T + 1.28)` for the
 temperature-dependent multiplier, excluding the mine-level term.
 
-## OGame Approximations
+## Veydrift Ranges
 
-The field and temperature ranges use the OGame Wiki Colonization table for slots
-1-15. That table gives minimum, average, and maximum fields plus the minimum,
-average, and maximum upper temperature for each slot. Veydrift chooses values in
-those ranges with a deterministic centered roll around the listed average.
+The field and temperature ranges use Veydrift's canonical slot bands for slots
+1-15. The table gives minimum, average, and maximum fields plus the minimum,
+average, and maximum upper temperature for each slot. Veydrift chooses values
+in those ranges with a deterministic centered roll around the listed average.
 
 The generated `minTemperatureC` is always `maxTemperatureC - 40`, matching the
 wiki note that the displayed planet temperature range spans 40 degrees.
@@ -57,20 +57,9 @@ Position bonuses follow the wiki values:
   bonuses.
 - colder outer planets get higher `deuteriumFormulaBps`.
 
-Planet biomes use the OGame Position page's redesigned-universe slot pattern:
+Planet biomes use Veydrift's redesigned-universe slot pattern:
 odd and even systems have predictable slot-to-type mappings for desert, dry,
 normal, jungle, water, ice, and gas planets.
 
-These are close OGame-style approximations, not a claim of exact server parity.
-The original game can apply class, alliance, and universe-setting bonuses after
-colonization; Veydrift keeps the base deterministic metadata canonical and can
-layer game-specific modifiers separately.
-
-## Sources
-
-- OGame Wiki Colonization:
-  https://ogame.fandom.com/wiki/Colonization
-- OGame Wiki Position:
-  https://ogame.fandom.com/wiki/Position
-- OGame Wiki Temperature:
-  https://ogame.fandom.com/wiki/Temperature
+Veydrift keeps the base deterministic metadata canonical and can layer
+game-specific modifiers separately.

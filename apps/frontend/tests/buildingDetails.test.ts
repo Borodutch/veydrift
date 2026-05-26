@@ -345,7 +345,7 @@ describe("building detail helpers", () => {
     expect(rows.map((row) => row.durationSeconds)).toEqual([360, 720]);
   });
 
-  test("builds Missile Silo rows with OGame missile slot capacity", () => {
+  test("builds Missile Silo rows with Veydrift missile slot capacity", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
