@@ -173,7 +173,7 @@ function StatusPanel({
   }
 
   if (error) {
-    return <Notice tone="danger">Shipyard state could not be loaded from the backend. Refresh or try again after deployment sync.</Notice>;
+    return <Notice tone="danger">{error}</Notice>;
   }
 
   if (shipyardState?.productionAvailable === false) {

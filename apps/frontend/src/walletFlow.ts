@@ -1885,6 +1885,10 @@ async function highscoreHttpFailureMessage(response: Response): Promise<string> 
     return "Rankings are temporarily unavailable because the game API is not fully configured. Retry after the backend configuration is restored.";
   }
 
+  if (response.status === 503 && errorCode === "highscores_unavailable") {
+    return "Rankings are temporarily unavailable because the game API could not read current chain data. Retry in a moment.";
+  }
+
   if (response.status >= 500) {
     return `Rankings are temporarily unavailable because the game API returned ${response.status}. Retry in a moment.`;
   }

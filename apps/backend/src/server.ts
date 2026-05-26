@@ -365,7 +365,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           }
         );
       } catch (error) {
-        return errorResponse(error, 400);
+        return highscoreFailureResponse(error);
       }
     }
 
@@ -399,7 +399,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           }
         );
       } catch (error) {
-        return errorResponse(error, 400);
+        return highscoreFailureResponse(error);
       }
     }
 
@@ -723,6 +723,27 @@ function requireHighscoreReader(chainReader: ChainReader | undefined, problems: 
   return ready as HighscoreReader;
 }
 
+function highscoreFailureResponse(error: unknown): Response {
+  if (isRpcTransportError(error)) {
+    return Response.json(
+      {
+        error: "highscores_unavailable",
+        detail: error instanceof Error ? error.message : "RPC request failed."
+      },
+      {
+        headers: corsHeaders,
+        status: 503
+      }
+    );
+  }
+
+  return errorResponse(error, 400);
+}
+
+function isRpcTransportError(error: unknown): boolean {
+  return error instanceof Error && /^RPC(?: HTTP)?\b/.test(error.message);
+}
+
 type RankedHighscoreEntry = HighscoreEntry & {
   rank: number;
 };
@@ -774,15 +795,33 @@ function unavailableResponse(problems: ConfigProblem[]): Response {
 }
 
 function errorResponse(error: unknown, status: number): Response {
+  const responseStatus = statusForError(error, status);
   return Response.json(
     {
       error: error instanceof Error ? error.message : "Request failed."
     },
     {
       headers: corsHeaders,
-      status
+      status: responseStatus
     }
   );
+}
+
+function statusForError(error: unknown, fallback: number): number {
+  if (!(error instanceof Error)) return fallback;
+
+  if (isRateLimitedRpcError(error)) return 503;
+  if (isUpstreamRpcError(error)) return 502;
+
+  return fallback;
+}
+
+function isRateLimitedRpcError(error: Error): boolean {
+  return /RPC HTTP (429|503)|over rate limit|rate limit|too many requests/i.test(error.message);
+}
+
+function isUpstreamRpcError(error: Error): boolean {
+  return /^RPC (HTTP \d+|-?\d+:)/i.test(error.message);
 }
 
 function selectedPlanetId(url: URL): bigint | undefined {
