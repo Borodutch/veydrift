@@ -2698,7 +2698,6 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
-        vm.prank(defender);
         moons.createMoon(targetPlanetId);
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 120);
