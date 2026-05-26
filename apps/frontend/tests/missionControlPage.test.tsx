@@ -55,10 +55,15 @@ describe("MissionControlPage", () => {
       onRecall: () => undefined,
       onRefresh: () => undefined,
       onResolve: () => undefined,
+      protectedResources: { metal: "5000", crystal: "3000", deuterium: "1000" },
+      raidableResources: { metal: "1200", crystal: "800", deuterium: "0" },
     });
     const text = visibleText(page);
 
     expect(text).toContain("Fleet Operations");
+    expect(text).toContain("Protected Storage");
+    expect(text).toContain("Shielded 5,000 Metal 3,000 Crystal 1,000 Deut.");
+    expect(text).toContain("Raid-exposed 1,200 Metal 800 Crystal 0 Deut.");
     expect(text).toContain("Active missions 3");
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Transport # 9");
