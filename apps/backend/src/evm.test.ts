@@ -151,6 +151,53 @@ describe("moon chance report event decoding", () => {
       }
     ]);
   });
+
+  test("shrinks log chunks when the fallback range is still too wide", async () => {
+    const calls: Array<{ method: string; params: unknown[] }> = [];
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          calls.push({ method, params });
+          if (method === "eth_blockNumber") {
+            return "0x8fc" as T;
+          }
+
+          const [filter] = params as [{ fromBlock: string; toBlock: string }];
+          if (filter.toBlock === "latest") {
+            throw new Error("RPC HTTP 400");
+          }
+
+          const fromBlock = BigInt(filter.fromBlock);
+          const toBlock = BigInt(filter.toBlock);
+          if (toBlock - fromBlock > 1_000n) {
+            throw new Error("RPC HTTP 400");
+          }
+
+          return [] as T;
+        }
+      }
+    );
+
+    await expect(reader.listSettledPlanetEvents(100n, "latest")).resolves.toEqual([]);
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "eth_getLogs",
+      "eth_blockNumber",
+      "eth_getLogs",
+      "eth_getLogs",
+      "eth_getLogs",
+      "eth_getLogs"
+    ]);
+    expect(calls[3]?.params).toEqual([
+      {
+        address: readerConfig.gameContractAddress,
+        fromBlock: "0x64",
+        toBlock: "0x44b",
+        topics: expect.any(Array)
+      }
+    ]);
+  });
 });
 
 describe("fleet mission visibility", () => {

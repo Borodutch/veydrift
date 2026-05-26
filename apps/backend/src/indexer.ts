@@ -88,11 +88,9 @@ export class SettlementIndexer {
   }
 
   async rebuild(): Promise<IndexerSnapshot> {
-    const [events, debrisEvents, moonChanceEvents] = await Promise.all([
-      this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest"),
-      this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest"),
-      this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest")
-    ]);
+    const events = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    const debrisEvents = await this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest");
+    const moonChanceEvents = await this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest");
     this.planets.clear();
     this.debrisFields.clear();
     this.moonChanceReports.clear();
