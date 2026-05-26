@@ -127,7 +127,7 @@ describe("moon chance report event decoding", () => {
             throw new Error("RPC -32602: query exceeds max block range 2000");
           }
           if (method === "eth_blockNumber") {
-            return "0x1000" as T;
+            return "0x70" as T;
           }
           return [] as T;
         }
@@ -146,10 +146,60 @@ describe("moon chance report event decoding", () => {
       {
         address: readerConfig.gameContractAddress,
         fromBlock: "0x64",
-        toBlock: "0x833",
+        toBlock: "0x6d",
         topics: expect.any(Array)
       }
     ]);
+    expect(calls[3]?.params).toEqual([
+      {
+        address: readerConfig.gameContractAddress,
+        fromBlock: "0x6e",
+        toBlock: "0x70",
+        topics: expect.any(Array)
+      }
+    ]);
+  });
+
+  test("splits log chunks again when an RPC rejects a chunk", async () => {
+    const calls: Array<{ method: string; params: unknown[] }> = [];
+    const failedRanges = new Set(["0x64:0x6d"]);
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          calls.push({ method, params });
+          if (calls.length === 1) {
+            throw new Error("RPC HTTP 400");
+          }
+          if (method === "eth_blockNumber") {
+            return "0x6d" as T;
+          }
+          if (method === "eth_getLogs") {
+            const [filter] = params as [{ fromBlock: string; toBlock: string }];
+            const range = `${filter.fromBlock}:${filter.toBlock}`;
+            if (failedRanges.delete(range)) {
+              throw new Error("RPC HTTP 400");
+            }
+            return [] as T;
+          }
+
+          throw new Error(`Unexpected ${method}`);
+        }
+      }
+    );
+
+    await expect(reader.listSettledPlanetEvents(100n, "latest")).resolves.toEqual([]);
+
+    const logRanges = calls
+      .filter((call) => call.method === "eth_getLogs")
+      .slice(1)
+      .map((call) => {
+        const [filter] = call.params as [{ fromBlock: string; toBlock: string }];
+        return `${filter.fromBlock}:${filter.toBlock}`;
+      });
+    expect(logRanges).toContain("0x64:0x6d");
+    expect(logRanges).toContain("0x64:0x68");
+    expect(logRanges).toContain("0x69:0x6d");
   });
 
   test("shrinks log chunks when the fallback range is still too wide", async () => {
@@ -160,7 +210,7 @@ describe("moon chance report event decoding", () => {
         async request<T>(method: string, params: unknown[]): Promise<T> {
           calls.push({ method, params });
           if (method === "eth_blockNumber") {
-            return "0x8fc" as T;
+            return "0x70" as T;
           }
 
           const [filter] = params as [{ fromBlock: string; toBlock: string }];
@@ -170,7 +220,7 @@ describe("moon chance report event decoding", () => {
 
           const fromBlock = BigInt(filter.fromBlock);
           const toBlock = BigInt(filter.toBlock);
-          if (toBlock - fromBlock > 1_000n) {
+          if (toBlock - fromBlock > 4n) {
             throw new Error("RPC HTTP 400");
           }
 
@@ -181,22 +231,14 @@ describe("moon chance report event decoding", () => {
 
     await expect(reader.listSettledPlanetEvents(100n, "latest")).resolves.toEqual([]);
 
-    expect(calls.map((call) => call.method)).toEqual([
-      "eth_getLogs",
-      "eth_blockNumber",
-      "eth_getLogs",
-      "eth_getLogs",
-      "eth_getLogs",
-      "eth_getLogs"
-    ]);
-    expect(calls[3]?.params).toEqual([
-      {
-        address: readerConfig.gameContractAddress,
-        fromBlock: "0x64",
-        toBlock: "0x44b",
-        topics: expect.any(Array)
-      }
-    ]);
+    const logRanges = calls
+      .filter((call) => call.method === "eth_getLogs")
+      .slice(1)
+      .map((call) => {
+        const [filter] = call.params as [{ fromBlock: string; toBlock: string }];
+        return `${filter.fromBlock}:${filter.toBlock}`;
+      });
+    expect(logRanges).toEqual(["0x64:0x6d", "0x64:0x68", "0x69:0x6d", "0x6e:0x70"]);
   });
 
   test("decodes alliance profiles returned as dynamic ABI tuples", async () => {

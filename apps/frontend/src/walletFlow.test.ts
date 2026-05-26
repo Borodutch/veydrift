@@ -1183,6 +1183,26 @@ describe("walletFlow", () => {
     }
   });
 
+  test("explains temporary highscore chain read failures", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ error: "highscores_unavailable", detail: "RPC HTTP 429" }),
+      {
+        headers: { "content-type": "application/json" },
+        status: 503,
+      }
+    )) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
+        "Rankings are temporarily unavailable because the game API could not read current chain data. Retry in a moment."
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("explains highscore network and CORS failures instead of exposing Failed to fetch", async () => {
     const originalFetch = globalThis.fetch;
 
