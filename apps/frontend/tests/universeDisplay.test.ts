@@ -16,6 +16,7 @@ import {
   formatMissionPreview,
   formatGalaxyOccupancySource,
   formatGalaxyOccupancySummary,
+  PUBLIC_INTEL_NOTICE,
   galaxyMissionFuelCost,
   galaxyMissionTravelSeconds
 } from "../src/components/GalaxyView";
@@ -339,6 +340,10 @@ describe("tester universe display data", () => {
       enabled: false,
       reason: "Requires an interplanetary missile on your active planet.",
     });
+
+    expect(PUBLIC_INTEL_NOTICE).toMatch(/public onchain state/i);
+    expect(PUBLIC_INTEL_NOTICE).toMatch(/no espionage probes/i);
+    expect(PUBLIC_INTEL_NOTICE).toMatch(/hidden spy reports/i);
   });
 
   test("visible MVP catalog uses scoped gameplay assets", () => {

@@ -30,6 +30,8 @@ import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 const SMALL_CARGO_CAPACITY = 5_000;
 const SMALL_CARGO_SHIP_ID = 0;
+export const PUBLIC_INTEL_NOTICE =
+  "All target intel is public onchain state. No espionage probes, hidden spy reports, or fog of war.";
 
 type MissionResources = {
   metal?: number;
@@ -234,6 +236,9 @@ export function GalaxyView({
           <h2 className="text-lg font-semibold text-white">Galaxy</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             System [{galaxy}:{system}:1-{POSITION_COUNT}]
+          </p>
+          <p className="mt-1 max-w-2xl text-xs text-slate-500">
+            {PUBLIC_INTEL_NOTICE}
           </p>
         </div>
 

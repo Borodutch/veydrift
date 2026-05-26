@@ -17,6 +17,8 @@ constraint, not a temporary MVP shortcut.
 - Veydrift scope excludes espionage. Espionage-named catalog items may remain as
   legacy IDs or research prerequisites, but there is no probe scan mechanic,
   hidden enemy-state reveal, or espionage report system to implement.
+- VEY-KANEO-196 formalizes this as an intentional non-parity decision against
+  classic OGame espionage and hidden-intel mechanics.
 
 ## Canonical Public State
 
@@ -114,6 +116,8 @@ is explicit public counterplay:
   return-fleet risk.
 - VEY-KANEO-133 implements interplanetary missile attacks and missile silo
   mechanics.
+- VEY-KANEO-196 records the explicit product decision to exclude classic OGame
+  espionage probes, hidden spy reports, and hidden-intel parity.
 
 Future fleet and combat work should extend these public mechanics instead of
 adding private state.
