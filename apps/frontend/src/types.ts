@@ -30,7 +30,14 @@ export interface DebrisField {
   crystal: number;
 }
 
-export type MoonChanceStatus = "pending" | "created" | "not_created" | "existing_moon_skipped";
+export type MoonChanceStatus =
+  | "pending"
+  | "created"
+  | "not_created"
+  | "existing_moon_skipped"
+  | "moon_destruction_pending"
+  | "moon_destroyed"
+  | "moon_survived";
 
 export interface MoonChanceReport {
   battleId: string;
@@ -42,6 +49,11 @@ export interface MoonChanceReport {
   crystalDebris?: string;
   randomnessRequestId?: string;
   moonCreated?: boolean;
+  moonDestroyed?: boolean;
+  deathstarsDestroyed?: boolean;
+  deathstars?: number;
+  moonDestructionChanceBps?: number;
+  deathstarDestructionChanceBps?: number;
   moonFields?: number;
   moonDiameterKm?: number;
 }
