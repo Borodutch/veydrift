@@ -1039,6 +1039,83 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    function testInterplanetaryMissileAttackRejectsSameOwnerTargetPlanet() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(originPlanetId, 9);
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(colonyPlanetId, 1, 104, 9);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 1);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.SelfAttack.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, colonyPlanetId, Defense.RocketLauncher, 1
+        );
+
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 1);
+    }
+
+    function testInterplanetaryMissileAttackRejectsSameAllianceTargetPlanet() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedMissileAttackPlanets();
+        uint256 allianceId = _createAlliance(defender);
+        vm.prank(defender);
+        allianceSystem.inviteMember(allianceId, player);
+        vm.prank(player);
+        allianceSystem.acceptInvite(allianceId);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.SameAllianceAttack.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 1);
+    }
+
+    function testInterplanetaryMissileAttackRejectsProtectedDefender() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _setTechnologyLevel(player, Technology.Graviton, 100);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.AttackScoreProtection.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 1);
+    }
+
+    function testInterplanetaryMissileAttackRecordsBashingWindow() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 7);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 10);
+
+        for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW; i++) {
+            vm.prank(player);
+            game.launchInterplanetaryMissileAttack(
+                originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+            );
+        }
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.AttackBashingLimitReached.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 1);
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 4);
+    }
+
     function testRiftDepositRequiresContractGates() public {
         vm.expectRevert(VeydriftGameStorage.NoPlanet.selector);
         game.depositMarketResource(1, Resource.Metal, 1);
