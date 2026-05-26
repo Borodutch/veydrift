@@ -13,8 +13,10 @@ library VeydriftAntiRaidPrimitives {
     uint32 public constant MIN_RECALL_SECONDS = 60;
     uint16 public constant RECALL_FUEL_REFUND_BPS = 0;
 
-    uint16 public constant BASE_RAID_LOOT_BPS = 1_000;
-    uint16 public constant PROTECTED_STORAGE_BPS = 5_000;
+    uint16 public constant BASE_RAID_LOOT_BPS = 5_000;
+    uint16 public constant HONORABLE_RAID_LOOT_BPS = 7_500;
+    uint16 public constant BANDIT_RAID_LOOT_BPS = 10_000;
+    uint16 public constant PROTECTED_STORAGE_BPS = 0;
     uint16 public constant WRECK_FIELD_RECOVERY_BPS = 3_000;
     uint16 public constant DEFENSE_REPAIR_BPS = 7_000;
 
@@ -24,8 +26,12 @@ library VeydriftAntiRaidPrimitives {
     uint32 public constant BASHING_WINDOW_SECONDS = 24 hours;
     uint8 public constant MAX_ATTACKS_PER_BASHING_WINDOW = 6;
 
-    uint256 public constant NEWBIE_PROTECTION_MIN_DEFENDER_SCORE = 5_000;
-    uint16 public constant NEWBIE_PROTECTION_MAX_ATTACKER_SCORE_BPS = 50_000;
+    uint256 public constant NEWBIE_PROTECTION_LOW_SCORE = 50_000;
+    uint256 public constant NEWBIE_PROTECTION_HIGH_SCORE = 500_000;
+    uint32 public constant NEWBIE_PROTECTION_LOW_RATIO_BPS = 50_000;
+    uint32 public constant NEWBIE_PROTECTION_HIGH_RATIO_BPS = 100_000;
+    uint64 public constant PLAYER_INACTIVE_SECONDS = 7 days;
+    int256 public constant BANDIT_HONOR_THRESHOLD = -500;
 
     function fleetSlotLimit(uint16 computerLevel) internal pure returns (uint256) {
         return BASE_FLEET_SLOTS + uint256(computerLevel) * FLEET_SLOTS_PER_COMPUTER_LEVEL;
@@ -99,14 +105,47 @@ library VeydriftAntiRaidPrimitives {
         return !warException && attacksInWindow >= MAX_ATTACKS_PER_BASHING_WINDOW;
     }
 
+    function newbieProtectionRatioBps(uint256 score) internal pure returns (uint32) {
+        if (score < NEWBIE_PROTECTION_LOW_SCORE) return NEWBIE_PROTECTION_LOW_RATIO_BPS;
+        if (score < NEWBIE_PROTECTION_HIGH_SCORE) return NEWBIE_PROTECTION_HIGH_RATIO_BPS;
+        return 0;
+    }
+
+    function isInactive(uint256 lastActiveAt, uint256 nowTimestamp) internal pure returns (bool) {
+        return lastActiveAt != 0 && nowTimestamp >= lastActiveAt + PLAYER_INACTIVE_SECONDS;
+    }
+
     function isScoreProtected(
         uint256 attackerScore,
         uint256 defenderScore,
-        bool warOrAllianceException
+        bool protectionException,
+        bool defenderInactive
     ) internal pure returns (bool) {
-        if (warOrAllianceException) return false;
-        if (defenderScore >= NEWBIE_PROTECTION_MIN_DEFENDER_SCORE) return false;
-        return attackerScore * BPS > defenderScore * NEWBIE_PROTECTION_MAX_ATTACKER_SCORE_BPS;
+        if (protectionException || defenderInactive) return false;
+        uint32 attackerRatio = newbieProtectionRatioBps(attackerScore);
+        uint32 defenderRatio = newbieProtectionRatioBps(defenderScore);
+        if (attackerRatio == 0 && defenderRatio == 0) return false;
+        if (defenderRatio != 0 && attackerScore * BPS > defenderScore * defenderRatio) return true;
+        if (attackerRatio != 0 && defenderScore * BPS > attackerScore * attackerRatio) return true;
+        return false;
+    }
+
+    function plunderBps(bool honorable, bool defenderBandit) internal pure returns (uint16) {
+        if (defenderBandit) return BANDIT_RAID_LOOT_BPS;
+        if (honorable) return HONORABLE_RAID_LOOT_BPS;
+        return BASE_RAID_LOOT_BPS;
+    }
+
+    function isHonorableTarget(
+        uint256 attackerScore,
+        uint256 defenderScore,
+        int256 defenderHonor,
+        bool neutralException
+    ) internal pure returns (bool) {
+        if (neutralException) return false;
+        if (defenderHonor <= BANDIT_HONOR_THRESHOLD) return true;
+        if (defenderScore >= attackerScore) return true;
+        return defenderScore * BPS >= attackerScore * 5_000;
     }
 
     function wreckFieldRecovery(uint256 destroyedStructuralValue) internal pure returns (uint256) {

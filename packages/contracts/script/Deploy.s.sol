@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
+import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -41,8 +42,13 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
-        VeydriftGame game =
-            new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
+        VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
+        VeydriftGame game = new VeydriftGame(
+            admin,
+            address(gameplayModule),
+            address(planetManagementModule),
+            address(attackProtectionModule)
+        );
         gameAddress = address(game);
         VeydriftAllianceSystem allianceSystem =
             new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));

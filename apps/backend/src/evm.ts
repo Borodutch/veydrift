@@ -318,7 +318,9 @@ export type AllianceState = {
 
 type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
-export type AttackBlockReason = "none" | "bashing_limit" | "score_protection";
+export type AttackBlockReason = "none" | "bashing_limit" | "score_protection" | "same_alliance";
+export type AttackRelation = "peer" | "stronger" | "weaker";
+export type HonorStatus = "neutral" | "honorable" | "bandit";
 
 export type AttackProtectionStatus = {
   wallet: Address;
@@ -326,6 +328,10 @@ export type AttackProtectionStatus = {
   allowed: boolean;
   blockedReason: AttackBlockReason;
   blockedReasonLabel: string | null;
+  relation: AttackRelation;
+  defenderHonorStatus: HonorStatus;
+  plunderBps: number;
+  defenderInactive: boolean;
 };
 
 export type SettledPlanetEvent = PlanetState & {
@@ -1440,13 +1446,19 @@ export class VeydriftGameReader implements ChainReader {
     assertAddress(wallet);
     const words = splitWords(await this.call("0x8a6b2246", [encodeAddress(wallet), encodeUint(targetPlanetId)]));
     const blockedReason = decodeAttackBlockReason(Number(decodeUintWord(wordAt(words, 0))));
+    const flags = words.length > 1 ? Number(decodeUintWord(wordAt(words, 1))) : 0;
+    const plunderBps = words.length > 2 ? Number(decodeUintWord(wordAt(words, 2))) : 5000;
 
     return {
       wallet,
       targetPlanetId: targetPlanetId.toString(),
       allowed: blockedReason === "none",
       blockedReason,
-      blockedReasonLabel: attackBlockReasonLabel(blockedReason)
+      blockedReasonLabel: attackBlockReasonLabel(blockedReason),
+      relation: decodeAttackRelation(flags),
+      defenderHonorStatus: decodeHonorStatus(flags),
+      plunderBps,
+      defenderInactive: (flags & 16) !== 0
     };
   }
 
@@ -2912,13 +2924,29 @@ export function attackBlockReasonLabel(reason: AttackBlockReason): string | null
   if (reason === "score_protection") {
     return "Attack blocked: target is protected by newbie or score-ratio protection.";
   }
+  if (reason === "same_alliance") {
+    return "Attack blocked: target belongs to your alliance.";
+  }
   return null;
 }
 
 function decodeAttackBlockReason(reason: number): AttackBlockReason {
   if (reason === 1) return "bashing_limit";
   if (reason === 2) return "score_protection";
+  if (reason === 3) return "same_alliance";
   return "none";
+}
+
+function decodeAttackRelation(flags: number): AttackRelation {
+  if ((flags & 1) !== 0) return "stronger";
+  if ((flags & 2) !== 0) return "weaker";
+  return "peer";
+}
+
+function decodeHonorStatus(flags: number): HonorStatus {
+  if ((flags & 8) !== 0) return "bandit";
+  if ((flags & 4) !== 0) return "honorable";
+  return "neutral";
 }
 
 function decodeResources(words: string[]): Resources {
