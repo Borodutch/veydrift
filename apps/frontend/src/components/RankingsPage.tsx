@@ -123,9 +123,6 @@ function RankingRow({ active, entry }: { active: HighscoreCategory; entry: Highs
       <span className="font-mono text-slate-400">#{entry.rank}</span>
       <span className="min-w-0">
         <span className="block truncate font-mono text-slate-100">{shortAddress(entry.wallet)}</span>
-        <span className="block text-xs text-slate-500">
-          {entry.homePlanetId ? `Planet ${entry.homePlanetId}` : "No home planet"}
-        </span>
       </span>
       <span className="text-right font-mono text-slate-300">{entry.planetCount}</span>
       <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
