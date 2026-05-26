@@ -2,15 +2,81 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
-import {Building, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+
+interface IVeydriftPlanetAttackProtectionAllianceSystem {
+    function attackLimitAllianceContext(address attacker, address defender)
+        external
+        view
+        returns (
+            uint256 attackerAllianceId,
+            uint256 defenderAllianceId,
+            bool sameAlliance,
+            bool atWar,
+            bool bashingWarException,
+            bool scoreProtectionException
+        );
+}
 
 /// @notice Delegatecall target for colony and planet metadata/destruction paths.
 contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     constructor() VeydriftResourceReserves(address(0)) {}
+
+    function launchInterplanetaryMissileAttack(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        Defense primaryTarget,
+        uint32 quantity
+    ) external {
+        Planet storage origin = _planets[originPlanetId];
+        if (origin.owner == address(0)) revert NoPlanet();
+        if (origin.owner != msg.sender) revert NotPlanetOwner();
+        if (originPlanetId == targetPlanetId) revert SamePlanet();
+        Planet storage target = _planets[targetPlanetId];
+        if (target.owner == address(0)) revert NoPlanet();
+        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
+        if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
+        _enforceAttackProtection(msg.sender, targetPlanetId);
+
+        uint256 range = _interplanetaryMissileRange(msg.sender);
+        if (
+            origin.galaxy != target.galaxy
+                || _systemDistanceForMissiles(origin.system, target.system) > range
+        ) {
+            revert InterplanetaryMissileOutOfRange(origin.system, target.system, range);
+        }
+
+        uint32 available = _defenseCounts[originPlanetId][Defense.InterplanetaryMissile];
+        if (quantity == 0 || available < quantity) revert InvalidQuantity();
+        _defenseCounts[originPlanetId][Defense.InterplanetaryMissile] = available - quantity;
+
+        uint32 antiBallistic = _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile];
+        uint32 intercepted = antiBallistic < quantity ? antiBallistic : quantity;
+        _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile] = antiBallistic - intercepted;
+
+        uint32 hits = quantity - intercepted;
+        uint32 targetDefense = _defenseCounts[targetPlanetId][primaryTarget];
+        uint32 destroyedPrimary = targetDefense < hits ? targetDefense : hits;
+        _defenseCounts[targetPlanetId][primaryTarget] = targetDefense - destroyedPrimary;
+        _recordAttack(msg.sender, targetPlanetId);
+
+        emit InterplanetaryMissileAttack(
+            msg.sender,
+            originPlanetId,
+            targetPlanetId,
+            primaryTarget,
+            quantity,
+            intercepted,
+            hits,
+            destroyedPrimary
+        );
+    }
 
     function createColonyAtNextSlot(uint256 originPlanetId, uint256 salt)
         external
@@ -567,6 +633,159 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             MAX_SYSTEM,
             MAX_POSITION
         );
+    }
+
+    function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
+        address defender = _attackDefender(targetPlanetId);
+        if (defender == attacker) revert SelfAttack();
+        AttackBlockReason reason = _attackBlockReason(
+            attacker,
+            defender,
+            _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId))
+        );
+        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
+        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
+        if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
+    }
+
+    function _recordAttack(address attacker, uint256 targetPlanetId) private {
+        address defender = _attackDefender(targetPlanetId);
+        if (_isAttackProtectionExempt(attacker, defender)) return;
+
+        bytes32 windowKey = _attackWindowKey(attacker, defender, targetPlanetId);
+        AttackWindow storage window = _attackWindows[windowKey];
+        uint64 currentTime = _currentTimestamp();
+        if (
+            window.windowStartedAt == 0
+                || currentTime
+                    >= window.windowStartedAt + VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS
+        ) {
+            window.windowStartedAt = currentTime;
+            window.count = 1;
+        } else {
+            window.count += 1;
+        }
+    }
+
+    function _attackBlockReason(address attacker, address defender, uint32 attacksInWindow)
+        private
+        view
+        returns (AttackBlockReason)
+    {
+        if (attacker == defender || _isAttackProtectionExempt(attacker, defender)) {
+            return AttackBlockReason.None;
+        }
+        (bool sameAlliance, bool bashingWarException, bool scoreProtectionException) =
+            _attackProtectionAllianceContext(attacker, defender);
+        if (sameAlliance) return AttackBlockReason.SameAlliance;
+        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(attacksInWindow, bashingWarException))
+        {
+            return AttackBlockReason.BashingLimit;
+        }
+        if (VeydriftAntiRaidPrimitives.isScoreProtected(
+                _totalUserScore(attacker), _totalUserScore(defender), scoreProtectionException
+            )) {
+            return AttackBlockReason.ScoreProtection;
+        }
+        return AttackBlockReason.None;
+    }
+
+    function _attackProtectionAllianceContext(address attacker, address defender)
+        private
+        view
+        returns (bool sameAlliance, bool bashingWarException, bool scoreProtectionException)
+    {
+        address allianceSystem = _allianceSystem;
+        if (allianceSystem == address(0)) return (false, false, false);
+        (,, sameAlliance,, bashingWarException, scoreProtectionException) =
+            IVeydriftPlanetAttackProtectionAllianceSystem(allianceSystem)
+                .attackLimitAllianceContext(attacker, defender);
+    }
+
+    function _currentAttackCount(bytes32 windowKey) private view returns (uint32) {
+        AttackWindow memory window = _attackWindows[windowKey];
+        uint64 currentTime = _currentTimestamp();
+        if (
+            window.windowStartedAt == 0
+                || currentTime
+                    >= window.windowStartedAt + VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS
+        ) {
+            return 0;
+        }
+        return window.count;
+    }
+
+    function _isAttackProtectionExempt(address attacker, address defender)
+        private
+        view
+        returns (bool)
+    {
+        return _attackProtectionExemptions[_playerPairKey(attacker, defender)];
+    }
+
+    function _attackDefender(uint256 targetPlanetId) private view returns (address) {
+        address defender = _planets[targetPlanetId].owner;
+        if (defender == address(0)) revert NoPlanet();
+        return defender;
+    }
+
+    function _attackWindowKey(address attacker, address defender, uint256 targetPlanetId)
+        private
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(attacker, defender, targetPlanetId));
+    }
+
+    function _interplanetaryMissileRange(address attacker) private view returns (uint256) {
+        uint16 impulseDrive = _technologyLevels[attacker][Technology.ImpulseDrive];
+        if (impulseDrive == 0) return 0;
+        return uint256(impulseDrive) * 5 - 1;
+    }
+
+    function _systemDistanceForMissiles(uint16 originSystem, uint16 targetSystem)
+        private
+        pure
+        returns (uint256)
+    {
+        return originSystem > targetSystem
+            ? uint256(originSystem - targetSystem)
+            : uint256(targetSystem - originSystem);
+    }
+
+    function _totalUserScore(address player) private view returns (uint256 score) {
+        for (uint8 id = 0; id <= MAX_TECHNOLOGY_ID;) {
+            score += uint256(_technologyLevels[player][Technology(id)]) * (id + 1) * 15;
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint256 planetId = 1; planetId < nextPlanetId;) {
+            if (_planets[planetId].owner == player) {
+                score += 1_000;
+                for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
+                    score += uint256(_buildingLevels[planetId][Building(id)]) * (id + 1) * 10;
+                    unchecked {
+                        ++id;
+                    }
+                }
+                for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
+                    score += uint256(_defenseCounts[planetId][Defense(id)]) * (id + 1) * 2;
+                    unchecked {
+                        ++id;
+                    }
+                }
+                for (uint8 id = 0; id <= MAX_SHIP_ID;) {
+                    score += uint256(_shipCounts[planetId][Ship(id)]) * (id + 1) * 4;
+                    unchecked {
+                        ++id;
+                    }
+                }
+            }
+            unchecked {
+                ++planetId;
+            }
+        }
     }
 
     function _currentTimestamp() private view returns (uint64) {

@@ -232,7 +232,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
-        _delegateToPlayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function attackProtectionStatus(address, uint256) external returns (AttackBlockReason) {
