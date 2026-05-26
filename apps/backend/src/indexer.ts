@@ -16,9 +16,14 @@ export class SettlementIndexer {
   private readonly moonChanceReports = new Map<string, MoonChanceReportEvent>();
   private readonly planets = new Map<string, SettledPlanetEvent>();
   private lastRebuiltAt: string | null = null;
+  private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
+  private rebuildPromise: Promise<IndexerSnapshot> | null = null;
 
   constructor(
-    private readonly chainReader: Pick<ChainReader, "listDebrisFieldEvents" | "listMoonChanceReportEvents" | "listSettledPlanetEvents">,
+    private readonly chainReader: Pick<
+      ChainReader,
+      "listDebrisFieldEvents" | "listMoonChanceReportEvents" | "listSettledPlanetEvents"
+    > & Pick<Partial<ChainReader>, "listCurrentPlanets">,
     private readonly fromBlock: bigint
   ) {}
 
@@ -88,6 +93,33 @@ export class SettlementIndexer {
   }
 
   async rebuild(): Promise<IndexerSnapshot> {
+    if (this.rebuildPromise) {
+      return this.rebuildPromise;
+    }
+
+    this.rebuildPromise = this.rebuildUncached().finally(() => {
+      this.rebuildPromise = null;
+      this.planetRebuildPromise = null;
+    });
+    this.planetRebuildPromise = this.rebuildPromise;
+    return this.rebuildPromise;
+  }
+
+  async rebuildPlanets(): Promise<IndexerSnapshot> {
+    if (this.rebuildPromise) {
+      return this.rebuildPromise;
+    }
+    if (this.planetRebuildPromise) {
+      return this.planetRebuildPromise;
+    }
+
+    this.planetRebuildPromise = this.rebuildPlanetsUncached().finally(() => {
+      this.planetRebuildPromise = null;
+    });
+    return this.planetRebuildPromise;
+  }
+
+  private async rebuildUncached(): Promise<IndexerSnapshot> {
     const events = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
     const debrisEvents = await this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest");
     const moonChanceEvents = await this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest");
@@ -102,6 +134,18 @@ export class SettlementIndexer {
     }
     for (const event of moonChanceEvents) {
       this.applyMoonChanceEvent(event);
+    }
+    this.lastRebuiltAt = new Date().toISOString();
+    return this.snapshot();
+  }
+
+  private async rebuildPlanetsUncached(): Promise<IndexerSnapshot> {
+    const events = this.chainReader.listCurrentPlanets
+      ? await this.chainReader.listCurrentPlanets()
+      : await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    this.planets.clear();
+    for (const event of events) {
+      this.planets.set(event.planetId, event);
     }
     this.lastRebuiltAt = new Date().toISOString();
     return this.snapshot();

@@ -1581,6 +1581,65 @@ describe("Veydrift backend", () => {
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
+  test("coalesces concurrent index rebuilds", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+
+    const [first, second] = await Promise.all([
+      indexer.rebuild(),
+      indexer.rebuild()
+    ]);
+
+    expect(first).toMatchObject({
+      indexedDebrisFields: 1,
+      indexedMoonChanceReports: 1,
+      indexedPlanets: 1
+    });
+    expect(second).toEqual(first);
+    expect(chainReader.rebuildCalls).toBe(1);
+  });
+
+  test("warms highscore rankings with settled planets only", async () => {
+    const chainReader = new MockChainReader();
+    const currentPlanetReader = chainReader as MockChainReader & {
+      listCurrentPlanets: () => Promise<SettledPlanetEvent[]>;
+    };
+    currentPlanetReader.listCurrentPlanets = async () => {
+      chainReader.rebuildCalls += 1;
+      return [{
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      }];
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("historical settlement logs should not be required for highscores");
+    };
+    chainReader.listDebrisFieldEvents = async () => {
+      throw new Error("debris logs should not be required for highscores");
+    };
+    chainReader.listMoonChanceReportEvents = async () => {
+      throw new Error("moon chance logs should not be required for highscores");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total[0]).toMatchObject({
+      rank: 1,
+      wallet: player
+    });
+    expect(chainReader.rebuildCalls).toBe(1);
+  });
+
   test("serves highscores derived from indexed canonical state", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
