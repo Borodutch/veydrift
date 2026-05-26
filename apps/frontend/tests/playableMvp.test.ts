@@ -147,7 +147,7 @@ describe("playable MVP contract display helpers", () => {
     expect(shipCatalog.map((ship) => ship.asset)).toEqual(shipAssetManifest.map((asset) => asset.src));
   });
 
-  test("uses vanilla OGame representative ship requirements and duration estimates", () => {
+  test("uses canonical Veydrift representative ship requirements and duration estimates", () => {
     expect(shipCatalog.find((ship) => ship.key === "smallCargo")?.requirements).toEqual([
       { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
@@ -335,7 +335,7 @@ describe("playable MVP contract display helpers", () => {
     ]);
   });
 
-  test("matches vanilla OGame research cost scaling", () => {
+  test("matches canonical Veydrift research cost scaling", () => {
     const base = createInitialPlayableState(1_000).research;
 
     expect(researchCost({ ...base, energy: 0 }, "energy")).toEqual({ metal: 0, crystal: 800, deuterium: 400 });
@@ -373,7 +373,7 @@ describe("playable MVP contract display helpers", () => {
     )).toBe(false);
   });
 
-  test("applies the OGame Robotics and Nanite Factory divisors to modeled building upgrade duration", () => {
+  test("applies the Veydrift Robotics and Nanite Factory divisors to modeled building upgrade duration", () => {
     const state = createInitialPlayableState(1_000);
     const cost = buildingCost(state.buildings, "metalStorage");
     const upgradedRobotics = {
@@ -395,7 +395,7 @@ describe("playable MVP contract display helpers", () => {
       .toBe(28_800);
   });
 
-  test("estimates research duration with the vanilla OGame lab level plus one denominator", () => {
+  test("estimates research duration with the canonical Veydrift lab level plus one denominator", () => {
     const state = createInitialPlayableState(1_000);
     const cost = { metal: 12_000, crystal: 12_000, deuterium: 0 };
     const labOne = { ...state.buildings, researchLab: 1 };

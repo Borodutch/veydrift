@@ -177,7 +177,7 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
-  test("shows Robotics Factory as an OGame construction-time divisor", () => {
+  test("shows Robotics Factory as a Veydrift construction-time divisor", () => {
     const state = createInitialPlayableState(1_000);
     const effect = buildingEffectMetrics(state.buildings, "roboticsFactory");
     const rows = detailEffectRows(effect, buildingEnergyDetail(state.buildings, "roboticsFactory"));

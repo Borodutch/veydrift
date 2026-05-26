@@ -14,7 +14,7 @@ constraint, not a temporary MVP shortcut.
   they must not hold authoritative hidden game state.
 - Veydrift will not build a privacy, zk, committed-root, private-preimage,
   hidden-state oracle, or fog-of-war roadmap for gameplay state.
-- OGame parity excludes espionage. Espionage-named catalog items may remain as
+- Veydrift scope excludes espionage. Espionage-named catalog items may remain as
   legacy IDs or research prerequisites, but there is no probe scan mechanic,
   hidden enemy-state reveal, or espionage report system to implement.
 
@@ -93,7 +93,7 @@ messages, but duplicated logic is advisory only.
 ## No Espionage Or Hidden-State Replacement
 
 Public state means attackers can inspect targets and in-flight missions. Veydrift
-does not replace OGame espionage friction with hidden commitments. The risk model
+does not replace legacy espionage friction with hidden commitments. The risk model
 is explicit public counterplay:
 
 - VEY-KANEO-111 removes espionage from Veydrift scope.

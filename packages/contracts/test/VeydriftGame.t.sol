@@ -337,7 +337,7 @@ contract VeydriftGameTest is Test {
         assertEq(deuteriumCap, 10_000);
     }
 
-    function testVanillaResearchCostsScaleByCurrentLevel() public {
+    function testResearchCostsScaleByCurrentLevel() public {
         VeydriftGameStorage.Resources memory energy = game.researchCost(player, Technology.Energy);
         assertEq(energy.metal, 0);
         assertEq(energy.crystal, 800);
@@ -378,7 +378,7 @@ contract VeydriftGameTest is Test {
         assertEq(graviton.deuterium, 0);
     }
 
-    function testResearchPrerequisitesUseVanillaOGameRequirements() public {
+    function testResearchPrerequisitesUseCanonicalVeydriftRequirements() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         _setBuildingLevel(planetId, Building.ResearchLab, 1);
@@ -504,7 +504,7 @@ contract VeydriftGameTest is Test {
         assertEq(nextCost.deuterium, 0);
     }
 
-    function testBuildingConstructionDurationsMatchClassicOGameFormula() public {
+    function testBuildingConstructionDurationsMatchCanonicalVeydriftFormula() public {
         _assertStartedBuildingDuration(address(0xB001), Building.MetalMine, 60, 15, 0, 108);
         _assertStartedBuildingDuration(address(0xB002), Building.SolarPlant, 75, 30, 0, 151);
         _assertStartedBuildingDuration(
@@ -604,7 +604,7 @@ contract VeydriftGameTest is Test {
         game.startBuildingUpgrade(planetId, Building.Terraformer);
     }
 
-    function testOGameBuildingEconomyFormulas() public {
+    function testVeydriftBuildingEconomyFormulas() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
 
@@ -715,7 +715,7 @@ contract VeydriftGameTest is Test {
         );
     }
 
-    function testCrawlerDependencyCatalogRequiresVanillaUnlocks() public {
+    function testCrawlerDependencyCatalogRequiresCanonicalUnlocks() public {
         vm.expectRevert(
             abi.encodeWithSelector(
                 VeydriftDependencies.MissingDependency.selector, CRAWLER_TECH_REQUIREMENT
@@ -726,7 +726,7 @@ contract VeydriftGameTest is Test {
         VeydriftDependencies.requireShip(Ship.Crawler, 5, 4, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0);
     }
 
-    function testBuildingDependencyCatalogRequiresVanillaUnlocks() public {
+    function testBuildingDependencyCatalogRequiresCanonicalUnlocks() public {
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftDependencies.MissingDependency.selector, ENERGY_3)
         );
@@ -835,7 +835,7 @@ contract VeydriftGameTest is Test {
         assertFalse(game.activeBuildingConstruction(planetId).active);
     }
 
-    function testDefenseDependenciesMatchVanillaOGameRequirements() public {
+    function testDefenseDependenciesMatchCanonicalVeydriftRequirements() public {
         VeydriftDependencies.requireDefense(Defense.RocketLauncher, 1, 0, 0, 0, 0, 0, 0, 0, 0);
 
         vm.expectRevert(
@@ -866,7 +866,7 @@ contract VeydriftGameTest is Test {
         );
     }
 
-    function testDefenseDurationUsesVanillaShipyardNaniteBasis() public pure {
+    function testDefenseDurationUsesCanonicalShipyardNaniteBasis() public pure {
         assertEq(VeydriftFormulas.unitDuration(1, 0, 2_000, 0, 0, 1, 60), 1_440);
         assertEq(VeydriftFormulas.unitDuration(1, 2, 2_000, 0, 0, 1, 60), 360);
         assertEq(VeydriftFormulas.unitDuration(8, 0, 1_500, 500, 0, 1, 60), 320);

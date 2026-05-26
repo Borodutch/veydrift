@@ -23,7 +23,7 @@ const slotMaxTemperatureProfiles = [
 ] as const;
 
 describe("backend universe metadata", () => {
-  test("uses OGame-style temperature bands for every planet position", () => {
+  test("uses Veydrift temperature bands for every planet position", () => {
     for (const [position, minMaxTemperatureC, maxMaxTemperatureC] of slotMaxTemperatureProfiles) {
       const planet = planetMetadata(chainId, settlementContractAddress, {
         galaxy: 2,

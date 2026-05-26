@@ -23,7 +23,7 @@ interface IVeydriftRandomnessEngine {
         returns (uint256 randomWord);
 }
 
-/// @notice Moon state and moon-only OGame structures kept outside VeydriftGame's size-bound core.
+/// @notice Moon state and moon-only Veydrift structures kept outside VeydriftGame's size-bound core.
 contract VeydriftMoonSystem {
     using SafeCast for uint256;
 

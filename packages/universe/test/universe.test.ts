@@ -45,7 +45,7 @@ describe("deterministic universe generation", () => {
     expect(after).toEqual(before);
   });
 
-  test("uses stable OGame-like field and temperature ranges for all slots", () => {
+  test("uses stable Veydrift field and temperature ranges for all slots", () => {
     for (const profile of listSlotProfiles()) {
       const planet = generatePlanet({
         seed,

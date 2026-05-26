@@ -20,8 +20,8 @@ import {
   storageCaps,
 } from "../src/playableMvp";
 
-describe("vanilla OGame formula conformance", () => {
-  test("uses vanilla mine production, deuterium temperature, and energy throttling", () => {
+describe("canonical Veydrift formula conformance", () => {
+  test("uses base mine production, deuterium temperature, and energy throttling", () => {
     const state = createInitialPlayableState();
     const buildings = {
       ...state.buildings,
@@ -54,7 +54,7 @@ describe("vanilla OGame formula conformance", () => {
     });
   });
 
-  test("uses vanilla storage capacities", () => {
+  test("uses base storage capacities", () => {
     const state = createInitialPlayableState();
     const buildings = {
       ...state.buildings,
@@ -71,7 +71,7 @@ describe("vanilla OGame formula conformance", () => {
       .toBe(180_862_636_975_685_000);
   });
 
-  test("uses vanilla Fusion Reactor energy-tech scaling and deuterium draw", () => {
+  test("uses base Fusion Reactor energy-tech scaling and deuterium draw", () => {
     const state = createInitialPlayableState();
     const buildings = {
       ...state.buildings,
@@ -100,7 +100,7 @@ describe("vanilla OGame formula conformance", () => {
     });
   });
 
-  test("uses vanilla per-building cost growth factors", () => {
+  test("uses base per-building cost growth factors", () => {
     const state = createInitialPlayableState();
 
     expect(costAt(state.buildings, "metalMine", 2)).toEqual({
@@ -140,7 +140,7 @@ describe("vanilla OGame formula conformance", () => {
     });
   });
 
-  test("uses vanilla building and research durations", () => {
+  test("uses base building and research durations", () => {
     const state = createInitialPlayableState();
 
     expect(buildingDurationEstimate(state.buildings, costAt(state.buildings, "metalMine", 0)))
@@ -175,7 +175,7 @@ describe("vanilla OGame formula conformance", () => {
     ).toBe(43_200);
   });
 
-  test("uses vanilla ship costs, requirements, cargo, and shipyard duration", () => {
+  test("uses base ship costs, requirements, cargo, and shipyard duration", () => {
     const smallCargo = shipCatalog.find((ship) => ship.key === "smallCargo");
     const cruiser = shipCatalog.find((ship) => ship.key === "cruiser");
     const deathstar = shipCatalog.find((ship) => ship.key === "deathstar");
@@ -211,7 +211,7 @@ describe("vanilla OGame formula conformance", () => {
     expect(shipDurationEstimate(7, 2, { metal: 45_000, crystal: 15_000, deuterium: 0 })).toBe(2_700);
   });
 
-  test("uses vanilla defense costs and requirements", () => {
+  test("uses base defense costs and requirements", () => {
     expect(defenseCatalog.find((defense) => defense.key === "rocketLauncher")).toMatchObject({
       baseCost: { metal: 2_000, crystal: 0, deuterium: 0 },
       requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
@@ -232,7 +232,7 @@ describe("vanilla OGame formula conformance", () => {
       .toEqual({ metal: 50_000, crystal: 50_000, deuterium: 30_000 });
   });
 
-  test("uses vanilla research costs, requirements, and duration scaling", () => {
+  test("uses base research costs, requirements, and duration scaling", () => {
     const state = createInitialPlayableState();
 
     expect(researchCatalog.find((research) => research.key === "energy")?.baseCost)
