@@ -38,7 +38,7 @@ contract VeydriftSpaceDockSystemTest is Test {
         vm.deal(player, 1 ether);
     }
 
-    function testSpaceDockCatalogUsesOGameCostAndRepairFormula() public pure {
+    function testSpaceDockCatalogUsesVeydriftCostAndRepairFormula() public pure {
         (uint128 metal, uint128 crystal, uint128 deuterium) =
             VeydriftCatalog.spaceDockUpgradeCost(0);
         assertEq(metal, 200);

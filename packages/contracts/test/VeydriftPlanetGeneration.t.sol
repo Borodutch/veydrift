@@ -126,7 +126,7 @@ contract VeydriftPlanetGenerationTest is Test {
         assertEq(temperature, sameTemperature);
     }
 
-    function testSlotTemperatureProfilesKeepOgameLikeBands() public view {
+    function testSlotTemperatureProfilesKeepVeydriftBands() public view {
         (int16 innerMin, int16 innerMax) = harness.slotMaxTemperatureProfile(1);
         (int16 middleMin, int16 middleMax) = harness.slotMaxTemperatureProfile(8);
         (int16 outerMin, int16 outerMax) = harness.slotMaxTemperatureProfile(15);

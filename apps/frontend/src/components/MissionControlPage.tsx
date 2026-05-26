@@ -1,7 +1,7 @@
 import { RefreshCw, Route, ShieldAlert, TimerReset } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
-import type { FleetMissionSummary, FleetMissionVisibilityResponse } from "../walletFlow";
+import type { FleetMissionSummary, FleetMissionVisibilityResponse, OnChainResources } from "../walletFlow";
 
 type MissionControlActionState =
   | { status: "idle" }
@@ -30,6 +30,8 @@ interface MissionControlPageProps {
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
   onResolve: (missionId: string) => void;
+  protectedResources?: OnChainResources | null | undefined;
+  raidableResources?: OnChainResources | null | undefined;
 }
 
 export function MissionControlPage({
@@ -44,6 +46,8 @@ export function MissionControlPage({
   onRecall,
   onRefresh,
   onResolve,
+  protectedResources,
+  raidableResources,
 }: MissionControlPageProps) {
   const incoming = fleetVisibility?.incoming ?? [];
   const outgoing = fleetVisibility?.outgoing ?? [];
@@ -96,6 +100,11 @@ export function MissionControlPage({
         <Metric label="Hostile inbound" value={incoming.length.toString()} />
         <Metric label="Returns" value={returning.length.toString()} />
       </div>
+
+      <RaidProtectionPanel
+        protectedResources={protectedResources}
+        raidableResources={raidableResources}
+      />
 
       {activeCount === 0 ? (
         <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
@@ -291,6 +300,54 @@ function MissionSection({
         </div>
       )}
     </section>
+  );
+}
+
+function RaidProtectionPanel({
+  protectedResources,
+  raidableResources,
+}: {
+  protectedResources?: OnChainResources | null | undefined;
+  raidableResources?: OnChainResources | null | undefined;
+}) {
+  if (!protectedResources && !raidableResources) return null;
+
+  return (
+    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <ResourceSummaryBlock
+        label="Protected storage"
+        resources={protectedResources}
+      />
+      <ResourceSummaryBlock
+        label="Raid-exposed resources"
+        resources={raidableResources}
+      />
+    </section>
+  );
+}
+
+function ResourceSummaryBlock({
+  label,
+  resources,
+}: {
+  label: string;
+  resources?: OnChainResources | null | undefined;
+}) {
+  return (
+    <div className="min-w-0 rounded border border-white/10 bg-black/15 px-3 py-2">
+      <div className="text-[0.68rem] font-semibold uppercase tracking-normal text-slate-500">{label}</div>
+      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm font-semibold text-slate-200">
+        {resources ? (
+          <>
+            <span>{formatResource(resources.metal)} Metal</span>
+            <span>{formatResource(resources.crystal)} Crystal</span>
+            <span>{formatResource(resources.deuterium)} Deut.</span>
+          </>
+        ) : (
+          <span className="text-slate-500">Unavailable</span>
+        )}
+      </div>
+    </div>
   );
 }
 

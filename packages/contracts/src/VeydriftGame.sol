@@ -148,15 +148,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function finishDefenseProduction(uint256) external {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function startShipProduction(uint256, Ship, uint32) external {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function finishShipProduction(uint256) external {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function startResearch(uint256, Technology) external {
@@ -172,7 +172,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function setSpaceDockSystem(address) external {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function setAllianceSystem(address nextAllianceSystem) external onlyOwner {
@@ -209,22 +209,22 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources calldata,
         uint256
     ) external returns (uint256) {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function joinAttackMission(uint256, uint256, uint256, MissionShips calldata, Resources calldata)
         external
         returns (uint256)
     {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function recallFleetMission(uint256) external {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function resolveFleetMission(uint256) external {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function completeFleetMissionReturn(uint256) external {
@@ -232,11 +232,11 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function attackProtectionStatus(address, uint256) external returns (AttackBlockReason) {
-        _delegateToGameplayModule();
+        _delegateToPlayModule();
     }
 
     function depositMarketResource(uint256, Resource, uint128) external {
@@ -809,7 +809,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         });
     }
 
-    function _delegateToGameplayModule() private {
+    function _delegateToPlayModule() private {
         (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {

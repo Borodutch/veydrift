@@ -1054,6 +1054,7 @@ describe("Veydrift backend", () => {
           batchSelectors.push(selector);
           if (selector === "0xd9b24865") return abiWords(1n);
           if (selector === "0x291ee1b5") return abiWords(120n, 30n, 0n);
+          if (selector === "0xe512884c") return abiWords(0n);
           throw new Error(`Unexpected batch call ${selector}`);
         }) as T[];
       }
@@ -1062,11 +1063,13 @@ describe("Veydrift backend", () => {
     const state = await reader.getInfrastructureState(player);
 
     expect(state.buildings).toHaveLength(16);
-    expect(batchSelectors).toHaveLength(32);
+    expect(batchSelectors).toHaveLength(47);
     expect(batchSelectors.filter((selector) => selector === "0xd9b24865")).toHaveLength(16);
     expect(batchSelectors.filter((selector) => selector === "0x291ee1b5")).toHaveLength(16);
+    expect(batchSelectors.filter((selector) => selector === "0xe512884c")).toHaveLength(15);
     expect(individualSelectors).not.toContain("0xd9b24865");
     expect(individualSelectors).not.toContain("0x291ee1b5");
+    expect(individualSelectors).not.toContain("0xe512884c");
   });
 
   test("answers moon state from a mocked chain reader", async () => {

@@ -7,7 +7,7 @@ import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {Building, Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
-contract VeydriftOGameFormulaConformanceTest is Test {
+contract VeydriftFormulaConformanceTest is Test {
     uint16 internal constant BPS = 10_000;
     uint32 internal constant MIN_QUEUE_SECONDS = 60;
     bytes32 private constant DEP_COMBUSTION_2 = "COMBUSTION_2";
@@ -15,7 +15,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
     bytes32 private constant DEP_GAUSS_CANNON = "WEAPONS_3";
     bytes32 private constant DEP_PLASMA_RESEARCH = "ENERGY_8_LASER_10_ION_5";
 
-    function testVanillaOGameMineProductionAndEnergy() public pure {
+    function testCanonicalVeydriftMineProductionAndEnergy() public pure {
         (uint256 produced, uint256 required, uint256 scaleBps) =
             VeydriftFormulas.energyBalance(3, 3, 2, 6, 0, 0);
         assertEq(produced, 212);
@@ -35,7 +35,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         assertEq(deuterium, 0);
     }
 
-    function testVanillaOGameFusionReactorEnergyAndDeuteriumUse() public pure {
+    function testCanonicalVeydriftFusionReactorEnergyAndDeuteriumUse() public pure {
         (uint256 produced, uint256 required, uint256 scaleBps) =
             VeydriftFormulas.energyBalance(0, 0, 0, 0, 2, 3);
 
@@ -53,7 +53,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         assertEq(deuterium, 21);
     }
 
-    function testVanillaOGamePlanetMultipliers() public pure {
+    function testCanonicalVeydriftPlanetMultipliers() public pure {
         (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
             VeydriftFormulas.planetMultipliers(-12, 206);
 
@@ -62,7 +62,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         assertEq(deuteriumMultiplier, 13_040);
     }
 
-    function testVanillaOGameStorageCapTable() public pure {
+    function testCanonicalVeydriftStorageCapTable() public pure {
         (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) =
             VeydriftFormulas.storageCaps(0, 3, 10);
 
@@ -71,7 +71,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         assertEq(deuteriumCap, 5_355_000);
     }
 
-    function testVanillaOGameBuildingCosts() public pure {
+    function testCanonicalVeydriftBuildingCosts() public pure {
         _assertBuildingCost(Building.MetalMine, 2, 135, 33, 0);
         _assertBuildingCost(Building.CrystalMine, 3, 196, 98, 0);
         _assertBuildingCost(Building.DeuteriumSynthesizer, 4, 1_139, 379, 0);
@@ -81,7 +81,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         _assertBuildingCost(Building.MetalStorage, 10, 1_024_000, 0, 0);
     }
 
-    function testVanillaOGameDurations() public pure {
+    function testCanonicalVeydriftDurations() public pure {
         assertEq(VeydriftFormulas.buildingDuration(0, 0, 60, 15, MIN_QUEUE_SECONDS), 108);
         assertEq(VeydriftFormulas.buildingDuration(0, 0, 75, 30, MIN_QUEUE_SECONDS), 151);
         assertEq(VeydriftFormulas.buildingDuration(0, 0, 225, 75, MIN_QUEUE_SECONDS), 432);
@@ -101,7 +101,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         );
     }
 
-    function testVanillaOGameShipCostsCargoAndRequirements() public {
+    function testCanonicalVeydriftShipCostsCargoAndRequirements() public {
         _assertShip(Ship.SmallCargo, 2_000, 2_000, 0, 5_000);
         _assertShip(Ship.Cruiser, 20_000, 7_000, 2_000, 800);
         _assertShip(Ship.Deathstar, 5_000_000, 4_000_000, 1_000_000, 1_000_000);
@@ -122,7 +122,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         VeydriftDependencies.requireShip(Ship.Cruiser, 5, 0, 4, 0, 0, 0, 0, 0, 2, 0, 0, 0);
     }
 
-    function testVanillaOGameDefenseCostsAndRequirements() public {
+    function testCanonicalVeydriftDefenseCostsAndRequirements() public {
         _assertDefense(Defense.RocketLauncher, 2_000, 0, 0);
         _assertDefense(Defense.IonCannon, 2_000, 6_000, 0);
         _assertDefense(Defense.GaussCannon, 20_000, 15_000, 2_000);
@@ -137,7 +137,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         VeydriftDependencies.requireDefense(Defense.GaussCannon, 6, 0, 6, 0, 0, 3, 1, 0, 0);
     }
 
-    function testVanillaOGameCombatStatsAndRapidfire() public pure {
+    function testCanonicalVeydriftCombatStatsAndRapidfire() public pure {
         assertEq(VeydriftCatalog.shipBattleAttack(Ship.SmallCargo), 5);
         assertEq(VeydriftCatalog.shipBattleShield(Ship.SmallCargo), 10);
         assertEq(VeydriftCatalog.shipBattleHull(Ship.SmallCargo), 400);
@@ -168,7 +168,7 @@ contract VeydriftOGameFormulaConformanceTest is Test {
         );
     }
 
-    function testVanillaOGameResearchCostsAndRequirements() public {
+    function testCanonicalVeydriftResearchCostsAndRequirements() public {
         _assertResearch(Technology.Energy, 0, 800, 400);
         _assertResearch(Technology.HyperspaceDrive, 10_000, 20_000, 6_000);
         _assertResearch(Technology.Plasma, 2_000, 4_000, 1_000);

@@ -20,7 +20,7 @@ Galaxy UI work can preview the same rules the contracts enforce.
   intentionally keeps this as the Veydrift MVP formula, `5 minutes + distance` for one-way travel
   and `shipCount + floor(shipCount * distance / 10000)` for fuel. It does not yet model selected
   mission speed, per-ship consumption, or drive-technology speed bonuses, so UI previews must mirror
-  this contract formula exactly instead of presenting classic OGame mechanics the contract will not
+  this contract formula exactly instead of presenting contract-backed Veydrift mechanics the contract will not
   charge or store.
 - Recall: recalled fleets still spend fuel, cannot return faster than the minimum recall window,
   and use contract-calculated return timing.

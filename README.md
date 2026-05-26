@@ -240,8 +240,22 @@ Dockerfile path `apps/frontend/Dockerfile.test` from the repository root. Do not
 repoint or modify the production `veydrift/frontend` service while rolling back
 the test frontend.
 
-The backend test service uses build path `/apps/backend` and can be built with
-either `Dockerfile.test` or `nixpacks.test.toml`. Configure it with:
+The backend test service must also use the repository root as the EasyPanel
+source/build path so Bun can install the monorepo workspace and resolve
+`@veydrift/universe`. Do not set the source/build path to `/apps/backend`.
+Configure `veydrift/backend-test` with:
+
+```text
+Source path: /
+Build type: Nixpacks
+Nixpacks version: 1.34.1
+Nixpacks config path: apps/backend/nixpacks.test.toml
+Install command: bun install --frozen-lockfile && rm -rf /root/.cache/nix
+Build command: cd apps/backend && bun run build && rm -rf /root/.bun/install/cache /tmp/*
+Start command: cd apps/backend && bun run start
+```
+
+Configure it with:
 
 ```text
 VEYDRIFT_ALLOWED_ORIGIN=https://test.veydrift.com
@@ -256,13 +270,18 @@ VEYDRIFT_NETWORK_NAME=Base Sepolia
 VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
 VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql
 VEYDRIFT_RPC_URL=<Alchemy Base Sepolia RPC URL>
+PORT=4000
 ```
 
 `VEYDRIFT_RPC_URL` and deployer keys must come from Vaultwarden or EasyPanel
-secret storage and must not be committed. Rollback is service-local: remove the
-`test.veydrift.com` and `api-test.veydrift.com` domains from the test services,
-or scale/delete `frontend-test` and `backend-test`. Do not repoint or delete the
-production `veydrift/frontend` service while rolling back the test app.
+secret storage and must not be committed. If the backend Nixpacks deploy needs
+to be rolled back, keep the same environment variables and switch only
+`veydrift/backend-test` back to Dockerfile build with Dockerfile path
+`apps/backend/Dockerfile.test` from the repository root. Broader rollback is
+service-local: remove the `test.veydrift.com` and `api-test.veydrift.com`
+domains from the test services, or scale/delete `frontend-test` and
+`backend-test`. Do not repoint or delete the production `veydrift/frontend`
+service while rolling back the test app.
 
 ## Operating Rules
 

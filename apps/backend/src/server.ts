@@ -379,11 +379,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           await indexer.rebuild();
         }
         const planetsByOwner: Map<string, SettledPlanetEvent[]> = indexer?.settledPlanetsByOwner() ?? new Map();
-        const entries = await Promise.all(
-          [...planetsByOwner.entries()].map(([owner, planets]) =>
-            ready.getHighscoreForWallet(owner as `0x${string}`, planets.map((planet) => planet.planetId))
-          )
-        );
+        const entries = [];
+        for (const [owner, planets] of planetsByOwner.entries()) {
+          entries.push(await ready.getHighscoreForWallet(
+            owner as `0x${string}`,
+            planets.map((planet) => planet.planetId)
+          ));
+        }
         const rankings = highscoreRankings(entries, limit);
 
         return Response.json(
