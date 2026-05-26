@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { BackendConfig } from "./config";
 import {
   decodeMoonChanceReportLog,
+  HttpJsonRpcTransport,
   isMoonChanceReportLog,
   VeydriftGameReader,
   type Address,
@@ -15,6 +16,155 @@ const skippedTopic = "0x93793f9a66f3a0a4cea93b7eb92e142d7283b5b33f657e14277879f2
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+
+describe("HTTP JSON-RPC transport", () => {
+  test("coalesces concurrent identical cacheable RPC reads", async () => {
+    const previousFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      await fetchGate;
+      return Response.json({
+        jsonrpc: "2.0",
+        id: 1,
+        result: "0x1234"
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport("https://rpc.example", { cacheTtlMs: 1_000 });
+      const params = [{ to: "0x0000000000000000000000000000000000000001", data: "0x181c1bc4" }, "latest"];
+      const first = transport.request<string>("eth_call", params);
+      const second = transport.request<string>("eth_call", params);
+
+      await Promise.resolve();
+      releaseFetch();
+
+      await expect(Promise.all([first, second])).resolves.toEqual(["0x1234", "0x1234"]);
+      expect(fetchCalls).toBe(1);
+      expect(transport.snapshot()).toEqual({
+        batchRequests: 0,
+        callsByMethod: {
+          eth_call: 2
+        },
+        httpRequests: 1
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("deduplicates identical cacheable RPC reads within a batch", async () => {
+    const previousFetch = globalThis.fetch;
+    let batchSize = 0;
+
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const body = JSON.parse(String(init?.body)) as Array<{ id: number }>;
+      batchSize = body.length;
+      return Response.json(body.map((request) => ({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: "0xabcd"
+      })));
+    }) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport("https://rpc.example", { cacheTtlMs: 1_000 });
+      const request = {
+        method: "eth_call",
+        params: [{ to: "0x0000000000000000000000000000000000000001", data: "0x181c1bc4" }, "latest"]
+      };
+
+      await expect(transport.requestBatch<string>([request, request])).resolves.toEqual(["0xabcd", "0xabcd"]);
+      expect(batchSize).toBe(1);
+      expect(transport.snapshot()).toEqual({
+        batchRequests: 1,
+        callsByMethod: {
+          eth_call: 2
+        },
+        httpRequests: 1
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+describe("current planet enumeration", () => {
+  test("reads current planet owners without scanning historical logs", async () => {
+    const batchSelectors: string[] = [];
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_call");
+          const [call] = params as [{ data: string }];
+          expect(call.data.slice(0, 10)).toBe("0xc16bedad");
+          return dataWords([word(3n)]) as T;
+        },
+        async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+          return requests.map((request) => {
+            const [call] = request.params as [{ data: string }];
+            const selector = call.data.slice(0, 10);
+            batchSelectors.push(selector);
+            expect(selector).toBe("0x181c1bc4");
+
+            if (batchSelectors.length === 1) {
+              return dataWords([
+                addressWord("0x0000000000000000000000000000000000000def"),
+                word(2n),
+                word(44n),
+                word(9n),
+                word(211n),
+                word(1n),
+                word(9_788n),
+                word(10_233n),
+                word(10_584n),
+                word(1_700_000_000n),
+                word(5_000n),
+                word(4_900n),
+                word(4_800n)
+              ]);
+            }
+
+            return dataWords([
+              addressWord("0x0000000000000000000000000000000000000000"),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n),
+              word(0n)
+            ]);
+          }) as T[];
+        }
+      }
+    );
+
+    await expect(reader.listCurrentPlanets()).resolves.toEqual([
+      expect.objectContaining({
+        eventName: "PlanetStarted",
+        owner: "0x0000000000000000000000000000000000000def",
+        planetId: "1",
+        galaxy: 2,
+        system: 44,
+        position: 9
+      })
+    ]);
+    expect(batchSelectors).toHaveLength(2);
+  });
+});
 
 describe("moon chance report event decoding", () => {
   test("decodes pending moon chance request logs", () => {
