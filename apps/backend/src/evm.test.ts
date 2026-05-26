@@ -198,6 +198,89 @@ describe("moon chance report event decoding", () => {
       }
     ]);
   });
+
+  test("decodes alliance profiles returned as dynamic ABI tuples", async () => {
+    const allianceContractAddress = "0x2222222222222222222222222222222222222222";
+    const wallet = "0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE" as Address;
+    const reader = new VeydriftGameReader(
+      {
+        ...readerConfig,
+        allianceContractAddress
+      },
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_call");
+          const [call] = params as [{ data: string; to: string }];
+          expect(call.to).toBe(allianceContractAddress);
+          const selector = call.data.slice(0, 10);
+
+          if (selector === "0xad642b52") {
+            return dataWords([word(1n), word(3n), word(1_779_816_676n)]) as T;
+          }
+          if (selector === "0xf0bab901") {
+            return uintArrayResult([1n]) as T;
+          }
+          if (selector === "0x79c76adf") {
+            return allianceProfileResult({
+              active: true,
+              tag: "VDFT",
+              name: "Veydrift Union",
+              description: "Union!",
+              owner: wallet,
+              createdAt: 1_779_816_676n,
+              memberCount: 1n
+            }) as T;
+          }
+          if (selector === "0xf4d46b3b" || selector === "0xdb132ffb") {
+            return dataWords([word(0n), word(0n), word(0n), word(0n)]) as T;
+          }
+          if (selector === "0x2a1ef311") {
+            return addressArrayResult([wallet]) as T;
+          }
+          if (selector === "0x2953e5ce") {
+            return addressArrayResult([]) as T;
+          }
+
+          throw new Error(`Unexpected selector ${selector}`);
+        }
+      }
+    );
+
+    await expect(reader.getAllianceState(wallet)).resolves.toMatchObject({
+      wallet,
+      allianceAvailable: true,
+      membership: {
+        allianceId: "1",
+        role: "owner",
+        joinedAt: "1779816676"
+      },
+      profile: {
+        active: true,
+        tag: "VDFT",
+        name: "Veydrift Union",
+        description: "Union!",
+        owner: wallet,
+        createdAt: "1779816676",
+        memberCount: 1
+      },
+      directory: [
+        {
+          allianceId: "1",
+          active: true,
+          tag: "VDFT",
+          name: "Veydrift Union",
+          description: "Union!"
+        }
+      ],
+      members: [
+        {
+          address: wallet,
+          role: "owner",
+          joinedAt: "1779816676"
+        }
+      ]
+    });
+  });
 });
 
 describe("fleet mission visibility", () => {
@@ -271,6 +354,59 @@ function topic(value: bigint): string {
 
 function addressWord(address: string): string {
   return address.slice(2).padStart(64, "0");
+}
+
+function uintArrayResult(values: bigint[]): string {
+  return dataWords([word(32n), word(BigInt(values.length)), ...values.map(word)]);
+}
+
+function addressArrayResult(values: Address[]): string {
+  return dataWords([word(32n), word(BigInt(values.length)), ...values.map(addressWord)]);
+}
+
+function allianceProfileResult({
+  active,
+  tag,
+  name,
+  description,
+  owner,
+  createdAt,
+  memberCount
+}: {
+  active: boolean;
+  tag: string;
+  name: string;
+  description: string;
+  owner: Address;
+  createdAt: bigint;
+  memberCount: bigint;
+}): string {
+  const tagTail = stringTail(tag);
+  const nameTail = stringTail(name);
+  const descriptionTail = stringTail(description);
+  const tagOffset = 7n * 32n;
+  const nameOffset = tagOffset + BigInt(tagTail.length / 2);
+  const descriptionOffset = nameOffset + BigInt(nameTail.length / 2);
+
+  return dataWords([
+    word(32n),
+    word(active ? 1n : 0n),
+    word(tagOffset),
+    word(nameOffset),
+    word(descriptionOffset),
+    addressWord(owner),
+    word(createdAt),
+    word(memberCount),
+    tagTail,
+    nameTail,
+    descriptionTail
+  ]);
+}
+
+function stringTail(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  const data = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${word(BigInt(bytes.length))}${data.padEnd(Math.ceil(data.length / 64) * 64, "0")}`;
 }
 
 function addressTopic(address: string): string {

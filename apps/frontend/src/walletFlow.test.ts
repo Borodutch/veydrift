@@ -12,6 +12,7 @@ import {
   encodeLaunchFleetMissionCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
+  fetchAllianceState,
   fetchHighscores,
   fetchInfrastructureState,
   fetchMoonState,
@@ -1149,6 +1150,33 @@ describe("walletFlow", () => {
     try {
       await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
         "Rankings are temporarily unavailable because the deployed game API does not support highscores yet. Retry after the backend redeploys."
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("surfaces wallet API error messages from backend responses", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe(`https://api.example.test/wallet/${account}/alliance`);
+      expect(init).toEqual({
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      });
+      return new Response(
+        JSON.stringify({ error: "Alliance profile could not be decoded." }),
+        {
+          headers: { "content-type": "application/json" },
+          status: 400,
+        }
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchAllianceState("https://api.example.test", account)).rejects.toThrow(
+        "Alliance API failed: 400: Alliance profile could not be decoded."
       );
     } finally {
       globalThis.fetch = originalFetch;
