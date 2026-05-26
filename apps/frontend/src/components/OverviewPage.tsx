@@ -10,6 +10,7 @@ import {
   overviewQueueItemRemainingClassName,
   queueProgressBarState,
   queueProgressFillState,
+  usedFieldsFromBuildings,
   type ChainLoadStatus,
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
@@ -60,6 +61,7 @@ interface OverviewPageProps {
   onChainStatus: ChainLoadStatus;
   planetRenameAction?: PlanetRenameActionState | undefined;
   canRenamePlanet?: boolean | undefined;
+  usedFields?: number | undefined;
 }
 
 export function OverviewPage({
@@ -87,8 +89,9 @@ export function OverviewPage({
   onChainStatus,
   planetRenameAction = { status: "idle" },
   canRenamePlanet = false,
+  usedFields: selectedPlanetUsedFields,
 }: OverviewPageProps) {
-  const usedFields = Object.values(settledState.buildings).filter((level) => level > 0).length;
+  const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
   const buildingQueue = activeBuildingQueue ?? (settledState.queue?.kind === "building" ? settledState.queue : undefined);
   const onChainBuildingQueue = buildingQueue

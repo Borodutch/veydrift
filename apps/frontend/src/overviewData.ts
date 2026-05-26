@@ -91,6 +91,12 @@ export function displayTemperatureRange(temperature: number | undefined): string
   return `${temperature - 20}°C to ${temperature + 20}°C`;
 }
 
+export function usedFieldsFromBuildings(buildings: Partial<Record<BuildingKey, number>>): number {
+  return Object.values(buildings).reduce((sum, level) => {
+    return sum + Math.max(0, Math.floor(level ?? 0));
+  }, 0);
+}
+
 export function displayPlanetStats(
   settlement: WalletSettlementResponse | undefined,
   queues: PlayerQueuesResponse | undefined,
