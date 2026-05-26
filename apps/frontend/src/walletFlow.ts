@@ -388,6 +388,8 @@ export type SettlementState =
   | { kind: "legacy-settled"; planet: PlanetSummary }
   | { kind: "settled"; planet: PlanetSummary };
 
+const frontendBaseSepoliaRpcUrl = import.meta.env.VITE_BASE_SEPOLIA_RPC_URL?.trim();
+
 export const BASE_SEPOLIA = {
   chainId: 84532,
   chainIdHex: "0x14a34",
@@ -397,9 +399,7 @@ export const BASE_SEPOLIA = {
     symbol: "ETH",
     decimals: 18
   },
-  rpcUrls: [
-    "https://sepolia.base.org"
-  ],
+  rpcUrls: frontendBaseSepoliaRpcUrl ? [frontendBaseSepoliaRpcUrl] : ["https://sepolia.base.org"],
   blockExplorerUrls: [
     "https://sepolia.basescan.org"
   ]
@@ -1824,6 +1824,44 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId
   return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withPlanetId("queues", planetId), "Queues");
 }
 
+export function frontendReadonlyRpcConfigured(): boolean {
+  return Boolean(frontendBaseSepoliaRpcUrl);
+}
+
+export async function fetchWalletQueuesFromReadonlyRpc(
+  gameContractAddress: string,
+  wallet: string
+): Promise<PlayerQueuesResponse> {
+  const homePlanetId = decodeUintResult(await readonlyRpcCall(gameContractAddress, encodeAddressCall("0x0ff79fa5", wallet)));
+
+  if (homePlanetId === 0n) {
+    return {
+      wallet,
+      homePlanetId: null,
+      building: null,
+      defense: null,
+      ship: null,
+      research: null
+    };
+  }
+
+  const [building, defense, ship, research] = await Promise.all([
+    readReadonlyPlanetQueue(gameContractAddress, "0xb8e835ab", homePlanetId, "building"),
+    readReadonlyPlanetQueue(gameContractAddress, "0x5758361d", homePlanetId, "defense"),
+    readReadonlyPlanetQueue(gameContractAddress, "0xb6f4b7b7", homePlanetId, "ship"),
+    readReadonlyResearchQueue(gameContractAddress, wallet)
+  ]);
+
+  return {
+    wallet,
+    homePlanetId: homePlanetId.toString(),
+    building,
+    defense,
+    ship,
+    research
+  };
+}
+
 export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string): Promise<FleetMissionVisibilityResponse> {
   return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, "fleet-visibility", "Fleet visibility");
 }
@@ -1903,6 +1941,109 @@ async function readJsonErrorBody(response: Response): Promise<{ error?: unknown 
   } catch {
     return undefined;
   }
+}
+
+async function readonlyRpcCall(contractAddress: string, data: string): Promise<string> {
+  if (!frontendBaseSepoliaRpcUrl) {
+    throw new Error("Frontend Base Sepolia RPC is not configured.");
+  }
+
+  const response = await fetch(frontendBaseSepoliaRpcUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_call",
+      params: [
+        {
+          to: contractAddress,
+          data
+        },
+        "latest"
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Frontend RPC HTTP ${response.status}`);
+  }
+
+  const body = await response.json() as { result?: unknown; error?: { message?: unknown } };
+  if (body.error) {
+    throw new Error(typeof body.error.message === "string" ? body.error.message : "Frontend RPC error");
+  }
+
+  if (typeof body.result !== "string") {
+    throw new Error("Frontend RPC response missing result.");
+  }
+
+  return body.result;
+}
+
+async function readReadonlyPlanetQueue(
+  gameContractAddress: string,
+  selector: string,
+  planetId: bigint,
+  kind: "building" | "defense" | "ship"
+): Promise<QueueStateResponse> {
+  const words = splitAbiWords(await readonlyRpcCall(gameContractAddress, encodeUintCall(selector, planetId)));
+  const active = decodeBoolWord(wordAt(words, 0));
+
+  return {
+    active,
+    kind: active ? kind : null,
+    ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
+    ...(kind === "building"
+      ? { targetLevel: Number(decodeUintWord(wordAt(words, 2))) }
+      : { quantity: Number(decodeUintWord(wordAt(words, 2))) }),
+    readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
+    cost: decodeResources(words.slice(4, 7))
+  };
+}
+
+async function readReadonlyResearchQueue(gameContractAddress: string, wallet: string): Promise<QueueStateResponse> {
+  const words = splitAbiWords(await readonlyRpcCall(gameContractAddress, encodeAddressCall("0x2b98afc7", wallet)));
+  const active = decodeBoolWord(wordAt(words, 0));
+
+  return {
+    active,
+    kind: active ? "research" : null,
+    ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
+    targetLevel: Number(decodeUintWord(wordAt(words, 2))),
+    readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
+    cost: decodeResources(words.slice(4, 7))
+  };
+}
+
+function splitAbiWords(hex: string): string[] {
+  const data = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const words: string[] = [];
+  for (let index = 0; index < data.length; index += 64) {
+    words.push(data.slice(index, index + 64).padStart(64, "0"));
+  }
+  return words;
+}
+
+function wordAt(words: string[], index: number): string {
+  const word = words[index];
+  if (!word) {
+    throw new Error("Frontend RPC response did not contain enough ABI words.");
+  }
+
+  return word;
+}
+
+function decodeBoolWord(word: string): boolean {
+  return decodeUintWord(word) !== 0n;
+}
+
+function decodeResources(words: string[]): OnChainResources {
+  return {
+    metal: decodeUintWord(wordAt(words, 0)).toString(),
+    crystal: decodeUintWord(wordAt(words, 1)).toString(),
+    deuterium: decodeUintWord(wordAt(words, 2)).toString()
+  };
 }
 
 function highscoreNetworkFailureMessage(error: unknown): string {

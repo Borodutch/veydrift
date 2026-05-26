@@ -81,8 +81,10 @@ import {
   fetchFleetMissionVisibility,
   fetchAllianceState,
   sendFinishDefenseProductionTransaction,
+  fetchWalletQueuesFromReadonlyRpc,
   fetchWalletQueues,
   fetchWalletSettlement,
+  frontendReadonlyRpcConfigured,
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
   sendCollectResourcesTransaction,
@@ -242,6 +244,7 @@ async function loadWalletPlanetSyncSnapshot(
   apiBaseUrl: string,
   account: string,
   activePlanetId: string | undefined,
+  gameContract: string | undefined,
 ): Promise<WalletPlanetSyncSnapshot> {
   const settlement = await fetchWalletSettlement(apiBaseUrl, account);
   const [planetsResult, queuesResult, visibilityResult] = await Promise.allSettled([
@@ -259,7 +262,7 @@ async function loadWalletPlanetSyncSnapshot(
       };
   const queues = queuesResult.status === "fulfilled"
     ? queuesResult.value
-    : emptyPlayerQueues(account, settlement.homePlanetId);
+    : await fallbackPlayerQueues(account, settlement.homePlanetId, gameContract);
   const fleetVisibility = visibilityResult.status === "fulfilled"
     ? visibilityResult.value
     : emptyFleetVisibility(account, settlement.homePlanetId);
@@ -270,6 +273,23 @@ async function loadWalletPlanetSyncSnapshot(
     queues,
     settlement,
   };
+}
+
+async function fallbackPlayerQueues(
+  wallet: string,
+  homePlanetId: string | null,
+  gameContract: string | undefined,
+): Promise<PlayerQueuesResponse> {
+  if (!gameContract || !frontendReadonlyRpcConfigured()) {
+    return emptyPlayerQueues(wallet, homePlanetId);
+  }
+
+  try {
+    return await fetchWalletQueuesFromReadonlyRpc(gameContract, wallet);
+  } catch (error) {
+    console.warn("Frontend RPC queue fallback failed", error);
+    return emptyPlayerQueues(wallet, homePlanetId);
+  }
 }
 
 function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
@@ -584,7 +604,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
     try {
       const snapshot = await waitForHydratedWalletPlanet(
-        () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId),
+        () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId, gameContract),
         activePlanetId,
       );
       const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
@@ -612,7 +632,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setFleetVisibility(undefined);
       setOnChainStatus("error");
     }
-  }, [account, activePlanetId, apiBaseUrl, isWalletConnected, selectedPlanetId]);
+  }, [account, activePlanetId, apiBaseUrl, gameContract, isWalletConnected, selectedPlanetId]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation) => {
     if (!apiBaseUrl || !account) {

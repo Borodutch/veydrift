@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  readonly VITE_BASE_SEPOLIA_RPC_URL?: string;
   readonly VITE_VEYDRIFT_API_URL?: string;
   readonly VITE_VEYDRIFT_SETTLEMENT_ADDRESS?: string;
   readonly VITE_VEYDRIFT_SURFACE?: "playable" | "settlement" | "test";
