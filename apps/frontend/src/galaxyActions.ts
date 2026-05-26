@@ -193,13 +193,23 @@ export function galaxyActionsForSlot({
         mission: "attack",
       },
     }),
-    {
-      enabled: false,
-      kind: "harvest",
-      label: "Harvest",
-      mode: "future",
-      reason: "Debris fields are not live on this deployment yet.",
-    },
+    enabledOrDisabled({
+      blocker: commonBlocker ?? debrisFieldBlocker(planet) ?? shipRequirementBlocker(shipyardState, "recycler", "Requires a recycler on your home planet."),
+      enabled: {
+        enabled: true,
+        kind: "harvest",
+        label: "Harvest",
+        mode: "mission",
+        mission: "harvest",
+        ships: singleShip("recycler"),
+      },
+      disabled: {
+        kind: "harvest",
+        label: "Harvest",
+        mode: "mission",
+        mission: "harvest",
+      },
+    }),
     {
       enabled: false,
       kind: "acsDefend",
@@ -320,6 +330,14 @@ function interplanetaryMissileBlocker(defenseState: ChainDefenseState | null | u
 
   const interplanetaryMissiles = defenseState.defenses.find((defense) => defense.id === 9)?.count ?? 0;
   return interplanetaryMissiles > 0 ? undefined : "Requires an interplanetary missile on your active planet.";
+}
+
+function debrisFieldBlocker(planet: Planet | undefined): string | undefined {
+  const debris = planet?.debrisField;
+  if (!debris || debris.metal + debris.crystal <= 0) {
+    return "No debris field at this coordinate.";
+  }
+  return undefined;
 }
 
 function firstAvailableCargoShip(shipyardState: ChainShipyardState | null): MissionShipKey | undefined {
