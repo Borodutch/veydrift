@@ -51,6 +51,7 @@ import {
 import {
   isWalletPlanetHydrated,
   safeResourceNumber,
+  usedFieldsFromBuildings,
   type ChainLoadStatus,
 } from "./overviewData";
 import {
@@ -683,6 +684,17 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setOnChainStatus("ready");
       setInfrastructureChainState(snapshot.infrastructure);
       setInfrastructureError(undefined);
+      setWalletPlanets((current) => current.map((planet) => {
+        if (planet.planetId !== (activePlanetId ?? snapshot.infrastructure.homePlanetId)) return planet;
+
+        return {
+          ...planet,
+          fieldsUsed: usedFieldsFromBuildings(infrastructurePlayableState(snapshot.infrastructure).buildings),
+          fieldsCapacity: snapshot.settlement.planet?.planetId === planet.planetId
+            ? snapshot.settlement.planet.fields
+            : planet.fieldsCapacity,
+        };
+      }));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load completed building state.";
       setOnChainError(message);
@@ -2061,6 +2073,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         settledState={settledState}
         shipProgress={shipProgress}
         state={state}
+        usedFields={selectedManagedPlanet?.fieldsUsed}
       />
     );
   })();
