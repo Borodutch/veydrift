@@ -9,6 +9,7 @@ import {
   overviewQueueItemRemainingClassName,
   queueProgressBarState,
   queueProgressFillState,
+  usedFieldsFromBuildings,
   type ChainLoadStatus,
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
@@ -49,6 +50,7 @@ interface OverviewPageProps {
   onChainSettlement?: WalletSettlementResponse | undefined;
   onChainQueues?: PlayerQueuesResponse | undefined;
   onChainStatus: ChainLoadStatus;
+  usedFields?: number | undefined;
 }
 
 export function OverviewPage({
@@ -73,8 +75,9 @@ export function OverviewPage({
   onChainSettlement,
   onChainQueues,
   onChainStatus,
+  usedFields: selectedPlanetUsedFields,
 }: OverviewPageProps) {
-  const usedFields = Object.values(settledState.buildings).filter((level) => level > 0).length;
+  const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
   const buildingQueue = activeBuildingQueue ?? (settledState.queue?.kind === "building" ? settledState.queue : undefined);
   const onChainBuildingQueue = buildingQueue
