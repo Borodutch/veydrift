@@ -148,7 +148,7 @@ type ShipyardActionState =
 type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
 type RiftActionState = ShipyardActionState;
-type PlanetActionState = ShipyardActionState;
+export type PlanetActionState = ShipyardActionState;
 type MissionActionState = ShipyardActionState;
 
 export function displayHomeCoordinates(
@@ -160,6 +160,44 @@ export function displayHomeCoordinates(
   if (!coordinates) return fallbackCoordinates;
 
   return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
+}
+
+function resourceAmountIsZero(value: string): boolean {
+  try {
+    return BigInt(value) === 0n;
+  } catch {
+    return value === "0";
+  }
+}
+
+export function abandonPlanetUnavailableLabel(
+  planet: ManagedPlanetResponse,
+  canTransact: boolean,
+  action: PlanetActionState
+): string | undefined {
+  if (action.status === "pending") return undefined;
+  if (!canTransact) return undefined;
+  if (planet.isHomePlanet) return "Home planets cannot be abandoned.";
+  if (planet.queues.building?.active || planet.queues.defense?.active || planet.queues.ship?.active) {
+    return "Finish active queues before abandoning this colony.";
+  }
+  if (
+    !resourceAmountIsZero(planet.resources.metal)
+    || !resourceAmountIsZero(planet.resources.crystal)
+    || !resourceAmountIsZero(planet.resources.deuterium)
+  ) {
+    return "Empty colony resources before abandoning.";
+  }
+
+  return undefined;
+}
+
+export function shouldShowAbandonPlanetButton(
+  planet: ManagedPlanetResponse,
+  canTransact: boolean,
+  action: PlanetActionState
+): boolean {
+  return canTransact && action.status !== "pending" && abandonPlanetUnavailableLabel(planet, canTransact, action) === undefined;
 }
 
 const counterplayShipPriority = [
@@ -2067,6 +2105,8 @@ function PlanetSwitcher({
 }) {
   const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
   if (!selectedPlanet) return null;
+  const abandonUnavailableLabel = abandonPlanetUnavailableLabel(selectedPlanet, canTransact, action);
+  const showAbandonButton = shouldShowAbandonPlanetButton(selectedPlanet, canTransact, action);
 
   return (
     <section className="mb-3 rounded border border-white/10 bg-[#101827]/80 p-2.5 shadow-lg shadow-black/10">
@@ -2101,6 +2141,11 @@ function PlanetSwitcher({
               {action.label}
             </span>
           )}
+          {action.status === "idle" && abandonUnavailableLabel && (
+            <span className="max-w-48 truncate text-xs text-slate-400">
+              {abandonUnavailableLabel}
+            </span>
+          )}
           <button
             className="h-8 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
             disabled={!canTransact || action.status === "pending"}
@@ -2109,14 +2154,15 @@ function PlanetSwitcher({
           >
             Rename
           </button>
-          <button
-            className="h-8 rounded border border-red-300/20 bg-red-300/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-            disabled={!canTransact || selectedPlanet.isHomePlanet || action.status === "pending"}
-            onClick={onAbandon}
-            type="button"
-          >
-            Abandon
-          </button>
+          {showAbandonButton && (
+            <button
+              className="h-8 rounded border border-red-300/20 bg-red-300/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-300/20"
+              onClick={onAbandon}
+              type="button"
+            >
+              Abandon
+            </button>
+          )}
         </div>
       </div>
     </section>
