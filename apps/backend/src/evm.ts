@@ -429,34 +429,46 @@ export class HttpJsonRpcTransport {
 
   async request<T>(method: string, params: unknown[]): Promise<T> {
     this.countRpc(method);
-    this.metrics.httpRequests += 1;
-    const response = await fetch(this.rpcUrl, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method,
-        params
-      })
-    });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      this.metrics.httpRequests += 1;
+      const response = await fetch(this.rpcUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+          params
+        })
+      });
 
-    if (!response.ok) {
-      throw new Error(`RPC HTTP ${response.status}`);
+      if (!response.ok) {
+        if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        throw new Error(`RPC HTTP ${response.status}`);
+      }
+
+      const body = (await response.json()) as JsonRpcResponse<T>;
+      if (body.error) {
+        if (isRetryableRpcError(body.error) && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
+      }
+
+      if (body.result === undefined) {
+        throw new Error("RPC response missing result.");
+      }
+
+      return body.result;
     }
 
-    const body = (await response.json()) as JsonRpcResponse<T>;
-    if (body.error) {
-      throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
-    }
-
-    if (body.result === undefined) {
-      throw new Error("RPC response missing result.");
-    }
-
-    return body.result;
+    throw new Error("RPC request failed after retries.");
   }
 
   async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
@@ -467,42 +479,55 @@ export class HttpJsonRpcTransport {
     for (const request of requests) {
       this.countRpc(request.method);
     }
-    this.metrics.batchRequests += 1;
-    this.metrics.httpRequests += 1;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      this.metrics.batchRequests += 1;
+      this.metrics.httpRequests += 1;
 
-    const response = await fetch(this.rpcUrl, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(requests.map((request, index) => ({
-        jsonrpc: "2.0",
-        id: index + 1,
-        method: request.method,
-        params: request.params
-      })))
-    });
+      const response = await fetch(this.rpcUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(requests.map((request, index) => ({
+          jsonrpc: "2.0",
+          id: index + 1,
+          method: request.method,
+          params: request.params
+        })))
+      });
 
-    if (!response.ok) {
-      throw new Error(`RPC HTTP ${response.status}`);
+      if (!response.ok) {
+        if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        throw new Error(`RPC HTTP ${response.status}`);
+      }
+
+      const bodies = (await response.json()) as Array<JsonRpcResponse<T> & { id?: number }>;
+      const retryableError = bodies.find((body) => body.error && isRetryableRpcError(body.error));
+      if (retryableError?.error && attempt < 2) {
+        await retryDelay(attempt);
+        continue;
+      }
+      const byId = new Map(bodies.map((body) => [body.id, body]));
+
+      return requests.map((_, index) => {
+        const body = byId.get(index + 1);
+        if (!body) {
+          throw new Error("RPC batch response missing item.");
+        }
+        if (body.error) {
+          throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
+        }
+        if (body.result === undefined) {
+          throw new Error("RPC response missing result.");
+        }
+        return body.result;
+      });
     }
 
-    const bodies = (await response.json()) as Array<JsonRpcResponse<T> & { id?: number }>;
-    const byId = new Map(bodies.map((body) => [body.id, body]));
-
-    return requests.map((_, index) => {
-      const body = byId.get(index + 1);
-      if (!body) {
-        throw new Error("RPC batch response missing item.");
-      }
-      if (body.error) {
-        throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
-      }
-      if (body.result === undefined) {
-        throw new Error("RPC response missing result.");
-      }
-      return body.result;
-    });
+    throw new Error("RPC batch request failed after retries.");
   }
 
   snapshot(): RpcMetrics {
@@ -1440,17 +1465,40 @@ export class VeydriftGameReader implements ChainReader {
       : decodeUint(filter.toBlock);
     if (toBlock < fromBlock) return [];
 
+    return this.getLogsInChunks(filter, fromBlock, toBlock, 1_999n);
+  }
+
+  private async getLogsInChunks(
+    filter: RpcLogFilter,
+    fromBlock: bigint,
+    toBlock: bigint,
+    maxChunkSpan: bigint
+  ): Promise<RpcLog[]> {
     const logs: RpcLog[] = [];
-    const maxChunkSpan = 1_999n;
     for (let start = fromBlock; start <= toBlock; start += maxChunkSpan + 1n) {
       const end = start + maxChunkSpan > toBlock ? toBlock : start + maxChunkSpan;
-      logs.push(...await this.transport.request<RpcLog[]>("eth_getLogs", [{
-        ...filter,
-        fromBlock: toQuantity(start),
-        toBlock: toQuantity(end)
-      }]));
+      logs.push(...await this.getLogsRange(filter, start, end));
     }
     return logs;
+  }
+
+  private async getLogsRange(filter: RpcLogFilter, fromBlock: bigint, toBlock: bigint): Promise<RpcLog[]> {
+    try {
+      return await this.transport.request<RpcLog[]>("eth_getLogs", [{
+        ...filter,
+        fromBlock: toQuantity(fromBlock),
+        toBlock: toQuantity(toBlock)
+      }]);
+    } catch (error) {
+      if (!shouldChunkLogQuery(error) || fromBlock >= toBlock) {
+        throw error;
+      }
+    }
+
+    const midpoint = fromBlock + ((toBlock - fromBlock) / 2n);
+    const left = await this.getLogsRange(filter, fromBlock, midpoint);
+    const right = await this.getLogsRange(filter, midpoint + 1n, toBlock);
+    return [...left, ...right];
   }
 
   private async readResearchQueue(wallet: Address): Promise<QueueState> {
@@ -1467,57 +1515,97 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readTechnologyLevels(wallet: Address): Promise<Record<string, number>> {
-    const entries = await Promise.all(
-      supportedTechnologyIds.map(async (id) => [
-        id.toString(),
-        Number(await this.readUintCall("0xe512884c", [encodeAddress(wallet), encodeUint(BigInt(id))]))
-      ] as const)
+    const results = await this.batchCallContract(
+      this.gameContractAddress,
+      supportedTechnologyIds.map((id) => ({
+        selector: "0xe512884c",
+        args: [encodeAddress(wallet), encodeUint(BigInt(id))]
+      }))
     );
+    const entries = supportedTechnologyIds.map((id, index) => [
+      id.toString(),
+      Number(decodeUintWord(wordAt(splitWords(results[index] ?? "0x"), 0)))
+    ] as const);
 
     return Object.fromEntries(entries);
   }
 
   private async readShipRows(planetId: bigint): Promise<ShipyardState["ships"]> {
-    const rows = await Promise.all(
-      supportedShipIds.map(async (id) => {
-        try {
-          const [count, cost] = await Promise.all([
-            this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
-            this.readResources("0xc4222030", BigInt(id))
-          ]);
-
-          return {
-            id,
-            count: Number(count),
-            cost
-          };
-        } catch (error) {
-          if (isRpcRevert(error)) {
-            return null;
+    try {
+      const results = await this.batchCallContract(
+        this.gameContractAddress,
+        supportedShipIds.flatMap((id) => ([
+          {
+            selector: "0x57686701",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          },
+          {
+            selector: "0xc4222030",
+            args: [encodeUint(BigInt(id))]
           }
+        ]))
+      );
 
-          throw error;
-        }
-      })
-    );
+      return supportedShipIds.map((id, index) => ({
+        id,
+        count: Number(decodeUintWord(wordAt(splitWords(results[index * 2] ?? "0x"), 0))),
+        cost: decodeResources(splitWords(results[index * 2 + 1] ?? "0x"))
+      }));
+    } catch (error) {
+      if (!isRpcRevert(error)) {
+        throw error;
+      }
+    }
+
+    const rows: Array<ShipyardState["ships"][number] | null> = [];
+    for (const id of supportedShipIds) {
+      rows.push(await this.readShipRow(planetId, id));
+    }
 
     return rows.filter((row): row is ShipyardState["ships"][number] => row !== null);
   }
 
-  private async readDefenseRows(planetId: bigint): Promise<DefenseState["defenses"]> {
-    return Promise.all(
-      Array.from({ length: defenseCount }, async (_, id) => {
-        const [count, cost] = await Promise.all([
-          this.readUintCall("0x836e3a32", [encodeUint(planetId), encodeUint(BigInt(id))]),
-          this.readResources("0x9b906295", BigInt(id))
-        ]);
+  private async readShipRow(planetId: bigint, id: number): Promise<ShipyardState["ships"][number] | null> {
+    try {
+      const [count, cost] = await Promise.all([
+        this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
+        this.readResources("0xc4222030", BigInt(id))
+      ]);
 
-        return {
-          id,
-          count: Number(count),
-          cost
-        };
-      })
+      return {
+        id,
+        count: Number(count),
+        cost
+      };
+    } catch (error) {
+      if (isRpcRevert(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  private async readDefenseRows(planetId: bigint): Promise<DefenseState["defenses"]> {
+    const results = await this.batchCallContract(
+      this.gameContractAddress,
+      Array.from({ length: defenseCount }, (_, id) => ([
+        {
+          selector: "0x836e3a32",
+          args: [encodeUint(planetId), encodeUint(BigInt(id))]
+        },
+        {
+          selector: "0x9b906295",
+          args: [encodeUint(BigInt(id))]
+        }
+      ])).flat()
+    );
+
+    return Array.from({ length: defenseCount }, (_, id) => ({
+      id,
+      count: Number(decodeUintWord(wordAt(splitWords(results[id * 2] ?? "0x"), 0))),
+      cost: decodeResources(splitWords(results[id * 2 + 1] ?? "0x"))
+    })
     );
   }
 
@@ -1580,19 +1668,25 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readTechnologyRows(wallet: Address): Promise<ResearchState["technologies"]> {
-    return Promise.all(
-      supportedTechnologyIds.map(async (id) => {
-        const [level, cost] = await Promise.all([
-          this.readUintCall("0xe512884c", [encodeAddress(wallet), encodeUint(BigInt(id))]),
-          this.readResourcesCall("0x6e984888", [encodeAddress(wallet), encodeUint(BigInt(id))])
-        ]);
+    const results = await this.batchCallContract(
+      this.gameContractAddress,
+      supportedTechnologyIds.flatMap((id) => ([
+        {
+          selector: "0xe512884c",
+          args: [encodeAddress(wallet), encodeUint(BigInt(id))]
+        },
+        {
+          selector: "0x6e984888",
+          args: [encodeAddress(wallet), encodeUint(BigInt(id))]
+        }
+      ]))
+    );
 
-        return {
-          id,
-          level: Number(level),
-          cost
-        };
-      })
+    return supportedTechnologyIds.map((id, index) => ({
+      id,
+      level: Number(decodeUintWord(wordAt(splitWords(results[index * 2] ?? "0x"), 0))),
+      cost: decodeResources(splitWords(results[index * 2 + 1] ?? "0x"))
+    })
     );
   }
 
@@ -1915,20 +2009,35 @@ export class VeydriftGameReader implements ChainReader {
   ): Promise<string[]> {
     if (calls.length === 0) return [];
 
+    const runSequentially = async (): Promise<string[]> => {
+      const results: string[] = [];
+      for (const call of calls) {
+        results.push(await this.callContract(contractAddress, call.selector, call.args));
+      }
+      return results;
+    };
+
     if (!this.transport.requestBatch) {
-      return Promise.all(calls.map((call) => this.callContract(contractAddress, call.selector, call.args)));
+      return runSequentially();
     }
 
-    return this.transport.requestBatch<string>(calls.map((call) => ({
-      method: "eth_call",
-      params: [
-        {
-          to: contractAddress,
-          data: `${call.selector}${call.args.join("")}`
-        },
-        "latest"
-      ]
-    })));
+    try {
+      return await this.transport.requestBatch<string>(calls.map((call) => ({
+        method: "eth_call",
+        params: [
+          {
+            to: contractAddress,
+            data: `${call.selector}${call.args.join("")}`
+          },
+          "latest"
+        ]
+      })));
+    } catch (error) {
+      if (!shouldRetryWithoutBatch(error)) {
+        throw error;
+      }
+      return runSequentially();
+    }
   }
 }
 
@@ -2514,4 +2623,22 @@ function isRpcRevert(error: unknown): boolean {
 
 function shouldChunkLogQuery(error: unknown): boolean {
   return error instanceof Error && /max block range|block range|too many blocks|RPC HTTP 400/i.test(error.message);
+}
+
+function shouldRetryWithoutBatch(error: unknown): boolean {
+  return error instanceof Error && /RPC HTTP (400|413|429)|over rate limit|rate limit/i.test(error.message);
+}
+
+function isRetryableRpcHttpStatus(status: number): boolean {
+  return status === 429 || status === 503;
+}
+
+function isRetryableRpcError(error: { code: number; message: string }): boolean {
+  return /over rate limit|rate limit|too many requests/i.test(error.message);
+}
+
+function retryDelay(attempt: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 300 * (attempt + 1));
+  });
 }
