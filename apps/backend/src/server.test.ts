@@ -1106,6 +1106,21 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("reports transient Moon RPC failures as service unavailable", async () => {
+    class RpcFailingMoonReader extends MockChainReader {
+      override async getMoonState(): Promise<MoonState> {
+        throw new Error("RPC HTTP 429");
+      }
+    }
+
+    const handler = createRequestHandler({ chainReader: new RpcFailingMoonReader(), config: configuredTestConfig });
+    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({ error: "RPC HTTP 429" });
+  });
+
   test("answers research state from a mocked chain reader", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
