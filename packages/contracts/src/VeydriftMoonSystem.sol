@@ -28,7 +28,8 @@ contract VeydriftMoonSystem {
     using SafeCast for uint256;
 
     uint16 public constant MAX_LEVEL = 50;
-    uint32 public constant MIN_QUEUE_SECONDS = 60;
+    uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
+    uint32 public constant MIN_QUEUE_SECONDS = 1;
     uint16 public constant MAX_GALAXY = 9;
     uint16 public constant MAX_SYSTEM = 499;
     bytes32 public constant MOON_SEED_DOMAIN = keccak256("veydrift.moon.v1");
@@ -555,7 +556,9 @@ contract VeydriftMoonSystem {
         pure
         returns (uint256)
     {
-        return VeydriftFormulas.buildingDuration(0, 0, cost.metal, cost.crystal, MIN_QUEUE_SECONDS);
+        return VeydriftFormulas.buildingDuration(
+            0, 0, cost.metal, cost.crystal, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+        );
     }
 
     function _moonUsedFields(uint256 planetId) private view returns (uint256 used) {

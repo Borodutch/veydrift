@@ -16,7 +16,8 @@ interface IVeydriftSpaceDockGame {
 contract VeydriftSpaceDockSystem {
     using SafeCast for uint256;
 
-    uint32 public constant MIN_QUEUE_SECONDS = 60;
+    uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
+    uint32 public constant MIN_QUEUE_SECONDS = 1;
     uint64 public constant WRECKAGE_TTL = 3 days;
     uint256 public constant MIN_WRECKAGE_VALUE = 150_000;
     uint16 public constant BPS = 10_000;
@@ -218,6 +219,7 @@ contract VeydriftSpaceDockSystem {
             crystal,
             deuterium,
             quantity,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
     }

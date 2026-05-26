@@ -213,6 +213,7 @@ export type ResearchState = {
   unavailableReason?: string;
   resources: Resources | null;
   researchLabLevel: number;
+  researchNetworkLabLevels: number[];
   technologyLevels: Record<string, number>;
   technologies: Array<{
     id: number;
@@ -1199,6 +1200,7 @@ export class VeydriftGameReader implements ChainReader {
           "The deployed contract only supports first-planet settlement. Research is not available on this deployment yet.",
         resources: null,
         researchLabLevel: 0,
+        researchNetworkLabLevels: [],
         technologyLevels: {},
         technologies: [],
         queue: null
@@ -1212,6 +1214,7 @@ export class VeydriftGameReader implements ChainReader {
         researchAvailable: true,
         resources: null,
         researchLabLevel: 0,
+        researchNetworkLabLevels: [],
         technologyLevels: {},
         technologies: supportedTechnologyIds.map((id) => ({
           id,
@@ -1223,9 +1226,10 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, researchLabLevel, queue, technologyLevels, technologies] = await Promise.all([
+    const [resources, researchLabLevel, researchNetworkLabLevels, queue, technologyLevels, technologies] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(6n)]),
+      this.readResearchNetworkLabLevels(wallet, planetId),
       this.readResearchQueue(wallet),
       this.readTechnologyLevels(wallet),
       this.readTechnologyRows(wallet)
@@ -1237,6 +1241,7 @@ export class VeydriftGameReader implements ChainReader {
       researchAvailable: true,
       resources,
       researchLabLevel: Number(researchLabLevel),
+      researchNetworkLabLevels,
       technologyLevels,
       technologies,
       queue
@@ -2098,6 +2103,15 @@ export class VeydriftGameReader implements ChainReader {
       },
       moon
     };
+  }
+
+  private async readResearchNetworkLabLevels(wallet: Address, selectedPlanetId: bigint): Promise<number[]> {
+    const planets = await this.getWalletPlanets(wallet);
+    return planets.planets
+      .filter((planet) => BigInt(planet.planetId) !== selectedPlanetId)
+      .map((planet) => planet.keyLevels.researchLab)
+      .filter((level) => level > 0)
+      .sort((left, right) => right - left);
   }
 
   private async resolveWalletPlanet(wallet: Address, selectedPlanetId?: bigint): Promise<WalletSettlement> {

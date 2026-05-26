@@ -654,6 +654,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             _buildingLevels[planetId][Building.NaniteFactory],
             cost.metal,
             cost.crystal,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
     }
@@ -670,6 +671,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             unitCost.crystal,
             unitCost.deuterium,
             quantity,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
     }

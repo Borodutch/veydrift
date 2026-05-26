@@ -241,6 +241,7 @@ export type ChainResearchState = {
   unavailableReason?: string;
   resources: OnChainResources | null;
   researchLabLevel: number;
+  researchNetworkLabLevels: number[];
   technologyLevels: Record<string, number>;
   technologies: Array<{
     id: number;

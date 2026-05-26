@@ -14,6 +14,7 @@ import {
   researchCatalog,
   researchCost,
   researchDurationEstimate,
+  researchLabRequirementFor,
   researchRequirementsFor,
   shipCatalog,
   shipDurationEstimate,
@@ -173,6 +174,19 @@ describe("canonical Veydrift formula conformance", () => {
         { metal: 12_000, crystal: 12_000, deuterium: 50_000 },
       ),
     ).toBe(43_200);
+    expect(buildingDurationEstimate(state.buildings, { metal: 1, crystal: 0, deuterium: 0 }))
+      .toBe(1);
+    expect(
+      researchDurationEstimate(
+        { ...state.buildings, researchLab: 4 },
+        { metal: 2_000, crystal: 4_000, deuterium: 1_000 },
+        {
+          networkLevel: 1,
+          requiredLabLevel: researchLabRequirementFor("plasma"),
+          researchNetworkLabLevels: [7, 2],
+        },
+      ),
+    ).toBe(1_800);
   });
 
   test("uses base ship costs, requirements, cargo, and shipyard duration", () => {
