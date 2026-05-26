@@ -1261,6 +1261,142 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    function testAttackProtectionRejectsSameAllianceAttack() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        vm.prank(defender);
+        uint256 allianceId = allianceSystem.createAlliance("SAME", "Same Fleet", "");
+        vm.prank(defender);
+        allianceSystem.inviteMember(allianceId, player);
+        vm.prank(player);
+        allianceSystem.acceptInvite(allianceId);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        assertEq(
+            uint8(game.attackProtectionStatus(player, targetPlanetId)),
+            uint8(VeydriftGameStorage.AttackBlockReason.SameAlliance)
+        );
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.AttackScoreProtection.selector);
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            1901
+        );
+    }
+
+    function testAttackProtectionHonorsWarBashingException() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        vm.prank(player);
+        uint256 attackerAllianceId = allianceSystem.createAlliance("ATK", "Attackers", "");
+        uint256 defenderAllianceId = _createAlliance(defender);
+        vm.prank(player);
+        allianceSystem.setDiplomacy(
+            attackerAllianceId, defenderAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+        _setTechnologyLevel(player, Technology.Computer, 10);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 7);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW; ++i) {
+            vm.prank(player);
+            game.launchFleetMission(
+                originPlanetId,
+                targetPlanetId,
+                VeydriftGameStorage.FleetMissionType.Attack,
+                _smallCargoManifest(),
+                VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                1910 + i
+            );
+        }
+
+        assertEq(
+            uint8(game.attackProtectionStatus(player, targetPlanetId)),
+            uint8(VeydriftGameStorage.AttackBlockReason.None)
+        );
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            1917
+        );
+        assertEq(missionId, VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW + 1);
+    }
+
+    function testAttackProtectionHonorsWarScoreProtectionException() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        vm.prank(player);
+        uint256 attackerAllianceId = allianceSystem.createAlliance("WAR", "War Fleet", "");
+        uint256 defenderAllianceId = _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setShipCount(originPlanetId, Ship.Deathstar, 100);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.AttackScoreProtection.selector);
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            1921
+        );
+
+        vm.prank(player);
+        allianceSystem.setDiplomacy(
+            attackerAllianceId, defenderAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            1922
+        );
+        assertEq(missionId, 1);
+    }
+
+    function testAttackProtectionUnsetAllianceSystemUsesSoloRules() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        vm.prank(defender);
+        uint256 allianceId = allianceSystem.createAlliance("OPEN", "Open", "");
+        vm.prank(defender);
+        allianceSystem.inviteMember(allianceId, player);
+        vm.prank(player);
+        allianceSystem.acceptInvite(allianceId);
+        vm.prank(admin);
+        game.setAllianceSystem(address(0));
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        assertEq(
+            uint8(game.attackProtectionStatus(player, targetPlanetId)),
+            uint8(VeydriftGameStorage.AttackBlockReason.None)
+        );
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            1931
+        );
+        assertEq(missionId, 1);
+    }
+
     function testDeployToSameOwnerTargetPlanetStillWorks() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();

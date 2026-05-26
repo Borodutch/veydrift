@@ -648,12 +648,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId))
         );
         if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
-        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
+        if (reason != AttackBlockReason.None) revert AttackScoreProtection();
     }
 
     function _recordAttack(address attacker, uint256 targetPlanetId) private {
         address defender = _attackDefender(targetPlanetId);
-        if (_isAttackProtectionExempt(attacker, defender)) return;
+        if (_attackProtectionExemptions[_playerPairKey(attacker, defender)]) return;
 
         bytes32 windowKey = _attackWindowKey(attacker, defender, targetPlanetId);
         AttackWindow storage window = _attackWindows[windowKey];
@@ -675,14 +675,33 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         view
         returns (AttackBlockReason)
     {
-        if (attacker == defender || _isAttackProtectionExempt(attacker, defender)) {
+        if (attacker == defender || _attackProtectionExemptions[_playerPairKey(attacker, defender)])
+        {
             return AttackBlockReason.None;
         }
-        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(attacksInWindow, false)) {
+        bool sameAlliance;
+        bool atWar;
+        address allianceSystem = _allianceSystem;
+        // Unset alliance system falls back to solo anti-raid rules with no diplomacy exceptions.
+        if (allianceSystem != address(0)) {
+            assembly ("memory-safe") {
+                let ptr := mload(0x40)
+                mstore(ptr, shl(224, 0xe740a348))
+                mstore(add(ptr, 0x04), attacker)
+                mstore(add(ptr, 0x24), defender)
+                if iszero(staticcall(gas(), allianceSystem, ptr, 0x44, ptr, 0x40)) {
+                    revert(0, 0)
+                }
+                sameAlliance := mload(ptr)
+                atWar := mload(add(ptr, 0x20))
+            }
+        }
+        if (sameAlliance) return AttackBlockReason.SameAlliance;
+        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(attacksInWindow, atWar)) {
             return AttackBlockReason.BashingLimit;
         }
         if (VeydriftAntiRaidPrimitives.isScoreProtected(
-                _totalUserScore(attacker), _totalUserScore(defender), false
+                _totalUserScore(attacker), _totalUserScore(defender), atWar
             )) {
             return AttackBlockReason.ScoreProtection;
         }
@@ -700,14 +719,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             return 0;
         }
         return window.count;
-    }
-
-    function _isAttackProtectionExempt(address attacker, address defender)
-        private
-        view
-        returns (bool)
-    {
-        return _attackProtectionExemptions[_playerPairKey(attacker, defender)];
     }
 
     function _attackDefender(uint256 targetPlanetId) private view returns (address) {

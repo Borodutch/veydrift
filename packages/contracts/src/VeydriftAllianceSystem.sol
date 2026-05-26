@@ -445,6 +445,17 @@ contract VeydriftAllianceSystem {
         scoreProtectionException = sameAlliance || atWar;
     }
 
+    function attackProtectionContext(address attacker, address defender)
+        external
+        view
+        returns (bool sameAlliance, bool atWar)
+    {
+        uint256 attackerAllianceId = _memberships[attacker].allianceId;
+        uint256 defenderAllianceId = _memberships[defender].allianceId;
+        sameAlliance = attackerAllianceId != 0 && attackerAllianceId == defenderAllianceId;
+        atWar = _relationship(attackerAllianceId, defenderAllianceId) == DiplomacyStatus.War;
+    }
+
     function canCoordinateDefense(
         address viewer,
         uint256 defenderPlanetId,

@@ -318,7 +318,7 @@ export type AllianceState = {
 
 type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
-export type AttackBlockReason = "none" | "bashing_limit" | "score_protection";
+export type AttackBlockReason = "none" | "bashing_limit" | "score_protection" | "same_alliance";
 
 export type AttackProtectionStatus = {
   wallet: Address;
@@ -2912,12 +2912,16 @@ export function attackBlockReasonLabel(reason: AttackBlockReason): string | null
   if (reason === "score_protection") {
     return "Attack blocked: target is protected by newbie or score-ratio protection.";
   }
+  if (reason === "same_alliance") {
+    return "Attack blocked: target belongs to your alliance.";
+  }
   return null;
 }
 
 function decodeAttackBlockReason(reason: number): AttackBlockReason {
   if (reason === 1) return "bashing_limit";
   if (reason === 2) return "score_protection";
+  if (reason === 3) return "same_alliance";
   return "none";
 }
 

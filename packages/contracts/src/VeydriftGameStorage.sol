@@ -144,7 +144,8 @@ abstract contract VeydriftGameStorage {
     enum AttackBlockReason {
         None,
         BashingLimit,
-        ScoreProtection
+        ScoreProtection,
+        SameAlliance
     }
 
     struct MissionShips {

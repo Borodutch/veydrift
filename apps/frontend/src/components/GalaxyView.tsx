@@ -62,7 +62,7 @@ export type GalaxyMissionPreview = {
 
 export type AttackProtectionStatus = {
   allowed: boolean;
-  blockedReason: "none" | "bashing_limit" | "score_protection";
+  blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
   blockedReasonLabel: string | null;
   targetPlanetId: string;
 };
@@ -715,6 +715,7 @@ export function formatAttackBlockReason(status: AttackProtectionStatus | undefin
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit";
   if (status.blockedReason === "score_protection") return "Attack blocked by score protection";
+  if (status.blockedReason === "same_alliance") return "Attack blocked by alliance membership";
   return "Attack blocked";
 }
 
