@@ -12,7 +12,7 @@ interface IVeydriftSpaceDockGame {
     function buildingLevel(uint256 planetId, Building building) external view returns (uint16);
 }
 
-/// @notice OGame-style Space Dock wreckage and repair accounting for combat modules.
+/// @notice Veydrift Space Dock wreckage and repair accounting for combat modules.
 contract VeydriftSpaceDockSystem {
     using SafeCast for uint256;
 

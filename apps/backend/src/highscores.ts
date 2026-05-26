@@ -104,7 +104,7 @@ const researchBaseCosts: readonly Cost[] = [
 export const highscoreFormula = {
   pointsDivisor: pointsDivisor.toString(),
   summary:
-    "Classic score uses one point per 1,000 resources of completed canonical owned state: buildings as economy, research globally, current fleet, and current defenses.",
+    "Veydrift score uses one point per 1,000 resources of completed canonical owned state: buildings as economy, research globally, current fleet, and current defenses.",
 } as const;
 
 export function calculateHighscore(input: HighscoreInput): HighscoreEntry {

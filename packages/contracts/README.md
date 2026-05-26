@@ -119,8 +119,8 @@ Fleet missions:
 - `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, and intercept mission types. Missile attacks use `launchInterplanetaryMissileAttack(...)`.
 - Departure settles involved planets, enforces fleet slots, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
 - For `AcsDefend` and `Intercept`, the `targetPlanetId` argument is the hostile attack mission id. The contract resolves the actual defended planet from that mission, requires alliance defense permission from `VeydriftAllianceSystem`, and links the launched fleet into the combat module's defender-side battle resolution.
-- Attack battles use six classic OGame-style rounds with cataloged attack, shield, and hull values, separate Weapons/Shielding/Armor scaling, shield absorption, hull explosion checks once damage exceeds 30% of hull, deterministic seed-derived target selection, and cataloged rapid-fire multipliers. ACS defending and intercepting fleets join the defender side when they arrive before the hostile attack.
-- For bounded gas, Veydrift resolves combat at the unit-stack level: one deterministic target stack per firing stack, rapid-fire as a catalog multiplier, and no persisted partial hull damage between rounds. This keeps the catalog, round count, shields, tech modifiers, debris, and outcomes aligned with classic OGame concepts without claiming byte-for-byte battle-simulator parity for every large mixed fleet.
+- Attack battles use six canonical Veydrift rounds with cataloged attack, shield, and hull values, separate Weapons/Shielding/Armor scaling, shield absorption, hull explosion checks once damage exceeds 30% of hull, deterministic seed-derived target selection, and cataloged rapid-fire multipliers. ACS defending and intercepting fleets join the defender side when they arrive before the hostile attack.
+- For bounded gas, Veydrift resolves combat at the unit-stack level: one deterministic target stack per firing stack, rapid-fire as a catalog multiplier, and no persisted partial hull damage between rounds. This keeps the catalog, round count, shields, tech modifiers, debris, and outcomes aligned with Veydrift combat concepts without claiming byte-for-byte battle-simulator parity for every large mixed fleet.
 - Battle randomness is deterministic from `ATTACK_BATTLE_DOMAIN`, chain id, mission id, attacker, origin, target, and the mission `randomnessRequestId`; the contract emits that seed in `AttackBattleResolved`.
 - Public-state anti-raid primitives are centralized in `VeydriftAntiRaidPrimitives`: fleet slots,
   travel/fuel, recall timing, hostile mission visibility, ACS cutoff, bashing/cooldown limits,
@@ -135,7 +135,7 @@ Fleet missions:
 Moon chance:
 
 - `VeydriftMoonSystem.requestMoonChanceFromBattle(battleId, targetPlanetId, metalDebris, crystalDebris)` is the battle/debris integration hook. The configured moon-chance reporter should call it after a qualifying battle creates debris.
-- Moon chance follows the classic debris rule: 1% per 100,000 metal+crystal debris, capped at 20%. Battles below 100,000 debris do not create a randomness request.
+- Moon chance follows the Veydrift debris rule: 1% per 100,000 metal+crystal debris, capped at 20%. Battles below 100,000 debris do not create a randomness request.
 - The moon system requests one seed from `RandomnessEngine` and stores a pending outcome. `finalizeMoonChance(outcomeId)` can be called by anyone after fulfillment; before fulfillment it reverts through `RandomnessEngine.PendingRandomness`.
 - Duplicate battle/target requests are rejected, and targets that already have a moon emit a skip event instead of creating a second moon. Successful outcomes derive moon fields and diameter from the fulfilled random word and battle context.
 

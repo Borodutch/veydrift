@@ -14,7 +14,7 @@ fleet counts, and current defense counts.
 - Defense score: current owned defense and missile value across indexed owned
   planets.
 
-Each category uses classic OGame-style points:
+Each category uses canonical Veydrift points:
 
 ```text
 score = floor(resource_value / 1000)
@@ -44,5 +44,5 @@ is the deterministic reference to port without adding client-side estimates.
 
 Moon building value should be added once moon ownership and building state are
 enumerable through the same public indexing path. Unspent resources are not
-counted in the ranking model because current classic rankings are based on
+counted in the ranking model because current rankings are based on
 owned completed value, not temporary wallet/planet balances.

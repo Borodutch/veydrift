@@ -12,7 +12,7 @@ import {
   unmetResearchRequirement,
 } from "../src/playableMvp";
 
-describe("OGame-style prerequisite gating", () => {
+describe("Veydrift prerequisite gating", () => {
   test("reports a representative locked research prerequisite", () => {
     const state = {
       ...createInitialPlayableState(1_000),
