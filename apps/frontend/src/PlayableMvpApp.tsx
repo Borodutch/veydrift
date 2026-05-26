@@ -4,7 +4,7 @@ import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
-import { OverviewPage } from "./components/OverviewPage";
+import { OverviewPage, type PlanetRenameActionState } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
 import { AlliancePage } from "./components/AlliancePage";
@@ -148,7 +148,7 @@ type ShipyardActionState =
 type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
 type RiftActionState = ShipyardActionState;
-type PlanetActionState = ShipyardActionState;
+type PlanetManagementActionState = ShipyardActionState;
 type MissionActionState = ShipyardActionState;
 
 export function displayHomeCoordinates(
@@ -336,7 +336,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [riftError, setRiftError] = useState<string | undefined>();
   const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
-  const [planetAction, setPlanetAction] = useState<PlanetActionState>({ status: "idle" });
+  const [planetManagementAction, setPlanetManagementAction] = useState<PlanetManagementActionState>({ status: "idle" });
+  const [planetRenameAction, setPlanetRenameAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
@@ -1522,55 +1523,55 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const handleSelectManagedPlanet = useCallback((planetId: string) => {
     setSelectedPlanetId(planetId);
-    setPlanetAction({ status: "idle" });
+    setPlanetManagementAction({ status: "idle" });
+    setPlanetRenameAction({ status: "idle" });
   }, []);
 
-  const handleRenamePlanet = useCallback(() => {
+  const handleRenamePlanet = useCallback((name: string) => {
     if (!provider || !account || !gameContract || !activePlanetId) {
-      setPlanetAction({ status: "error", label: "Wallet, game contract, or planet is unavailable." });
+      setPlanetRenameAction({ status: "error", label: "Wallet, game contract, or planet is unavailable." });
       return;
     }
-    const current = selectedManagedPlanet?.name ?? `Planet ${selectedManagedPlanet?.coordinates ?? activePlanetId}`;
-    const name = window.prompt("Planet name", current)?.trim();
-    if (!name) return;
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
 
-    setPlanetAction({ status: "pending", label: "Waiting for wallet confirmation" });
-    void sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, name)
+    setPlanetRenameAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    void sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, trimmedName)
       .then(async (txHash) => {
-        setPlanetAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
+        setPlanetRenameAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
         await waitForReceipt(provider, txHash);
         await refreshOnChainState();
-        setPlanetAction({ status: "success", label: "Planet renamed." });
+        setPlanetRenameAction({ status: "success", label: "Planet renamed." });
       })
       .catch((error) => {
         console.error(error);
-        setPlanetAction({
+        setPlanetRenameAction({
           status: "error",
           label: error instanceof Error ? error.message : "Rename transaction failed.",
         });
       });
-  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, selectedManagedPlanet]);
+  }, [account, activePlanetId, gameContract, provider, refreshOnChainState]);
 
   const handleAbandonPlanet = useCallback(() => {
     if (!provider || !account || !gameContract || !activePlanetId || selectedManagedPlanet?.isHomePlanet) {
-      setPlanetAction({ status: "error", label: "Only non-home colonies can be abandoned." });
+      setPlanetManagementAction({ status: "error", label: "Only non-home colonies can be abandoned." });
       return;
     }
     const label = selectedManagedPlanet?.name ?? `Planet ${selectedManagedPlanet?.coordinates ?? activePlanetId}`;
     if (!window.confirm(`Abandon ${label}? This requires an empty colony with no active queues or fleet missions.`)) return;
 
-    setPlanetAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    setPlanetManagementAction({ status: "pending", label: "Waiting for wallet confirmation" });
     void sendAbandonPlanetTransaction(provider, account, gameContract, activePlanetId)
       .then(async (txHash) => {
-        setPlanetAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
+        setPlanetManagementAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
         await waitForReceipt(provider, txHash);
         setSelectedPlanetId(undefined);
         await refreshOnChainState();
-        setPlanetAction({ status: "success", label: "Colony abandoned." });
+        setPlanetManagementAction({ status: "success", label: "Colony abandoned." });
       })
       .catch((error) => {
         console.error(error);
-        setPlanetAction({
+        setPlanetManagementAction({
           status: "error",
           label: error instanceof Error ? error.message : "Abandon transaction failed.",
         });
@@ -1802,10 +1803,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const planetSwitcher = walletPlanets.length > 0 ? (
     <PlanetSwitcher
-      action={planetAction}
+      action={planetManagementAction}
       canTransact={Boolean(provider && account && gameContract)}
       onAbandon={handleAbandonPlanet}
-      onRename={handleRenamePlanet}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
       selectedPlanetId={activePlanetId}
@@ -2013,6 +2013,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onJoinAttack={handleJoinAttack}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
+        onRenamePlanet={handleRenamePlanet}
         onResolveMission={handleResolveMission}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
@@ -2023,6 +2024,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         settledState={settledState}
         shipProgress={shipProgress}
         state={state}
+        canRenamePlanet={Boolean(provider && account && gameContract && activePlanetId)}
+        planetRenameAction={planetRenameAction}
       />
     );
   })();
@@ -2052,15 +2055,13 @@ function PlanetSwitcher({
   action,
   canTransact,
   onAbandon,
-  onRename,
   onSelect,
   planets,
   selectedPlanetId,
 }: {
-  action: PlanetActionState;
+  action: PlanetManagementActionState;
   canTransact: boolean;
   onAbandon: () => void;
-  onRename: () => void;
   onSelect: (planetId: string) => void;
   planets: ManagedPlanetResponse[];
   selectedPlanetId: string | undefined;
@@ -2101,14 +2102,6 @@ function PlanetSwitcher({
               {action.label}
             </span>
           )}
-          <button
-            className="h-8 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-            disabled={!canTransact || action.status === "pending"}
-            onClick={onRename}
-            type="button"
-          >
-            Rename
-          </button>
           <button
             className="h-8 rounded border border-red-300/20 bg-red-300/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
             disabled={!canTransact || selectedPlanet.isHomePlanet || action.status === "pending"}
