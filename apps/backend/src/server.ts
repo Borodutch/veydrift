@@ -774,15 +774,33 @@ function unavailableResponse(problems: ConfigProblem[]): Response {
 }
 
 function errorResponse(error: unknown, status: number): Response {
+  const responseStatus = statusForError(error, status);
   return Response.json(
     {
       error: error instanceof Error ? error.message : "Request failed."
     },
     {
       headers: corsHeaders,
-      status
+      status: responseStatus
     }
   );
+}
+
+function statusForError(error: unknown, fallback: number): number {
+  if (!(error instanceof Error)) return fallback;
+
+  if (isRateLimitedRpcError(error)) return 503;
+  if (isUpstreamRpcError(error)) return 502;
+
+  return fallback;
+}
+
+function isRateLimitedRpcError(error: Error): boolean {
+  return /RPC HTTP (429|503)|over rate limit|rate limit|too many requests/i.test(error.message);
+}
+
+function isUpstreamRpcError(error: Error): boolean {
+  return /^RPC (HTTP \d+|-?\d+:)/i.test(error.message);
 }
 
 function selectedPlanetId(url: URL): bigint | undefined {

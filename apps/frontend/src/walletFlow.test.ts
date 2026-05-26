@@ -15,6 +15,7 @@ import {
   fetchHighscores,
   fetchInfrastructureState,
   fetchMoonState,
+  fetchShipyardState,
   fetchWalletQueues,
   getInjectedProvider,
   isBaseSepoliaChain,
@@ -1044,6 +1045,8 @@ describe("walletFlow", () => {
       await fetchInfrastructureState("https://api.example.test", account);
       await fetchMoonState("https://api.example.test", account, "7");
       await fetchMoonState("https://api.example.test", account, "8:37:9");
+      await fetchShipyardState("https://api.example.test", account, "4");
+      await fetchShipyardState("https://api.example.test", account, "8:37:9");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1077,10 +1080,24 @@ describe("walletFlow", () => {
           headers: { accept: "application/json" },
         },
       },
+      {
+        url: `https://api.example.test/wallet/${account}/shipyard?planetId=4`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/shipyard`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
     ]);
   });
 
-  test("includes backend wallet API validation messages in errors", async () => {
+  test("includes backend wallet API validation messages in shipyard errors", async () => {
     const originalFetch = globalThis.fetch;
 
     globalThis.fetch = (async () => new Response(
@@ -1092,8 +1109,8 @@ describe("walletFlow", () => {
     )) as unknown as typeof fetch;
 
     try {
-      await expect(fetchMoonState("https://api.example.test", account, "7")).rejects.toThrow(
-        "Moon API failed: 400: planetId must be a positive integer."
+      await expect(fetchShipyardState("https://api.example.test", account, "4")).rejects.toThrow(
+        "Shipyard API failed: 400: planetId must be a positive integer."
       );
     } finally {
       globalThis.fetch = originalFetch;
