@@ -1,5 +1,6 @@
 import type { MainQueueItem, PlayableState, Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { Check, Pencil, X } from "lucide-preact";
 import {
   buildingQueueAsset,
   buildingQueueLabel,
@@ -9,6 +10,7 @@ import {
   overviewQueueItemRemainingClassName,
   queueProgressBarState,
   queueProgressFillState,
+  usedFieldsFromBuildings,
   type ChainLoadStatus,
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
@@ -27,6 +29,12 @@ function queueRemaining(readyAt: string | null, now: number): string {
 
 type BuildingQueueItem = Extract<MainQueueItem, { kind: "building" }>;
 
+export type PlanetRenameActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
+
 interface OverviewPageProps {
   state: PlayableState;
   settledState: PlayableState;
@@ -44,12 +52,16 @@ interface OverviewPageProps {
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
   onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
+  onRenamePlanet?: ((name: string) => void) | undefined;
   onResolveMission?: ((missionId: string) => void) | undefined;
   onChainError?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
   onChainQueues?: PlayerQueuesResponse | undefined;
   onChainStatus: ChainLoadStatus;
+  planetRenameAction?: PlanetRenameActionState | undefined;
+  canRenamePlanet?: boolean | undefined;
+  usedFields?: number | undefined;
 }
 
 export function OverviewPage({
@@ -68,14 +80,18 @@ export function OverviewPage({
   onNavigate,
   onCounterplay,
   onJoinAttack,
+  onRenamePlanet,
   onResolveMission,
   onChainError,
   fleetVisibility,
   onChainSettlement,
   onChainQueues,
   onChainStatus,
+  planetRenameAction = { status: "idle" },
+  canRenamePlanet = false,
+  usedFields: selectedPlanetUsedFields,
 }: OverviewPageProps) {
-  const usedFields = Object.values(settledState.buildings).filter((level) => level > 0).length;
+  const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
   const buildingQueue = activeBuildingQueue ?? (settledState.queue?.kind === "building" ? settledState.queue : undefined);
   const onChainBuildingQueue = buildingQueue
@@ -91,6 +107,9 @@ export function OverviewPage({
 
   const planetName = homePlanet?.name
     ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
+  const [renameDraft, setRenameDraft] = useState(planetName);
+  const [renamePanelOpen, setRenamePanelOpen] = useState(false);
+  const [renameValidation, setRenameValidation] = useState<string | undefined>(undefined);
   const planetSubhead = homePlanet
     ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : "Home planet";
@@ -121,11 +140,43 @@ export function OverviewPage({
     setHeroImageLoaded(isImageReady(heroImageRef.current));
   }, [heroImage]);
 
+  useEffect(() => {
+    if (!renamePanelOpen) {
+      setRenameDraft(planetName);
+      setRenameValidation(undefined);
+    }
+  }, [planetName, renamePanelOpen]);
+
+  useEffect(() => {
+    if (planetRenameAction.status === "success") {
+      setRenamePanelOpen(false);
+    }
+  }, [planetRenameAction.status]);
+
+  const canShowRename = Boolean(isWalletConnected && onRenamePlanet);
+  const renameBusy = planetRenameAction.status === "pending";
+  const renameStatusTone = planetRenameAction.status === "error"
+    ? "text-amber-200"
+    : planetRenameAction.status === "success"
+      ? "text-emerald-200"
+      : "text-slate-300";
+  const renameStatusLabel = planetRenameAction.status === "idle" ? undefined : planetRenameAction.label;
+  const handleRenameSubmit = (event: Event) => {
+    event.preventDefault();
+    const name = renameDraft.trim();
+    if (!name) {
+      setRenameValidation("Enter a planet name.");
+      return;
+    }
+    setRenameValidation(undefined);
+    onRenamePlanet?.(name);
+  };
+
   return (
     <div className="grid gap-3">
       {/* Planet hero — compact, no wasted space */}
       <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-        <div className="relative h-24 sm:h-28">
+        <div className={`relative ${renamePanelOpen ? "min-h-56" : "h-28 sm:h-32"}`}>
           {(!heroImage || !heroImageLoaded) && (
             <PlanetImageSkeleton className="absolute inset-0" />
           )}
@@ -144,11 +195,84 @@ export function OverviewPage({
             />
           ) : null}
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,9,19,0.35),rgba(7,9,19,0.92))]" />
-          <div className="relative flex h-full flex-col justify-end p-3 sm:p-4">
+          <div className={`relative flex ${renamePanelOpen ? "min-h-56" : "h-full"} flex-col justify-end p-3 sm:p-4`}>
             <p className="text-[11px] font-medium text-slate-400">{planetSubhead}</p>
-            <h2 className="text-base font-semibold text-white">
-              {planetName}
-            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="min-w-0 break-words text-base font-semibold text-white">
+                {planetName}
+              </h2>
+              {canShowRename && (
+                <button
+                  aria-expanded={renamePanelOpen}
+                  aria-label="Rename planet"
+                  className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-white/15 bg-black/35 px-2 text-[11px] font-semibold text-slate-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+                  disabled={renameBusy}
+                  onClick={() => {
+                    setRenamePanelOpen((open) => !open);
+                    setRenameDraft(planetName);
+                    setRenameValidation(undefined);
+                  }}
+                  title="Rename planet"
+                  type="button"
+                >
+                  <Pencil aria-hidden="true" size={13} strokeWidth={2} />
+                  Rename
+                </button>
+              )}
+            </div>
+            {canShowRename && planetRenameAction.status !== "idle" && !renamePanelOpen && (
+              <p className={`mt-1 max-w-full truncate text-xs ${renameStatusTone}`}>
+                {planetRenameAction.label}
+              </p>
+            )}
+            {canShowRename && renamePanelOpen && (
+              <form
+                className="mt-3 grid gap-2 rounded border border-white/10 bg-black/45 p-3 backdrop-blur"
+                onSubmit={handleRenameSubmit}
+              >
+                <label className="grid gap-1 text-xs font-medium text-slate-200">
+                  New planet name
+                  <input
+                    className="h-9 rounded border border-white/10 bg-[#080d18]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+                    disabled={renameBusy}
+                    maxLength={64}
+                    onInput={(event) => {
+                      setRenameDraft(event.currentTarget.value);
+                      setRenameValidation(undefined);
+                    }}
+                    placeholder="Enter planet name"
+                    value={renameDraft}
+                  />
+                </label>
+                <p className="text-[11px] leading-4 text-slate-300">
+                  Renaming this planet is an onchain transaction. Your wallet will ask for confirmation, and gas may be required.
+                </p>
+                {(renameValidation || renameStatusLabel) && (
+                  <p className={`text-xs ${renameValidation ? "text-amber-200" : renameStatusTone}`}>
+                    {renameValidation ?? renameStatusLabel}
+                  </p>
+                )}
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    className="inline-flex h-8 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+                    disabled={renameBusy}
+                    onClick={() => setRenamePanelOpen(false)}
+                    type="button"
+                  >
+                    <X aria-hidden="true" size={13} strokeWidth={2} />
+                    Cancel
+                  </button>
+                  <button
+                    className="inline-flex h-8 items-center gap-1 rounded border border-cyan-300/40 bg-cyan-300/10 px-2.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+                    disabled={!canRenamePlanet || renameBusy}
+                    type="submit"
+                  >
+                    <Check aria-hidden="true" size={13} strokeWidth={2} />
+                    {renameBusy ? "Confirming" : "Rename onchain"}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
 
