@@ -344,8 +344,9 @@ Veydrift uses public blockchain state as the source of truth. Espionage reports,
 hidden fleet intent, commit-reveal protections, private orderflow, and other
 hidden-state mechanics are out of scope permanently for the product direction.
 There is no private state, spy report flow, probe unit, or research path for
-revealing information. Fleet and combat systems should use the public
-counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
+revealing information. VEY-KANEO-196 records this as the formal classic
+espionage and hidden-intel exclusion. Fleet and combat systems should use the
+public counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
 VEY-KANEO-133: visible commitment, recall limits, return exposure, and future
 ACS/intercept rules.
 
