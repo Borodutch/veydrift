@@ -2533,8 +2533,8 @@ function decodeStringResult(hex: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-function decodeString(words: string[], headIndex: number): string {
-  const offset = Number(decodeUintWord(wordAt(words, headIndex))) / 32;
+function decodeString(words: string[], headIndex: number, baseIndex = 0): string {
+  const offset = baseIndex + Number(decodeUintWord(wordAt(words, headIndex))) / 32;
   const length = Number(decodeUintWord(wordAt(words, offset)));
   let hex = "";
   for (let index = offset + 1; hex.length < length * 2; index += 1) {
@@ -2558,16 +2558,24 @@ function decodeUintArray(hex: string): bigint[] {
 }
 
 function decodeAllianceDirectoryEntry(allianceId: bigint, words: string[]): AllianceState["directory"][number] {
+  const tupleStart = dynamicTupleStart(words);
   return {
     allianceId: allianceId.toString(),
-    active: decodeBoolWord(wordAt(words, 0)),
-    tag: decodeString(words, 1),
-    name: decodeString(words, 2),
-    description: decodeString(words, 3),
-    owner: decodeAddressWord(wordAt(words, 4)),
-    createdAt: decodeUintWord(wordAt(words, 5)).toString(),
-    memberCount: Number(decodeUintWord(wordAt(words, 6)))
+    active: decodeBoolWord(wordAt(words, tupleStart)),
+    tag: decodeString(words, tupleStart + 1, tupleStart),
+    name: decodeString(words, tupleStart + 2, tupleStart),
+    description: decodeString(words, tupleStart + 3, tupleStart),
+    owner: decodeAddressWord(wordAt(words, tupleStart + 4)),
+    createdAt: decodeUintWord(wordAt(words, tupleStart + 5)).toString(),
+    memberCount: Number(decodeUintWord(wordAt(words, tupleStart + 6)))
   };
+}
+
+function dynamicTupleStart(words: string[]): number {
+  if (words.length < 2) return 0;
+
+  const offset = Number(decodeUintWord(wordAt(words, 0)) / 32n);
+  return offset > 0 && offset < words.length ? offset : 0;
 }
 
 function hexToBytes(hex: string): Uint8Array {
