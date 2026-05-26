@@ -105,8 +105,27 @@ export class CachedChainReader implements ChainReader {
     );
   }
 
+  getHighscoresForWallets(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]> {
+    if (!this.inner.getHighscoresForWallets) {
+      return Promise.reject(new Error("Bulk highscores are not supported by the wrapped chain reader."));
+    }
+
+    const scope = [...planetsByOwner.entries()]
+      .map(([owner, planets]) => `${owner}:${planets.map((planet) => planet.planetId).join(",")}`)
+      .join("|");
+    return this.cached(`highscores:${scope}`, () => this.inner.getHighscoresForWallets!(planetsByOwner));
+  }
+
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {
     return this.inner.listSettledPlanetEvents(fromBlock, toBlock);
+  }
+
+  listCurrentPlanets(): Promise<SettledPlanetEvent[]> {
+    if (!this.inner.listCurrentPlanets) {
+      return Promise.reject(new Error("Current planet enumeration is not supported by the wrapped chain reader."));
+    }
+
+    return this.cached("current-planets", () => this.inner.listCurrentPlanets!());
   }
 
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]> {
