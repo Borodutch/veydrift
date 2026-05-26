@@ -14,6 +14,7 @@ import {
   ensureBaseSepoliaNetwork,
   fetchHighscores,
   fetchInfrastructureState,
+  fetchShipyardState,
   fetchWalletQueues,
   getInjectedProvider,
   isBaseSepoliaChain,
@@ -1041,6 +1042,8 @@ describe("walletFlow", () => {
     try {
       await fetchWalletQueues("https://api.example.test///", account);
       await fetchInfrastructureState("https://api.example.test", account);
+      await fetchShipyardState("https://api.example.test", account, "4");
+      await fetchShipyardState("https://api.example.test", account, "8:37:9");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1060,7 +1063,41 @@ describe("walletFlow", () => {
           headers: { accept: "application/json" },
         },
       },
+      {
+        url: `https://api.example.test/wallet/${account}/shipyard?planetId=4`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/shipyard`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
     ]);
+  });
+
+  test("surfaces wallet API error bodies", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ error: "planetId must be a positive integer." }),
+      {
+        headers: { "content-type": "application/json" },
+        status: 400,
+      }
+    )) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchShipyardState("https://api.example.test", account, "4")).rejects.toThrow(
+        "Shipyard API failed: planetId must be a positive integer."
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("fetches empty highscores as a valid rankings payload", async () => {

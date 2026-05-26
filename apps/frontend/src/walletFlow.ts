@@ -1933,10 +1933,16 @@ async function fetchWalletJson<T>(
     cache: "no-store",
     headers: { accept: "application/json" },
   });
-  if (!response.ok) throw new Error(`${label} API failed: ${response.status}`);
+  if (!response.ok) throw new Error(await walletHttpFailureMessage(response, label));
   return response.json() as Promise<T>;
 }
 
+async function walletHttpFailureMessage(response: Response, label: string): Promise<string> {
+  const errorBody = await readJsonErrorBody(response);
+  const backendError = typeof errorBody?.error === "string" ? errorBody.error : undefined;
+  return backendError ? `${label} API failed: ${backendError}` : `${label} API failed: ${response.status}`;
+}
+
 function withPlanetId(path: string, planetId: string | undefined): string {
-  return planetId ? `${path}?planetId=${encodeURIComponent(planetId)}` : path;
+  return planetId && /^[1-9]\d*$/.test(planetId) ? `${path}?planetId=${encodeURIComponent(planetId)}` : path;
 }
