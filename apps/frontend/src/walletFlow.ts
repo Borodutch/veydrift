@@ -370,7 +370,19 @@ export type HighscoreEntry = {
   wallet: string;
   homePlanetId: string | null;
   planetCount: number;
+  planets?: HighscorePlanetSummary[];
   score: Record<HighscoreCategory, string>;
+};
+
+export type HighscorePlanetSummary = {
+  planetId: string;
+  name: string | null;
+  galaxy: number;
+  system: number;
+  position: number;
+  fields: number;
+  temperature: number;
+  isHomePlanet: boolean;
 };
 
 export type HighscoreResponse = {

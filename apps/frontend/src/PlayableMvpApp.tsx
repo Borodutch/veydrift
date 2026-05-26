@@ -2066,7 +2066,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     if (page === "rankings") {
       return (
-        <RankingsPage apiBaseUrl={apiBaseUrl} />
+        <RankingsPage apiBaseUrl={apiBaseUrl} onSelectPlanet={handleSelectPlanet} />
       );
     }
 

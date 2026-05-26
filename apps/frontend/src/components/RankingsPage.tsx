@@ -1,9 +1,19 @@
 import { useEffect, useState } from "preact/hooks";
-import { RotateCw } from "lucide-preact";
-import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscoreResponse } from "../walletFlow";
+import { MapPin, RotateCw } from "lucide-preact";
+import { formatPlanetType, planetImageForType, planetTypeFromTemperature } from "../data/mockUniverse";
+import type { Coordinates } from "../types";
+import {
+  fetchHighscores,
+  shortAddress,
+  type HighscoreCategory,
+  type HighscoreEntry,
+  type HighscorePlanetSummary,
+  type HighscoreResponse
+} from "../walletFlow";
 
 type RankingsPageProps = {
   apiBaseUrl: string | undefined;
+  onSelectPlanet: (coords: Coordinates) => void;
 };
 
 const categories: Array<{ key: HighscoreCategory; label: string }> = [
@@ -14,7 +24,7 @@ const categories: Array<{ key: HighscoreCategory; label: string }> = [
   { key: "defense", label: "Defense" },
 ];
 
-export function RankingsPage({ apiBaseUrl }: RankingsPageProps) {
+export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -103,7 +113,7 @@ export function RankingsPage({ apiBaseUrl }: RankingsPageProps) {
           <RankingsMessage label="No settled commanders indexed yet" />
         ) : (
           entries.map((entry) => (
-            <RankingRow active={active} entry={entry} key={`${active}-${entry.wallet}`} />
+            <RankingRow active={active} entry={entry} key={`${active}-${entry.wallet}`} onSelectPlanet={onSelectPlanet} />
           ))
         )}
       </div>
@@ -117,20 +127,97 @@ export function RankingsPage({ apiBaseUrl }: RankingsPageProps) {
   );
 }
 
-function RankingRow({ active, entry }: { active: HighscoreCategory; entry: HighscoreEntry }) {
+function RankingRow({
+  active,
+  entry,
+  onSelectPlanet
+}: {
+  active: HighscoreCategory;
+  entry: HighscoreEntry;
+  onSelectPlanet: (coords: Coordinates) => void;
+}) {
+  const planets = entry.planets ?? [];
+  const homePlanet = planets.find((planet) => planet.isHomePlanet || planet.planetId === entry.homePlanetId);
+  const primaryPlanet = homePlanet ?? planets[0];
+  const visiblePlanets = planets.slice(0, 5);
+  const hiddenPlanetCount = Math.max(0, planets.length - visiblePlanets.length);
+  const primaryLabel = primaryPlanet
+    ? `${planetDisplayName(primaryPlanet)} [${primaryPlanet.galaxy}:${primaryPlanet.system}:${primaryPlanet.position}]`
+    : "No public planet indexed";
+
   return (
     <div className="grid grid-cols-[56px_1fr_88px_96px] items-center border-b border-white/5 px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_1fr_100px_120px_120px]">
       <span className="font-mono text-slate-400">#{entry.rank}</span>
-      <span className="min-w-0">
-        <span className="block truncate font-mono text-slate-100">{shortAddress(entry.wallet)}</span>
-        <span className="block text-xs text-slate-500">
-          {entry.homePlanetId ? `Planet ${entry.homePlanetId}` : "No home planet"}
-        </span>
-      </span>
+      <div className="min-w-0">
+        <button
+          className="group min-w-0 text-left disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!primaryPlanet}
+          onClick={() => {
+            if (primaryPlanet) onSelectPlanet(planetCoordinates(primaryPlanet));
+          }}
+          title={primaryPlanet ? `Open ${primaryLabel}` : undefined}
+          type="button"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="block truncate font-mono text-slate-100 transition group-enabled:group-hover:text-cyan-100">
+              {shortAddress(entry.wallet)}
+            </span>
+            {primaryPlanet ? (
+              <MapPin aria-hidden="true" className="shrink-0 text-cyan-200/70 transition group-hover:text-cyan-100" size={14} />
+            ) : null}
+          </span>
+          <span className="mt-0.5 block truncate text-xs text-slate-500 group-enabled:group-hover:text-slate-300">
+            {primaryLabel}
+          </span>
+        </button>
+        {visiblePlanets.length > 0 ? (
+          <div className="mt-2 flex min-w-0 items-center gap-1.5">
+            {visiblePlanets.map((planet) => (
+              <PlanetThumb key={planet.planetId} onSelectPlanet={onSelectPlanet} planet={planet} />
+            ))}
+            {hiddenPlanetCount > 0 ? (
+              <span className="rounded border border-white/10 bg-white/5 px-1.5 py-1 text-[0.65rem] font-semibold text-slate-400">
+                +{hiddenPlanetCount}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       <span className="text-right font-mono text-slate-300">{entry.planetCount}</span>
       <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
       <span className="hidden text-right font-mono text-slate-400 sm:block">{formatScore(entry.score.total)}</span>
     </div>
+  );
+}
+
+function PlanetThumb({
+  onSelectPlanet,
+  planet
+}: {
+  onSelectPlanet: (coords: Coordinates) => void;
+  planet: HighscorePlanetSummary;
+}) {
+  const type = planetTypeFromTemperature(planet.temperature);
+  const label = `${planetDisplayName(planet)} [${planet.galaxy}:${planet.system}:${planet.position}]`;
+
+  return (
+    <button
+      aria-label={`Open ${label}`}
+      className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-white/10 bg-white/5 transition hover:border-cyan-300/60 focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
+      onClick={() => onSelectPlanet(planetCoordinates(planet))}
+      title={label}
+      type="button"
+    >
+      <img
+        alt=""
+        className="h-full w-full object-cover"
+        loading="lazy"
+        src={planetImageForType(type)}
+      />
+      {planet.isHomePlanet ? (
+        <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-cyan-200 shadow-[0_0_8px_rgba(103,232,249,0.9)]" />
+      ) : null}
+    </button>
   );
 }
 
@@ -148,4 +235,16 @@ function formatScore(value: string): string {
   } catch {
     return value;
   }
+}
+
+function planetCoordinates(planet: HighscorePlanetSummary): Coordinates {
+  return {
+    galaxy: planet.galaxy,
+    system: planet.system,
+    position: planet.position
+  };
+}
+
+function planetDisplayName(planet: HighscorePlanetSummary): string {
+  return planet.name?.trim() || formatPlanetType(planetTypeFromTemperature(planet.temperature));
 }

@@ -3,7 +3,7 @@ import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import { assertAddress, type ChainReader, type MoonChanceReportEvent, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
-import { highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
+import { highscoreFormula, type HighscoreEntry, type HighscorePlanetSummary, type ScoreBreakdown } from "./highscores";
 import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
@@ -355,10 +355,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           await indexer.rebuildPlanets();
         }
         const indexedPlanets = indexer?.settledPlanetsByOwner().get(wallet.toLowerCase()) ?? [];
+        const entry = await ready.getHighscoreForWallet(wallet, indexedPlanets.map((planet) => planet.planetId));
         return Response.json(
           {
             formula: highscoreFormula,
-            entry: await ready.getHighscoreForWallet(wallet, indexedPlanets.map((planet) => planet.planetId))
+            entry: withPublicHighscorePlanets(entry, indexedPlanets)
           },
           {
             headers: corsHeaders
@@ -382,7 +383,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const entries = ready.getHighscoresForWallets
           ? await ready.getHighscoresForWallets(planetsByOwner)
           : await highscoreEntriesForOwners(ready, planetsByOwner);
-        const rankings = highscoreRankings(entries, limit);
+        const entriesWithPlanets = entries.map((entry) =>
+          withPublicHighscorePlanets(entry, planetsByOwner.get(entry.wallet.toLowerCase()) ?? [])
+        );
+        const rankings = highscoreRankings(entriesWithPlanets, limit);
 
         return Response.json(
           {
@@ -596,6 +600,40 @@ async function highscoreEntriesForOwners(
     ));
   }
   return entries;
+}
+
+function withPublicHighscorePlanets(
+  entry: HighscoreEntry,
+  planets: readonly SettledPlanetEvent[]
+): HighscoreEntry {
+  return {
+    ...entry,
+    planets: publicHighscorePlanets(planets, entry.homePlanetId)
+  };
+}
+
+function publicHighscorePlanets(
+  planets: readonly SettledPlanetEvent[],
+  homePlanetId: string | null
+): HighscorePlanetSummary[] {
+  return [...planets]
+    .sort((left, right) => {
+      if (left.planetId === homePlanetId && right.planetId !== homePlanetId) return -1;
+      if (right.planetId === homePlanetId && left.planetId !== homePlanetId) return 1;
+      if (left.galaxy !== right.galaxy) return left.galaxy - right.galaxy;
+      if (left.system !== right.system) return left.system - right.system;
+      return left.position - right.position;
+    })
+    .map((planet) => ({
+      planetId: planet.planetId,
+      name: planet.name,
+      galaxy: planet.galaxy,
+      system: planet.system,
+      position: planet.position,
+      fields: planet.fields,
+      temperature: planet.temperature,
+      isHomePlanet: planet.planetId === homePlanetId
+    }));
 }
 
 function includeOccupiedPlanets(

@@ -24,7 +24,19 @@ export type HighscoreEntry = {
   wallet: Address;
   homePlanetId: string | null;
   planetCount: number;
+  planets?: HighscorePlanetSummary[];
   score: ScoreBreakdown;
+};
+
+export type HighscorePlanetSummary = {
+  planetId: string;
+  name: string | null;
+  galaxy: number;
+  system: number;
+  position: number;
+  fields: number;
+  temperature: number;
+  isHomePlanet: boolean;
 };
 
 type Cost = readonly [bigint, bigint, bigint];
