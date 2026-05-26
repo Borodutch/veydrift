@@ -7,6 +7,7 @@ import {
   safePlanetFields,
   safePlanetTemperature,
   safeResourceNumber,
+  usedFieldsFromBuildings,
 } from "../src/overviewData";
 
 describe("overview data guards", () => {
@@ -48,6 +49,17 @@ describe("overview data guards", () => {
       diameter: "14,353 km",
       status: "Idle",
     });
+  });
+
+  test("counts used fields as completed building levels, not occupied building types", () => {
+    expect(usedFieldsFromBuildings({
+      metalMine: 2,
+      crystalMine: 1,
+      deuteriumSynthesizer: 1,
+      solarPlant: 1,
+      roboticsFactory: 1,
+      shipyard: 0,
+    })).toBe(6);
   });
 
   test("does not render unavailable API state as local planet stats", () => {
