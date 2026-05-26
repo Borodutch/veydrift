@@ -1465,7 +1465,7 @@ export class VeydriftGameReader implements ChainReader {
       : decodeUint(filter.toBlock);
     if (toBlock < fromBlock) return [];
 
-    return this.getLogsInChunks(filter, fromBlock, toBlock, 1_999n);
+    return this.getLogsInChunks(filter, fromBlock, toBlock, 9n);
   }
 
   private async getLogsInChunks(

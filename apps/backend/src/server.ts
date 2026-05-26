@@ -365,7 +365,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           }
         );
       } catch (error) {
-        return errorResponse(error, 400);
+        return highscoreFailureResponse(error);
       }
     }
 
@@ -399,7 +399,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           }
         );
       } catch (error) {
-        return errorResponse(error, 400);
+        return highscoreFailureResponse(error);
       }
     }
 
@@ -721,6 +721,27 @@ function requireHighscoreReader(chainReader: ChainReader | undefined, problems: 
   }
 
   return ready as HighscoreReader;
+}
+
+function highscoreFailureResponse(error: unknown): Response {
+  if (isRpcTransportError(error)) {
+    return Response.json(
+      {
+        error: "highscores_unavailable",
+        detail: error instanceof Error ? error.message : "RPC request failed."
+      },
+      {
+        headers: corsHeaders,
+        status: 503
+      }
+    );
+  }
+
+  return errorResponse(error, 400);
+}
+
+function isRpcTransportError(error: unknown): boolean {
+  return error instanceof Error && /^RPC(?: HTTP)?\b/.test(error.message);
 }
 
 type RankedHighscoreEntry = HighscoreEntry & {

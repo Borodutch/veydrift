@@ -1606,6 +1606,53 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("returns a service error instead of a bad request when highscore RPC reads fail", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getHighscoreForWallet = async () => {
+      throw new Error("RPC HTTP 429");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body).toEqual({
+      error: "highscores_unavailable",
+      detail: "RPC HTTP 429"
+    });
+  });
+
+  test("returns a service error instead of a bad request when highscore index rebuild fails", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("RPC HTTP 429");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body).toEqual({
+      error: "highscores_unavailable",
+      detail: "RPC HTTP 429"
+    });
+  });
+
   test("returns CORS headers when highscores are unsupported", async () => {
     const handler = createRequestHandler({
       config: configuredTestConfig,
