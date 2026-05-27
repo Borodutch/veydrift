@@ -15,6 +15,7 @@ export type RuntimeConfig = {
   };
   gameContractAddress: string | null;
   graphqlUrl: string;
+  moonContractAddress: string | null;
   network: string;
   resourceTokenAddresses: {
     crystal: string | null;
@@ -41,4 +42,8 @@ export function gameContractAddress(config: RuntimeConfig): string | undefined {
 
 export function allianceContractAddress(config: RuntimeConfig): string | undefined {
   return config.allianceContractAddress ?? undefined;
+}
+
+export function moonContractAddress(config: RuntimeConfig): string | undefined {
+  return config.moonContractAddress ?? undefined;
 }

@@ -12,7 +12,30 @@ interface IVeydriftMoonGame {
     function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
     function spendMoonResources(uint256 planetId, VeydriftGameStorage.Resources calldata cost)
         external;
+    function moveMoonGateShips(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        address owner,
+        VeydriftGameStorage.MissionShips calldata ships
+    ) external;
     function technologyLevel(address player, Technology technology) external view returns (uint16);
+    function nextFleetId() external view returns (uint256);
+    function fleetMission(uint256 missionId)
+        external
+        view
+        returns (
+            VeydriftGameStorage.FleetMissionStatus status,
+            VeydriftGameStorage.FleetMissionType missionType,
+            address owner,
+            uint256 originPlanetId,
+            uint256 targetPlanetId,
+            uint64 departureAt,
+            uint64 arrivalAt,
+            uint64 returnAt,
+            uint128 fuelCost,
+            VeydriftGameStorage.Resources memory cargo,
+            uint256 randomnessRequestId
+        );
 }
 
 interface IVeydriftRandomnessEngine {
@@ -33,6 +56,7 @@ contract VeydriftMoonSystem {
     uint16 public constant MAX_SYSTEM = 499;
     bytes32 public constant MOON_SEED_DOMAIN = keccak256("veydrift.moon.v1");
     bytes32 public constant MOON_CHANCE_DOMAIN = keccak256("veydrift.moon-chance.v1");
+    bytes32 public constant MOON_DESTRUCTION_DOMAIN = keccak256("veydrift.moon-destruction.v1");
     uint16 public constant BPS = 10_000;
     uint256 public constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
     uint16 public constant MAX_MOON_CHANCE_BPS = 2_000;
@@ -74,11 +98,42 @@ contract VeydriftMoonSystem {
         uint64 finalizedAt;
     }
 
+    struct MoonDestructionOutcome {
+        bool active;
+        bool finalized;
+        bool moonDestroyed;
+        bool deathstarsDestroyed;
+        uint256 battleId;
+        uint256 targetPlanetId;
+        address attacker;
+        uint32 deathstars;
+        uint16 moonDestructionChanceBps;
+        uint16 deathstarDestructionChanceBps;
+        uint256 randomnessRequestId;
+        bytes32 purposeHash;
+        uint256 randomWord;
+        uint64 requestedAt;
+        uint64 finalizedAt;
+    }
+
+    struct PhalanxScanResult {
+        uint256 missionId;
+        VeydriftGameStorage.FleetMissionStatus status;
+        VeydriftGameStorage.FleetMissionType missionType;
+        address owner;
+        uint256 originPlanetId;
+        uint256 targetPlanetId;
+        uint64 departureAt;
+        uint64 arrivalAt;
+        uint64 returnAt;
+    }
+
     IVeydriftMoonGame public immutable game;
     IVeydriftRandomnessEngine public immutable randomness;
     address public owner;
     address public moonChanceReporter;
     uint256 public nextMoonChanceId = 1;
+    uint256 public nextMoonDestructionId = 1;
     mapping(uint256 planetId => Moon moon) internal _moons;
     mapping(uint256 planetId => mapping(MoonBuilding building => uint16 level)) internal
         _moonBuildingLevels;
@@ -87,11 +142,15 @@ contract VeydriftMoonSystem {
     mapping(uint256 outcomeId => MoonChanceOutcome outcome) internal _moonChanceOutcomes;
     mapping(uint256 requestId => uint256 outcomeId) public moonChanceOutcomeByRequestId;
     mapping(bytes32 battleKey => uint256 outcomeId) public moonChanceOutcomeByBattle;
+    mapping(uint256 outcomeId => MoonDestructionOutcome outcome) internal _moonDestructionOutcomes;
+    mapping(uint256 requestId => uint256 outcomeId) public moonDestructionOutcomeByRequestId;
+    mapping(bytes32 battleKey => uint256 outcomeId) public moonDestructionOutcomeByBattle;
 
     error ConstructionActive();
     error ConstructionInactive();
     error ConstructionNotReady(uint64 readyAt);
     error InvalidCoordinates();
+    error InvalidQuantity();
     error LevelTooHigh();
     error MissingDependency(bytes32 dependency);
     error MoonAlreadyExists(uint256 planetId);
@@ -105,9 +164,12 @@ contract VeydriftMoonSystem {
     error MoonChanceAlreadyRecorded(uint256 battleId, uint256 targetPlanetId);
     error MoonChanceAlreadyFinalized(uint256 outcomeId);
     error MoonChanceTooSmall(uint256 debris);
+    error MoonDestructionAlreadyRecorded(uint256 battleId, uint256 targetPlanetId);
+    error MoonDestructionAlreadyFinalized(uint256 outcomeId);
     error NotMoonChanceReporter(address account);
     error NotOwner(address account);
     error SameMoon();
+    error UnknownMoonDestructionOutcome(uint256 outcomeId);
     error UnknownMoonChanceOutcome(uint256 outcomeId);
     error ZeroAddress();
 
@@ -168,6 +230,25 @@ contract VeydriftMoonSystem {
         uint256 randomWord,
         uint16 moonFields,
         uint16 moonDiameterKm
+    );
+    event MoonDestructionRequested(
+        uint256 indexed outcomeId,
+        uint256 indexed battleId,
+        uint256 indexed targetPlanetId,
+        address attacker,
+        uint32 deathstars,
+        uint16 moonDestructionChanceBps,
+        uint16 deathstarDestructionChanceBps,
+        uint256 randomnessRequestId,
+        bytes32 purposeHash
+    );
+    event MoonDestructionFinalized(
+        uint256 indexed outcomeId,
+        uint256 indexed battleId,
+        uint256 indexed targetPlanetId,
+        bool moonDestroyed,
+        bool deathstarsDestroyed,
+        uint256 randomWord
     );
 
     constructor(address gameAddress, address randomnessAddress) {
@@ -269,6 +350,72 @@ contract VeydriftMoonSystem {
         );
     }
 
+    function requestMoonDestructionFromBattle(
+        uint256 battleId,
+        uint256 targetPlanetId,
+        address attacker,
+        uint32 deathstars
+    ) external onlyMoonChanceReporter returns (uint256 outcomeId, uint256 requestId) {
+        if (deathstars == 0) revert InvalidQuantity();
+        VeydriftGameStorage.Planet memory planetRef = game.planet(targetPlanetId);
+        if (planetRef.owner == address(0)) revert NoPlanet();
+
+        Moon memory moonRef = _moons[targetPlanetId];
+        if (!moonRef.exists) revert NoMoon(targetPlanetId);
+
+        bytes32 battleKey = _moonDestructionBattleKey(battleId, targetPlanetId);
+        if (moonDestructionOutcomeByBattle[battleKey] != 0) {
+            revert MoonDestructionAlreadyRecorded(battleId, targetPlanetId);
+        }
+
+        uint16 moonDestructionBps = moonDestructionChanceBps(moonRef.diameterKm, deathstars);
+        uint16 deathstarDestructionBps = moonDeathstarDestructionChanceBps(moonRef.diameterKm);
+        outcomeId = nextMoonDestructionId++;
+        bytes32 purposeHash = moonDestructionPurposeHash(
+            outcomeId,
+            battleId,
+            targetPlanetId,
+            attacker,
+            deathstars,
+            moonRef.diameterKm,
+            moonDestructionBps,
+            deathstarDestructionBps
+        );
+        requestId = randomness.requestRandomness(purposeHash);
+
+        _moonDestructionOutcomes[outcomeId] = MoonDestructionOutcome({
+            active: true,
+            finalized: false,
+            moonDestroyed: false,
+            deathstarsDestroyed: false,
+            battleId: battleId,
+            targetPlanetId: targetPlanetId,
+            attacker: attacker,
+            deathstars: deathstars,
+            moonDestructionChanceBps: moonDestructionBps,
+            deathstarDestructionChanceBps: deathstarDestructionBps,
+            randomnessRequestId: requestId,
+            purposeHash: purposeHash,
+            randomWord: 0,
+            requestedAt: _currentTimestamp(),
+            finalizedAt: 0
+        });
+        moonDestructionOutcomeByRequestId[requestId] = outcomeId;
+        moonDestructionOutcomeByBattle[battleKey] = outcomeId;
+
+        emit MoonDestructionRequested(
+            outcomeId,
+            battleId,
+            targetPlanetId,
+            attacker,
+            deathstars,
+            moonDestructionBps,
+            deathstarDestructionBps,
+            requestId,
+            purposeHash
+        );
+    }
+
     function finalizeMoonChance(uint256 outcomeId) external returns (bool moonCreated) {
         MoonChanceOutcome storage outcome = _moonChanceOutcomes[outcomeId];
         if (!outcome.active) revert UnknownMoonChanceOutcome(outcomeId);
@@ -301,6 +448,39 @@ contract VeydriftMoonSystem {
             randomWord,
             outcome.moonFields,
             outcome.moonDiameterKm
+        );
+    }
+
+    function finalizeMoonDestruction(uint256 outcomeId)
+        external
+        returns (bool moonDestroyed, bool deathstarsDestroyed)
+    {
+        MoonDestructionOutcome storage outcome = _moonDestructionOutcomes[outcomeId];
+        if (!outcome.active) revert UnknownMoonDestructionOutcome(outcomeId);
+        if (outcome.finalized) revert MoonDestructionAlreadyFinalized(outcomeId);
+
+        uint256 randomWord =
+            randomness.consumeRandomness(outcome.randomnessRequestId, outcome.purposeHash);
+        outcome.finalized = true;
+        outcome.randomWord = randomWord;
+        outcome.finalizedAt = _currentTimestamp();
+
+        moonDestroyed = randomWord % BPS < outcome.moonDestructionChanceBps;
+        deathstarsDestroyed = (randomWord / BPS) % BPS < outcome.deathstarDestructionChanceBps;
+        outcome.moonDestroyed = moonDestroyed;
+        outcome.deathstarsDestroyed = deathstarsDestroyed;
+
+        if (moonDestroyed && _moons[outcome.targetPlanetId].exists) {
+            _destroyMoon(outcome.targetPlanetId);
+        }
+
+        emit MoonDestructionFinalized(
+            outcomeId,
+            outcome.battleId,
+            outcome.targetPlanetId,
+            moonDestroyed,
+            deathstarsDestroyed,
+            randomWord
         );
     }
 
@@ -346,19 +526,55 @@ contract VeydriftMoonSystem {
     }
 
     function scanSystem(uint256 moonPlanetId, uint16 galaxy, uint16 system) external {
-        _requireMoonOwner(moonPlanetId);
-        VeydriftGameStorage.Planet memory origin = game.planet(moonPlanetId);
-        validateSystem(galaxy, system);
-        uint256 range = sensorPhalanxRange(moonPlanetId);
-        if (range == 0 || galaxy != origin.galaxy || _systemDistance(origin.system, system) > range)
-        {
-            revert SensorPhalanxOutOfRange(origin.system, system, range);
-        }
+        uint256 range = _requireScanRange(moonPlanetId, galaxy, system);
 
         emit SensorPhalanxScanned(moonPlanetId, galaxy, system, range);
     }
 
+    function scanSystemMissions(
+        uint256 moonPlanetId,
+        uint16 galaxy,
+        uint16 system,
+        uint256 maxResults
+    ) external view returns (PhalanxScanResult[] memory results) {
+        if (maxResults == 0) revert InvalidQuantity();
+        _requireScanRange(moonPlanetId, galaxy, system);
+
+        uint256 fleetLimit = game.nextFleetId();
+        PhalanxScanResult[] memory buffer = new PhalanxScanResult[](maxResults);
+        uint256 count;
+        for (uint256 missionId = 1; missionId < fleetLimit && count < maxResults; missionId++) {
+            PhalanxScanResult memory scan = _phalanxScanResult(missionId);
+            if (_isPhalanxVisible(scan.status) && _missionTouchesSystem(scan, galaxy, system)) {
+                buffer[count++] = scan;
+            }
+        }
+
+        results = new PhalanxScanResult[](count);
+        for (uint256 i = 0; i < count;) {
+            results[i] = buffer[i];
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function jumpGateJump(uint256 originMoonPlanetId, uint256 destinationMoonPlanetId) external {
+        _prepareJumpGateJump(originMoonPlanetId, destinationMoonPlanetId);
+    }
+
+    function jumpGateJumpShips(
+        uint256 originMoonPlanetId,
+        uint256 destinationMoonPlanetId,
+        VeydriftGameStorage.MissionShips calldata ships
+    ) external {
+        _prepareJumpGateJump(originMoonPlanetId, destinationMoonPlanetId);
+        game.moveMoonGateShips(originMoonPlanetId, destinationMoonPlanetId, msg.sender, ships);
+    }
+
+    function _prepareJumpGateJump(uint256 originMoonPlanetId, uint256 destinationMoonPlanetId)
+        private
+    {
         if (originMoonPlanetId == destinationMoonPlanetId) revert SameMoon();
         _requireMoonOwner(originMoonPlanetId);
         _requireMoonOwner(destinationMoonPlanetId);
@@ -425,6 +641,48 @@ contract VeydriftMoonSystem {
         );
     }
 
+    function moonDestructionRandomness(uint256 outcomeId)
+        external
+        view
+        returns (uint256 requestId, bytes32 purposeHash, bool finalized, uint256 randomWord)
+    {
+        MoonDestructionOutcome storage outcome = _moonDestructionOutcomes[outcomeId];
+        return
+            (
+                outcome.randomnessRequestId,
+                outcome.purposeHash,
+                outcome.finalized,
+                outcome.randomWord
+            );
+    }
+
+    function moonDestructionResult(uint256 outcomeId)
+        external
+        view
+        returns (
+            uint256 battleId,
+            uint256 targetPlanetId,
+            address attacker,
+            uint32 deathstars,
+            uint16 moonDestructionBps,
+            uint16 deathstarDestructionChanceBps,
+            bool moonDestroyed,
+            bool deathstarsDestroyed
+        )
+    {
+        MoonDestructionOutcome storage outcome = _moonDestructionOutcomes[outcomeId];
+        return (
+            outcome.battleId,
+            outcome.targetPlanetId,
+            outcome.attacker,
+            outcome.deathstars,
+            outcome.moonDestructionChanceBps,
+            outcome.deathstarDestructionChanceBps,
+            outcome.moonDestroyed,
+            outcome.deathstarsDestroyed
+        );
+    }
+
     function activeMoonBuildingConstruction(uint256 planetId)
         external
         view
@@ -456,6 +714,71 @@ contract VeydriftMoonSystem {
         uint256 level = _moonBuildingLevels[planetId][MoonBuilding.SensorPhalanx];
         if (level == 0) return 0;
         return (level * level) - 1;
+    }
+
+    function _requireScanRange(uint256 moonPlanetId, uint16 galaxy, uint16 system)
+        private
+        view
+        returns (uint256 range)
+    {
+        _requireMoonOwner(moonPlanetId);
+        VeydriftGameStorage.Planet memory origin = game.planet(moonPlanetId);
+        validateSystem(galaxy, system);
+        range = sensorPhalanxRange(moonPlanetId);
+        if (range == 0 || galaxy != origin.galaxy || _systemDistance(origin.system, system) > range)
+        {
+            revert SensorPhalanxOutOfRange(origin.system, system, range);
+        }
+    }
+
+    function _phalanxScanResult(uint256 missionId)
+        private
+        view
+        returns (PhalanxScanResult memory scan)
+    {
+        (
+            VeydriftGameStorage.FleetMissionStatus status,
+            VeydriftGameStorage.FleetMissionType missionType,
+            address owner_,
+            uint256 originPlanetId,
+            uint256 targetPlanetId,
+            uint64 departureAt,
+            uint64 arrivalAt,
+            uint64 returnAt,,,
+        ) = game.fleetMission(missionId);
+
+        return PhalanxScanResult({
+            missionId: missionId,
+            status: status,
+            missionType: missionType,
+            owner: owner_,
+            originPlanetId: originPlanetId,
+            targetPlanetId: targetPlanetId,
+            departureAt: departureAt,
+            arrivalAt: arrivalAt,
+            returnAt: returnAt
+        });
+    }
+
+    function _missionTouchesSystem(PhalanxScanResult memory scan, uint16 galaxy, uint16 system)
+        private
+        view
+        returns (bool)
+    {
+        VeydriftGameStorage.Planet memory origin = game.planet(scan.originPlanetId);
+        if (origin.galaxy == galaxy && origin.system == system) return true;
+        VeydriftGameStorage.Planet memory target = game.planet(scan.targetPlanetId);
+        return target.galaxy == galaxy && target.system == system;
+    }
+
+    function _isPhalanxVisible(VeydriftGameStorage.FleetMissionStatus status)
+        private
+        pure
+        returns (bool)
+    {
+        return status == VeydriftGameStorage.FleetMissionStatus.Outbound
+            || status == VeydriftGameStorage.FleetMissionStatus.Returning
+            || status == VeydriftGameStorage.FleetMissionStatus.Recalled;
     }
 
     function moonChanceBps(uint128 metalDebris, uint128 crystalDebris)
@@ -491,6 +814,52 @@ contract VeydriftMoonSystem {
                 chanceBps
             )
         );
+    }
+
+    function moonDestructionPurposeHash(
+        uint256 outcomeId,
+        uint256 battleId,
+        uint256 targetPlanetId,
+        address attacker,
+        uint32 deathstars,
+        uint16 moonDiameterKm,
+        uint16 moonDestructionBps,
+        uint16 deathstarDestructionBps
+    ) public view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                MOON_DESTRUCTION_DOMAIN,
+                block.chainid,
+                address(this),
+                outcomeId,
+                battleId,
+                targetPlanetId,
+                attacker,
+                deathstars,
+                moonDiameterKm,
+                moonDestructionBps,
+                deathstarDestructionBps
+            )
+        );
+    }
+
+    function moonDestructionChanceBps(uint16 moonDiameterKm, uint32 deathstars)
+        public
+        pure
+        returns (uint16)
+    {
+        if (deathstars == 0) return 0;
+        uint256 moonRoot = _sqrt(moonDiameterKm);
+        if (moonRoot >= 100) return 0;
+        uint256 chanceBps = (100 - moonRoot) * _sqrt(deathstars) * 100;
+        if (chanceBps > BPS) return BPS;
+        return chanceBps.toUint16();
+    }
+
+    function moonDeathstarDestructionChanceBps(uint16 moonDiameterKm) public pure returns (uint16) {
+        uint256 chanceBps = _sqrt(moonDiameterKm) * 50;
+        if (chanceBps > BPS) return BPS;
+        return chanceBps.toUint16();
     }
 
     function _requireMoonOwner(uint256 planetId) private view {
@@ -592,6 +961,14 @@ contract VeydriftMoonSystem {
         return keccak256(abi.encode(battleId, targetPlanetId));
     }
 
+    function _moonDestructionBattleKey(uint256 battleId, uint256 targetPlanetId)
+        private
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(MOON_DESTRUCTION_DOMAIN, battleId, targetPlanetId));
+    }
+
     function _moonOutcomeSeed(uint256 targetPlanetId, bytes32 purposeHash, uint256 randomWord)
         private
         pure
@@ -604,11 +981,64 @@ contract VeydriftMoonSystem {
     }
 
     function _moonFields(uint256 randomWord) private pure returns (uint16) {
-        return uint16(1 + (randomWord % 3));
+        return _moonDiameter(randomWord) / 1_000;
     }
 
     function _moonDiameter(uint256 randomWord) private pure returns (uint16) {
-        return uint16(3_400 + (randomWord % 5_101));
+        return uint16(3_466 + (randomWord % 5_479));
+    }
+
+    function _destroyMoon(uint256 planetId) private {
+        delete _moons[planetId];
+        delete moonBuildingConstructions[planetId];
+        for (uint8 i = 0; i <= uint8(type(MoonBuilding).max);) {
+            delete _moonBuildingLevels[planetId][MoonBuilding(i)];
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _sqrt(uint256 value) private pure returns (uint256 result) {
+        if (value == 0) return 0;
+        uint256 candidate = value;
+        result = 1;
+        if (candidate >= 2 ** 128) {
+            candidate >>= 128;
+            result <<= 64;
+        }
+        if (candidate >= 2 ** 64) {
+            candidate >>= 64;
+            result <<= 32;
+        }
+        if (candidate >= 2 ** 32) {
+            candidate >>= 32;
+            result <<= 16;
+        }
+        if (candidate >= 2 ** 16) {
+            candidate >>= 16;
+            result <<= 8;
+        }
+        if (candidate >= 2 ** 8) {
+            candidate >>= 8;
+            result <<= 4;
+        }
+        if (candidate >= 2 ** 4) {
+            candidate >>= 4;
+            result <<= 2;
+        }
+        if (candidate >= 2 ** 2) {
+            result <<= 1;
+        }
+
+        for (uint8 i = 0; i < 7;) {
+            result = (result + value / result) >> 1;
+            unchecked {
+                ++i;
+            }
+        }
+        uint256 roundedDown = value / result;
+        return result < roundedDown ? result : roundedDown;
     }
 
     function validateSystem(uint16 galaxy, uint16 system) private pure {
