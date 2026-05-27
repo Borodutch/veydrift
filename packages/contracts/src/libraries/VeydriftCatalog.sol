@@ -140,6 +140,69 @@ library VeydriftCatalog {
         revert InvalidId();
     }
 
+    function shipMovementStats(
+        Ship ship,
+        uint16 combustionDriveLevel,
+        uint16 impulseDriveLevel,
+        uint16 hyperspaceDriveLevel
+    ) public pure returns (uint256 cargoCapacity, uint256 fuelConsumption, uint256 speed) {
+        cargoCapacity = shipCargoCapacity(ship);
+        fuelConsumption = _shipFuelConsumption(ship, impulseDriveLevel);
+        speed = _shipSpeed(ship, combustionDriveLevel, impulseDriveLevel, hyperspaceDriveLevel);
+    }
+
+    function _shipFuelConsumption(Ship ship, uint16 impulseDriveLevel)
+        private
+        pure
+        returns (uint256)
+    {
+        if (ship == Ship.SmallCargo && impulseDriveLevel >= 5) return 20;
+        if (ship == Ship.SmallCargo) return 10;
+        if (ship == Ship.LightFighter) return 20;
+        if (ship == Ship.Recycler) return 300;
+        if (ship == Ship.ColonyShip) return 1_000;
+        if (ship == Ship.LargeCargo) return 50;
+        if (ship == Ship.HeavyFighter) return 75;
+        if (ship == Ship.Cruiser) return 300;
+        if (ship == Ship.Battleship) return 500;
+        if (ship == Ship.Bomber) return 1_000;
+        if (ship == Ship.Destroyer) return 1_000;
+        if (ship == Ship.Deathstar) return 1;
+        if (ship == Ship.Battlecruiser) return 250;
+        if (ship == Ship.Reaper) return 1_000;
+        if (ship == Ship.Pathfinder) return 300;
+        revert InvalidId();
+    }
+
+    function _shipSpeed(
+        Ship ship,
+        uint16 combustionDriveLevel,
+        uint16 impulseDriveLevel,
+        uint16 hyperspaceDriveLevel
+    ) private pure returns (uint256) {
+        if (ship == Ship.SmallCargo && impulseDriveLevel >= 5) {
+            return _driveSpeed(10_000, impulseDriveLevel, 20);
+        }
+        if (ship == Ship.SmallCargo) return _driveSpeed(5_000, combustionDriveLevel, 10);
+        if (ship == Ship.LightFighter) return _driveSpeed(12_500, combustionDriveLevel, 10);
+        if (ship == Ship.Recycler) return _driveSpeed(2_000, combustionDriveLevel, 10);
+        if (ship == Ship.ColonyShip) return _driveSpeed(2_500, impulseDriveLevel, 20);
+        if (ship == Ship.LargeCargo) return _driveSpeed(7_500, combustionDriveLevel, 10);
+        if (ship == Ship.HeavyFighter) return _driveSpeed(10_000, impulseDriveLevel, 20);
+        if (ship == Ship.Cruiser) return _driveSpeed(15_000, impulseDriveLevel, 20);
+        if (ship == Ship.Battleship) return _driveSpeed(10_000, hyperspaceDriveLevel, 30);
+        if (ship == Ship.Bomber && hyperspaceDriveLevel >= 8) {
+            return _driveSpeed(5_000, hyperspaceDriveLevel, 30);
+        }
+        if (ship == Ship.Bomber) return _driveSpeed(4_000, impulseDriveLevel, 20);
+        if (ship == Ship.Destroyer) return _driveSpeed(5_000, hyperspaceDriveLevel, 30);
+        if (ship == Ship.Deathstar) return _driveSpeed(100, hyperspaceDriveLevel, 30);
+        if (ship == Ship.Battlecruiser) return _driveSpeed(10_000, hyperspaceDriveLevel, 30);
+        if (ship == Ship.Reaper) return _driveSpeed(7_000, hyperspaceDriveLevel, 30);
+        if (ship == Ship.Pathfinder) return _driveSpeed(12_000, hyperspaceDriveLevel, 30);
+        revert InvalidId();
+    }
+
     function missileSlots(Defense defense) public pure returns (uint8) {
         if (defense == Defense.AntiBallisticMissile) return 1;
         if (defense == Defense.InterplanetaryMissile) return 2;
@@ -406,6 +469,14 @@ library VeydriftCatalog {
         return uint128(
             (uint256(value) * (uint256(numerator) ** exponent)) / (uint256(denominator) ** exponent)
         );
+    }
+
+    function _driveSpeed(uint256 baseSpeed, uint16 driveLevel, uint256 percentPerLevel)
+        private
+        pure
+        returns (uint256)
+    {
+        return (baseSpeed * (100 + uint256(driveLevel) * percentPerLevel)) / 100;
     }
 
     function _toUint128(uint256 value) private pure returns (uint128) {

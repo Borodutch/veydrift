@@ -506,7 +506,7 @@ contract VeydriftAllianceSystem {
         if (holdSeconds == 0) return 0;
         uint256 tenthsPerHour = uint256(ships.smallCargo) * 50 + uint256(ships.lightFighter) * 20
             + uint256(ships.recycler) * 300 + uint256(ships.colonyShip) * 1_000
-            + uint256(ships.largeCargo) * 50 + uint256(ships.heavyFighter) * 70
+            + uint256(ships.largeCargo) * 50 + uint256(ships.heavyFighter) * 75
             + uint256(ships.cruiser) * 300 + uint256(ships.battleship) * 500 + uint256(ships.bomber)
             * 1_000 + uint256(ships.destroyer) * 1_000 + uint256(ships.deathstar)
             + uint256(ships.battlecruiser) * 250 + uint256(ships.reaper) * 1_000

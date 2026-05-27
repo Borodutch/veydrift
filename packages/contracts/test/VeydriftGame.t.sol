@@ -1208,7 +1208,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VeydriftGameStorage.InsufficientResources.selector, 2_000, 0, 9_998
+                VeydriftGameStorage.InsufficientResources.selector, 2_000, 0, 9_976
             )
         );
         game.launchFleetMission(
@@ -1394,6 +1394,8 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setTechnologyLevel(player, Technology.Computer, 1);
         _setShipCount(originPlanetId, Ship.SmallCargo, 2);
         _setShipCount(originPlanetId, Ship.LightFighter, 1);
@@ -1546,8 +1548,9 @@ contract VeydriftGameTest is Test {
         ships.largeCargo = 1;
 
         uint256 distance = _planetDistanceForTest(originPlanetId, targetPlanetId);
-        uint256 expectedTravelSeconds = 5 minutes + distance;
-        uint128 expectedFuelCost = uint128(6 + (6 * distance) / 10_000);
+        uint256 expectedTravelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(distance, 5_000);
+        uint128 expectedFuelCost =
+            uint128(VeydriftAntiRaidPrimitives.missionFuelCost(130, distance));
         VeydriftGameStorage.Resources memory cargo =
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 11});
 
@@ -1583,6 +1586,8 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setTechnologyLevel(player, Technology.Computer, 1);
         _setShipCount(originPlanetId, Ship.SmallCargo, 2);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
@@ -1644,6 +1649,8 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setTechnologyLevel(player, Technology.Computer, 1);
         _setShipCount(originPlanetId, Ship.SmallCargo, 3);
         _setShipCount(originPlanetId, Ship.LightFighter, 1);
@@ -1657,7 +1664,7 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 150, crystal: 25, deuterium: 0});
 
         vm.expectEmit(true, false, false, true, address(game));
-        emit FleetMissionCargo(1, 150, 25, 0, 6);
+        emit FleetMissionCargo(1, 150, 25, 0, 4);
         vm.expectEmit(true, false, false, true, address(game));
         emit FleetMissionShips(1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         vm.prank(player);
@@ -1976,10 +1983,24 @@ contract VeydriftGameTest is Test {
             0
         );
 
-        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(counterplayMissionId);
-        assertEq(fuelCost, 10);
-        assertEq(game.planet(allyPlanetId).resources.deuterium, 49_990);
-        assertEq(game.planet(targetPlanetId).resources.deuterium, 40_644);
+        (,,,,, uint64 counterplayDepartureAt,, uint64 counterplayReturnAt, uint128 fuelCost,,) =
+            game.fleetMission(counterplayMissionId);
+        (,,,,,, uint64 hostileArrivalAt,,,,) = game.fleetMission(hostileMissionId);
+        uint256 counterplayDistance = _planetDistanceForTest(allyPlanetId, targetPlanetId);
+        uint256 counterplayTravelSeconds =
+            VeydriftAntiRaidPrimitives.travelSeconds(counterplayDistance, 10_000);
+        uint128 expectedTravelFuel =
+            uint128(VeydriftAntiRaidPrimitives.missionFuelCost(5_000, counterplayDistance));
+        uint256 holdSeconds =
+            hostileArrivalAt - (uint256(counterplayDepartureAt) + counterplayTravelSeconds);
+        uint128 expectedHoldingFuel = uint128((5_000 * holdSeconds + 10 hours - 1) / (10 hours));
+        uint128 depotSupport = expectedHoldingFuel < 20_000 ? expectedHoldingFuel : 20_000;
+        uint128 expectedFuelCost = expectedTravelFuel + expectedHoldingFuel - depotSupport;
+
+        assertEq(counterplayReturnAt, hostileArrivalAt + counterplayTravelSeconds);
+        assertEq(fuelCost, expectedFuelCost);
+        assertEq(game.planet(allyPlanetId).resources.deuterium, 50_000 - expectedFuelCost);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 50_000 - depotSupport);
     }
 
     function testFleetCounterplayInterceptJoinsCombatModuleResolution() public {
@@ -2506,9 +2527,16 @@ contract VeydriftGameTest is Test {
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
 
+        uint128 expectedFuelCost = uint128(
+            VeydriftAntiRaidPrimitives.missionFuelCost(
+                10, _planetDistanceForTest(originPlanetId, targetPlanetId)
+            )
+        );
         vm.prank(player);
         vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.CargoCapacityExceeded.selector, 5_000, 5_001)
+            abi.encodeWithSelector(
+                VeydriftGameStorage.CargoCapacityExceeded.selector, 5_000, 5_001 + expectedFuelCost
+            )
         );
         game.launchFleetMission(
             originPlanetId,
@@ -2544,6 +2572,8 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setTechnologyLevel(player, Technology.Computer, 2);
         _setShipCount(originPlanetId, Ship.Destroyer, 1);
         _setShipCount(originPlanetId, Ship.Recycler, 2);
@@ -2607,6 +2637,8 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 120);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
@@ -2663,6 +2695,8 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setShipCount(originPlanetId, Ship.LightFighter, 1);
         _setShipCount(targetPlanetId, Ship.LightFighter, 1);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
@@ -2700,6 +2734,8 @@ contract VeydriftGameTest is Test {
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         moons.createMoon(targetPlanetId);
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 120);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
@@ -2759,6 +2795,8 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setShipCount(originPlanetId, Ship.Destroyer, 40);
         _setShipCount(targetPlanetId, Ship.LightFighter, 40);
         _setResources(originPlanetId, 5_000_000, 5_000_000, 5_000_000);
@@ -3191,6 +3229,8 @@ contract VeydriftGameTest is Test {
         originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
     }
 
     function _seedMissileAttackPlanets()
@@ -3297,14 +3337,16 @@ contract VeydriftGameTest is Test {
         uint256 galaxyDistance = origin.galaxy > destination.galaxy
             ? uint256(origin.galaxy - destination.galaxy)
             : uint256(destination.galaxy - origin.galaxy);
+        if (galaxyDistance != 0) return galaxyDistance * 20_000;
         uint256 systemDistance = origin.system > destination.system
             ? uint256(origin.system - destination.system)
             : uint256(destination.system - origin.system);
+        if (systemDistance != 0) return 2_700 + systemDistance * 95;
         uint256 positionDistance = origin.position > destination.position
             ? uint256(origin.position - destination.position)
             : uint256(destination.position - origin.position);
-        return galaxyDistance * uint256(game.MAX_SYSTEM()) * uint256(game.MAX_POSITION())
-            + systemDistance * uint256(game.MAX_POSITION()) + positionDistance;
+        if (positionDistance != 0) return 1_000 + positionDistance * 5;
+        return 0;
     }
 
     function _packResourcesHead(uint128 metal, uint128 crystal) internal pure returns (bytes32) {

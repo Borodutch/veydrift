@@ -257,11 +257,11 @@ contract VeydriftAllianceSystemTest is Test {
 
         uint256 enemyPlanetId = game.homePlanetOf(enemy);
         uint256 leaderPlanetId = game.homePlanetOf(leader);
-        _setShipCount(enemyPlanetId, Ship.LightFighter, 1);
+        _setShipCount(enemyPlanetId, Ship.SmallCargo, 1);
         _setResources(enemyPlanetId, 500, 500, 10_000);
 
         VeydriftGameStorage.MissionShips memory ships;
-        ships.lightFighter = 1;
+        ships.smallCargo = 1;
 
         vm.prank(enemy);
         uint256 missionId = game.launchFleetMission(

@@ -9,7 +9,6 @@ library VeydriftAntiRaidPrimitives {
 
     uint8 public constant BASE_FLEET_SLOTS = 1;
     uint8 public constant FLEET_SLOTS_PER_COMPUTER_LEVEL = 1;
-    uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
     uint32 public constant MIN_RECALL_SECONDS = 60;
     uint16 public constant RECALL_FUEL_REFUND_BPS = 0;
 
@@ -31,13 +30,22 @@ library VeydriftAntiRaidPrimitives {
         return BASE_FLEET_SLOTS + uint256(computerLevel) * FLEET_SLOTS_PER_COMPUTER_LEVEL;
     }
 
-    function travelSeconds(uint256 distance) internal pure returns (uint256) {
-        return MIN_FLEET_TRAVEL_SECONDS + distance;
+    function travelSeconds(uint256 distance, uint256 slowestShipSpeed)
+        public
+        pure
+        returns (uint256)
+    {
+        if (slowestShipSpeed == 0) return 0;
+        return 10 + _sqrt((distance * 10 * 122_500) / slowestShipSpeed);
     }
 
-    function missionFuelCost(uint256 shipCount, uint256 distance) internal pure returns (uint256) {
-        if (shipCount == 0) return 0;
-        return shipCount + (shipCount * distance) / BPS;
+    function missionFuelCost(uint256 fleetFuelConsumption, uint256 distance)
+        public
+        pure
+        returns (uint256)
+    {
+        if (fleetFuelConsumption == 0) return 0;
+        return 1 + ((fleetFuelConsumption * distance * 4) + 17_500) / 35_000;
     }
 
     function recallReturnSeconds(uint256 elapsedOutboundSeconds) internal pure returns (uint256) {
@@ -115,5 +123,44 @@ library VeydriftAntiRaidPrimitives {
 
     function repairedDefenseCount(uint256 destroyedDefenseCount) internal pure returns (uint256) {
         return (destroyedDefenseCount * DEFENSE_REPAIR_BPS) / BPS;
+    }
+
+    function _sqrt(uint256 value) private pure returns (uint256 result) {
+        if (value == 0) return 0;
+        uint256 x = value;
+        result = 1;
+        if (x >= 2 ** 128) {
+            x >>= 128;
+            result <<= 64;
+        }
+        if (x >= 2 ** 64) {
+            x >>= 64;
+            result <<= 32;
+        }
+        if (x >= 2 ** 32) {
+            x >>= 32;
+            result <<= 16;
+        }
+        if (x >= 2 ** 16) {
+            x >>= 16;
+            result <<= 8;
+        }
+        if (x >= 2 ** 8) {
+            x >>= 8;
+            result <<= 4;
+        }
+        if (x >= 2 ** 4) {
+            x >>= 4;
+            result <<= 2;
+        }
+        if (x >= 2 ** 2) result <<= 1;
+        for (uint8 i = 0; i < 7;) {
+            result = (result + value / result) >> 1;
+            unchecked {
+                ++i;
+            }
+        }
+        uint256 roundedDown = value / result;
+        return result < roundedDown ? result : roundedDown;
     }
 }

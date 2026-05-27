@@ -70,9 +70,9 @@ import {
   type MissionShips,
 } from "./galaxyActions";
 import {
+  fleetMissionAvailableCargoCapacity,
   fleetMissionDistance,
   fleetMissionFuelCost,
-  fleetMissionShipCount,
 } from "./fleetMissionRules";
 import {
   fetchInfrastructureState,
@@ -242,16 +242,6 @@ function selectCounterplayShips(shipyardState: ChainShipyardState | null): Missi
   return null;
 }
 
-const missionCargoCapacity = (ships: Partial<MissionShips> | undefined): number => {
-  if (!ships) return 0;
-  return (ships.smallCargo ?? 0) * 5_000
-    + (ships.largeCargo ?? 0) * 25_000
-    + (ships.recycler ?? 0) * 20_000
-    + (ships.colonyShip ?? 0) * 7_500
-    + (ships.pathfinder ?? 0) * 12_000
-    + (ships.lightFighter ?? 0) * 50;
-};
-
 function transportCargoForSelectedPlanet(
   planet: ManagedPlanetResponse | undefined,
   ships: MissionShips,
@@ -259,7 +249,9 @@ function transportCargoForSelectedPlanet(
 ): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
   if (!planet?.resources) return undefined;
 
-  let remaining = missionCargoCapacity(ships);
+  const distance = fleetMissionDistance(planet, target);
+  const fuelCost = fleetMissionFuelCost(ships, distance);
+  let remaining = fleetMissionAvailableCargoCapacity(ships, distance);
   if (remaining <= 0) return undefined;
 
   const metal = Math.min(safeResourceNumber(planet.resources.metal) ?? 0, remaining);
@@ -267,8 +259,6 @@ function transportCargoForSelectedPlanet(
   const crystal = Math.min(safeResourceNumber(planet.resources.crystal) ?? 0, remaining);
   remaining -= crystal;
 
-  const distance = fleetMissionDistance(planet, target);
-  const fuelCost = fleetMissionFuelCost(fleetMissionShipCount(ships), distance);
   const deuteriumAvailable = Math.max(0, (safeResourceNumber(planet.resources.deuterium) ?? 0) - fuelCost);
   const deuterium = Math.min(deuteriumAvailable, remaining);
 

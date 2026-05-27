@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
+  fleetMissionAvailableCargoCapacity,
   fleetMissionDistance,
   fleetMissionFuelCost,
   fleetMissionShipCount,
@@ -28,8 +29,8 @@ import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
-const SMALL_CARGO_CAPACITY = 5_000;
 const SMALL_CARGO_SHIP_ID = 0;
+const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
 
 type MissionResources = {
   metal?: number;
@@ -437,17 +438,22 @@ export function estimateGalaxyMissionPreview({
   if (!homeCoords || !planner) return undefined;
   const fleetSlots = planner.fleetSlots ?? { active: 0, limit: 1 };
   const smallCargoCount = planner.ships?.find((ship) => ship.id === SMALL_CARGO_SHIP_ID)?.count ?? 0;
-  const missionShipCount = planner.missionShips ? fleetMissionShipCount(planner.missionShips) : 1;
-  const travelSeconds = galaxyMissionTravelSeconds(homeCoords, target);
-  const fuelCost = galaxyMissionFuelCost(homeCoords, target, missionShipCount);
+  const missionShips = planner.missionShips ?? defaultMissionShips();
+  const missionShipCount = fleetMissionShipCount(missionShips);
+  const distance = fleetMissionDistance(homeCoords, target);
+  const travelSeconds = fleetMissionTravelSeconds(distance, missionShips);
+  const fuelCost = fleetMissionFuelCost(missionShips, distance);
   const arrivalAt = now + travelSeconds * 1_000;
   const returnAt = arrivalAt + travelSeconds * 1_000;
+  const cargoCapacity = fleetMissionAvailableCargoCapacity(missionShips, distance);
   let blockedReason: string | undefined;
 
   if (sameCoordinateValues(homeCoords, target)) {
     blockedReason = "Origin planet";
   } else if (fleetSlots.active >= fleetSlots.limit) {
     blockedReason = "No fleet slots open";
+  } else if (missionShipCount <= 0) {
+    blockedReason = "No mission ships selected";
   } else if (smallCargoCount < 1) {
     blockedReason = "No Small Cargo available";
   } else if ((planner.resources?.deuterium ?? 0) < fuelCost) {
@@ -456,7 +462,7 @@ export function estimateGalaxyMissionPreview({
 
   return {
     blockedReason,
-    cargoCapacity: SMALL_CARGO_CAPACITY,
+    cargoCapacity,
     fleetSlots,
     fuelCost,
     arrivalAt,
@@ -465,11 +471,12 @@ export function estimateGalaxyMissionPreview({
 }
 
 export function galaxyMissionTravelSeconds(origin: Coordinates, target: Coordinates): number {
-  return fleetMissionTravelSeconds(fleetMissionDistance(origin, target));
+  return fleetMissionTravelSeconds(fleetMissionDistance(origin, target), defaultMissionShips());
 }
 
 export function galaxyMissionFuelCost(origin: Coordinates, target: Coordinates, shipCount: number): number {
-  return fleetMissionFuelCost(shipCount, fleetMissionDistance(origin, target));
+  const ships = { smallCargo: Math.max(0, Math.trunc(shipCount)) };
+  return fleetMissionFuelCost(ships, fleetMissionDistance(origin, target));
 }
 
 function GalaxySlot({
