@@ -25,7 +25,11 @@ export type IndexerSnapshot = {
   indexedPlanets: number;
   fromBlock: string;
   lastRebuiltAt: string | null;
+  lastReconciledAt: string | null;
+  lastReconciledBlock: string | null;
+  lastReconciliationError: string | null;
   latestIndexedBlock: string | null;
+  reconciliationInProgress: boolean;
   reorgDetectedAt: string | null;
 };
 
@@ -84,7 +88,11 @@ export class SettlementIndexer {
       indexedPlanets: this.count("indexed_planets"),
       fromBlock: this.fromBlock.toString(),
       lastRebuiltAt: this.metadata("lastRebuiltAt"),
+      lastReconciledAt: this.metadata("lastReconciledAt"),
+      lastReconciledBlock: this.metadata("lastReconciledBlock"),
+      lastReconciliationError: this.metadata("lastReconciliationError"),
       latestIndexedBlock: this.metadata("latestIndexedBlock"),
+      reconciliationInProgress: this.rebuildPromise !== null || this.planetRebuildPromise !== null,
       reorgDetectedAt: this.metadata("reorgDetectedAt")
     };
   }
@@ -223,10 +231,15 @@ export class SettlementIndexer {
       return this.rebuildPromise;
     }
 
-    this.rebuildPromise = this.rebuildUncached().finally(() => {
-      this.rebuildPromise = null;
-      this.planetRebuildPromise = null;
-    });
+    this.rebuildPromise = this.rebuildUncached()
+      .catch((error) => {
+        this.recordReconciliationError(error);
+        throw error;
+      })
+      .finally(() => {
+        this.rebuildPromise = null;
+        this.planetRebuildPromise = null;
+      });
     this.planetRebuildPromise = this.rebuildPromise;
     return this.rebuildPromise;
   }
@@ -262,7 +275,9 @@ export class SettlementIndexer {
       for (const event of moonChanceEvents) {
         this.upsertMoonChanceReport(event);
       }
+      const latestBlock = latestEventBlock([...events, ...debrisEvents, ...moonChanceEvents]);
       this.touch();
+      this.recordSuccessfulReconciliation(latestBlock);
     });
     rebuild();
     return this.snapshot();
@@ -384,11 +399,7 @@ export class SettlementIndexer {
   }
 
   private touch(): void {
-    this.db.query(`
-      INSERT INTO indexer_metadata (key, value)
-      VALUES ('lastRebuiltAt', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(new Date().toISOString());
+    this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
 
   private recordLog(eventId: string, log: IndexedRpcLog): void {
@@ -407,11 +418,29 @@ export class SettlementIndexer {
   }
 
   private recordLatestBlock(blockNumber: string): void {
+    this.setMetadata("latestIndexedBlock", blockNumberToDecimal(blockNumber));
+  }
+
+  private recordSuccessfulReconciliation(latestBlock: string | null): void {
+    const now = new Date().toISOString();
+    this.setMetadata("lastReconciledAt", now);
+    this.setMetadata("lastReconciledBlock", latestBlock ?? this.fromBlock.toString());
+    this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastReconciliationError'").run();
+    if (latestBlock) {
+      this.recordLatestBlock(latestBlock);
+    }
+  }
+
+  private recordReconciliationError(error: unknown): void {
+    this.setMetadata("lastReconciliationError", error instanceof Error ? error.message : String(error));
+  }
+
+  private setMetadata(key: string, value: string): void {
     this.db.query(`
       INSERT INTO indexer_metadata (key, value)
-      VALUES ('latestIndexedBlock', ?)
+      VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(blockNumberToDecimal(blockNumber));
+    `).run(key, value);
   }
 
   private count(table: "indexed_debris_fields" | "indexed_event_logs" | "indexed_moon_chance_reports" | "indexed_planets"): number {
@@ -458,4 +487,18 @@ function blockNumberToDecimal(blockNumber: string): string {
   } catch {
     return blockNumber;
   }
+}
+
+function latestEventBlock(events: Array<{ blockNumber: string }>): string | null {
+  let latest: bigint | null = null;
+  for (const event of events) {
+    try {
+      const block = BigInt(event.blockNumber);
+      latest = latest === null || block > latest ? block : latest;
+    } catch {
+      continue;
+    }
+  }
+
+  return latest?.toString() ?? null;
 }

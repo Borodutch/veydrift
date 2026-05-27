@@ -88,7 +88,9 @@ describe("SettlementIndexer", () => {
       await expect(first.rebuild()).resolves.toMatchObject({
         indexedDebrisFields: 1,
         indexedMoonChanceReports: 1,
-        indexedPlanets: 1
+        indexedPlanets: 1,
+        lastReconciliationError: null,
+        lastReconciledBlock: "125"
       });
 
       const second = new SettlementIndexer({
@@ -184,6 +186,21 @@ describe("SettlementIndexer", () => {
         resources: updatedDebris.resources
       })
     ]);
+  });
+
+  test("records reconciliation failures for health/debug visibility", async () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { throw new Error("RPC HTTP 429"); }
+    }, 100n);
+
+    await expect(indexer.rebuild()).rejects.toThrow("RPC HTTP 429");
+    expect(indexer.snapshot()).toMatchObject({
+      indexedPlanets: 0,
+      lastReconciliationError: "RPC HTTP 429",
+      reconciliationInProgress: false
+    });
   });
 });
 

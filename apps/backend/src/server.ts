@@ -78,7 +78,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const chainReader = cacheReader ?? rawChainReader;
   const indexer =
     dependencies.indexer ??
-    (chainReader ? new SettlementIndexer(chainReader, loaded.config.indexFromBlock, {
+    (isIndexableChainReader(chainReader) ? new SettlementIndexer(chainReader, loaded.config.indexFromBlock, {
       databasePath: loaded.config.indexDbPath
     }) : undefined);
   const chainSync =
@@ -95,6 +95,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   chainSync?.start();
   missionResolver?.start();
+  if (!dependencies.indexer && indexer && loaded.problems.length === 0) {
+    void indexer.rebuild().catch((error) => {
+      console.error("Veydrift index reconciliation failed", error);
+    });
+  }
   if (cacheReader) {
     chainSync?.addListener((event) => {
       if (event.kind === "chain-event") {
@@ -635,6 +640,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     );
   };
+}
+
+function isIndexableChainReader(
+  chainReader: ChainReader | undefined
+): chainReader is ChainReader {
+  return Boolean(
+    chainReader
+      && typeof chainReader.listDebrisFieldEvents === "function"
+      && typeof chainReader.listMoonChanceReportEvents === "function"
+      && typeof chainReader.listSettledPlanetEvents === "function"
+  );
 }
 
 async function highscoreEntriesForOwners(

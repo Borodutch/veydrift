@@ -1673,6 +1673,69 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("serves indexed wallet settlement without live chain reads when warm", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getWalletSettlement = async () => {
+      throw new Error("wallet settlement should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm settlement index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+    await expect(response.json()).resolves.toMatchObject({
+      wallet: player,
+      hasFirstPlanet: true,
+      homePlanetId: planet.planetId,
+      planet: {
+        planetId: planet.planetId,
+        owner: player
+      }
+    });
+    expect(response.status).toBe(200);
+  });
+
+  test("serves indexed planet detail without live chain reads when warm", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getPlanet = async () => {
+      throw new Error("planet detail should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm planet index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/planets/${planet.planetId}`));
+    await expect(response.json()).resolves.toMatchObject({
+      planetId: planet.planetId,
+      owner: player
+    });
+    expect(response.status).toBe(200);
+  });
+
   test("warms highscore rankings with settled planets only", async () => {
     const chainReader = new MockChainReader();
     const currentPlanetReader = chainReader as MockChainReader & {
