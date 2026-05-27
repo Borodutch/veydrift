@@ -71,11 +71,11 @@ contract VeydriftShipCatalogTest is Test {
     }
 
     function testShipDurationUsesVeydriftShipyardAndNaniteFormula() public pure {
-        assertEq(VeydriftFormulas.unitDuration(2, 0, 2_000, 2_000, 0, 1, 60), 1_920);
-        assertEq(VeydriftFormulas.unitDuration(7, 0, 45_000, 15_000, 0, 1, 60), 10_800);
-        assertEq(VeydriftFormulas.unitDuration(7, 2, 45_000, 15_000, 0, 1, 60), 2_700);
+        assertEq(VeydriftFormulas.unitDuration(2, 0, 2_000, 2_000, 0, 1, 1, 1), 1_920);
+        assertEq(VeydriftFormulas.unitDuration(7, 0, 45_000, 15_000, 0, 1, 1, 1), 10_800);
+        assertEq(VeydriftFormulas.unitDuration(7, 2, 45_000, 15_000, 0, 1, 1, 1), 2_700);
         assertEq(
-            VeydriftFormulas.unitDuration(12, 0, 5_000_000, 4_000_000, 1_000_000, 1, 60), 996_924
+            VeydriftFormulas.unitDuration(12, 0, 5_000_000, 4_000_000, 1_000_000, 1, 1, 1), 996_924
         );
     }
 

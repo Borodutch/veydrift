@@ -36,7 +36,8 @@ abstract contract VeydriftGameStorage {
     uint16 public constant BPS = 10_000;
     uint16 public constant RAID_LOOT_CAP_BPS = 5_000;
     uint16 public constant PROTECTED_STORAGE_BPS = 1_000;
-    uint32 public constant MIN_QUEUE_SECONDS = 60;
+    uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
+    uint32 public constant MIN_QUEUE_SECONDS = 1;
     uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
     uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
     uint16 public constant FLEET_RECALL_COST_BPS = 2_500;

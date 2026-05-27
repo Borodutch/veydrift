@@ -590,6 +590,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             unitCost.crystal,
             unitCost.deuterium,
             quantity,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
     }

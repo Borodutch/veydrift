@@ -421,6 +421,32 @@ contract VeydriftGameTest is Test {
         assertFalse(game.researchQueue(player).active);
     }
 
+    function testResearchDurationUsesLinkedLabsFromNetwork() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(planetId, Ship.ColonyShip, 1);
+
+        vm.prank(player);
+        uint256 colonyPlanetId = game.createColonyAtNextSlot(planetId, 189);
+
+        _setBuildingLevel(planetId, Building.ResearchLab, 4);
+        _setBuildingLevel(colonyPlanetId, Building.ResearchLab, 7);
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 1);
+        _setTechnologyLevel(player, Technology.Energy, 8);
+        _setTechnologyLevel(player, Technology.Laser, 10);
+        _setTechnologyLevel(player, Technology.Ion, 5);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Plasma);
+
+        VeydriftGameStorage.ResearchQueue memory queue = game.researchQueue(player);
+        assertTrue(queue.active);
+        assertEq(uint8(queue.technology), uint8(Technology.Plasma));
+        assertEq(queue.readyAt, block.timestamp + 1_800);
+    }
+
     function testAdvancedResearchPrerequisitesCoverRequestedTechnologies() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
@@ -650,7 +676,7 @@ contract VeydriftGameTest is Test {
 
         (uint128 levelThreeStorage,,) = VeydriftFormulas.storageCaps(3, 0, 0);
         assertEq(levelThreeStorage, 75_000);
-        assertEq(VeydriftFormulas.buildingDuration(2, 1, 10_000, 5_000, 60), 3_600);
+        assertEq(VeydriftFormulas.buildingDuration(2, 1, 10_000, 5_000, 1, 1), 3_600);
     }
 
     function testBuildingUpgradeSpendsInternalResources() public {
@@ -875,9 +901,9 @@ contract VeydriftGameTest is Test {
     }
 
     function testDefenseDurationUsesCanonicalShipyardNaniteBasis() public pure {
-        assertEq(VeydriftFormulas.unitDuration(1, 0, 2_000, 0, 0, 1, 60), 1_440);
-        assertEq(VeydriftFormulas.unitDuration(1, 2, 2_000, 0, 0, 1, 60), 360);
-        assertEq(VeydriftFormulas.unitDuration(8, 0, 1_500, 500, 0, 1, 60), 320);
+        assertEq(VeydriftFormulas.unitDuration(1, 0, 2_000, 0, 0, 1, 1, 1), 1_440);
+        assertEq(VeydriftFormulas.unitDuration(1, 2, 2_000, 0, 0, 1, 1, 1), 360);
+        assertEq(VeydriftFormulas.unitDuration(8, 0, 1_500, 500, 0, 1, 1, 1), 320);
     }
 
     function testDefenseProductionEnforcesDomeAndMissileCaps() public {

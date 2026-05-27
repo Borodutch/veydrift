@@ -242,7 +242,8 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         Resources memory cost = _researchCost(msg.sender, technology);
         _spend(planetId, cost);
 
-        uint64 readyAt = uint64(uint256(_currentTimestamp()) + _researchDuration(planetId, cost));
+        uint64 readyAt =
+            uint64(uint256(_currentTimestamp()) + _researchDuration(planetId, technology, cost));
         uint16 targetLevel = currentLevel + 1;
         researchQueues[msg.sender] = ResearchQueue({
             active: true,
@@ -436,18 +437,84 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         );
     }
 
-    function _researchDuration(uint256 planetId, Resources memory cost)
+    function _researchDuration(uint256 planetId, Technology technology, Resources memory cost)
         private
         view
         returns (uint256)
     {
         return VeydriftFormulas.researchDuration(
-            _buildingLevels[planetId][Building.ResearchLab],
+            _effectiveResearchLabLevel(planetId, _planets[planetId].owner, technology),
             cost.metal,
             cost.crystal,
             cost.deuterium,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
+    }
+
+    function _effectiveResearchLabLevel(uint256 planetId, address player, Technology technology)
+        private
+        view
+        returns (uint256)
+    {
+        uint16 localLabLevel = _buildingLevels[planetId][Building.ResearchLab];
+        uint16 requiredLabLevel = VeydriftCatalog.researchLabRequirement(technology);
+        if (localLabLevel < requiredLabLevel) return localLabLevel;
+
+        uint16 networkLevel = _technologyLevels[player][Technology.IntergalacticResearchNetwork];
+        if (networkLevel == 0) return localLabLevel;
+
+        uint16 maxLinkedLabs = networkLevel > MAX_LEVEL ? MAX_LEVEL : networkLevel;
+        uint16[50] memory linkedLabLevels;
+        uint16 linkedCount = 0;
+
+        for (uint256 candidatePlanetId = 1; candidatePlanetId < nextPlanetId;) {
+            if (candidatePlanetId != planetId && _planets[candidatePlanetId].owner == player) {
+                uint16 labLevel = _buildingLevels[candidatePlanetId][Building.ResearchLab];
+                if (labLevel >= requiredLabLevel) {
+                    linkedCount = _insertLinkedResearchLab(
+                        linkedLabLevels, linkedCount, maxLinkedLabs, labLevel
+                    );
+                }
+            }
+
+            unchecked {
+                ++candidatePlanetId;
+            }
+        }
+
+        uint256 effectiveLabLevel = localLabLevel;
+        for (uint16 index = 0; index < linkedCount;) {
+            effectiveLabLevel += linkedLabLevels[index];
+            unchecked {
+                ++index;
+            }
+        }
+        return effectiveLabLevel;
+    }
+
+    function _insertLinkedResearchLab(
+        uint16[50] memory linkedLabLevels,
+        uint16 linkedCount,
+        uint16 maxLinkedLabs,
+        uint16 labLevel
+    ) private pure returns (uint16) {
+        if (maxLinkedLabs == 0) return linkedCount;
+        if (linkedCount == maxLinkedLabs && labLevel <= linkedLabLevels[maxLinkedLabs - 1]) {
+            return linkedCount;
+        }
+
+        uint16 insertionIndex = linkedCount < maxLinkedLabs ? linkedCount : maxLinkedLabs - 1;
+        if (linkedCount < maxLinkedLabs) linkedCount += 1;
+
+        while (insertionIndex > 0 && linkedLabLevels[insertionIndex - 1] < labLevel) {
+            linkedLabLevels[insertionIndex] = linkedLabLevels[insertionIndex - 1];
+            unchecked {
+                --insertionIndex;
+            }
+        }
+        linkedLabLevels[insertionIndex] = labLevel;
+        return linkedCount;
     }
 
     function _requireResearchDependencies(
