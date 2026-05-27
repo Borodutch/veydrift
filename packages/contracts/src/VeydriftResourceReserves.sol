@@ -271,7 +271,8 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     {
         return mission.status == FleetMissionStatus.Outbound
             && (mission.missionType == FleetMissionType.Attack
-                || mission.missionType == FleetMissionType.Harvest)
+                || mission.missionType == FleetMissionType.Harvest
+                || mission.missionType == FleetMissionType.Colonize)
             && _missionResolutionTimestamp() >= mission.arrivalAt;
     }
 

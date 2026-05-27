@@ -21,7 +21,8 @@ describe("MissionResolutionService", () => {
     const requests: Array<{ method: string; params: unknown[] }> = [];
     const missions: ResolvableFleetMission[] = [
       mission("42", "Attack"),
-      mission("43", "Harvest")
+      mission("43", "Harvest"),
+      mission("44", "Colonize")
     ];
     const service = new MissionResolutionService(
       {
@@ -61,13 +62,21 @@ describe("MissionResolutionService", () => {
           to: config.gameContractAddress,
           data: encodeResolveFleetMissionCall(43n)
         }]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: config.missionResolverAddress,
+          to: config.gameContractAddress,
+          data: encodeResolveFleetMissionCall(44n)
+        }]
       }
     ]);
     expect(service.snapshot()).toMatchObject({
       enabled: true,
       lastError: null,
-      lastSubmittedMissionId: "43",
-      submittedCount: 2
+      lastSubmittedMissionId: "44",
+      submittedCount: 3
     });
   });
 
@@ -100,7 +109,10 @@ describe("MissionResolutionService", () => {
   });
 });
 
-function mission(missionId: string, missionType: "Attack" | "Harvest"): ResolvableFleetMission {
+function mission(
+  missionId: string,
+  missionType: "Attack" | "Harvest" | "Colonize"
+): ResolvableFleetMission {
   return {
     arrivalAt: "1770000000",
     missionId,
