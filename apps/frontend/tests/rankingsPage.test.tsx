@@ -9,13 +9,8 @@ import {
 import type { HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
 describe("RankingsPage", () => {
-  test("uses one clear ranking table instead of category tabs and a duplicate total column", () => {
-    expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Planets", "Score"]);
-    expect(rankingsColumnLabels).not.toContain("Total");
-    expect(rankingsColumnLabels).not.toContain("Economy");
-    expect(rankingsColumnLabels).not.toContain("Research");
-    expect(rankingsColumnLabels).not.toContain("Fleet");
-    expect(rankingsColumnLabels).not.toContain("Defense");
+  test("uses one ranking table with the active category score and total context", () => {
+    expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Planets", "Score", "Total"]);
   });
 
   test("renders rank, commander, planet count, canonical score, and public home coordinates", () => {
@@ -31,11 +26,15 @@ describe("RankingsPage", () => {
     expect(text).toContain("3");
     expect(text).toContain("1,500");
     expect(text).not.toContain("Planet 7");
-    expect(text).not.toContain("Total");
-    expect(text).not.toContain("Economy");
-    expect(text).not.toContain("Research");
-    expect(text).not.toContain("Fleet");
-    expect(text).not.toContain("Defense");
+    expect(text).toContain("Total");
+  });
+
+  test("renders the selected category score while keeping total visible", () => {
+    const table = RankingsTable({ active: "fleetCount", entries: [rankingEntry()], loading: false });
+    const text = visibleText(table);
+
+    expect(text).toContain("42");
+    expect(text).toContain("1,500");
   });
 
   test("opens the ranked commander's public home planet when available", () => {
@@ -65,7 +64,10 @@ describe("RankingsPage", () => {
         total: [entry],
         economy: [],
         research: [],
+        researchLevels: [],
+        military: [],
         fleet: [],
+        fleetCount: [],
         defense: [],
       },
     };
@@ -94,7 +96,10 @@ function rankingEntry(): HighscoreEntry {
       defense: "100",
       economy: "900",
       fleet: "200",
+      fleetCount: "42",
+      military: "300",
       research: "300",
+      researchLevels: "12",
       total: "1500",
     },
     wallet: "0x1111111111111111111111111111111111111111",

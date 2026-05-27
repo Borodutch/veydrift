@@ -4,9 +4,23 @@ export type ScoreBreakdown = {
   total: string;
   economy: string;
   research: string;
+  researchLevels: string;
+  military: string;
   fleet: string;
+  fleetCount: string;
   defense: string;
 };
+
+export const highscoreCategories: readonly (keyof ScoreBreakdown)[] = [
+  "total",
+  "economy",
+  "research",
+  "researchLevels",
+  "military",
+  "fleet",
+  "fleetCount",
+  "defense",
+];
 
 export type HighscoreInput = {
   wallet: Address;
@@ -14,6 +28,7 @@ export type HighscoreInput = {
   planetCount: number;
   planets: Array<{
     buildings: Array<{ id: number; level: number }>;
+    moonBuildings?: Array<{ id: number; level: number }> | undefined;
     defenses: Array<{ id: number; count: number }>;
     ships: Array<{ id: number; count: number }>;
   }>;
@@ -49,6 +64,12 @@ const buildingBaseCosts: readonly Cost[] = [
   [20_000n, 40_000n, 0n],
   [20_000n, 20_000n, 1_000n],
   [8_000n, 8_000n, 4_000n],
+];
+
+const moonBuildingBaseCosts: readonly Cost[] = [
+  [20_000n, 40_000n, 20_000n],
+  [20_000n, 40_000n, 20_000n],
+  [2_000_000n, 4_000_000n, 2_000_000n],
 ];
 
 const defenseCosts: readonly Cost[] = [
@@ -103,8 +124,13 @@ const researchBaseCosts: readonly Cost[] = [
 
 export const highscoreFormula = {
   pointsDivisor: pointsDivisor.toString(),
+  target:
+    "Classic OGame non-lifeform highscore parity: total, economy, research points, research levels, current military points, current fleet points, ship count, and defense points.",
   summary:
-    "Veydrift score uses one point per 1,000 resources of completed canonical owned state: buildings as economy, research globally, current fleet, and current defenses.",
+    "Veydrift score uses one point per 1,000 resources of completed canonical owned state: planet and moon buildings as economy, research globally, current military, current fleet, and current defenses. Destroyed ships and defenses leave the current-state rankings when contract state removes them.",
+  excludedCategories: [
+    "Military built, military destroyed, military lost, and honor rankings are intentionally excluded until Veydrift exposes per-wallet historical combat and honor ledgers.",
+  ],
 } as const;
 
 export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
@@ -115,6 +141,9 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
   for (const planet of input.planets) {
     for (const building of planet.buildings) {
       economyValue += completedLevelValue(buildingBaseCosts[building.id], building.level, buildingFactor(building.id));
+    }
+    for (const building of planet.moonBuildings ?? []) {
+      economyValue += completedLevelValue(moonBuildingBaseCosts[building.id], building.level, [2n, 1n]);
     }
     for (const ship of planet.ships) {
       const cost = shipCosts[ship.id];
@@ -131,15 +160,21 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
   }
 
   let researchValue = 0n;
+  let researchLevelCount = 0n;
   for (const technology of input.technologies) {
     researchValue += completedResearchValue(technology.id, technology.level);
+    researchLevelCount += BigInt(Math.max(0, technology.level));
   }
 
   const economy = points(economyValue);
   const research = points(researchValue);
   const fleet = points(fleetValue);
   const defense = points(defenseValue);
-  const total = economy + research + fleet + defense;
+  const military = fleet + defense;
+  const fleetCount = input.planets.reduce((sum, planet) => (
+    sum + planet.ships.reduce((planetSum, ship) => planetSum + BigInt(Math.max(0, ship.count)), 0n)
+  ), 0n);
+  const total = economy + research + military;
 
   return {
     wallet: input.wallet,
@@ -149,7 +184,10 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
       total: total.toString(),
       economy: economy.toString(),
       research: research.toString(),
+      researchLevels: researchLevelCount.toString(),
+      military: military.toString(),
       fleet: fleet.toString(),
+      fleetCount: fleetCount.toString(),
       defense: defense.toString(),
     },
   };

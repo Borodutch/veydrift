@@ -1258,7 +1258,10 @@ describe("walletFlow", () => {
         total: [],
         economy: [],
         research: [],
+        researchLevels: [],
+        military: [],
         fleet: [],
+        fleetCount: [],
         defense: []
       }
     };

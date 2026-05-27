@@ -36,12 +36,15 @@ describe("highscore formulas", () => {
       total: "100",
       economy: "0",
       research: "48",
+      researchLevels: "5",
+      military: "52",
       fleet: "26",
+      fleetCount: "3",
       defense: "26",
     });
   });
 
-  test("accumulates economy across multiple planets", () => {
+  test("accumulates economy across multiple planets and moons", () => {
     const entry = calculateHighscore({
       wallet: "0x2222222222222222222222222222222222222222" as Address,
       homePlanetId: "1",
@@ -49,6 +52,10 @@ describe("highscore formulas", () => {
       planets: [
         {
           buildings: [{ id: 11, level: 1 }],
+          moonBuildings: [
+            { id: 0, level: 2 },
+            { id: 1, level: 1 },
+          ],
           defenses: [],
           ships: [],
         },
@@ -61,7 +68,51 @@ describe("highscore formulas", () => {
       technologies: [],
     });
 
-    expect(entry.score.economy).toBe("1641");
-    expect(entry.score.total).toBe("1641");
+    expect(entry.score.economy).toBe("1961");
+    expect(entry.score.total).toBe("1961");
+  });
+
+  test("drops current military and fleet-count points when units are gone", () => {
+    const fullFleet = calculateHighscore({
+      wallet: "0x3333333333333333333333333333333333333333" as Address,
+      homePlanetId: "3",
+      planetCount: 1,
+      planets: [
+        {
+          buildings: [],
+          defenses: [{ id: 0, count: 5 }],
+          ships: [{ id: 0, count: 5 }],
+        },
+      ],
+      technologies: [],
+    });
+    const afterLosses = calculateHighscore({
+      wallet: "0x3333333333333333333333333333333333333333" as Address,
+      homePlanetId: "3",
+      planetCount: 1,
+      planets: [
+        {
+          buildings: [],
+          defenses: [{ id: 0, count: 2 }],
+          ships: [{ id: 0, count: 1 }],
+        },
+      ],
+      technologies: [],
+    });
+
+    expect(fullFleet.score).toMatchObject({
+      total: "30",
+      military: "30",
+      fleet: "20",
+      fleetCount: "5",
+      defense: "10",
+    });
+    expect(afterLosses.score).toMatchObject({
+      total: "8",
+      military: "8",
+      fleet: "4",
+      fleetCount: "1",
+      defense: "4",
+    });
   });
 });

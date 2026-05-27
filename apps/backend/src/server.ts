@@ -3,7 +3,7 @@ import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import { assertAddress, type ChainReader, type MoonChanceReportEvent, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
-import { highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
+import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
@@ -779,13 +779,9 @@ function highscoreRankings(
   limit: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
-  return {
-    total: rankHighscores(entries, "total", limit, planetsByOwner),
-    economy: rankHighscores(entries, "economy", limit, planetsByOwner),
-    research: rankHighscores(entries, "research", limit, planetsByOwner),
-    fleet: rankHighscores(entries, "fleet", limit, planetsByOwner),
-    defense: rankHighscores(entries, "defense", limit, planetsByOwner)
-  };
+  return Object.fromEntries(
+    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner)])
+  ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
 
 function rankHighscores(
