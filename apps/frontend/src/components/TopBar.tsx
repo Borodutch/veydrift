@@ -1,8 +1,10 @@
 import type { EnergyBalance, Resources, QueueItem } from "../playableMvp";
 import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { shortAddress } from "../walletFlow";
+import { Download } from "lucide-preact";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const compactFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
 const BPS = 10_000;
 
 interface TopBarProps {
@@ -47,8 +49,8 @@ export function TopBar({
 
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
-      <div className="mx-auto flex min-h-11 max-w-7xl flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-3 py-1.5 sm:justify-between sm:px-4 lg:px-6">
-        <div className="grid w-full min-w-0 grid-cols-2 items-center gap-x-1.5 gap-y-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5">
+      <div className="mx-auto flex min-h-10 max-w-7xl flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
+        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem] items-center gap-1 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
           {resourceStatus === "loading" ? (
             <span className="text-xs text-slate-400">Resources loading</span>
           ) : resourceStatus === "error" || !resources ? (
@@ -56,6 +58,7 @@ export function TopBar({
           ) : (
             <>
               <ResourcePip
+                abbr="M"
                 cap={showResourceDetails ? caps.metal : undefined}
                 color="text-amber-300"
                 delta={resourceDeltas?.metal}
@@ -64,6 +67,7 @@ export function TopBar({
                 value={resources.metal}
               />
               <ResourcePip
+                abbr="C"
                 cap={showResourceDetails ? caps.crystal : undefined}
                 color="text-cyan-300"
                 delta={resourceDeltas?.crystal}
@@ -72,6 +76,7 @@ export function TopBar({
                 value={resources.crystal}
               />
               <ResourcePip
+                abbr="D"
                 cap={showResourceDetails ? caps.deuterium : undefined}
                 color="text-emerald-300"
                 delta={resourceDeltas?.deuterium}
@@ -90,13 +95,15 @@ export function TopBar({
           )}
           {showCollectButton && (
             <button
-              className="col-span-2 inline-flex h-7 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 text-[11px] font-semibold leading-none text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-span-1"
+              aria-label={collectResourcesTitle(resourceDeltas, canCollectResources)}
+              className="col-start-5 grid h-7 w-7 shrink-0 place-items-center rounded border border-cyan-300/30 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-start-auto sm:inline-flex sm:w-auto sm:px-2.5 sm:text-[11px] sm:font-semibold sm:leading-none"
               disabled={!canCollectResources}
               onClick={onCollectResources}
               title={collectResourcesTitle(resourceDeltas, canCollectResources)}
               type="button"
             >
-              Collect
+              <Download aria-hidden="true" className="h-3.5 w-3.5 sm:hidden" strokeWidth={2.25} />
+              <span className="sr-only sm:not-sr-only">Collect</span>
             </button>
           )}
           {queue && (
@@ -129,6 +136,7 @@ export function TopBar({
 }
 
 function ResourcePip({
+  abbr,
   label,
   value,
   rate,
@@ -136,6 +144,7 @@ function ResourcePip({
   color,
   delta,
 }: {
+  abbr: string;
   label: string;
   value: number;
   rate?: number | undefined;
@@ -146,14 +155,23 @@ function ResourcePip({
   const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   const wholeDelta = Math.floor(Math.max(0, delta ?? 0));
   return (
-    <div className="inline-flex h-6 items-center justify-center whitespace-nowrap sm:justify-start">
-      <span className="inline-flex items-baseline gap-1.5">
-        <span className={`text-xs font-semibold leading-none ${color}`}>{label}</span>
-        <span className="text-xs leading-none text-white">{format(value)}</span>
-        {wholeDelta > 0 && <span className="text-[10px] font-semibold leading-none text-lime-300">+{format(wholeDelta)}</span>}
-        {rate !== undefined && <span className="text-[10px] leading-none text-slate-500">+{format(rate)}/h</span>}
+    <div
+      className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1.5 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
+      title={resourceTitle(label, value, rate, cap, wholeDelta)}
+    >
+      <span className="inline-flex min-w-0 items-baseline gap-1 sm:gap-1.5">
+        <span className={`text-[11px] font-semibold leading-none sm:text-xs ${color}`}>
+          <span className="sm:hidden">{abbr}</span>
+          <span className="hidden sm:inline">{label}</span>
+        </span>
+        <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${pct >= 90 ? "text-amber-100" : "text-white"}`}>
+          <span className="sm:hidden">{formatCompact(value)}</span>
+          <span className="hidden sm:inline">{format(value)}</span>
+        </span>
+        {wholeDelta > 0 && <span className="hidden text-[10px] font-semibold leading-none text-lime-300 sm:inline">+{format(wholeDelta)}</span>}
+        {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
         {pct >= 90 && (
-          <span className="text-[10px] leading-none text-amber-400">{pct}%</span>
+          <span className="hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>
         )}
       </span>
     </div>
@@ -176,17 +194,26 @@ function EnergyPip({
 
   return (
     <div
-      className="inline-flex h-6 items-center justify-center whitespace-nowrap sm:justify-start"
+      className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1.5 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
       title={showShortageFactor
         ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%`
         : `${format(produced)} produced / ${format(required)} required`}
     >
-      <span className="inline-flex items-baseline gap-1.5">
-        <span className={`text-xs font-semibold leading-none ${tone}`}>Energy</span>
-        <span className={`text-xs leading-none ${current < 0 ? "text-red-200" : "text-white"}`}>{format(current)}</span>
-        {required > 0 && <span className="text-[10px] leading-none text-slate-500">{format(produced)}/{format(required)}</span>}
+      <span className="inline-flex min-w-0 items-baseline gap-1 sm:gap-1.5">
+        <span className={`text-[11px] font-semibold leading-none sm:text-xs ${tone}`}>
+          <span className="sm:hidden">E</span>
+          <span className="hidden sm:inline">Energy</span>
+        </span>
+        <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${current < 0 ? "text-red-200" : "text-white"}`}>
+          <span className="sm:hidden">{formatCompact(current)}</span>
+          <span className="hidden sm:inline">{format(current)}</span>
+        </span>
+        {required > 0 && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">{format(produced)}/{format(required)}</span>}
         {showShortageFactor && (
-          <span className="text-[10px] font-semibold leading-none text-red-200">{productionPercent}% output</span>
+          <span className="text-[9px] font-semibold leading-none text-red-200 sm:text-[10px]">
+            <span className="sm:hidden">{productionPercent}%</span>
+            <span className="hidden sm:inline">{productionPercent}% output</span>
+          </span>
         )}
       </span>
     </div>
@@ -195,6 +222,20 @@ function EnergyPip({
 
 function format(value: number): string {
   return formatter.format(Math.floor(value));
+}
+
+function formatCompact(value: number): string {
+  const rounded = Math.floor(value);
+  if (Math.abs(rounded) < 10_000) return format(rounded);
+  return compactFormatter.format(rounded);
+}
+
+function resourceTitle(label: string, value: number, rate: number | undefined, cap: number | undefined, delta: number): string {
+  const details = [`${label}: ${format(value)}`];
+  if (delta > 0) details.push(`Collectable +${format(delta)}`);
+  if (rate !== undefined) details.push(`+${format(rate)}/h`);
+  if (cap !== undefined) details.push(`Cap ${format(cap)}`);
+  return details.join(" / ");
 }
 
 function collectResourcesTitle(deltas: Resources | undefined, canCollect: boolean): string {
