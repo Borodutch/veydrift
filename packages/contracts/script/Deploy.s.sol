@@ -5,6 +5,7 @@ import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
@@ -41,8 +42,13 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
-        VeydriftGame game =
-            new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
+        VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
+        VeydriftGame game = new VeydriftGame(
+            admin,
+            address(gameplayModule),
+            address(planetManagementModule),
+            address(colonizationModule)
+        );
         gameAddress = address(game);
         VeydriftAllianceSystem allianceSystem =
             new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
@@ -55,6 +61,8 @@ contract Deploy is ResourceTokenDeployment {
         game.setResourceTokens(metalToken, crystalToken, deuteriumToken);
         game.setAllianceSystem(allianceSystemAddress);
         game.setMoonSystem(moonSystemAddress);
+        game.setRandomnessEngine(randomnessEngineAddress);
+        randomnessEngine.setRequesterAuthorization(gameAddress, true);
         randomnessEngine.setRequesterAuthorization(moonSystemAddress, true);
         emit VeydriftDeployment(
             gameAddress,

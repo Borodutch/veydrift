@@ -4,12 +4,13 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
-import {MoonBuilding, Resource, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {MoonBuilding, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
 contract MoonMockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -65,13 +66,38 @@ contract VeydriftMoonSystemTest is Test {
         uint16 moonFields,
         uint16 moonDiameterKm
     );
+    event MoonDestructionRequested(
+        uint256 indexed outcomeId,
+        uint256 indexed battleId,
+        uint256 indexed targetPlanetId,
+        address attacker,
+        uint32 deathstars,
+        uint16 moonDestructionChanceBps,
+        uint16 deathstarDestructionChanceBps,
+        uint256 randomnessRequestId,
+        bytes32 purposeHash
+    );
+    event MoonDestructionFinalized(
+        uint256 indexed outcomeId,
+        uint256 indexed battleId,
+        uint256 indexed targetPlanetId,
+        bool moonDestroyed,
+        bool deathstarsDestroyed,
+        uint256 randomWord
+    );
 
     function setUp() public {
         randomness = new RandomnessEngine(admin, fulfiller);
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
-        game = new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
+        VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
+        game = new VeydriftGame(
+            admin,
+            address(gameplayModule),
+            address(planetManagementModule),
+            address(colonizationModule)
+        );
         moons = new VeydriftMoonSystem(address(game), address(randomness));
         metalToken = new MoonMockResourceToken();
         crystalToken = new MoonMockResourceToken();
@@ -105,10 +131,10 @@ contract VeydriftMoonSystemTest is Test {
         assertTrue(moon.exists);
         assertEq(moon.planetId, planetId);
         assertEq(moon.owner, player);
-        assertGe(moon.fields, 1);
-        assertLe(moon.fields, 3);
-        assertGe(moon.diameterKm, 3_400);
-        assertLe(moon.diameterKm, 8_500);
+        assertGe(moon.fields, 3);
+        assertLe(moon.fields, 8);
+        assertGe(moon.diameterKm, 3_466);
+        assertLe(moon.diameterKm, 8_944);
 
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftMoonSystem.MoonAlreadyExists.selector, planetId)
@@ -132,6 +158,15 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.moonChanceBps(100_000, 0), 100);
         assertEq(moons.moonChanceBps(750_000, 250_000), 1_000);
         assertEq(moons.moonChanceBps(3_000_000, 0), 2_000);
+    }
+
+    function testMoonDestructionParityChances() public view {
+        assertEq(moons.moonDestructionChanceBps(3_400, 1), 4_200);
+        assertEq(moons.moonDestructionChanceBps(8_500, 1), 800);
+        assertEq(moons.moonDestructionChanceBps(3_400, 9), 10_000);
+        assertEq(moons.moonDestructionChanceBps(8_500, 0), 0);
+        assertEq(moons.moonDeathstarDestructionChanceBps(3_400), 2_900);
+        assertEq(moons.moonDeathstarDestructionChanceBps(8_500), 4_600);
     }
 
     function testBattleMoonChanceRequestsRandomnessAndBlocksPendingOutcome() public {
@@ -267,6 +302,145 @@ contract VeydriftMoonSystemTest is Test {
         moons.requestMoonChanceFromBattle(82, planetId, 99_999, 0);
     }
 
+    function testMoonDestructionRequestsRandomnessAndDestroysMoonState() public {
+        uint256 planetId = _startPlanet();
+
+        VeydriftMoonSystem.Moon memory moon = _createMoon(planetId);
+        _fundPlanet(planetId, 1_000_000, 1_000_000, 1_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+
+        vm.prank(player);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.SensorPhalanx);
+        VeydriftMoonSystem.MoonBuildingConstruction memory construction =
+            moons.activeMoonBuildingConstruction(planetId);
+        assertTrue(construction.active);
+
+        uint16 moonDestructionBps = moons.moonDestructionChanceBps(moon.diameterKm, 1);
+        uint16 deathstarDestructionBps = moons.moonDeathstarDestructionChanceBps(moon.diameterKm);
+        bytes32 purposeHash = moons.moonDestructionPurposeHash(
+            1,
+            91,
+            planetId,
+            reporter,
+            1,
+            moon.diameterKm,
+            moonDestructionBps,
+            deathstarDestructionBps
+        );
+
+        vm.expectEmit(true, true, true, true, address(moons));
+        emit MoonDestructionRequested(
+            1,
+            91,
+            planetId,
+            reporter,
+            1,
+            moonDestructionBps,
+            deathstarDestructionBps,
+            1,
+            purposeHash
+        );
+        vm.prank(reporter);
+        (uint256 outcomeId, uint256 requestId) =
+            moons.requestMoonDestructionFromBattle(91, planetId, reporter, 1);
+
+        (
+            uint256 battleId,
+            uint256 targetPlanetId,
+            address attacker,
+            uint32 deathstars,
+            uint16 reportedMoonBps,
+            uint16 reportedDeathstarBps,
+            bool moonDestroyed,
+            bool deathstarsDestroyed
+        ) = moons.moonDestructionResult(outcomeId);
+        (uint256 storedRequestId, bytes32 storedPurposeHash, bool finalized,) =
+            moons.moonDestructionRandomness(outcomeId);
+        assertEq(battleId, 91);
+        assertEq(targetPlanetId, planetId);
+        assertEq(attacker, reporter);
+        assertEq(deathstars, 1);
+        assertEq(reportedMoonBps, moonDestructionBps);
+        assertEq(reportedDeathstarBps, deathstarDestructionBps);
+        assertFalse(moonDestroyed);
+        assertFalse(deathstarsDestroyed);
+        assertEq(storedRequestId, requestId);
+        assertEq(storedPurposeHash, purposeHash);
+        assertFalse(finalized);
+
+        uint256 randomWord = uint256(moonDestructionBps - 1) + uint256(9_999) * 10_000;
+        vm.prank(fulfiller);
+        randomness.fulfillRandomness(requestId, randomWord);
+
+        vm.expectEmit(true, true, true, true, address(moons));
+        emit MoonDestructionFinalized(outcomeId, 91, planetId, true, false, randomWord);
+        (moonDestroyed, deathstarsDestroyed) = moons.finalizeMoonDestruction(outcomeId);
+        assertTrue(moonDestroyed);
+        assertFalse(deathstarsDestroyed);
+        assertFalse(moons.moon(planetId).exists);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 0);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.SensorPhalanx), 0);
+        assertFalse(moons.activeMoonBuildingConstruction(planetId).active);
+
+        (,, finalized,) = moons.moonDestructionRandomness(outcomeId);
+        (,,,,,, moonDestroyed, deathstarsDestroyed) = moons.moonDestructionResult(outcomeId);
+        assertTrue(finalized);
+        assertTrue(moonDestroyed);
+        assertFalse(deathstarsDestroyed);
+    }
+
+    function testMoonDestructionCanDestroyDeathstarsWithoutDestroyingMoon() public {
+        uint256 planetId = _startPlanet();
+
+        VeydriftMoonSystem.Moon memory moon = _createMoon(planetId);
+        uint16 moonDestructionBps = moons.moonDestructionChanceBps(moon.diameterKm, 1);
+        uint16 deathstarDestructionBps = moons.moonDeathstarDestructionChanceBps(moon.diameterKm);
+
+        vm.prank(reporter);
+        (uint256 outcomeId, uint256 requestId) =
+            moons.requestMoonDestructionFromBattle(92, planetId, reporter, 1);
+
+        uint256 randomWord =
+            uint256(moonDestructionBps) + uint256(deathstarDestructionBps - 1) * 10_000;
+        vm.prank(fulfiller);
+        randomness.fulfillRandomness(requestId, randomWord);
+
+        (bool moonDestroyed, bool deathstarsDestroyed) = moons.finalizeMoonDestruction(outcomeId);
+        assertFalse(moonDestroyed);
+        assertTrue(deathstarsDestroyed);
+        assertTrue(moons.moon(planetId).exists);
+    }
+
+    function testMoonDestructionRejectsInvalidRequestsAndDuplicates() public {
+        uint256 planetId = _startPlanet();
+
+        vm.prank(reporter);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NoMoon.selector, planetId));
+        moons.requestMoonDestructionFromBattle(93, planetId, reporter, 1);
+
+        _createMoon(planetId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftMoonSystem.NotMoonChanceReporter.selector, address(this))
+        );
+        moons.requestMoonDestructionFromBattle(93, planetId, reporter, 1);
+
+        vm.prank(reporter);
+        vm.expectRevert(VeydriftMoonSystem.InvalidQuantity.selector);
+        moons.requestMoonDestructionFromBattle(93, planetId, reporter, 0);
+
+        vm.prank(reporter);
+        moons.requestMoonDestructionFromBattle(93, planetId, reporter, 1);
+
+        vm.prank(reporter);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMoonSystem.MoonDestructionAlreadyRecorded.selector, 93, planetId
+            )
+        );
+        moons.requestMoonDestructionFromBattle(93, planetId, reporter, 1);
+    }
+
     function testMoonBuildingUpgradeSpendsPlanetResources() public {
         uint256 planetId = _startPlanet();
 
@@ -320,6 +494,31 @@ contract VeydriftMoonSystemTest is Test {
         vm.prank(player);
         moons.scanSystem(planetId, planet.galaxy, nearSystem);
 
+        uint256 targetPlanetId = 200;
+        _setPlanetLocation(targetPlanetId, address(0xCAFE), planet.galaxy, nearSystem, 8);
+        _storeFleetMission(
+            1,
+            VeydriftGameStorage.FleetMissionStatus.Outbound,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            address(0xCAFE),
+            targetPlanetId,
+            planetId,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 30 minutes),
+            uint64(block.timestamp + 60 minutes)
+        );
+        _setNextFleetId(2);
+
+        vm.prank(player);
+        VeydriftMoonSystem.PhalanxScanResult[] memory scans =
+            moons.scanSystemMissions(planetId, planet.galaxy, nearSystem, 10);
+        assertEq(scans.length, 1);
+        assertEq(scans[0].missionId, 1);
+        assertEq(uint8(scans[0].status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(uint8(scans[0].missionType), uint8(VeydriftGameStorage.FleetMissionType.Attack));
+        assertEq(scans[0].originPlanetId, targetPlanetId);
+        assertEq(scans[0].targetPlanetId, planetId);
+
         vm.prank(player);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -358,6 +557,37 @@ contract VeydriftMoonSystemTest is Test {
         moons.jumpGateJump(planetId, secondPlanetId);
     }
 
+    function testJumpGateMovesShipsBetweenOwnedMoons() public {
+        uint256 planetId = _startPlanet();
+        uint256 secondPlanetId = 2;
+        _setPlanetOwner(secondPlanetId, player);
+        _setTechnologyLevel(player, Technology.Hyperspace, 7);
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 3_000_000, 5_000_000, 3_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.JumpGate);
+
+        _createMoon(secondPlanetId);
+        _fundPlanet(secondPlanetId, 3_000_000, 5_000_000, 3_000_000);
+        _buildMoon(secondPlanetId, MoonBuilding.LunarBase);
+        _buildMoon(secondPlanetId, MoonBuilding.JumpGate);
+
+        _setShipCount(planetId, Ship.SmallCargo, 4);
+        _setShipCount(planetId, Ship.Battlecruiser, 2);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 3;
+        ships.battlecruiser = 2;
+
+        vm.prank(player);
+        moons.jumpGateJumpShips(planetId, secondPlanetId, ships);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
+        assertEq(game.shipCount(planetId, Ship.Battlecruiser), 0);
+        assertEq(game.shipCount(secondPlanetId, Ship.SmallCargo), 3);
+        assertEq(game.shipCount(secondPlanetId, Ship.Battlecruiser), 2);
+    }
+
     function _startPlanet() internal returns (uint256 planetId) {
         vm.prank(player);
         planetId = game.startPlanet{value: 0.05 ether}();
@@ -382,6 +612,45 @@ contract VeydriftMoonSystemTest is Test {
         vm.store(address(game), bytes32(planetBase), bytes32(uint256(uint160(owner))));
     }
 
+    function _setPlanetLocation(
+        uint256 planetId,
+        address owner,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position
+    ) internal {
+        uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
+        uint256 packed = uint256(uint160(owner)) | (uint256(galaxy) << 160)
+            | (uint256(system) << 176) | (uint256(position) << 192);
+        vm.store(address(game), bytes32(planetBase), bytes32(packed));
+    }
+
+    function _setNextFleetId(uint256 nextFleetId) internal {
+        vm.store(address(game), bytes32(uint256(11)), bytes32(nextFleetId));
+    }
+
+    function _storeFleetMission(
+        uint256 missionId,
+        VeydriftGameStorage.FleetMissionStatus status,
+        VeydriftGameStorage.FleetMissionType missionType,
+        address owner,
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        uint64 departureAt,
+        uint64 arrivalAt,
+        uint64 returnAt
+    ) internal {
+        uint256 missionBase = uint256(keccak256(abi.encode(missionId, uint256(24))));
+        uint256 packedHead = uint256(uint8(status)) | (uint256(uint8(missionType)) << 8)
+            | (uint256(uint160(owner)) << 16);
+        uint256 packedTimes =
+            uint256(departureAt) | (uint256(arrivalAt) << 64) | (uint256(returnAt) << 128);
+        vm.store(address(game), bytes32(missionBase), bytes32(packedHead));
+        vm.store(address(game), bytes32(missionBase + 1), bytes32(originPlanetId));
+        vm.store(address(game), bytes32(missionBase + 2), bytes32(targetPlanetId));
+        vm.store(address(game), bytes32(missionBase + 3), bytes32(packedTimes));
+    }
+
     function _fundPlanet(uint256 planetId, uint128 metal, uint128 crystal, uint128 deuterium)
         internal
     {
@@ -401,6 +670,12 @@ contract VeydriftMoonSystemTest is Test {
         vm.store(address(game), slot, bytes32(uint256(level)));
     }
 
+    function _setShipCount(uint256 planetId, Ship ship, uint32 count) internal {
+        bytes32 outerSlot = keccak256(abi.encode(planetId, uint256(22)));
+        bytes32 slot = keccak256(abi.encode(uint256(uint8(ship)), outerSlot));
+        vm.store(address(game), slot, bytes32(uint256(count)));
+    }
+
     function _expectedMoonShape(uint256 planetId, bytes32 purposeHash, uint256 randomWord)
         internal
         pure
@@ -411,7 +686,7 @@ contract VeydriftMoonSystemTest is Test {
                 abi.encode(keccak256("veydrift.moon-chance.v1"), planetId, purposeHash, randomWord)
             )
         );
-        fields = uint16(1 + (seed % 3));
-        diameterKm = uint16(3_400 + (seed % 5_101));
+        diameterKm = uint16(3_466 + (seed % 5_479));
+        fields = diameterKm / 1_000;
     }
 }

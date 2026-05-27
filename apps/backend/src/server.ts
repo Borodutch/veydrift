@@ -645,6 +645,8 @@ function moonChanceReportRef(report: IndexedMoonChanceReportEvent | undefined): 
 
 function moonChanceStatus(report: MoonChanceReportEvent): string {
   if (report.eventName === "MoonChanceRequested") return "pending";
+  if (report.eventName === "MoonDestructionRequested") return "moon_destruction_pending";
+  if (report.eventName === "MoonDestructionFinalized") return report.moonDestroyed ? "moon_destroyed" : "moon_survived";
   if (report.eventName === "MoonChanceSkippedExistingMoon") return "existing_moon_skipped";
   return report.moonCreated ? "created" : "not_created";
 }
