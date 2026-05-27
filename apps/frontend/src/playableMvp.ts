@@ -781,8 +781,8 @@ const fleetMissionShipKeys = new Set<ShipKey>([
 export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatBlock {
   const stats = shipBattleStatsByKey[ship.key];
   const notes = [
-    "Mission fuel is distance and ship-count based; there is no separate per-ship fuel stat yet.",
-    "Battle resolution uses six Veydrift rounds with shields, hull explosion checks, tech scaling, and rapid-fire where cataloged.",
+    "Mission fuel uses per-ship fuel consumption, distance, and selected mission speed.",
+    "Battle resolution uses six Veydrift rounds with unit-weighted target selection, shields, hull explosion checks, tech scaling, rapid-fire where cataloged, and post-battle defense repair.",
   ];
 
   if (!fleetMissionShipKeys.has(ship.key)) {
@@ -819,7 +819,7 @@ export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatB
 export function defenseCombatStats(defense: (typeof defenseCatalog)[number]): CombatStatBlock {
   const battlefieldDefense = defense.id <= 7;
   const notes = battlefieldDefense
-    ? ["Battle resolution uses six Veydrift rounds with shields, hull explosion checks, tech scaling, and rapid-fire where cataloged."]
+    ? ["Battle resolution uses six Veydrift rounds with unit-weighted target selection, shields, hull explosion checks, tech scaling, rapid-fire where cataloged, and post-battle defense repair."]
     : ["Missile attack and interception rules are separate from current fleet battle defense stats."];
 
   if (defense.key === "smallShieldDome" || defense.key === "largeShieldDome") {
@@ -1079,7 +1079,8 @@ const BUILDING_REQUIREMENTS: Partial<Record<BuildingKey, BuildingRequirement[]>>
 };
 
 const BPS = 10_000;
-const MIN_QUEUE_SECONDS = 60;
+export const QUEUE_UNIVERSE_SPEED = 1;
+const MIN_QUEUE_SECONDS = 1;
 const PLANET = {
   fields: 206,
   temperature: -12,
@@ -1395,6 +1396,16 @@ export function researchRequirementsFor(key: ResearchKey): ResearchRequirement[]
   return uniqueRequirements([...BASE_RESEARCH_REQUIREMENTS, ...(entry.requirements ?? [])]);
 }
 
+export function researchLabRequirementFor(key: ResearchKey): number {
+  let requiredLevel = 0;
+  for (const requirement of researchRequirementsFor(key)) {
+    if (requirement.type === "building" && requirement.key === "researchLab") {
+      requiredLevel = Math.max(requiredLevel, requirement.level);
+    }
+  }
+  return requiredLevel;
+}
+
 export function buildingRequirementsFor(key: BuildingKey): BuildingRequirement[] {
   return uniqueRequirements(BUILDING_REQUIREMENTS[key] ?? []);
 }
@@ -1501,8 +1512,19 @@ function uniqueBy<T>(items: readonly T[], keyFor: (item: T) => string): T[] {
 export function researchDurationEstimate(
   buildings: Record<BuildingKey, number>,
   cost: Resources,
+  options: {
+    networkLevel?: number | undefined;
+    requiredLabLevel?: number | undefined;
+    researchNetworkLabLevels?: readonly number[] | undefined;
+    universeSpeed?: number | undefined;
+  } = {},
 ): number {
-  return researchDurationSeconds(buildings.researchLab, cost);
+  const labLevel = effectiveResearchLabLevel(buildings.researchLab, {
+    networkLevel: options.networkLevel ?? 0,
+    requiredLabLevel: options.requiredLabLevel ?? 0,
+    researchNetworkLabLevels: options.researchNetworkLabLevels ?? [],
+  });
+  return researchDurationSeconds(labLevel, cost, options.universeSpeed);
 }
 
 export function buildingDurationEstimate(
@@ -1731,19 +1753,50 @@ function storageCap(level: number): number {
 function buildingDurationSeconds(roboticsLevel: number, naniteLevel: number, cost: Resources): number {
   const roboticsDivisor = roboticsLevel + 1;
   const naniteDivisor = 2 ** naniteLevel;
-  const raw = Math.floor(((cost.metal + cost.crystal) * 3_600) / (2_500 * roboticsDivisor * naniteDivisor));
+  const raw = Math.floor(
+    ((cost.metal + cost.crystal) * 3_600)
+      / (2_500 * roboticsDivisor * naniteDivisor * QUEUE_UNIVERSE_SPEED),
+  );
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 
-function researchDurationSeconds(researchLabLevel: number, cost: Resources): number {
-  const raw = Math.floor(((cost.metal + cost.crystal) * 3_600) / (1_000 * (researchLabLevel + 1)));
+function researchDurationSeconds(
+  researchLabLevel: number,
+  cost: Resources,
+  universeSpeed = QUEUE_UNIVERSE_SPEED,
+): number {
+  const speed = Math.max(1, Math.floor(universeSpeed));
+  const raw = Math.floor(((cost.metal + cost.crystal) * 3_600) / (1_000 * (researchLabLevel + 1) * speed));
   return Math.max(MIN_QUEUE_SECONDS, raw);
 }
 
 function shipDurationSeconds(shipyardLevel: number, naniteLevel: number, cost: Resources, quantity: number): number {
-  const denominator = 2500 * (shipyardLevel + 1) * (2 ** naniteLevel);
+  const denominator = 2500 * (shipyardLevel + 1) * (2 ** naniteLevel) * QUEUE_UNIVERSE_SPEED;
   const raw = Math.ceil(((cost.metal + cost.crystal) * Math.max(1, Math.floor(quantity)) * 3_600) / denominator);
   return Math.max(MIN_QUEUE_SECONDS, raw);
+}
+
+function effectiveResearchLabLevel(
+  localLabLevel: number,
+  options: {
+    networkLevel: number;
+    requiredLabLevel: number;
+    researchNetworkLabLevels: readonly number[];
+  },
+): number {
+  const requiredLabLevel = Math.max(0, Math.floor(options.requiredLabLevel));
+  if (localLabLevel < requiredLabLevel) return localLabLevel;
+
+  const linkedCount = Math.max(0, Math.floor(options.networkLevel));
+  if (linkedCount === 0) return localLabLevel;
+
+  const linkedLabTotal = [...options.researchNetworkLabLevels]
+    .filter((level) => level >= requiredLabLevel)
+    .sort((left, right) => right - left)
+    .slice(0, linkedCount)
+    .reduce((total, level) => total + level, 0);
+
+  return localLabLevel + linkedLabTotal;
 }
 
 function scaleByBps(value: number, multiplierBps: number): number {

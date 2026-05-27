@@ -6,6 +6,7 @@ import {
   encodeQuantity,
   encodeAddressUintCall,
   encodeAddressCall,
+  encodeColonizationTargetId,
   encodeGameCall,
   encodeJoinAttackMissionCall,
   encodeLaunchInterplanetaryMissileAttackCall,
@@ -37,6 +38,9 @@ import {
   sendJoinAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
+  sendFinishMoonBuildingUpgradeTransaction,
+  sendJumpGateJumpTransaction,
+  sendMoonScanTransaction,
   sendRecallFleetMissionTransaction,
   sendResolveFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
@@ -51,6 +55,7 @@ import {
   sendRequestResourceWithdrawalTransaction,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
+  sendStartMoonBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
@@ -132,6 +137,28 @@ describe("walletFlow", () => {
       targetPlanetId: 9,
       ships,
     });
+    const colonyData = encodeLaunchFleetMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: encodeColonizationTargetId(2, 44, 10),
+      missionType: 2,
+      ships: {
+        smallCargo: 0,
+        lightFighter: 0,
+        recycler: 0,
+        colonyShip: 1,
+        largeCargo: 0,
+        heavyFighter: 0,
+        cruiser: 0,
+        battleship: 0,
+        bomber: 0,
+        destroyer: 0,
+        deathstar: 0,
+        battlecruiser: 0,
+        reaper: 0,
+        pathfinder: 0,
+      },
+      speedPercent: 40,
+    });
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
@@ -144,7 +171,7 @@ describe("walletFlow", () => {
       missionType: 3,
       ships,
     })).resolves.toBe("0xgalaxy1");
-    await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10)).resolves.toBe("0xgalaxy2");
+    await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10, 40)).resolves.toBe("0xgalaxy2");
     await expect(sendJoinAttackMissionTransaction(provider, account, contract, {
       originPlanetId: 7,
       attackMissionId: 12,
@@ -158,7 +185,7 @@ describe("walletFlow", () => {
       quantity: 1,
     })).resolves.toBe("0xgalaxy4");
 
-    expect(missionData.startsWith("0x28247df8")).toBe(true);
+    expect(missionData.startsWith("0x60eac16f")).toBe(true);
     expect(joinData.startsWith("0x28260eb6")).toBe(true);
     expect(encodeLaunchInterplanetaryMissileAttackCall({
       originPlanetId: 7,
@@ -189,7 +216,7 @@ describe("walletFlow", () => {
         params: [{
           from: account,
           to: contract,
-          data: encodeGameCall("0x71358ab8", [7, 2, 44, 10]),
+          data: colonyData,
         }],
       },
       {
@@ -239,14 +266,15 @@ describe("walletFlow", () => {
         crystal: "202",
         deuterium: "303",
       },
+      speedPercent: 50,
       randomnessRequestId: 404,
     })).toBe(
-      "0x28247df8"
+      "0x60eac16f"
         + [
           7, 9, 3,
           1, 2, 3, 4, 5, 6, 7,
           8, 9, 10, 11, 12, 13, 14,
-          101, 202, 303, 404,
+          101, 202, 303, 50, 404,
         ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
     );
   });
@@ -845,6 +873,106 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: "0xa5a0d5970000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("submits moon building, scan, and Jump Gate transactions", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0xmoon${requests.length}`;
+    });
+    const ships = {
+      smallCargo: 2,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 1,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+
+    await expect(sendStartMoonBuildingUpgradeTransaction(provider, account, contract, "7", 1)).resolves.toBe("0xmoon1");
+    await expect(sendFinishMoonBuildingUpgradeTransaction(provider, account, contract, "7")).resolves.toBe("0xmoon2");
+    await expect(sendMoonScanTransaction(provider, account, contract, "7", 2, 44)).resolves.toBe("0xmoon3");
+    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9")).resolves.toBe("0xmoon4");
+    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9", ships)).resolves.toBe("0xmoon5");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x715e1b1a", [7, 1])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x713b9e66", [7])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0xfc1e78b1", [7, 2, 44])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x36aaf8f8", [7, 9])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x3095d992", [
+              7,
+              9,
+              ships.smallCargo,
+              ships.lightFighter,
+              ships.recycler,
+              ships.colonyShip,
+              ships.largeCargo,
+              ships.heavyFighter,
+              ships.cruiser,
+              ships.battleship,
+              ships.bomber,
+              ships.destroyer,
+              ships.deathstar,
+              ships.battlecruiser,
+              ships.reaper,
+              ships.pathfinder,
+            ])
           }
         ]
       }

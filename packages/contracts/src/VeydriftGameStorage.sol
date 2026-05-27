@@ -1,12 +1,27 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IERC20ReserveToken {
     function balanceOf(address account) external view returns (uint256);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function transfer(address to, uint256 amount) external returns (bool);
+}
+
+interface IVeydriftAttackProtectionAllianceSystem {
+    function attackLimitAllianceContext(address attacker, address defender)
+        external
+        view
+        returns (
+            uint256 attackerAllianceId,
+            uint256 defenderAllianceId,
+            bool sameAlliance,
+            bool atWar,
+            bool bashingWarException,
+            bool scoreProtectionException
+        );
 }
 
 /// @notice Shared storage, ABI structs, events, and owner controls for VeydriftGame modules.
@@ -21,8 +36,10 @@ abstract contract VeydriftGameStorage {
     uint16 public constant BPS = 10_000;
     uint16 public constant RAID_LOOT_CAP_BPS = 5_000;
     uint16 public constant PROTECTED_STORAGE_BPS = 1_000;
-    uint32 public constant MIN_QUEUE_SECONDS = 60;
-    uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 5 minutes;
+    uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
+    uint16 public constant FLEET_UNIVERSE_SPEED = 1;
+    uint32 public constant MIN_QUEUE_SECONDS = 1;
+    uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 10;
     uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
     uint16 public constant FLEET_RECALL_COST_BPS = 2_500;
     uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
@@ -33,8 +50,9 @@ abstract contract VeydriftGameStorage {
     bytes32 public constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
     bytes32 public constant ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
     uint8 public constant BATTLE_MAX_ROUNDS = 6;
-    uint16 public constant RAID_LOOT_BPS = 5_000;
-    uint16 public constant RAID_PROTECTED_STORAGE_BPS = 1_000;
+    uint16 public constant RAID_LOOT_BPS = VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS;
+    uint16 public constant RAID_PROTECTED_STORAGE_BPS =
+        VeydriftAntiRaidPrimitives.PROTECTED_STORAGE_BPS;
     uint16 public constant COMBAT_DEBRIS_BPS = 3_000;
 
     struct Resources {
@@ -144,8 +162,15 @@ abstract contract VeydriftGameStorage {
     enum AttackBlockReason {
         None,
         BashingLimit,
-        ScoreProtection
+        ScoreProtection,
+        SameAlliance
     }
+
+    uint8 internal constant ATTACK_RELATION_STRONGER_FLAG = 1;
+    uint8 internal constant ATTACK_RELATION_WEAKER_FLAG = 2;
+    uint8 internal constant ATTACK_HONORABLE_FLAG = 4;
+    uint8 internal constant ATTACK_BANDIT_FLAG = 8;
+    uint8 internal constant ATTACK_INACTIVE_FLAG = 16;
 
     struct MissionShips {
         uint32 smallCargo;
@@ -232,6 +257,9 @@ abstract contract VeydriftGameStorage {
     mapping(bytes32 playerPairKey => bool enabled) internal _attackProtectionExemptions;
     address internal _allianceSystem;
     mapping(uint256 hostileMissionId => uint256[] missionIds) internal _fleetCounterplayMissions;
+    address internal _randomnessEngine;
+    mapping(address player => uint64 lastActiveAt) internal playerLastActiveAt;
+    mapping(address player => int256 points) internal honorPoints;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -286,6 +314,7 @@ abstract contract VeydriftGameStorage {
     error InterplanetaryMissileOutOfRange(uint16 originSystem, uint16 targetSystem, uint256 range);
     error AttackBashingLimitReached();
     error AttackScoreProtection();
+    error SameAllianceAttack();
     error InvalidPlanetName();
     error CannotAbandonHomePlanet();
     error PlanetHasActiveQueues();
@@ -293,6 +322,7 @@ abstract contract VeydriftGameStorage {
     error PlanetHasActiveFleetMissions();
     error AttackJoinCutoffPassed(uint64 cutoffAt);
     error CannotJoinOwnAttackTarget();
+    error RandomnessEngineUnset();
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -444,6 +474,9 @@ abstract contract VeydriftGameStorage {
         uint32 reaper,
         uint32 pathfinder
     );
+    event RandomnessEngineUpdated(
+        address indexed oldRandomnessEngine, address indexed newRandomnessEngine
+    );
     event FleetMissionRecalled(
         uint256 indexed missionId, address indexed owner, uint64 returnAt, uint128 recallCost
     );
@@ -572,8 +605,180 @@ abstract contract VeydriftGameStorage {
         _attackProtectionExemptions[_playerPairKey(attacker, defender)] = enabled;
     }
 
+    function _attackBattlePurposeHash(uint256 missionId) internal view returns (bytes32) {
+        return keccak256(abi.encode(ATTACK_BATTLE_DOMAIN, block.chainid, missionId));
+    }
+
     function _playerPairKey(address attacker, address defender) internal pure returns (bytes32) {
         return keccak256(abi.encode(attacker, defender));
+    }
+
+    function _touchPlayer(address player) internal {
+        uint64 currentTime = uint64(block.timestamp);
+        if (playerLastActiveAt[player] == currentTime) return;
+        playerLastActiveAt[player] = currentTime;
+    }
+
+    function _recordAttack(address attacker, uint256 targetPlanetId) internal {
+        address defender = _attackDefender(targetPlanetId);
+        bool defenderInactive =
+            VeydriftAntiRaidPrimitives.isInactive(playerLastActiveAt[defender], block.timestamp);
+        if (_isAttackProtectionExempt(attacker, defender) || defenderInactive) {
+            return;
+        }
+
+        bytes32 windowKey = _attackWindowKey(attacker, defender, targetPlanetId);
+        AttackWindow storage window = _attackWindows[windowKey];
+        uint64 currentTime = uint64(block.timestamp);
+        if (
+            window.windowStartedAt == 0
+                || currentTime
+                    >= window.windowStartedAt + VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS
+        ) {
+            window.windowStartedAt = currentTime;
+            window.count = 1;
+        } else {
+            window.count += 1;
+        }
+    }
+
+    function _attackProtectionStatus(address attacker, uint256 targetPlanetId)
+        internal
+        view
+        returns (AttackBlockReason reason, uint8 flags, uint16 plunderBps)
+    {
+        address defender = _attackDefender(targetPlanetId);
+        uint256 attackerScore = _totalUserScore(attacker);
+        uint256 defenderScore = _totalUserScore(defender);
+        bool defenderInactive =
+            VeydriftAntiRaidPrimitives.isInactive(playerLastActiveAt[defender], block.timestamp);
+        if (defenderInactive) flags |= ATTACK_INACTIVE_FLAG;
+
+        bool defenderBandit =
+            honorPoints[defender] <= VeydriftAntiRaidPrimitives.BANDIT_HONOR_THRESHOLD;
+        bool honorable = VeydriftAntiRaidPrimitives.isHonorableTarget(
+            attackerScore, defenderScore, honorPoints[defender], defenderInactive
+        );
+        if (defenderBandit) flags |= ATTACK_BANDIT_FLAG;
+        else if (honorable) flags |= ATTACK_HONORABLE_FLAG;
+        plunderBps = VeydriftAntiRaidPrimitives.plunderBps(honorable, defenderBandit);
+        flags |= _attackRelationFlags(attackerScore, defenderScore);
+
+        if (attacker == defender || _isAttackProtectionExempt(attacker, defender)) {
+            return (AttackBlockReason.None, flags, plunderBps);
+        }
+        (bool sameAlliance, bool bashingWarException, bool scoreProtectionException) =
+            _attackProtectionAllianceContext(attacker, defender);
+        if (sameAlliance) return (AttackBlockReason.SameAlliance, flags, plunderBps);
+        if (VeydriftAntiRaidPrimitives.isScoreProtected(
+                attackerScore, defenderScore, scoreProtectionException, defenderInactive
+            )) {
+            return (AttackBlockReason.ScoreProtection, flags, plunderBps);
+        }
+        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(
+                _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId)),
+                bashingWarException || defenderInactive
+            )) {
+            return (AttackBlockReason.BashingLimit, flags, plunderBps);
+        }
+    }
+
+    function _attackRelationFlags(uint256 attackerScore, uint256 defenderScore)
+        internal
+        pure
+        returns (uint8)
+    {
+        uint32 attackerRatio = VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(attackerScore);
+        uint32 defenderRatio = VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(defenderScore);
+        if (defenderRatio != 0 && attackerScore * BPS > defenderScore * defenderRatio) {
+            return ATTACK_RELATION_WEAKER_FLAG;
+        }
+        if (attackerRatio != 0 && defenderScore * BPS > attackerScore * attackerRatio) {
+            return ATTACK_RELATION_STRONGER_FLAG;
+        }
+        return 0;
+    }
+
+    function _currentAttackCount(bytes32 windowKey) internal view returns (uint32) {
+        AttackWindow memory window = _attackWindows[windowKey];
+        uint64 currentTime = uint64(block.timestamp);
+        if (
+            window.windowStartedAt == 0
+                || currentTime
+                    >= window.windowStartedAt + VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS
+        ) {
+            return 0;
+        }
+        return window.count;
+    }
+
+    function _isAttackProtectionExempt(address attacker, address defender)
+        internal
+        view
+        returns (bool)
+    {
+        return _attackProtectionExemptions[_playerPairKey(attacker, defender)];
+    }
+
+    function _attackProtectionAllianceContext(address attacker, address defender)
+        internal
+        view
+        returns (bool sameAlliance, bool bashingWarException, bool scoreProtectionException)
+    {
+        address allianceSystem = _allianceSystem;
+        if (allianceSystem == address(0)) return (false, false, false);
+        (,, sameAlliance,, bashingWarException, scoreProtectionException) =
+            IVeydriftAttackProtectionAllianceSystem(allianceSystem)
+                .attackLimitAllianceContext(attacker, defender);
+    }
+
+    function _attackDefender(uint256 targetPlanetId) internal view returns (address) {
+        address defender = _planets[targetPlanetId].owner;
+        if (defender == address(0)) revert NoPlanet();
+        return defender;
+    }
+
+    function _attackWindowKey(address attacker, address defender, uint256 targetPlanetId)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(attacker, defender, targetPlanetId));
+    }
+
+    function _totalUserScore(address player) internal view returns (uint256 score) {
+        for (uint8 id = 0; id <= MAX_TECHNOLOGY_ID;) {
+            score += uint256(_technologyLevels[player][Technology(id)]) * (id + 1) * 15;
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint256 planetId = 1; planetId < nextPlanetId;) {
+            if (_planets[planetId].owner == player) {
+                score += 1_000;
+                for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
+                    score += uint256(_buildingLevels[planetId][Building(id)]) * (id + 1) * 10;
+                    unchecked {
+                        ++id;
+                    }
+                }
+                for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
+                    score += uint256(_defenseCounts[planetId][Defense(id)]) * (id + 1) * 2;
+                    unchecked {
+                        ++id;
+                    }
+                }
+                for (uint8 id = 0; id <= MAX_SHIP_ID;) {
+                    score += uint256(_shipCounts[planetId][Ship(id)]) * (id + 1) * 4;
+                    unchecked {
+                        ++id;
+                    }
+                }
+            }
+            unchecked {
+                ++planetId;
+            }
+        }
     }
 
     function withdrawFees(address payable to) external onlyOwner {

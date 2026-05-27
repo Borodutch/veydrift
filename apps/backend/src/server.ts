@@ -382,7 +382,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const entries = ready.getHighscoresForWallets
           ? await ready.getHighscoresForWallets(planetsByOwner)
           : await highscoreEntriesForOwners(ready, planetsByOwner);
-        const rankings = highscoreRankings(entries, limit);
+        const rankings = highscoreRankings(entries, limit, planetsByOwner);
 
         return Response.json(
           {
@@ -645,6 +645,8 @@ function moonChanceReportRef(report: IndexedMoonChanceReportEvent | undefined): 
 
 function moonChanceStatus(report: MoonChanceReportEvent): string {
   if (report.eventName === "MoonChanceRequested") return "pending";
+  if (report.eventName === "MoonDestructionRequested") return "moon_destruction_pending";
+  if (report.eventName === "MoonDestructionFinalized") return report.moonDestroyed ? "moon_destroyed" : "moon_survived";
   if (report.eventName === "MoonChanceSkippedExistingMoon") return "existing_moon_skipped";
   return report.moonCreated ? "created" : "not_created";
 }
@@ -755,24 +757,38 @@ function isRpcTransportError(error: unknown): boolean {
 }
 
 type RankedHighscoreEntry = HighscoreEntry & {
+  homePlanet: RankedHighscorePlanet | null;
   rank: number;
+};
+
+type RankedHighscorePlanet = {
+  planetId: string;
+  name: string | null;
+  coordinates: {
+    galaxy: number;
+    system: number;
+    position: number;
+  };
+  archetype: ReturnType<typeof planetArchetypeForTemperature>;
 };
 
 type HighscoreCategory = keyof ScoreBreakdown;
 
 function highscoreRankings(
   entries: HighscoreEntry[],
-  limit: number
+  limit: number,
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
   return Object.fromEntries(
-    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit)])
+    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner)])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
 
 function rankHighscores(
   entries: HighscoreEntry[],
   category: HighscoreCategory,
-  limit: number
+  limit: number,
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
 ): RankedHighscoreEntry[] {
   return [...entries]
     .sort((left, right) => {
@@ -783,8 +799,33 @@ function rankHighscores(
     .slice(0, limit)
     .map((entry, index) => ({
       ...entry,
+      homePlanet: rankedHighscoreHomePlanet(entry, planetsByOwner),
       rank: index + 1
     }));
+}
+
+function rankedHighscoreHomePlanet(
+  entry: HighscoreEntry,
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
+): RankedHighscorePlanet | null {
+  if (!entry.homePlanetId) return null;
+
+  const planet = planetsByOwner
+    .get(entry.wallet.toLowerCase())
+    ?.find((candidate) => candidate.planetId === entry.homePlanetId);
+
+  if (!planet) return null;
+
+  return {
+    planetId: planet.planetId,
+    name: planet.name,
+    coordinates: {
+      galaxy: planet.galaxy,
+      system: planet.system,
+      position: planet.position
+    },
+    archetype: planetArchetypeForTemperature(planet.temperature)
+  };
 }
 
 function unavailableResponse(problems: ConfigProblem[]): Response {

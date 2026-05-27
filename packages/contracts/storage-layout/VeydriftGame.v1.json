@@ -185,6 +185,24 @@
       "offset": 0,
       "slot": "32",
       "type": "mapping(uint256 => uint256[])"
+    },
+    {
+      "label": "_randomnessEngine",
+      "offset": 0,
+      "slot": "33",
+      "type": "address"
+    },
+    {
+      "label": "playerLastActiveAt",
+      "offset": 0,
+      "slot": "34",
+      "type": "mapping(address => uint64)"
+    },
+    {
+      "label": "honorPoints",
+      "offset": 0,
+      "slot": "35",
+      "type": "mapping(address => int256)"
     }
   ],
   "structs": {

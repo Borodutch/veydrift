@@ -1,3 +1,5 @@
+import type { PlanetType } from "./types";
+
 export type Eip1193Provider = {
   request<T = unknown>(args: {
     method: string;
@@ -241,6 +243,7 @@ export type ChainResearchState = {
   unavailableReason?: string;
   resources: OnChainResources | null;
   researchLabLevel: number;
+  researchNetworkLabLevels: number[];
   technologyLevels: Record<string, number>;
   technologies: Array<{
     id: number;
@@ -377,8 +380,20 @@ export type HighscoreEntry = {
   rank: number;
   wallet: string;
   homePlanetId: string | null;
+  homePlanet: HighscorePlanet | null;
   planetCount: number;
   score: Record<HighscoreCategory, string>;
+};
+
+export type HighscorePlanet = {
+  planetId: string;
+  name: string | null;
+  coordinates: {
+    galaxy: number;
+    system: number;
+    position: number;
+  };
+  archetype: PlanetType;
 };
 
 export type HighscoreResponse = {
@@ -437,7 +452,7 @@ const GAME_SELECTORS = {
   finishResourceWithdrawal: "0xde0f208c",
   joinAttackMission: "0x28260eb6",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
-  launchFleetMission: "0x28247df8",
+  launchFleetMission: "0x60eac16f",
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
@@ -448,6 +463,15 @@ const GAME_SELECTORS = {
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
+} as const;
+const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
+const COLONIZE_MISSION_TYPE = 2;
+const MOON_SELECTORS = {
+  finishMoonBuildingUpgrade: "0x713b9e66",
+  jumpGateJump: "0x36aaf8f8",
+  jumpGateJumpShips: "0x3095d992",
+  scanSystem: "0xfc1e78b1",
+  startMoonBuildingUpgrade: "0x715e1b1a"
 } as const;
 const ALLIANCE_SELECTORS = {
   createAlliance: "0x944cde0e",
@@ -543,6 +567,7 @@ export function encodeLaunchFleetMissionCall({
   missionType,
   ships,
   cargo,
+  speedPercent = 100,
   randomnessRequestId = 0,
 }: {
   originPlanetId: bigint | number | string;
@@ -550,6 +575,7 @@ export function encodeLaunchFleetMissionCall({
   missionType: number;
   ships: MissionShips;
   cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  speedPercent?: number | undefined;
   randomnessRequestId?: bigint | number | string | undefined;
 }): string {
   return encodeGameCall(GAME_SELECTORS.launchFleetMission, [
@@ -573,8 +599,26 @@ export function encodeLaunchFleetMissionCall({
     cargo?.metal ?? 0,
     cargo?.crystal ?? 0,
     cargo?.deuterium ?? 0,
+    speedPercent,
     randomnessRequestId,
   ]);
+}
+
+export function encodeColonizationTargetId(galaxy: number, system: number, position: number): string {
+  if (!Number.isInteger(galaxy) || galaxy < 1 || galaxy > 9) {
+    throw new Error("Enter a valid galaxy.");
+  }
+  if (!Number.isInteger(system) || system < 1 || system > 499) {
+    throw new Error("Enter a valid system.");
+  }
+  if (!Number.isInteger(position) || position < 1 || position > 15) {
+    throw new Error("Enter a valid position.");
+  }
+
+  return (COLONIZATION_COORDINATE_FLAG
+    | (BigInt(galaxy) << 24n)
+    | (BigInt(system) << 8n)
+    | BigInt(position)).toString();
 }
 
 export function encodeJoinAttackMissionCall({
@@ -1278,6 +1322,104 @@ export async function sendFinishBuildingUpgradeTransaction(
   });
 }
 
+export async function sendStartMoonBuildingUpgradeTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+  buildingId: number
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId])
+      }
+    ]
+  });
+}
+
+export async function sendFinishMoonBuildingUpgradeTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(MOON_SELECTORS.finishMoonBuildingUpgrade, [planetId])
+      }
+    ]
+  });
+}
+
+export async function sendMoonScanTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  moonPlanetId: string,
+  galaxy: number,
+  system: number
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(MOON_SELECTORS.scanSystem, [moonPlanetId, galaxy, system])
+      }
+    ]
+  });
+}
+
+export async function sendJumpGateJumpTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  originMoonPlanetId: string,
+  destinationMoonPlanetId: string,
+  ships?: MissionShips
+): Promise<string> {
+  const selector = ships ? MOON_SELECTORS.jumpGateJumpShips : MOON_SELECTORS.jumpGateJump;
+  const args = ships
+    ? [
+      originMoonPlanetId,
+      destinationMoonPlanetId,
+      ships.smallCargo,
+      ships.lightFighter,
+      ships.recycler,
+      ships.colonyShip,
+      ships.largeCargo,
+      ships.heavyFighter,
+      ships.cruiser,
+      ships.battleship,
+      ships.bomber,
+      ships.destroyer,
+      ships.deathstar,
+      ships.battlecruiser,
+      ships.reaper,
+      ships.pathfinder,
+    ]
+    : [originMoonPlanetId, destinationMoonPlanetId];
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeGameCall(selector, args)
+      }
+    ]
+  });
+}
+
 export async function sendFinishResearchTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -1464,7 +1606,8 @@ export async function sendCreateColonyTransaction(
   originPlanetId: string,
   galaxy: number,
   system: number,
-  position: number
+  position: number,
+  speedPercent = 100
 ): Promise<string> {
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -1472,7 +1615,28 @@ export async function sendCreateColonyTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.createColony, [originPlanetId, galaxy, system, position])
+        data: encodeLaunchFleetMissionCall({
+          originPlanetId,
+          targetPlanetId: encodeColonizationTargetId(galaxy, system, position),
+          missionType: COLONIZE_MISSION_TYPE,
+          ships: {
+            smallCargo: 0,
+            lightFighter: 0,
+            recycler: 0,
+            colonyShip: 1,
+            largeCargo: 0,
+            heavyFighter: 0,
+            cruiser: 0,
+            battleship: 0,
+            bomber: 0,
+            destroyer: 0,
+            deathstar: 0,
+            battlecruiser: 0,
+            reaper: 0,
+            pathfinder: 0,
+          },
+          speedPercent,
+        })
       }
     ]
   });

@@ -3,6 +3,8 @@ import type { ComponentChildren, VNode } from "preact";
 import { CombatStatsInfoButton, formatCombatStatValue } from "../src/components/CombatStatsInfo";
 import { defenseCatalog, defenseCombatStats, shipCatalog, shipCombatStats } from "../src/playableMvp";
 
+const brandedReferencePattern = new RegExp(["o", "game"].join(""), "i");
+
 describe("combat stat info controls", () => {
   test("renders ship battle stats behind an accessible info control", () => {
     const lightFighter = shipCatalog.find((ship) => ship.key === "lightFighter")!;
@@ -22,16 +24,22 @@ describe("combat stat info controls", () => {
     expect(text).toContain("400");
     expect(text).toContain("Cargo");
     expect(text).toContain("50");
+    expect(text).toContain("Battle resolution uses six Veydrift rounds");
+    expect(text).not.toMatch(brandedReferencePattern);
   });
 
   test("renders defense and missile-specific battle notes", () => {
     const rocketLauncher = defenseCatalog.find((defense) => defense.key === "rocketLauncher")!;
     const interplanetaryMissile = defenseCatalog.find((defense) => defense.key === "interplanetaryMissile")!;
 
-    expect(visibleText(CombatStatsInfoButton({
+    const rocketText = visibleText(CombatStatsInfoButton({
       label: rocketLauncher.label,
       stats: defenseCombatStats(rocketLauncher),
-    }))).toContain("80");
+    }));
+
+    expect(rocketText).toContain("80");
+    expect(rocketText).toContain("Battle resolution uses six Veydrift rounds");
+    expect(rocketText).not.toMatch(brandedReferencePattern);
     expect(visibleText(CombatStatsInfoButton({
       label: interplanetaryMissile.label,
       stats: defenseCombatStats(interplanetaryMissile),

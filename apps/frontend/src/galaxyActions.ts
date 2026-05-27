@@ -11,7 +11,7 @@ export type GalaxyActionKind =
   | "intercept"
   | "missileAttack";
 
-export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize">;
+export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize" | "missileAttack">;
 
 export type MissionShipKey =
   | "smallCargo"
@@ -193,27 +193,23 @@ export function galaxyActionsForSlot({
         mission: "attack",
       },
     }),
-    {
-      enabled: false,
-      kind: "harvest",
-      label: "Harvest",
-      mode: "future",
-      reason: "Debris fields are not live on this deployment yet.",
-    },
-    {
-      enabled: false,
-      kind: "acsDefend",
-      label: "ACS Defend",
-      mode: "future",
-      reason: "Alliance defense is not implemented yet.",
-    },
-    {
-      enabled: false,
-      kind: "intercept",
-      label: "Intercept",
-      mode: "future",
-      reason: "Alliance intercept is not implemented yet.",
-    },
+    enabledOrDisabled({
+      blocker: commonBlocker ?? debrisFieldBlocker(planet) ?? shipRequirementBlocker(shipyardState, "recycler", "Requires a recycler on your home planet."),
+      enabled: {
+        enabled: true,
+        kind: "harvest",
+        label: "Harvest",
+        mode: "mission",
+        mission: "harvest",
+        ships: singleShip("recycler"),
+      },
+      disabled: {
+        kind: "harvest",
+        label: "Harvest",
+        mode: "mission",
+        mission: "harvest",
+      },
+    }),
     {
       ...enabledOrDisabled({
         blocker: missileBlocker,
@@ -249,8 +245,6 @@ export function missionTypeId(mission: GalaxyMissionKind): number {
       return 5;
     case "intercept":
       return 6;
-    case "missileAttack":
-      return 7;
   }
 }
 
@@ -320,6 +314,14 @@ function interplanetaryMissileBlocker(defenseState: ChainDefenseState | null | u
 
   const interplanetaryMissiles = defenseState.defenses.find((defense) => defense.id === 9)?.count ?? 0;
   return interplanetaryMissiles > 0 ? undefined : "Requires an interplanetary missile on your active planet.";
+}
+
+function debrisFieldBlocker(planet: Planet | undefined): string | undefined {
+  const debris = planet?.debrisField;
+  if (!debris || debris.metal + debris.crystal <= 0) {
+    return "No debris field at this coordinate.";
+  }
+  return undefined;
 }
 
 function firstAvailableCargoShip(shipyardState: ChainShipyardState | null): MissionShipKey | undefined {

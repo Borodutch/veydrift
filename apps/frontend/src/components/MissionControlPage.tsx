@@ -1,4 +1,4 @@
-import { RefreshCw, Route, ShieldAlert, TimerReset } from "lucide-preact";
+import { EyeOff, RefreshCw, Route, ShieldAlert, TimerReset } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import type { FleetMissionSummary, FleetMissionVisibilityResponse, OnChainResources } from "../walletFlow";
@@ -108,7 +108,7 @@ export function MissionControlPage({
 
       {activeCount === 0 ? (
         <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
-          No visible missions for this wallet. Launch transport, deploy, attack, ACS, intercept, or harvest missions from Galaxy when the target action is contract-supported.
+          No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy when the target action is contract-supported.
         </div>
       ) : null}
 
@@ -169,7 +169,7 @@ export function MissionControlPage({
         />
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-3 lg:grid-cols-4">
         <CapabilityPanel
           icon={<ShieldAlert aria-hidden="true" size={18} />}
           title="ACS and Intercept"
@@ -184,6 +184,11 @@ export function MissionControlPage({
           icon={<TimerReset aria-hidden="true" size={18} />}
           title="Missiles and Moons"
           body="Missile and moon-chance entries appear here only after the indexed contract stream exposes them as mission records."
+        />
+        <CapabilityPanel
+          icon={<EyeOff aria-hidden="true" size={18} />}
+          title="No Spy Reports"
+          body="Target intel is public contract state; Veydrift does not support espionage probes, scan missions, or hidden reveal reports."
         />
       </div>
     </section>

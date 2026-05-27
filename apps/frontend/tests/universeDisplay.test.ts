@@ -11,6 +11,7 @@ import { buildingCatalog, shipCatalog } from "../src/playableMvp";
 import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
+  PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
   formatMoonChanceLabel,
   formatMissionPreview,
@@ -166,11 +167,11 @@ describe("tester universe display data", () => {
 
     expect(preview).toMatchObject({
       blockedReason: undefined,
-      cargoCapacity: 5_000,
+      cargoCapacity: 10_032,
       fleetSlots: { active: 1, limit: 3 },
-      fuelCost: 3,
+      fuelCost: 18,
     });
-    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 3 D / Cargo 5,000");
+    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 18 D / Cargo 10,032");
 
     expect(estimateGalaxyMissionPreview({
       homeCoords: { galaxy: 1, system: 10, position: 5 },
@@ -186,16 +187,16 @@ describe("tester universe display data", () => {
   test("galaxy mission preview formulas match contract primitives across distances", () => {
     const origin = { galaxy: 1, system: 1, position: 1 };
 
-    expect(galaxyMissionTravelSeconds(origin, origin)).toBe(300);
-    expect(galaxyMissionFuelCost(origin, origin, 3)).toBe(3);
+    expect(galaxyMissionTravelSeconds(origin, origin)).toBe(10);
+    expect(galaxyMissionFuelCost(origin, origin, 3)).toBe(1);
 
     const nearby = { galaxy: 1, system: 3, position: 4 };
-    expect(galaxyMissionTravelSeconds(origin, nearby)).toBe(333);
-    expect(galaxyMissionFuelCost(origin, nearby, 3)).toBe(3);
+    expect(galaxyMissionTravelSeconds(origin, nearby)).toBe(851);
+    expect(galaxyMissionFuelCost(origin, nearby, 3)).toBe(11);
 
     const distant = { galaxy: 4, system: 499, position: 15 };
-    expect(galaxyMissionTravelSeconds(origin, distant)).toBe(30_239);
-    expect(galaxyMissionFuelCost(origin, distant, 3)).toBe(11);
+    expect(galaxyMissionTravelSeconds(origin, distant)).toBe(3_844);
+    expect(galaxyMissionFuelCost(origin, distant, 3)).toBe(207);
   });
 
   test("galaxy slot actions expose supported public-state missions without espionage", () => {
@@ -214,6 +215,13 @@ describe("tester universe display data", () => {
         },
       ],
     })[0];
+    const enemyWithDebris = {
+      ...enemy,
+      debrisField: {
+        metal: 40_000,
+        crystal: 15_000,
+      },
+    };
     const own = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
@@ -239,6 +247,7 @@ describe("tester universe display data", () => {
       ships: [
         { id: 0, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 2, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 3, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
       ],
       queue: null,
@@ -271,6 +280,23 @@ describe("tester universe display data", () => {
       planet: own,
       shipyardState,
     });
+    const harvestActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: enemyWithDebris,
+      defenseState,
+      shipyardState,
+    });
+    const noRecyclerHarvestActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: enemyWithDebris,
+      defenseState,
+      shipyardState: {
+        ...shipyardState,
+        ships: shipyardState.ships.filter((ship) => ship.id !== 2),
+      },
+    });
     const originActions = galaxyActionsForSlot({
       account: "0x1111111111111111111111111111111111111111",
       homePlanetId: "7",
@@ -299,10 +325,10 @@ describe("tester universe display data", () => {
     expect(enemyActions.map((action) => action.label)).toEqual([
       "Attack",
       "Harvest",
-      "ACS Defend",
-      "Intercept",
       "Missile",
     ]);
+    expect(enemyActions.map((action) => action.kind)).not.toContain("acsDefend");
+    expect(enemyActions.map((action) => action.kind)).not.toContain("intercept");
     expect(enemyActions.find((action) => action.kind === "attack")?.enabled).toBe(true);
     expect(enemyActions.find((action) => action.kind === "missileAttack")).toMatchObject({
       enabled: true,
@@ -312,7 +338,19 @@ describe("tester universe display data", () => {
     });
     expect(enemyActions.find((action) => action.kind === "harvest")).toMatchObject({
       enabled: false,
-      reason: "Debris fields are not live on this deployment yet.",
+      reason: "No debris field at this coordinate.",
+    });
+    expect(harvestActions.find((action) => action.kind === "harvest")).toMatchObject({
+      enabled: true,
+      mode: "mission",
+      mission: "harvest",
+      ships: {
+        recycler: 1,
+      },
+    });
+    expect(noRecyclerHarvestActions.find((action) => action.kind === "harvest")).toMatchObject({
+      enabled: false,
+      reason: "Requires a recycler on your home planet.",
     });
     expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy"]);
     expect(originActions).toEqual([]);
@@ -322,6 +360,7 @@ describe("tester universe display data", () => {
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
     ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
+    expect(PUBLIC_INTEL_SUMMARY_LABEL).toBe("Public intel");
     expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
       Object.keys(emptyMissionShips())
     );

@@ -59,11 +59,11 @@ export function RiftPage({
       <header className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300/80">
-            Interdimensional Rift Stabilizer
+            Veydrift Rift Stabilizer
           </p>
           <h2 className="mt-1 text-lg font-semibold text-white">Resource Bridge</h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-            Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day withdrawal window.
+            Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day Veydrift withdrawal window.
           </p>
         </div>
         <button

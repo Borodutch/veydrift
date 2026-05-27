@@ -34,9 +34,19 @@ describe("MissionControlPage", () => {
     }).map((action) => [action.kind, action.enabled])).toEqual([
       ["completeReturn", true],
     ]);
+
+    expect(missionLifecycleActions({
+      canTransact: true,
+      context: "incoming",
+      mission: mission({ arrivalAt: "1770000300", missionId: "4", missionType: "Attack", status: "Outbound" }),
+      now,
+    }).map((action) => [action.kind, action.enabled])).toEqual([
+      ["resolve", false],
+      ["counterplay", true],
+    ]);
   });
 
-  test("renders fleet operations from visibility data without unsupported fake actions", () => {
+  test("renders fleet operations from visibility data with explicit espionage exclusion copy", () => {
     const page = MissionControlPage({
       actionState: { status: "idle" },
       canTransact: true,
@@ -63,8 +73,10 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Transport # 9");
     expect(text).toContain("Complete return");
-    expect(text).not.toContain("Espionage");
-    expect(text).not.toContain("Spy");
+    expect(text).toContain("No Spy Reports");
+    expect(text).toContain("Target intel is public contract state");
+    expect(text).not.toContain("Espionage mission");
+    expect(text).not.toContain("Scan mission");
   });
 });
 

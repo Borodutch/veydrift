@@ -416,6 +416,7 @@ class MockChainReader implements ChainReader {
       researchAvailable: true,
       resources: planet.resources,
       researchLabLevel: 1,
+      researchNetworkLabLevels: [],
       technologyLevels: {
         "0": 1
       },
@@ -540,7 +541,11 @@ class MockChainReader implements ChainReader {
       targetPlanetId: targetPlanetId.toString(),
       allowed: true,
       blockedReason: "none",
-      blockedReasonLabel: null
+      blockedReasonLabel: null,
+      relation: "peer",
+      defenderHonorStatus: "neutral",
+      plunderBps: 5000,
+      defenderInactive: false
     };
   }
 
@@ -1659,6 +1664,16 @@ describe("Veydrift backend", () => {
       rank: 1,
       wallet: player,
       homePlanetId: planet.planetId,
+      homePlanet: {
+        planetId: planet.planetId,
+        name: "Eos",
+        coordinates: {
+          galaxy: 2,
+          system: 44,
+          position: 9
+        },
+        archetype: "temperate-ocean"
+      },
       planetCount: 1,
       score: {
         total: "15",

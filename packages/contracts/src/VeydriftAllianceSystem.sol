@@ -445,6 +445,20 @@ contract VeydriftAllianceSystem {
         scoreProtectionException = sameAlliance || atWar;
     }
 
+    function attackProtectionFlags(address attacker, address defender)
+        external
+        view
+        returns (uint256 flags)
+    {
+        if (attacker == defender) return 0;
+        uint256 attackerAllianceId = _memberships[attacker].allianceId;
+        uint256 defenderAllianceId = _memberships[defender].allianceId;
+        bool sameAlliance = attackerAllianceId != 0 && attackerAllianceId == defenderAllianceId;
+        bool atWar = _relationship(attackerAllianceId, defenderAllianceId) == DiplomacyStatus.War;
+        if (sameAlliance) flags |= 1;
+        if (atWar) flags |= 2;
+    }
+
     function canCoordinateDefense(
         address viewer,
         uint256 defenderPlanetId,
@@ -506,7 +520,7 @@ contract VeydriftAllianceSystem {
         if (holdSeconds == 0) return 0;
         uint256 tenthsPerHour = uint256(ships.smallCargo) * 50 + uint256(ships.lightFighter) * 20
             + uint256(ships.recycler) * 300 + uint256(ships.colonyShip) * 1_000
-            + uint256(ships.largeCargo) * 50 + uint256(ships.heavyFighter) * 70
+            + uint256(ships.largeCargo) * 50 + uint256(ships.heavyFighter) * 75
             + uint256(ships.cruiser) * 300 + uint256(ships.battleship) * 500 + uint256(ships.bomber)
             * 1_000 + uint256(ships.destroyer) * 1_000 + uint256(ships.deathstar)
             + uint256(ships.battlecruiser) * 250 + uint256(ships.reaper) * 1_000

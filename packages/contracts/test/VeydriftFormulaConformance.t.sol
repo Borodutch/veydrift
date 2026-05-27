@@ -9,7 +9,8 @@ import {Building, Defense, Ship, Technology} from "../src/libraries/VeydriftType
 
 contract VeydriftFormulaConformanceTest is Test {
     uint16 internal constant BPS = 10_000;
-    uint32 internal constant MIN_QUEUE_SECONDS = 60;
+    uint16 internal constant QUEUE_UNIVERSE_SPEED = 1;
+    uint32 internal constant MIN_QUEUE_SECONDS = 1;
     bytes32 private constant DEP_COMBUSTION_2 = "COMBUSTION_2";
     bytes32 private constant DEP_ION_2 = "ION_2";
     bytes32 private constant DEP_GAUSS_CANNON = "WEAPONS_3";
@@ -82,23 +83,76 @@ contract VeydriftFormulaConformanceTest is Test {
     }
 
     function testCanonicalVeydriftDurations() public pure {
-        assertEq(VeydriftFormulas.buildingDuration(0, 0, 60, 15, MIN_QUEUE_SECONDS), 108);
-        assertEq(VeydriftFormulas.buildingDuration(0, 0, 75, 30, MIN_QUEUE_SECONDS), 151);
-        assertEq(VeydriftFormulas.buildingDuration(0, 0, 225, 75, MIN_QUEUE_SECONDS), 432);
-        assertEq(VeydriftFormulas.buildingDuration(0, 0, 400, 120, MIN_QUEUE_SECONDS), 748);
-        assertEq(VeydriftFormulas.buildingDuration(0, 0, 6_000, 0, MIN_QUEUE_SECONDS), 8_640);
-        assertEq(VeydriftFormulas.buildingDuration(1, 0, 6_000, 0, MIN_QUEUE_SECONDS), 4_320);
-        assertEq(VeydriftFormulas.buildingDuration(1, 2, 6_000, 0, MIN_QUEUE_SECONDS), 1_080);
-        assertEq(VeydriftFormulas.unitDuration(2, 0, 2_000, 2_000, 0, 1, MIN_QUEUE_SECONDS), 1_920);
         assertEq(
-            VeydriftFormulas.unitDuration(7, 2, 45_000, 15_000, 0, 1, MIN_QUEUE_SECONDS), 2_700
+            VeydriftFormulas.buildingDuration(
+                0, 0, 60, 15, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            108
         );
         assertEq(
-            VeydriftFormulas.researchDuration(0, 12_000, 12_000, 50_000, MIN_QUEUE_SECONDS), 86_400
+            VeydriftFormulas.buildingDuration(
+                0, 0, 75, 30, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            151
         );
         assertEq(
-            VeydriftFormulas.researchDuration(1, 12_000, 12_000, 50_000, MIN_QUEUE_SECONDS), 43_200
+            VeydriftFormulas.buildingDuration(
+                0, 0, 225, 75, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            432
         );
+        assertEq(
+            VeydriftFormulas.buildingDuration(
+                0, 0, 400, 120, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            748
+        );
+        assertEq(
+            VeydriftFormulas.buildingDuration(
+                0, 0, 6_000, 0, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            8_640
+        );
+        assertEq(
+            VeydriftFormulas.buildingDuration(
+                1, 0, 6_000, 0, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            4_320
+        );
+        assertEq(
+            VeydriftFormulas.buildingDuration(
+                1, 2, 6_000, 0, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            1_080
+        );
+        assertEq(
+            VeydriftFormulas.unitDuration(
+                2, 0, 2_000, 2_000, 0, 1, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            1_920
+        );
+        assertEq(
+            VeydriftFormulas.unitDuration(
+                7, 2, 45_000, 15_000, 0, 1, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            2_700
+        );
+        assertEq(
+            VeydriftFormulas.researchDuration(
+                0, 12_000, 12_000, 50_000, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            86_400
+        );
+        assertEq(
+            VeydriftFormulas.researchDuration(
+                1, 12_000, 12_000, 50_000, QUEUE_UNIVERSE_SPEED, MIN_QUEUE_SECONDS
+            ),
+            43_200
+        );
+        assertEq(VeydriftFormulas.buildingDuration(0, 0, 1, 0, 1, MIN_QUEUE_SECONDS), 1);
+        assertEq(VeydriftFormulas.buildingDuration(0, 0, 1_000, 0, 4, MIN_QUEUE_SECONDS), 360);
+        assertEq(VeydriftFormulas.unitDuration(0, 0, 1_000, 0, 0, 1, 4, MIN_QUEUE_SECONDS), 360);
+        assertEq(VeydriftFormulas.researchDuration(0, 1_000, 0, 0, 4, MIN_QUEUE_SECONDS), 900);
     }
 
     function testCanonicalVeydriftShipCostsCargoAndRequirements() public {
