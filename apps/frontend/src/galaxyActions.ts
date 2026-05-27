@@ -11,7 +11,7 @@ export type GalaxyActionKind =
   | "intercept"
   | "missileAttack";
 
-export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize">;
+export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize" | "missileAttack">;
 
 export type MissionShipKey =
   | "smallCargo"
@@ -259,8 +259,6 @@ export function missionTypeId(mission: GalaxyMissionKind): number {
       return 5;
     case "intercept":
       return 6;
-    case "missileAttack":
-      return 7;
   }
 }
 

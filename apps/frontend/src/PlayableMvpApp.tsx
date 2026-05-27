@@ -1675,7 +1675,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     if (action.mode === "colonize") {
-      void runGalaxyTransaction("Colony launch", () => sendCreateColonyTransaction(
+      void runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
         gameContract,
