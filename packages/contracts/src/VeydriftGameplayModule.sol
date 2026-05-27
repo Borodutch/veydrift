@@ -427,6 +427,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = uint64(_currentTimestamp() + elapsed);
+        _untrackMissionResolution(missionId, mission);
+        if (_isCounterplayMissionType(mission.missionType)) {
+            _untrackCounterplayMissionResolution(mission.randomnessRequestId, mission);
+        }
 
         emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, recallCost);
         emit FleetMissionReturnExposed(
@@ -466,6 +470,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 || mission.missionType == FleetMissionType.Harvest
         ) {
             _delegateToCombatModule();
+            if (mission.status != FleetMissionStatus.Outbound) {
+                _untrackMissionResolution(missionId, mission);
+            }
+            if (mission.status == FleetMissionStatus.Resolved) {
+                _untrackPhalanxMission(missionId, mission);
+            }
         } else {
             if (_fleetMissions[mission.randomnessRequestId].status == FleetMissionStatus.Outbound) {
                 return;
@@ -711,6 +721,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             }
         }
         revert UnsupportedGameplayModule();
+    }
+
+    function _isCounterplayMissionType(FleetMissionType missionType) private pure returns (bool) {
+        return missionType == FleetMissionType.AcsAttack
+            || missionType == FleetMissionType.AcsDefend
+            || missionType == FleetMissionType.Intercept;
     }
 
     function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)

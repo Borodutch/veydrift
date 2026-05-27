@@ -162,17 +162,17 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     function _trackMissionResolution(uint256 missionId, FleetMission storage mission) internal {
         if (!_isResolutionTrackedMissionType(mission.missionType)) return;
 
-        _resolutionMissionIdsByPlanet[mission.originPlanetId].push(missionId);
-        _resolutionMissionIdsByPlayer[mission.owner].push(missionId);
+        _addResolutionMissionForPlanet(mission.originPlanetId, missionId);
+        _addResolutionMissionForPlayer(mission.owner, missionId);
 
         if (mission.missionType == FleetMissionType.Colonize) return;
 
         if (mission.targetPlanetId != mission.originPlanetId) {
-            _resolutionMissionIdsByPlanet[mission.targetPlanetId].push(missionId);
+            _addResolutionMissionForPlanet(mission.targetPlanetId, missionId);
         }
         address targetOwner = _planets[mission.targetPlanetId].owner;
         if (targetOwner != address(0) && targetOwner != mission.owner) {
-            _resolutionMissionIdsByPlayer[targetOwner].push(missionId);
+            _addResolutionMissionForPlayer(targetOwner, missionId);
         }
     }
 
@@ -180,15 +180,57 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         uint256 hostileMissionId,
         FleetMission storage mission
     ) internal {
-        _resolutionMissionIdsByPlanet[mission.originPlanetId].push(hostileMissionId);
+        _addResolutionMissionForPlanet(mission.originPlanetId, hostileMissionId);
         if (mission.targetPlanetId != mission.originPlanetId) {
-            _resolutionMissionIdsByPlanet[mission.targetPlanetId].push(hostileMissionId);
+            _addResolutionMissionForPlanet(mission.targetPlanetId, hostileMissionId);
         }
-        _resolutionMissionIdsByPlayer[mission.owner].push(hostileMissionId);
+        _addResolutionMissionForPlayer(mission.owner, hostileMissionId);
 
         address targetOwner = _planets[mission.targetPlanetId].owner;
         if (targetOwner != address(0) && targetOwner != mission.owner) {
-            _resolutionMissionIdsByPlayer[targetOwner].push(hostileMissionId);
+            _addResolutionMissionForPlayer(targetOwner, hostileMissionId);
+        }
+    }
+
+    function _untrackMissionResolution(uint256 missionId, FleetMission storage mission) internal {
+        if (!_isResolutionTrackedMissionType(mission.missionType)) return;
+
+        _untrackDirectMissionResolution(missionId, mission);
+        _untrackLinkedCounterplayMissionResolutions(missionId);
+    }
+
+    function _untrackCounterplayMissionResolution(
+        uint256 hostileMissionId,
+        FleetMission storage mission
+    ) internal {
+        _removeResolutionMissionForPlanet(mission.originPlanetId, hostileMissionId);
+        if (mission.targetPlanetId != mission.originPlanetId) {
+            _removeResolutionMissionForPlanet(mission.targetPlanetId, hostileMissionId);
+        }
+        _removeResolutionMissionForPlayer(mission.owner, hostileMissionId);
+
+        address targetOwner = _planets[mission.targetPlanetId].owner;
+        if (targetOwner != address(0) && targetOwner != mission.owner) {
+            _removeResolutionMissionForPlayer(targetOwner, hostileMissionId);
+        }
+    }
+
+    function _untrackDirectMissionResolution(uint256 missionId, FleetMission storage mission)
+        internal
+    {
+        if (!_isResolutionTrackedMissionType(mission.missionType)) return;
+
+        _removeResolutionMissionForPlanet(mission.originPlanetId, missionId);
+        _removeResolutionMissionForPlayer(mission.owner, missionId);
+
+        if (mission.missionType != FleetMissionType.Colonize) {
+            if (mission.targetPlanetId != mission.originPlanetId) {
+                _removeResolutionMissionForPlanet(mission.targetPlanetId, missionId);
+            }
+            address targetOwner = _planets[mission.targetPlanetId].owner;
+            if (targetOwner != address(0) && targetOwner != mission.owner) {
+                _removeResolutionMissionForPlayer(targetOwner, missionId);
+            }
         }
     }
 
@@ -321,6 +363,64 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     {
         return missionType == FleetMissionType.Attack || missionType == FleetMissionType.Harvest
             || missionType == FleetMissionType.Colonize;
+    }
+
+    function _addResolutionMissionForPlanet(uint256 planetId, uint256 missionId) private {
+        if (_resolutionMissionIndexByPlanet[planetId][missionId] != 0) return;
+        _resolutionMissionIdsByPlanet[planetId].push(missionId);
+        _resolutionMissionIndexByPlanet[planetId][missionId] =
+        _resolutionMissionIdsByPlanet[planetId].length;
+    }
+
+    function _removeResolutionMissionForPlanet(uint256 planetId, uint256 missionId) private {
+        uint256 indexPlusOne = _resolutionMissionIndexByPlanet[planetId][missionId];
+        if (indexPlusOne == 0) return;
+
+        uint256[] storage missionIds = _resolutionMissionIdsByPlanet[planetId];
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = missionIds.length - 1;
+        if (index != lastIndex) {
+            uint256 movedMissionId = missionIds[lastIndex];
+            missionIds[index] = movedMissionId;
+            _resolutionMissionIndexByPlanet[planetId][movedMissionId] = indexPlusOne;
+        }
+        missionIds.pop();
+        delete _resolutionMissionIndexByPlanet[planetId][missionId];
+    }
+
+    function _addResolutionMissionForPlayer(address player, uint256 missionId) private {
+        if (_resolutionMissionIndexByPlayer[player][missionId] != 0) return;
+        _resolutionMissionIdsByPlayer[player].push(missionId);
+        _resolutionMissionIndexByPlayer[player][missionId] =
+        _resolutionMissionIdsByPlayer[player].length;
+    }
+
+    function _removeResolutionMissionForPlayer(address player, uint256 missionId) private {
+        uint256 indexPlusOne = _resolutionMissionIndexByPlayer[player][missionId];
+        if (indexPlusOne == 0) return;
+
+        uint256[] storage missionIds = _resolutionMissionIdsByPlayer[player];
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = missionIds.length - 1;
+        if (index != lastIndex) {
+            uint256 movedMissionId = missionIds[lastIndex];
+            missionIds[index] = movedMissionId;
+            _resolutionMissionIndexByPlayer[player][movedMissionId] = indexPlusOne;
+        }
+        missionIds.pop();
+        delete _resolutionMissionIndexByPlayer[player][missionId];
+    }
+
+    function _untrackLinkedCounterplayMissionResolutions(uint256 hostileMissionId) private {
+        uint256[] storage counterplayMissionIds = _fleetCounterplayMissions[hostileMissionId];
+        for (uint256 index = 0; index < counterplayMissionIds.length;) {
+            _untrackCounterplayMissionResolution(
+                hostileMissionId, _fleetMissions[counterplayMissionIds[index]]
+            );
+            unchecked {
+                ++index;
+            }
+        }
     }
 
     function _addPhalanxMissionForPlanet(uint256 planetId, uint256 missionId) private {

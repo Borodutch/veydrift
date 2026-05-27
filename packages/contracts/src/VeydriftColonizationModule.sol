@@ -223,6 +223,10 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
         }
+        _untrackDirectMissionResolution(missionId, mission);
+        if (mission.status == FleetMissionStatus.Resolved) {
+            _untrackPhalanxMission(missionId, mission);
+        }
 
         emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
         if (mission.status == FleetMissionStatus.Returning) {

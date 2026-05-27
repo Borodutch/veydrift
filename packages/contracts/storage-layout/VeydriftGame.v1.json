@@ -229,15 +229,27 @@
       "type": "mapping(address => uint256[])"
     },
     {
-      "label": "_phalanxMissionIdsBySystem",
+      "label": "_resolutionMissionIndexByPlanet",
       "offset": 0,
       "slot": "40",
+      "type": "mapping(uint256 => mapping(uint256 => uint256))"
+    },
+    {
+      "label": "_resolutionMissionIndexByPlayer",
+      "offset": 0,
+      "slot": "41",
+      "type": "mapping(address => mapping(uint256 => uint256))"
+    },
+    {
+      "label": "_phalanxMissionIdsBySystem",
+      "offset": 0,
+      "slot": "42",
       "type": "mapping(bytes32 => uint256[])"
     },
     {
       "label": "_phalanxMissionIndexBySystem",
       "offset": 0,
-      "slot": "41",
+      "slot": "43",
       "type": "mapping(bytes32 => mapping(uint256 => uint256))"
     }
   ],

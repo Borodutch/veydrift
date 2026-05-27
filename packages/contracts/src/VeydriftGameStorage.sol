@@ -264,6 +264,10 @@ abstract contract VeydriftGameStorage {
     mapping(uint256 planetId => uint256 indexPlusOne) internal _ownedPlanetIndex;
     mapping(uint256 planetId => uint256[] missionIds) internal _resolutionMissionIdsByPlanet;
     mapping(address player => uint256[] missionIds) internal _resolutionMissionIdsByPlayer;
+    mapping(uint256 planetId => mapping(uint256 missionId => uint256 indexPlusOne)) internal
+        _resolutionMissionIndexByPlanet;
+    mapping(address player => mapping(uint256 missionId => uint256 indexPlusOne)) internal
+        _resolutionMissionIndexByPlayer;
     mapping(bytes32 systemKey => uint256[] missionIds) internal _phalanxMissionIdsBySystem;
     mapping(bytes32 systemKey => mapping(uint256 missionId => uint256 indexPlusOne)) internal
         _phalanxMissionIndexBySystem;

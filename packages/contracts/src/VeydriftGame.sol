@@ -243,11 +243,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             missionType := calldataload(0x44)
         }
         if (missionType == uint8(FleetMissionType.Colonize)) {
-            bytes memory result = _delegateToColonizationModuleResult();
-            uint256 missionId = abi.decode(result, (uint256));
-            _trackPhalanxMission(missionId, _fleetMissions[missionId]);
-            _trackMissionResolution(missionId, _fleetMissions[missionId]);
-            return missionId;
+            return _launchColonizeMission();
         }
         _delegateToPlayModule();
     }
@@ -267,11 +263,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             missionType := calldataload(0x44)
         }
         if (missionType == uint8(FleetMissionType.Colonize)) {
-            bytes memory result = _delegateToColonizationModuleResult();
-            uint256 missionId = abi.decode(result, (uint256));
-            _trackPhalanxMission(missionId, _fleetMissions[missionId]);
-            _trackMissionResolution(missionId, _fleetMissions[missionId]);
-            return missionId;
+            return _launchColonizeMission();
         }
         _delegateToPlayModule();
     }
@@ -290,20 +282,8 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function resolveFleetMission(uint256 missionId) external {
-        FleetMissionType missionType = _fleetMissions[missionId].missionType;
-        if (missionType == FleetMissionType.Colonize) {
-            _delegateToColonizationModuleResult();
-            if (_fleetMissions[missionId].status == FleetMissionStatus.Resolved) {
-                _untrackPhalanxMission(missionId, _fleetMissions[missionId]);
-            }
-            return;
-        }
-        if (missionType == FleetMissionType.Attack || missionType == FleetMissionType.Harvest) {
-            _delegateToPlayModuleResult();
-            if (_fleetMissions[missionId].status == FleetMissionStatus.Resolved) {
-                _untrackPhalanxMission(missionId, _fleetMissions[missionId]);
-            }
-            return;
+        if (_fleetMissions[missionId].missionType == FleetMissionType.Colonize) {
+            _delegateToColonizationModule();
         }
         _delegateToPlayModule();
     }
@@ -861,20 +841,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToPlayModule() private {
-        bytes memory result = _delegateToPlayModuleResult();
+        (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
         assembly ("memory-safe") {
             return(add(result, 32), mload(result))
         }
-    }
-
-    function _delegateToPlayModuleResult() private returns (bytes memory result) {
-        (bool ok, bytes memory callResult) = _gameplayModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(callResult, 32), mload(callResult))
-            }
-        }
-        return callResult;
     }
 
     function _delegateToPlanetManagementModule() private {
@@ -901,20 +876,27 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
     }
 
+    function _launchColonizeMission() private returns (uint256 missionId) {
+        (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        missionId = abi.decode(result, (uint256));
+        _trackPhalanxMission(missionId, _fleetMissions[missionId]);
+        _trackMissionResolution(missionId, _fleetMissions[missionId]);
+    }
+
     function _delegateToColonizationModule() private {
-        bytes memory result = _delegateToColonizationModuleResult();
+        (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
         assembly ("memory-safe") {
             return(add(result, 32), mload(result))
         }
-    }
-
-    function _delegateToColonizationModuleResult() private returns (bytes memory result) {
-        (bool ok, bytes memory callResult) = _colonizationModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(callResult, 32), mload(callResult))
-            }
-        }
-        return callResult;
     }
 }
