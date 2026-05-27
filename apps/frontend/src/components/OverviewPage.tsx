@@ -1,6 +1,6 @@
 import type { MainQueueItem, PlayableState, Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Check, Pencil, X } from "lucide-preact";
+import { Check, Pencil, Trash2, X } from "lucide-preact";
 import {
   buildingQueueAsset,
   buildingQueueLabel,
@@ -35,6 +35,8 @@ export type PlanetRenameActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
+export type PlanetManagementActionState = PlanetRenameActionState;
+
 interface OverviewPageProps {
   state: PlayableState;
   settledState: PlayableState;
@@ -61,6 +63,9 @@ interface OverviewPageProps {
   onChainStatus: ChainLoadStatus;
   planetRenameAction?: PlanetRenameActionState | undefined;
   canRenamePlanet?: boolean | undefined;
+  planetManagementAction?: PlanetManagementActionState | undefined;
+  canAbandonPlanet?: boolean | undefined;
+  onAbandonPlanet?: (() => void) | undefined;
   usedFields?: number | undefined;
 }
 
@@ -89,6 +94,9 @@ export function OverviewPage({
   onChainStatus,
   planetRenameAction = { status: "idle" },
   canRenamePlanet = false,
+  planetManagementAction = { status: "idle" },
+  canAbandonPlanet = false,
+  onAbandonPlanet,
   usedFields: selectedPlanetUsedFields,
 }: OverviewPageProps) {
   const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
@@ -161,6 +169,12 @@ export function OverviewPage({
       ? "text-emerald-200"
       : "text-slate-300";
   const renameStatusLabel = planetRenameAction.status === "idle" ? undefined : planetRenameAction.label;
+  const managementStatusTone = planetManagementAction.status === "error"
+    ? "text-amber-200"
+    : planetManagementAction.status === "success"
+      ? "text-emerald-200"
+      : "text-slate-300";
+  const showAbandonAction = Boolean(canAbandonPlanet && onAbandonPlanet);
   const handleRenameSubmit = (event: Event) => {
     event.preventDefault();
     const name = renameDraft.trim();
@@ -201,28 +215,46 @@ export function OverviewPage({
               <h2 className="min-w-0 break-words text-base font-semibold text-white">
                 {planetName}
               </h2>
-              {canShowRename && (
-                <button
-                  aria-expanded={renamePanelOpen}
-                  aria-label="Rename planet"
-                  className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-white/15 bg-black/35 px-2 text-[11px] font-semibold text-slate-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-                  disabled={renameBusy}
-                  onClick={() => {
-                    setRenamePanelOpen((open) => !open);
-                    setRenameDraft(planetName);
-                    setRenameValidation(undefined);
-                  }}
-                  title="Rename planet"
-                  type="button"
-                >
-                  <Pencil aria-hidden="true" size={13} strokeWidth={2} />
-                  Rename
-                </button>
-              )}
+              <div className="flex shrink-0 items-center gap-1.5">
+                {canShowRename && (
+                  <button
+                    aria-expanded={renamePanelOpen}
+                    aria-label="Rename planet"
+                    className="grid h-8 w-8 place-items-center rounded border border-white/15 bg-black/35 text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+                    disabled={renameBusy}
+                    onClick={() => {
+                      setRenamePanelOpen((open) => !open);
+                      setRenameDraft(planetName);
+                      setRenameValidation(undefined);
+                    }}
+                    title="Rename planet"
+                    type="button"
+                  >
+                    <Pencil aria-hidden="true" size={14} strokeWidth={2} />
+                  </button>
+                )}
+                {showAbandonAction && (
+                  <button
+                    aria-label="Abandon planet"
+                    className="inline-flex h-8 items-center gap-1 rounded border border-red-300/25 bg-red-300/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 focus:outline-none focus:ring-2 focus:ring-red-300/50"
+                    onClick={() => onAbandonPlanet?.()}
+                    title="Abandon planet"
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
+                    Abandon
+                  </button>
+                )}
+              </div>
             </div>
             {canShowRename && planetRenameAction.status !== "idle" && !renamePanelOpen && (
               <p className={`mt-1 max-w-full truncate text-xs ${renameStatusTone}`}>
                 {planetRenameAction.label}
+              </p>
+            )}
+            {planetManagementAction.status !== "idle" && (
+              <p className={`mt-1 max-w-full truncate text-xs ${managementStatusTone}`}>
+                {planetManagementAction.label}
               </p>
             )}
             {canShowRename && renamePanelOpen && (
