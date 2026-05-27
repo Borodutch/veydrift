@@ -32,6 +32,10 @@ library VeydriftAntiRaidPrimitives {
         return BASE_FLEET_SLOTS + uint256(computerLevel) * FLEET_SLOTS_PER_COMPUTER_LEVEL;
     }
 
+    function travelSeconds(uint256 distance) public pure returns (uint256) {
+        return travelSeconds(distance, 2_500, FULL_MISSION_SPEED_PERCENT, 1);
+    }
+
     function travelSeconds(uint256 distance, uint256 slowestShipSpeed)
         public
         pure

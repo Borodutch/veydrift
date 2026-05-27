@@ -20,6 +20,13 @@ interface IVeydriftCounterplayAllianceSystem {
     ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport);
 }
 
+interface IVeydriftAttackProtectionAllianceSystem {
+    function attackProtectionFlags(address attacker, address defender)
+        external
+        view
+        returns (uint256);
+}
+
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
     address private immutable _combatModule;
@@ -154,8 +161,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 originPlanetId,
         uint256 targetPlanetId,
         FleetMissionType missionType,
-        MissionShips calldata ships,
-        Resources calldata cargo,
+        MissionShips memory ships,
+        Resources memory cargo,
         uint16 speedPercent,
         uint256 randomnessRequestId
     ) private returns (uint256 missionId) {
@@ -184,6 +191,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (
             missionType == FleetMissionType.MissileAttack
                 || missionType == FleetMissionType.AcsAttack
+                || missionType == FleetMissionType.Colonize
         ) {
             revert InvalidMissionType(missionType);
         }
@@ -207,10 +215,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
         _requireMissionShips(originPlanetId, ships);
 
-        if (
-            missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy
-                || missionType == FleetMissionType.Colonize
-        ) {
+        if (missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy) {
             _requirePlanetOwner(targetPlanetId);
         }
 
@@ -319,8 +324,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 originPlanetId,
         uint256 attackMissionId,
         uint256 expectedTargetPlanetId,
-        MissionShips calldata ships,
-        Resources calldata cargo
+        MissionShips memory ships,
+        Resources memory cargo
     ) private returns (uint256 missionId) {
         _requirePlanetOwner(originPlanetId);
         FleetMission storage attack = _fleetMissions[attackMissionId];
@@ -436,7 +441,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             .requestRandomness(_attackBattlePurposeHash(missionId));
     }
 
-    function _emitFleetMissionShips(uint256 missionId, MissionShips calldata ships) private {
+    function _emitFleetMissionShips(uint256 missionId, MissionShips memory ships) private {
         emit FleetMissionShips(
             missionId,
             ships.smallCargo,
@@ -751,14 +756,23 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         view
         returns (AttackBlockReason)
     {
-        if (attacker == defender || _isAttackProtectionExempt(attacker, defender)) {
+        if (_isAttackProtectionExempt(attacker, defender)) {
             return AttackBlockReason.None;
         }
-        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(attacksInWindow, false)) {
+        uint256 allianceFlags;
+        // Unconfigured alliance systems fall back to plain anti-raid rules with no diplomacy exceptions.
+        address allianceSystem = _allianceSystem;
+        if (allianceSystem != address(0)) {
+            allianceFlags = IVeydriftAttackProtectionAllianceSystem(allianceSystem)
+                .attackProtectionFlags(attacker, defender);
+        }
+        if (allianceFlags & 1 != 0) return AttackBlockReason.ScoreProtection;
+        bool atWar = allianceFlags & 2 != 0;
+        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(attacksInWindow, atWar)) {
             return AttackBlockReason.BashingLimit;
         }
         if (VeydriftAntiRaidPrimitives.isScoreProtected(
-                _totalUserScore(attacker), _totalUserScore(defender), false
+                _totalUserScore(attacker), _totalUserScore(defender), atWar
             )) {
             return AttackBlockReason.ScoreProtection;
         }
