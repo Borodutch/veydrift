@@ -903,10 +903,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 } else {
                     joined.status = FleetMissionStatus.Returning;
                     joined.returnAt = uint64(
-                        block.timestamp
-                            + VeydriftAntiRaidPrimitives.travelSeconds(
-                                _planetDistance(attack.targetPlanetId, joined.originPlanetId)
-                            )
+                        block.timestamp + (uint256(joined.returnAt) - uint256(attack.arrivalAt))
                     );
                     emit FleetMissionReturnExposed(
                         joinedMissionId,
@@ -948,9 +945,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     counterplay.status = FleetMissionStatus.Returning;
                     counterplay.returnAt = uint64(
                         block.timestamp
-                            + VeydriftAntiRaidPrimitives.travelSeconds(
-                                _planetDistance(hostile.targetPlanetId, counterplay.originPlanetId)
-                            )
+                            + (uint256(counterplay.returnAt) - uint256(hostile.arrivalAt))
                     );
                     emit FleetMissionReturnExposed(
                         counterplayMissionId,
@@ -1255,26 +1250,34 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     {
         Planet storage origin = _planets[originPlanetId];
         Planet storage destination = _planets[destinationPlanetId];
-        if (origin.owner == address(0) || destination.owner == address(0)) revert NoPlanet();
         uint256 galaxyDistance = origin.galaxy > destination.galaxy
             ? uint256(origin.galaxy - destination.galaxy)
             : uint256(destination.galaxy - origin.galaxy);
+        if (galaxyDistance != 0) return galaxyDistance * 20_000;
         uint256 systemDistance = origin.system > destination.system
             ? uint256(origin.system - destination.system)
             : uint256(destination.system - origin.system);
+        if (systemDistance != 0) return 2_700 + systemDistance * 95;
         uint256 positionDistance = origin.position > destination.position
             ? uint256(origin.position - destination.position)
             : uint256(destination.position - origin.position);
-        return galaxyDistance * uint256(MAX_SYSTEM) * uint256(MAX_POSITION) + systemDistance
-            * uint256(MAX_POSITION) + positionDistance;
+        if (positionDistance != 0) return 1_000 + positionDistance * 5;
+        return 0;
     }
 
     function _missionCargoCapacity(MissionShips memory ships) private pure returns (uint256) {
-        return uint256(ships.smallCargo) * VeydriftCatalog.shipCargoCapacity(Ship.SmallCargo)
-            + uint256(ships.recycler) * VeydriftCatalog.shipCargoCapacity(Ship.Recycler)
-            + uint256(ships.colonyShip) * VeydriftCatalog.shipCargoCapacity(Ship.ColonyShip)
-            + uint256(ships.largeCargo) * VeydriftCatalog.shipCargoCapacity(Ship.LargeCargo)
-            + uint256(ships.pathfinder) * VeydriftCatalog.shipCargoCapacity(Ship.Pathfinder);
+        uint256 capacity;
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            uint32 quantity = _missionShipQuantity(ships, ship);
+            if (quantity != 0) {
+                capacity += uint256(quantity) * VeydriftCatalog.shipCargoCapacity(ship);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        return capacity;
     }
 
     function _missionShipTotal(MissionShips memory ships) private pure returns (uint256) {

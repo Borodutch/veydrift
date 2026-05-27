@@ -8,10 +8,10 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
     function testFleetSlotTravelFuelAndRecallPrimitives() public pure {
         assertEq(VeydriftAntiRaidPrimitives.fleetSlotLimit(0), 1);
         assertEq(VeydriftAntiRaidPrimitives.fleetSlotLimit(7), 8);
-        assertEq(VeydriftAntiRaidPrimitives.travelSeconds(42), 5 minutes + 42);
-        assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(3, 0), 3);
-        assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(3, 33), 3);
-        assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(3, 20_000), 9);
+        assertEq(VeydriftAntiRaidPrimitives.travelSeconds(42, 5_000), 111);
+        assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(30, 0), 1);
+        assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(30, 33), 1);
+        assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(30, 20_000), 70);
         assertEq(VeydriftAntiRaidPrimitives.recallReturnSeconds(12), 60);
         assertEq(VeydriftAntiRaidPrimitives.recallReturnSeconds(90), 90);
         assertEq(VeydriftAntiRaidPrimitives.recallFuelRefund(100), 0);

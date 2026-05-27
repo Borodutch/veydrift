@@ -70,9 +70,10 @@ import {
   type MissionShips,
 } from "./galaxyActions";
 import {
+  type FleetDriveLevels,
+  fleetMissionAvailableCargoCapacity,
   fleetMissionDistance,
   fleetMissionFuelCost,
-  fleetMissionShipCount,
 } from "./fleetMissionRules";
 import {
   fetchInfrastructureState,
@@ -248,24 +249,18 @@ function selectCounterplayShips(shipyardState: ChainShipyardState | null): Missi
   return null;
 }
 
-const missionCargoCapacity = (ships: Partial<MissionShips> | undefined): number => {
-  if (!ships) return 0;
-  return (ships.smallCargo ?? 0) * 5_000
-    + (ships.largeCargo ?? 0) * 25_000
-    + (ships.recycler ?? 0) * 20_000
-    + (ships.colonyShip ?? 0) * 7_500
-    + (ships.pathfinder ?? 0) * 12_000
-    + (ships.lightFighter ?? 0) * 50;
-};
-
 function transportCargoForSelectedPlanet(
   planet: ManagedPlanetResponse | undefined,
   ships: MissionShips,
   target: Coordinates,
+  driveLevels: FleetDriveLevels = {},
+  speedPercent = 100,
 ): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
   if (!planet?.resources) return undefined;
 
-  let remaining = missionCargoCapacity(ships);
+  const distance = fleetMissionDistance(planet, target);
+  const fuelCost = fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
+  let remaining = fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   if (remaining <= 0) return undefined;
 
   const metal = Math.min(safeResourceNumber(planet.resources.metal) ?? 0, remaining);
@@ -273,8 +268,6 @@ function transportCargoForSelectedPlanet(
   const crystal = Math.min(safeResourceNumber(planet.resources.crystal) ?? 0, remaining);
   remaining -= crystal;
 
-  const distance = fleetMissionDistance(planet, target);
-  const fuelCost = fleetMissionFuelCost(fleetMissionShipCount(ships), distance);
   const deuteriumAvailable = Math.max(0, (safeResourceNumber(planet.resources.deuterium) ?? 0) - fuelCost);
   const deuterium = Math.min(deuteriumAvailable, remaining);
 
@@ -283,6 +276,14 @@ function transportCargoForSelectedPlanet(
     metal: String(metal),
     crystal: String(crystal),
     deuterium: String(deuterium),
+  };
+}
+
+function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefined): FleetDriveLevels {
+  return {
+    combustionDrive: levels?.["3"] ?? 0,
+    impulseDrive: levels?.["9"] ?? 0,
+    hyperspaceDrive: levels?.["10"] ?? 0,
   };
 }
 
@@ -1666,7 +1667,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       });
   }, [account, activePlanetId, gameContract, provider, refreshOnChainState, selectedManagedPlanet]);
 
-  const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
+  const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent = 100) => {
     if (!action.enabled) return;
     const originPlanetId = activePlanetId ?? onChainSettlement?.homePlanetId;
     if (!provider || !account || !gameContract || !originPlanetId) {
@@ -1717,12 +1718,19 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         targetPlanetId,
         missionType: missionTypeId(action.mission),
         ships: action.ships,
+        speedPercent,
         cargo: action.kind === "transport"
-          ? transportCargoForSelectedPlanet(selectedManagedPlanet, action.ships, coords)
+          ? transportCargoForSelectedPlanet(
+              selectedManagedPlanet,
+              action.ships,
+              coords,
+              driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels),
+              speedPercent,
+            )
           : undefined,
       },
     ));
-  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, selectedManagedPlanet]);
+  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleCounterplay = useCallback((hostileMissionId: string, mode: "acsDefend" | "intercept") => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {

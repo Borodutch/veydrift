@@ -162,7 +162,7 @@ describe("walletFlow", () => {
       quantity: 1,
     })).resolves.toBe("0xgalaxy4");
 
-    expect(missionData.startsWith("0x28247df8")).toBe(true);
+    expect(missionData.startsWith("0x60eac16f")).toBe(true);
     expect(joinData.startsWith("0x28260eb6")).toBe(true);
     expect(encodeLaunchInterplanetaryMissileAttackCall({
       originPlanetId: 7,
@@ -243,14 +243,15 @@ describe("walletFlow", () => {
         crystal: "202",
         deuterium: "303",
       },
+      speedPercent: 50,
       randomnessRequestId: 404,
     })).toBe(
-      "0x28247df8"
+      "0x60eac16f"
         + [
           7, 9, 3,
           1, 2, 3, 4, 5, 6, 7,
           8, 9, 10, 11, 12, 13, 14,
-          101, 202, 303, 404,
+          101, 202, 303, 50, 404,
         ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
     );
   });
