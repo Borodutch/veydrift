@@ -348,6 +348,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         colonyPlanetId = nextPlanetId++;
         occupiedCoordinates[coordinates] = true;
         planetCountOf[owner] += 1;
+        _registerOwnedPlanet(owner, colonyPlanetId);
 
         bytes32 seed = _planetSeed(galaxy, system, position);
         uint16 fields = uint16(160 + (uint256(seed) % 80));

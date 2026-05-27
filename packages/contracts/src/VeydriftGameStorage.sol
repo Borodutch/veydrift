@@ -260,6 +260,13 @@ abstract contract VeydriftGameStorage {
     address internal _randomnessEngine;
     mapping(address player => uint64 lastActiveAt) internal playerLastActiveAt;
     mapping(address player => int256 points) internal honorPoints;
+    mapping(address player => uint256[] planetIds) internal _ownedPlanetIds;
+    mapping(uint256 planetId => uint256 indexPlusOne) internal _ownedPlanetIndex;
+    mapping(uint256 planetId => uint256[] missionIds) internal _resolutionMissionIdsByPlanet;
+    mapping(address player => uint256[] missionIds) internal _resolutionMissionIdsByPlayer;
+    mapping(bytes32 systemKey => uint256[] missionIds) internal _phalanxMissionIdsBySystem;
+    mapping(bytes32 systemKey => mapping(uint256 missionId => uint256 indexPlusOne)) internal
+        _phalanxMissionIndexBySystem;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -629,6 +636,28 @@ abstract contract VeydriftGameStorage {
         playerLastActiveAt[player] = currentTime;
     }
 
+    function _registerOwnedPlanet(address player, uint256 planetId) internal {
+        if (_ownedPlanetIndex[planetId] != 0) return;
+        _ownedPlanetIds[player].push(planetId);
+        _ownedPlanetIndex[planetId] = _ownedPlanetIds[player].length;
+    }
+
+    function _unregisterOwnedPlanet(address player, uint256 planetId) internal {
+        uint256 indexPlusOne = _ownedPlanetIndex[planetId];
+        if (indexPlusOne == 0) return;
+
+        uint256[] storage planetIds = _ownedPlanetIds[player];
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = planetIds.length - 1;
+        if (index != lastIndex) {
+            uint256 movedPlanetId = planetIds[lastIndex];
+            planetIds[index] = movedPlanetId;
+            _ownedPlanetIndex[movedPlanetId] = indexPlusOne;
+        }
+        planetIds.pop();
+        delete _ownedPlanetIndex[planetId];
+    }
+
     function _recordAttack(address attacker, uint256 targetPlanetId) internal {
         address defender = _attackDefender(targetPlanetId);
         bool defenderInactive =
@@ -763,30 +792,30 @@ abstract contract VeydriftGameStorage {
                 ++id;
             }
         }
-        for (uint256 planetId = 1; planetId < nextPlanetId;) {
-            if (_planets[planetId].owner == player) {
-                score += 1_000;
-                for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
-                    score += uint256(_buildingLevels[planetId][Building(id)]) * (id + 1) * 10;
-                    unchecked {
-                        ++id;
-                    }
+        uint256[] storage planetIds = _ownedPlanetIds[player];
+        for (uint256 planetIndex = 0; planetIndex < planetIds.length;) {
+            uint256 planetId = planetIds[planetIndex];
+            score += 1_000;
+            for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
+                score += uint256(_buildingLevels[planetId][Building(id)]) * (id + 1) * 10;
+                unchecked {
+                    ++id;
                 }
-                for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
-                    score += uint256(_defenseCounts[planetId][Defense(id)]) * (id + 1) * 2;
-                    unchecked {
-                        ++id;
-                    }
+            }
+            for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
+                score += uint256(_defenseCounts[planetId][Defense(id)]) * (id + 1) * 2;
+                unchecked {
+                    ++id;
                 }
-                for (uint8 id = 0; id <= MAX_SHIP_ID;) {
-                    score += uint256(_shipCounts[planetId][Ship(id)]) * (id + 1) * 4;
-                    unchecked {
-                        ++id;
-                    }
+            }
+            for (uint8 id = 0; id <= MAX_SHIP_ID;) {
+                score += uint256(_shipCounts[planetId][Ship(id)]) * (id + 1) * 4;
+                unchecked {
+                    ++id;
                 }
             }
             unchecked {
-                ++planetId;
+                ++planetIndex;
             }
         }
     }

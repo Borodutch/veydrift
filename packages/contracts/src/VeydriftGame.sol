@@ -243,7 +243,11 @@ contract VeydriftGame is VeydriftResourceReserves {
             missionType := calldataload(0x44)
         }
         if (missionType == uint8(FleetMissionType.Colonize)) {
-            _delegateToColonizationModule();
+            bytes memory result = _delegateToColonizationModuleResult();
+            uint256 missionId = abi.decode(result, (uint256));
+            _trackPhalanxMission(missionId, _fleetMissions[missionId]);
+            _trackMissionResolution(missionId, _fleetMissions[missionId]);
+            return missionId;
         }
         _delegateToPlayModule();
     }
@@ -263,7 +267,11 @@ contract VeydriftGame is VeydriftResourceReserves {
             missionType := calldataload(0x44)
         }
         if (missionType == uint8(FleetMissionType.Colonize)) {
-            _delegateToColonizationModule();
+            bytes memory result = _delegateToColonizationModuleResult();
+            uint256 missionId = abi.decode(result, (uint256));
+            _trackPhalanxMission(missionId, _fleetMissions[missionId]);
+            _trackMissionResolution(missionId, _fleetMissions[missionId]);
+            return missionId;
         }
         _delegateToPlayModule();
     }
@@ -282,8 +290,20 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function resolveFleetMission(uint256 missionId) external {
-        if (_fleetMissions[missionId].missionType == FleetMissionType.Colonize) {
-            _delegateToColonizationModule();
+        FleetMissionType missionType = _fleetMissions[missionId].missionType;
+        if (missionType == FleetMissionType.Colonize) {
+            _delegateToColonizationModuleResult();
+            if (_fleetMissions[missionId].status == FleetMissionStatus.Resolved) {
+                _untrackPhalanxMission(missionId, _fleetMissions[missionId]);
+            }
+            return;
+        }
+        if (missionType == FleetMissionType.Attack || missionType == FleetMissionType.Harvest) {
+            _delegateToPlayModuleResult();
+            if (_fleetMissions[missionId].status == FleetMissionStatus.Resolved) {
+                _untrackPhalanxMission(missionId, _fleetMissions[missionId]);
+            }
+            return;
         }
         _delegateToPlayModule();
     }
@@ -567,6 +587,7 @@ contract VeydriftGame is VeydriftResourceReserves {
 
         homePlanetOf[player] = planetId;
         planetCountOf[player] = 1;
+        _registerOwnedPlanet(player, planetId);
         _planets[planetId] = Planet({
             owner: player,
             galaxy: galaxy,
@@ -675,15 +696,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _settleResources(uint256 planetId) private {
-        for (uint256 missionId = 1; missionId < nextFleetId; missionId++) {
-            FleetMission storage mission = _fleetMissions[missionId];
-            if (
-                _isPendingResolutionMission(mission)
-                    && (mission.originPlanetId == planetId || mission.targetPlanetId == planetId)
-            ) {
-                revert FleetMissionNotResolved(mission.arrivalAt);
-            }
-        }
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         uint64 currentTime = uint64(block.timestamp);
         BuildingConstruction memory construction = buildingConstructions[planetId];
         if (construction.active && currentTime >= construction.readyAt) {
@@ -848,15 +861,20 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToPlayModule() private {
-        (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
+        bytes memory result = _delegateToPlayModuleResult();
         assembly ("memory-safe") {
             return(add(result, 32), mload(result))
         }
+    }
+
+    function _delegateToPlayModuleResult() private returns (bytes memory result) {
+        (bool ok, bytes memory callResult) = _gameplayModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(callResult, 32), mload(callResult))
+            }
+        }
+        return callResult;
     }
 
     function _delegateToPlanetManagementModule() private {
@@ -884,14 +902,19 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToColonizationModule() private {
-        (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
+        bytes memory result = _delegateToColonizationModuleResult();
         assembly ("memory-safe") {
             return(add(result, 32), mload(result))
         }
+    }
+
+    function _delegateToColonizationModuleResult() private returns (bytes memory result) {
+        (bool ok, bytes memory callResult) = _colonizationModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(callResult, 32), mload(callResult))
+            }
+        }
+        return callResult;
     }
 }
