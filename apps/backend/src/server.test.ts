@@ -624,6 +624,33 @@ class MockChainReader implements ChainReader {
   }
 }
 
+function testIndexer(): SettlementIndexer {
+  const indexer = new SettlementIndexer(new MockChainReader(), 100n);
+  indexer.applyEvent({
+    ...planet,
+    eventName: "PlanetStarted",
+    transactionHash: "0xabc",
+    blockNumber: "123"
+  });
+  return indexer;
+}
+
+function withoutIndexLists(reader: ChainReader): ChainReader {
+  return new Proxy(reader, {
+    get(target, property, receiver) {
+      if (
+        property === "listSettledPlanetEvents"
+        || property === "listMoonChanceReportEvents"
+        || property === "listDebrisFieldEvents"
+      ) {
+        return undefined;
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    }
+  });
+}
+
 describe("Veydrift backend", () => {
   const handler = createRequestHandler();
 
@@ -893,7 +920,7 @@ describe("Veydrift backend", () => {
   test("answers wallet planet management state from a mocked chain reader", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
-      chainReader: new MockChainReader()
+      chainReader: withoutIndexLists(new MockChainReader())
     })(new Request(`http://localhost/wallet/${player}/planets`));
 
     await expect(response.json()).resolves.toMatchObject({
@@ -913,6 +940,45 @@ describe("Veydrift backend", () => {
       ]
     });
     expect(response.status).toBe(200);
+  });
+
+  test("answers wallet planet management state from the DB-backed indexer without live RPC", async () => {
+    const indexer = testIndexer();
+    let liveReadCalled = false;
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      indexer,
+      chainReader: new class extends MockChainReader {
+        override async getWalletPlanets(): Promise<WalletPlanets> {
+          liveReadCalled = true;
+          throw new Error("RPC HTTP 429");
+        }
+      }()
+    })(new Request(`http://localhost/wallet/${player}/planets`));
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(liveReadCalled).toBe(false);
+    expect(body).toMatchObject({
+      wallet: player,
+      homePlanetId: "7",
+      planets: [
+        {
+          planetId: "7",
+          coordinates: "2:44:9",
+          resources: {
+            metal: "5000",
+            crystal: "4900",
+            deuterium: "4800"
+          },
+          queues: {
+            building: null,
+            defense: null,
+            ship: null
+          }
+        }
+      ]
+    });
   });
 
   test("answers shipyard state from a mocked chain reader", async () => {
@@ -947,6 +1013,23 @@ describe("Veydrift backend", () => {
   test("returns service unavailable for transient shipyard RPC rate limits", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
+      chainReader: withoutIndexLists(new class extends MockChainReader {
+        override async getShipyardState(): Promise<ShipyardState> {
+          throw new Error("RPC HTTP 429");
+        }
+      }())
+    })(new Request(`http://localhost/wallet/${player}/shipyard`));
+
+    await expect(response.json()).resolves.toEqual({
+      error: "RPC HTTP 429"
+    });
+    expect(response.status).toBe(503);
+  });
+
+  test("returns stale indexed shipyard context for transient RPC rate limits", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      indexer: testIndexer(),
       chainReader: new class extends MockChainReader {
         override async getShipyardState(): Promise<ShipyardState> {
           throw new Error("RPC HTTP 429");
@@ -954,10 +1037,22 @@ describe("Veydrift backend", () => {
       }()
     })(new Request(`http://localhost/wallet/${player}/shipyard`));
 
-    await expect(response.json()).resolves.toEqual({
-      error: "RPC HTTP 429"
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(body).toMatchObject({
+      wallet: player,
+      homePlanetId: "7",
+      degraded: true,
+      stale: true,
+      source: "contract-state-indexer",
+      detail: "RPC HTTP 429",
+      resources: {
+        metal: "5000",
+        crystal: "4900",
+        deuterium: "4800"
+      }
     });
-    expect(response.status).toBe(503);
   });
 
   test("answers defense state from a mocked chain reader", async () => {
@@ -1138,7 +1233,7 @@ describe("Veydrift backend", () => {
       }
     }
 
-    const handler = createRequestHandler({ chainReader: new RpcFailingMoonReader(), config: configuredTestConfig });
+    const handler = createRequestHandler({ chainReader: withoutIndexLists(new RpcFailingMoonReader()), config: configuredTestConfig });
     const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
     const body = await response.json();
 
