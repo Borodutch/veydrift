@@ -89,6 +89,8 @@ contract VeydriftMoonSystemTest is Test {
 
     function setUp() public {
         randomness = new RandomnessEngine(admin, fulfiller);
+        vm.prank(admin);
+        randomness.setPrecommitRequired(false);
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
@@ -178,6 +180,12 @@ contract VeydriftMoonSystemTest is Test {
 
     function testBattleMoonChanceRequestsRandomnessAndBlocksPendingOutcome() public {
         uint256 planetId = _startPlanet();
+        bytes32 commitment = randomness.randomnessCommitment(123);
+        vm.prank(admin);
+        randomness.setPrecommitRequired(true);
+        vm.prank(fulfiller);
+        randomness.commitRandomness(commitment);
+        vm.roll(block.number + 1);
         bytes32 purposeHash = moons.moonChancePurposeHash(1, 77, planetId, 1_500_000, 0, 1_500);
 
         vm.expectEmit(true, true, true, true, address(moons));
@@ -199,6 +207,7 @@ contract VeydriftMoonSystemTest is Test {
         assertFalse(finalized);
         assertEq(request.requester, address(moons));
         assertEq(request.purposeHash, storedPurposeHash);
+        assertEq(request.randomnessCommitment, commitment);
 
         vm.expectRevert(
             abi.encodeWithSelector(RandomnessEngine.PendingRandomness.selector, requestId)

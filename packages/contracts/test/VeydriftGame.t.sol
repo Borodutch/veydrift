@@ -190,6 +190,8 @@ contract VeydriftGameTest is Test {
         game = _newGame(admin);
         allianceSystem = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         randomness = new RandomnessEngine(admin, fulfiller);
+        vm.prank(admin);
+        randomness.setPrecommitRequired(false);
         moons = new VeydriftMoonSystem(address(game), address(randomness));
         metalToken = new MockResourceToken();
         crystalToken = new MockResourceToken();
@@ -3090,6 +3092,13 @@ contract VeydriftGameTest is Test {
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
         _setResources(targetPlanetId, 10_000, 4_000, 3_000);
+        uint256 randomWord = 42;
+        bytes32 commitment = randomness.randomnessCommitment(randomWord);
+        vm.prank(admin);
+        randomness.setPrecommitRequired(true);
+        vm.prank(fulfiller);
+        randomness.commitRandomness(commitment);
+        vm.roll(block.number + 1);
 
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 1;
@@ -3115,6 +3124,7 @@ contract VeydriftGameTest is Test {
         RandomnessEngine.Request memory request = randomness.request(actualRequestId);
         assertEq(request.requester, address(game));
         assertEq(request.purposeHash, expectedPurposeHash);
+        assertEq(request.randomnessCommitment, commitment);
 
         vm.warp(arrivalAt);
         vm.expectRevert(
@@ -3122,7 +3132,16 @@ contract VeydriftGameTest is Test {
         );
         game.resolveFleetMission(missionId);
 
-        uint256 randomWord = 42;
+        bytes32 wrongCommitment = randomness.randomnessCommitment(randomWord + 1);
+        vm.startPrank(fulfiller);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RandomnessEngine.RandomnessCommitmentMismatch.selector, commitment, wrongCommitment
+            )
+        );
+        randomness.fulfillRandomness(actualRequestId, randomWord + 1);
+        vm.stopPrank();
+
         vm.prank(fulfiller);
         randomness.fulfillRandomness(actualRequestId, randomWord);
         uint256 expectedSeed = uint256(

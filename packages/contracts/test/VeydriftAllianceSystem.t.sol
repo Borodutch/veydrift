@@ -72,6 +72,8 @@ contract VeydriftAllianceSystemTest is Test {
             address(colonizationModule)
         );
         RandomnessEngine randomness = new RandomnessEngine(admin, fulfiller);
+        vm.prank(admin);
+        randomness.setPrecommitRequired(false);
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         metalToken = new AllianceMockResourceToken();
         crystalToken = new AllianceMockResourceToken();
