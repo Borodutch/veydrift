@@ -2845,6 +2845,36 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(originPlanetId, Ship.Recycler), 2);
     }
 
+    function testRecyclerHarvestSplitsMetalAndCrystalEvenlyBeforeRemainder() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Recycler, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setDebrisField(targetPlanetId, 40_000, 15_000);
+
+        VeydriftGameStorage.MissionShips memory harvestShips;
+        harvestShips.recycler = 1;
+        vm.prank(player);
+        uint256 harvestMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Harvest,
+            harvestShips,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 harvestArrivalAt,,) = _fleetMission(harvestMissionId);
+        vm.warp(harvestArrivalAt);
+        game.resolveFleetMission(harvestMissionId);
+
+        (,,, VeydriftGameStorage.Resources memory harvestedCargo) = _fleetMission(harvestMissionId);
+        assertEq(harvestedCargo.metal, 10_000);
+        assertEq(harvestedCargo.crystal, 10_000);
+        (uint128 remainingDebrisMetal, uint128 remainingDebrisCrystal) =
+            game.debrisField(targetPlanetId);
+        assertEq(remainingDebrisMetal, 30_000);
+        assertEq(remainingDebrisCrystal, 5_000);
+    }
+
     function testQualifyingAttackCreatesMoonChanceAndFinalizesAfterRandomness() public {
         address defender = address(0xDEF);
         vm.deal(defender, 1 ether);
@@ -3533,6 +3563,11 @@ contract VeydriftGameTest is Test {
         vm.store(address(game), bytes32(planetBase + 3), bytes32(uint256(deuterium)));
         vm.store(address(game), bytes32(uint256(14)), _packResourcesHead(metal, crystal));
         vm.store(address(game), bytes32(uint256(15)), bytes32(uint256(deuterium)));
+    }
+
+    function _setDebrisField(uint256 planetId, uint128 metal, uint128 crystal) internal {
+        bytes32 slot = keccak256(abi.encode(planetId, uint256(27)));
+        vm.store(address(game), slot, _packResourcesHead(metal, crystal));
     }
 
     function _lightFighterManifest()

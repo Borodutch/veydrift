@@ -1028,18 +1028,30 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 capacity = _missionCargoCapacity(mission.ships);
         uint256 cargoTotal =
             uint256(mission.cargo.metal) + mission.cargo.crystal + mission.cargo.deuterium;
-        if (capacity <= cargoTotal || (field.metal == 0 && field.crystal == 0)) return;
 
-        capacity -= cargoTotal;
-        uint128 metal = _toUint128(_min(field.metal, capacity));
-        field.metal -= metal;
-        capacity -= metal;
+        unchecked {
+            capacity -= cargoTotal;
+        }
+        uint128 metal;
+        uint128 crystal;
+        if (field.metal < field.crystal) {
+            metal = _toUint128(_min(field.metal, capacity / 2));
+            unchecked {
+                crystal = _toUint128(_min(field.crystal, capacity - metal));
+            }
+        } else {
+            crystal = _toUint128(_min(field.crystal, capacity / 2));
+            unchecked {
+                metal = _toUint128(_min(field.metal, capacity - crystal));
+            }
+        }
 
-        uint128 crystal = _toUint128(_min(field.crystal, capacity));
-        field.crystal -= crystal;
-
-        mission.cargo.metal += metal;
-        mission.cargo.crystal += crystal;
+        unchecked {
+            field.metal -= metal;
+            field.crystal -= crystal;
+            mission.cargo.metal += metal;
+            mission.cargo.crystal += crystal;
+        }
         _emitDebrisFieldUpdated(mission.targetPlanetId);
     }
 
