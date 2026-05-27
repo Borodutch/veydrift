@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
@@ -10,6 +12,15 @@ import {
   queueProgressFillState,
 } from "../src/overviewData";
 import type { Planet } from "../src/types";
+
+const OVERVIEW_PAGE_SOURCE = readFileSync(
+  join(import.meta.dir, "..", "src", "components", "OverviewPage.tsx"),
+  "utf8",
+);
+const PLAYABLE_APP_SOURCE = readFileSync(
+  join(import.meta.dir, "..", "src", "PlayableMvpApp.tsx"),
+  "utf8",
+);
 
 const homePlanet: Planet = {
   alliance: null,
@@ -172,5 +183,21 @@ describe("overview queue progress display", () => {
       elapsedMs: 1_000_000,
       progress: 1,
     });
+  });
+});
+
+describe("overview planet management actions", () => {
+  test("keeps the rename trigger icon-only with accessible label and tooltip", () => {
+    const renameButtonSource = OVERVIEW_PAGE_SOURCE.match(/aria-label="Rename planet"[\s\S]*?<\/button>/)?.[0] ?? "";
+
+    expect(renameButtonSource).toContain('title="Rename planet"');
+    expect(renameButtonSource).toContain("<Pencil");
+    expect(renameButtonSource).not.toMatch(/>\s*Rename\s*</);
+  });
+
+  test("keeps abandon action in the overview action cluster", () => {
+    expect(OVERVIEW_PAGE_SOURCE).toContain('aria-label="Abandon planet"');
+    expect(OVERVIEW_PAGE_SOURCE).toContain("<Trash2");
+    expect(PLAYABLE_APP_SOURCE).not.toContain("PlanetAbandonButton");
   });
 });

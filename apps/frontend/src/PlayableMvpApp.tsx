@@ -1966,10 +1966,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const mobilePlanetSelector = walletPlanets.length > 0 ? (
     <PlanetSelector
-      action={planetManagementAction}
-      canTransact={Boolean(provider && account && gameContract)}
       layout="mobile"
-      onAbandon={handleAbandonPlanet}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
       selectedPlanetId={activePlanetId}
@@ -1978,10 +1975,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const planetSidebar = walletPlanets.length > 0 ? (
     <PlanetSelector
-      action={planetManagementAction}
-      canTransact={Boolean(provider && account && gameContract)}
       layout="sidebar"
-      onAbandon={handleAbandonPlanet}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
       selectedPlanetId={activePlanetId}
@@ -2208,6 +2202,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         state={state}
         canRenamePlanet={Boolean(provider && account && gameContract && activePlanetId)}
         planetRenameAction={planetRenameAction}
+        planetManagementAction={planetManagementAction}
+        canAbandonPlanet={selectedManagedPlanet
+          ? shouldShowAbandonPlanetButton(
+            selectedManagedPlanet,
+            Boolean(provider && account && gameContract),
+            planetManagementAction,
+          )
+          : false}
+        onAbandonPlanet={handleAbandonPlanet}
         usedFields={selectedManagedPlanet?.fieldsUsed}
       />
     );
@@ -2237,31 +2240,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 }
 
 function PlanetSelector({
-  action,
-  canTransact,
   layout,
-  onAbandon,
   onSelect,
   planets,
   selectedPlanetId,
 }: {
-  action: PlanetManagementActionState;
-  canTransact: boolean;
   layout: "mobile" | "sidebar";
-  onAbandon: () => void;
   onSelect: (planetId: string) => void;
   planets: ManagedPlanetResponse[];
   selectedPlanetId: string | undefined;
 }) {
   const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
   if (!selectedPlanet) return null;
-  const abandonUnavailableLabel = abandonPlanetUnavailableLabel(selectedPlanet, canTransact, action);
-
-  const actionLabel = action.status !== "idle" ? (
-    <span className={`truncate text-xs ${action.status === "error" ? "text-amber-200" : "text-slate-300"}`}>
-      {action.label}
-    </span>
-  ) : null;
 
   if (layout === "mobile") {
     return (
@@ -2288,20 +2278,6 @@ function PlanetSelector({
               </option>
             ))}
           </select>
-          <div className="flex shrink-0 items-center gap-2">
-            {actionLabel}
-            {action.status === "idle" && abandonUnavailableLabel && (
-              <span className="max-w-48 truncate text-xs text-slate-400">
-                {abandonUnavailableLabel}
-              </span>
-            )}
-            <PlanetAbandonButton
-              action={action}
-              canTransact={canTransact}
-              onAbandon={onAbandon}
-              selectedPlanet={selectedPlanet}
-            />
-          </div>
         </div>
       </section>
     );
@@ -2365,64 +2341,7 @@ function PlanetSelector({
           );
         })}
       </div>
-
-      <div className="mt-4 rounded border border-white/10 bg-black/20 p-3">
-        <div className="flex items-start gap-3">
-          <img
-            alt=""
-            className="h-12 w-12 rounded border border-white/10 object-cover"
-            src={planetImage(selectedPlanet)}
-          />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-white">{planetDisplayName(selectedPlanet)}</p>
-            <p className="mt-1 truncate text-xs text-slate-400">{selectedPlanet.coordinates}</p>
-            <p className="mt-1 truncate text-[0.7rem] text-slate-500">
-              M{selectedPlanet.keyLevels.metalMine} C{selectedPlanet.keyLevels.crystalMine} D{selectedPlanet.keyLevels.deuteriumSynthesizer}
-            </p>
-          </div>
-        </div>
-        <div className="mt-3 flex items-center justify-between gap-2">
-          {actionLabel ? (
-            <div className="min-w-0 flex-1">{actionLabel}</div>
-          ) : abandonUnavailableLabel ? (
-            <span className="min-w-0 flex-1 truncate text-xs text-slate-400">{abandonUnavailableLabel}</span>
-          ) : (
-            <span />
-          )}
-          <PlanetAbandonButton
-            action={action}
-            canTransact={canTransact}
-            onAbandon={onAbandon}
-            selectedPlanet={selectedPlanet}
-          />
-        </div>
-      </div>
     </aside>
-  );
-}
-
-function PlanetAbandonButton({
-  action,
-  canTransact,
-  onAbandon,
-  selectedPlanet,
-}: {
-  action: PlanetManagementActionState;
-  canTransact: boolean;
-  onAbandon: () => void;
-  selectedPlanet: ManagedPlanetResponse;
-}) {
-  const showAbandonButton = shouldShowAbandonPlanetButton(selectedPlanet, canTransact, action);
-  if (!showAbandonButton) return null;
-
-  return (
-    <button
-      className="h-8 rounded border border-red-300/20 bg-red-300/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-300/20"
-      onClick={onAbandon}
-      type="button"
-    >
-      Abandon
-    </button>
   );
 }
 

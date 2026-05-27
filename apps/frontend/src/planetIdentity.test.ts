@@ -221,6 +221,11 @@ describe("planet identity", () => {
 
   test("shows the abandon action only for empty inactive-queue colonies", () => {
     expect(shouldShowAbandonPlanetButton(managedPlanet(), true, idleAction)).toBe(true);
+    expect(shouldShowAbandonPlanetButton(managedPlanet(), false, idleAction)).toBe(false);
+    expect(shouldShowAbandonPlanetButton(managedPlanet(), true, {
+      status: "pending",
+      label: "Waiting for wallet confirmation",
+    })).toBe(false);
 
     expect(shouldShowAbandonPlanetButton(managedPlanet({
       resources: {
