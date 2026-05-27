@@ -1,3 +1,5 @@
+import type { PlanetType } from "./types";
+
 export type Eip1193Provider = {
   request<T = unknown>(args: {
     method: string;
@@ -370,8 +372,20 @@ export type HighscoreEntry = {
   rank: number;
   wallet: string;
   homePlanetId: string | null;
+  homePlanet: HighscorePlanet | null;
   planetCount: number;
   score: Record<HighscoreCategory, string>;
+};
+
+export type HighscorePlanet = {
+  planetId: string;
+  name: string | null;
+  coordinates: {
+    galaxy: number;
+    system: number;
+    position: number;
+  };
+  archetype: PlanetType;
 };
 
 export type HighscoreResponse = {
