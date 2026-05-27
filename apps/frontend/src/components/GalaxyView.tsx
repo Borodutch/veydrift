@@ -726,9 +726,15 @@ export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string 
   const chance = typeof moonChance.chanceBps === "number"
     ? ` ${(moonChance.chanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
     : "";
+  const destructionChance = typeof moonChance.moonDestructionChanceBps === "number"
+    ? ` ${(moonChance.moonDestructionChanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
+    : "";
   if (moonChance.status === "pending") return `Moon chance${chance} pending`;
   if (moonChance.status === "created") return `Moon created${moonChance.moonDiameterKm ? ` ${moonChance.moonDiameterKm.toLocaleString()} km` : ""}`;
   if (moonChance.status === "not_created") return `Moon chance${chance} missed`;
+  if (moonChance.status === "moon_destruction_pending") return `Moon destruction${destructionChance} pending`;
+  if (moonChance.status === "moon_destroyed") return "Moon destroyed";
+  if (moonChance.status === "moon_survived") return "Moon survived";
   return "Existing moon skipped";
 }
 

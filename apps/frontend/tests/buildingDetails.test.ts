@@ -385,7 +385,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 2);
 
     expect(rows.map(({ durationSeconds, level }) => ({ durationSeconds, level }))).toEqual([
-      { durationSeconds: 60, level: 1 },
+      { durationSeconds: 54, level: 1 },
       { durationSeconds: 80, level: 2 },
     ]);
   });

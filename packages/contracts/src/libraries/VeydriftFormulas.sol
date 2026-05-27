@@ -9,6 +9,7 @@ library VeydriftFormulas {
     using SafeCast for uint256;
 
     error LevelTooHigh();
+    error InvalidUniverseSpeed();
     uint16 private constant BPS = 10_000;
 
     function planetMultipliers(int16 temperature, uint16 fields)
@@ -102,10 +103,12 @@ library VeydriftFormulas {
         uint256 naniteLevel,
         uint128 metalCost,
         uint128 crystalCost,
+        uint16 universeSpeed,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
+        if (universeSpeed == 0) revert InvalidUniverseSpeed();
         uint256 raw = ((uint256(metalCost) + uint256(crystalCost)) * 1 hours)
-            / (2500 * (roboticsLevel + 1) * (2 ** naniteLevel));
+            / (2500 * (roboticsLevel + 1) * (2 ** naniteLevel) * universeSpeed);
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
 
@@ -124,9 +127,11 @@ library VeydriftFormulas {
         uint128 crystalCost,
         uint128,
         uint32 quantity,
+        uint16 universeSpeed,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
-        uint256 denominator = 2500 * (shipyardLevel + 1) * (2 ** naniteLevel);
+        if (universeSpeed == 0) revert InvalidUniverseSpeed();
+        uint256 denominator = 2500 * (shipyardLevel + 1) * (2 ** naniteLevel) * universeSpeed;
         uint256 numerator = (uint256(metalCost) + uint256(crystalCost)) * quantity * 1 hours;
         uint256 raw = (numerator + denominator - 1) / denominator;
         return raw < minQueueSeconds ? minQueueSeconds : raw;
@@ -137,10 +142,12 @@ library VeydriftFormulas {
         uint128 metalCost,
         uint128 crystalCost,
         uint128,
+        uint16 universeSpeed,
         uint32 minQueueSeconds
     ) public pure returns (uint256) {
+        if (universeSpeed == 0) revert InvalidUniverseSpeed();
         uint256 raw = ((uint256(metalCost) + uint256(crystalCost)) * 1 hours)
-            / (1000 * (labLevel + 1));
+            / (1000 * (labLevel + 1) * universeSpeed);
         return raw < minQueueSeconds ? minQueueSeconds : raw;
     }
 
