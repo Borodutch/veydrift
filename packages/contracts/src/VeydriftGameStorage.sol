@@ -497,6 +497,16 @@ abstract contract VeydriftGameStorage {
         uint128 lootCrystal,
         uint128 lootDeuterium
     );
+    event CombatRoundResolved(
+        uint256 indexed missionId,
+        uint8 indexed round,
+        uint256 attackerUnits,
+        uint256 defenderUnits,
+        uint128 attackerLossMetal,
+        uint128 attackerLossCrystal,
+        uint128 defenderLossMetal,
+        uint128 defenderLossCrystal
+    );
     event CombatLosses(
         uint256 indexed missionId,
         uint128 attackerMetal,
