@@ -187,12 +187,24 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _settleResources(originPlanetId);
         uint256 travelDistance =
             _planetDistanceToCoordinates(originPlanetId, galaxy, system, position);
-        uint128 fuelCost = _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(1, travelDistance));
+        (, uint256 fuelConsumption, uint256 speed) = VeydriftCatalog.shipMovementStats(
+            Ship.ColonyShip,
+            _technologyLevels[msg.sender][Technology.CombustionDrive],
+            _technologyLevels[msg.sender][Technology.ImpulseDrive],
+            _technologyLevels[msg.sender][Technology.HyperspaceDrive]
+        );
+        uint128 fuelCost =
+            _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(fuelConsumption, travelDistance));
         _spend(originPlanetId, Resources({metal: 0, crystal: 0, deuterium: fuelCost}));
         _shipCounts[originPlanetId][Ship.ColonyShip] -= 1;
 
         uint64 departureAt = _currentTimestamp();
-        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(travelDistance);
+        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
+            travelDistance,
+            speed,
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            FLEET_UNIVERSE_SPEED
+        );
         uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
@@ -300,14 +312,16 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         uint256 galaxyDistance = origin.galaxy > galaxy
             ? uint256(origin.galaxy - galaxy)
             : uint256(galaxy - origin.galaxy);
+        if (galaxyDistance != 0) return galaxyDistance * 20_000;
         uint256 systemDistance = origin.system > system
             ? uint256(origin.system - system)
             : uint256(system - origin.system);
+        if (systemDistance != 0) return 2_700 + systemDistance * 95;
         uint256 positionDistance = origin.position > position
             ? uint256(origin.position - position)
             : uint256(position - origin.position);
-        return galaxyDistance * uint256(MAX_SYSTEM) * uint256(MAX_POSITION) + systemDistance
-            * uint256(MAX_POSITION) + positionDistance;
+        if (positionDistance != 0) return 1_000 + positionDistance * 5;
+        return 0;
     }
 
     function _encodeColonyTarget(uint16 galaxy, uint16 system, uint8 position)
