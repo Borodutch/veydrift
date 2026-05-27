@@ -14,6 +14,11 @@ import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol
 contract VeydriftColonizationModule is VeydriftResourceReserves {
     using SafeCast for uint256;
 
+    uint256 private constant COLONIZATION_COORDINATE_FLAG = 1 << 255;
+    uint256 private constant COLONIZATION_GALAXY_SHIFT = 24;
+    uint256 private constant COLONIZATION_SYSTEM_SHIFT = 8;
+    uint256 private constant COLONIZATION_COORDINATE_MASK = 0xffff;
+    uint256 private constant COLONIZATION_POSITION_MASK = 0xff;
     constructor() VeydriftResourceReserves(address(0)) {}
 
     function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
@@ -109,7 +114,14 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     {
         _validateColonyCreation(originPlanetId);
         (uint16 galaxy, uint16 system, uint8 position) = _nextColonyCoordinates(msg.sender, salt);
-        return _launchColonyMission(originPlanetId, galaxy, system, position);
+        return _launchColonyMission(
+            originPlanetId,
+            galaxy,
+            system,
+            position,
+            Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        );
     }
 
     function createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
@@ -117,7 +129,74 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         returns (uint256)
     {
         _validateColonyCreation(originPlanetId);
-        return _launchColonyMission(originPlanetId, galaxy, system, position);
+        return _launchColonyMission(
+            originPlanetId,
+            galaxy,
+            system,
+            position,
+            Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        );
+    }
+
+    function launchFleetMission(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        FleetMissionType missionType,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint256 randomnessRequestId
+    ) external returns (uint256 missionId) {
+        missionId = _launchColonizeFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            missionType,
+            ships,
+            cargo,
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            randomnessRequestId
+        );
+    }
+
+    function launchFleetMission(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        FleetMissionType missionType,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint16 speedPercent,
+        uint256 randomnessRequestId
+    ) external returns (uint256 missionId) {
+        missionId = _launchColonizeFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            missionType,
+            ships,
+            cargo,
+            speedPercent,
+            randomnessRequestId
+        );
+    }
+
+    function _launchColonizeFleetMission(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        FleetMissionType missionType,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint16 speedPercent,
+        uint256 randomnessRequestId
+    ) private returns (uint256 missionId) {
+        if (missionType != FleetMissionType.Colonize) {
+            revert InvalidMissionType(missionType);
+        }
+        if (randomnessRequestId != 0) revert InvalidId();
+        _validateColonyCreation(originPlanetId);
+        if (ships.colonyShip != 1 || _missionShipTotal(ships) != 1) revert InvalidQuantity();
+
+        (uint16 galaxy, uint16 system, uint8 position) = _decodeColonyTarget(targetPlanetId);
+        missionId =
+            _launchColonyMission(originPlanetId, galaxy, system, position, cargo, speedPercent);
     }
 
     function resolveFleetMission(uint256 missionId) external {
@@ -179,7 +258,9 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         uint256 originPlanetId,
         uint16 galaxy,
         uint16 system,
-        uint8 position
+        uint8 position,
+        Resources memory cargo,
+        uint16 speedPercent
     ) private returns (uint256 missionId) {
         bytes32 coordinates = _coordinateKey(galaxy, system, position);
         if (occupiedCoordinates[coordinates]) revert CoordinatesOccupied();
@@ -187,23 +268,36 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _settleResources(originPlanetId);
         uint256 travelDistance =
             _planetDistanceToCoordinates(originPlanetId, galaxy, system, position);
-        (, uint256 fuelConsumption, uint256 speed) = VeydriftCatalog.shipMovementStats(
+        (uint256 capacity, uint256 fuelConsumption, uint256 speed) = VeydriftCatalog.shipMovementStats(
             Ship.ColonyShip,
             _technologyLevels[msg.sender][Technology.CombustionDrive],
             _technologyLevels[msg.sender][Technology.ImpulseDrive],
             _technologyLevels[msg.sender][Technology.HyperspaceDrive]
         );
-        uint128 fuelCost =
-            _toUint128(VeydriftAntiRaidPrimitives.missionFuelCost(fuelConsumption, travelDistance));
-        _spend(originPlanetId, Resources({metal: 0, crystal: 0, deuterium: fuelCost}));
+        uint128 fuelCost = _toUint128(
+            VeydriftAntiRaidPrimitives.missionFuelCost(
+                fuelConsumption, travelDistance, speedPercent
+            )
+        );
+        uint256 committedCapacity =
+            uint256(cargo.metal) + uint256(cargo.crystal) + uint256(cargo.deuterium) + fuelCost;
+        if (committedCapacity > capacity) {
+            revert CargoCapacityExceeded(capacity, committedCapacity);
+        }
+        _spend(
+            originPlanetId,
+            Resources({
+                metal: cargo.metal,
+                crystal: cargo.crystal,
+                deuterium: _toUint128(uint256(cargo.deuterium) + fuelCost)
+            })
+        );
+        _increaseInternalResources(cargo);
         _shipCounts[originPlanetId][Ship.ColonyShip] -= 1;
 
         uint64 departureAt = _currentTimestamp();
         uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
-            travelDistance,
-            speed,
-            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
-            FLEET_UNIVERSE_SPEED
+            travelDistance, speed, speedPercent, FLEET_UNIVERSE_SPEED
         );
         uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
@@ -222,7 +316,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             arrivalAt: arrivalAt,
             returnAt: returnAt,
             fuelCost: fuelCost,
-            cargo: Resources({metal: 0, crystal: 0, deuterium: 0}),
+            cargo: cargo,
             ships: ships,
             randomnessRequestId: 0
         });
@@ -236,7 +330,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             returnAt,
             0
         );
-        emit FleetMissionCargo(missionId, 0, 0, 0, fuelCost);
+        emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
         emit FleetMissionShips(missionId, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
@@ -330,7 +424,8 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         returns (uint256)
     {
         _coordinateKey(galaxy, system, position);
-        return (uint256(galaxy) << 24) | (uint256(system) << 8) | uint256(position);
+        return COLONIZATION_COORDINATE_FLAG | (uint256(galaxy) << COLONIZATION_GALAXY_SHIFT)
+            | (uint256(system) << COLONIZATION_SYSTEM_SHIFT) | uint256(position);
     }
 
     function _decodeColonyTarget(uint256 target)
@@ -338,10 +433,18 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         view
         returns (uint16 galaxy, uint16 system, uint8 position)
     {
-        galaxy = (target >> 24).toUint16();
-        system = ((target >> 8) & 0xffff).toUint16();
-        position = (target & 0xff).toUint8();
+        if ((target & COLONIZATION_COORDINATE_FLAG) == 0) revert InvalidCoordinates();
+        galaxy = ((target >> COLONIZATION_GALAXY_SHIFT) & COLONIZATION_COORDINATE_MASK).toUint16();
+        system = ((target >> COLONIZATION_SYSTEM_SHIFT) & COLONIZATION_COORDINATE_MASK).toUint16();
+        position = (target & COLONIZATION_POSITION_MASK).toUint8();
         _coordinateKey(galaxy, system, position);
+    }
+
+    function _missionShipTotal(MissionShips memory ships) private pure returns (uint256) {
+        return uint256(ships.smallCargo) + ships.lightFighter + ships.recycler + ships.colonyShip
+            + ships.largeCargo + ships.heavyFighter + ships.cruiser + ships.battleship
+            + ships.bomber + ships.destroyer + ships.deathstar + ships.battlecruiser + ships.reaper
+            + ships.pathfinder;
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {

@@ -219,14 +219,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (shipTotal == 0) revert InvalidQuantity();
     }
 
-    function createColonyAtNextSlot(uint256, uint256) external returns (uint256) {
-        _delegateToColonizationModule();
-    }
-
-    function createColony(uint256, uint16, uint16, uint8) external returns (uint256) {
-        _delegateToColonizationModule();
-    }
-
     function renamePlanet(uint256, string calldata) external {
         _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
@@ -246,6 +238,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint256
     ) external returns (uint256) {
         _touchPlayer(msg.sender);
+        uint256 missionType;
+        assembly ("memory-safe") {
+            missionType := calldataload(0x44)
+        }
+        if (missionType == uint8(FleetMissionType.Colonize)) {
+            _delegateToColonizationModule();
+        }
         _delegateToPlayModule();
     }
 
@@ -259,6 +258,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint256
     ) external returns (uint256) {
         _touchPlayer(msg.sender);
+        uint256 missionType;
+        assembly ("memory-safe") {
+            missionType := calldataload(0x44)
+        }
+        if (missionType == uint8(FleetMissionType.Colonize)) {
+            _delegateToColonizationModule();
+        }
         _delegateToPlayModule();
     }
 

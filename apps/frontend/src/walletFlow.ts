@@ -454,6 +454,8 @@ const GAME_SELECTORS = {
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2"
 } as const;
+const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
+const COLONIZE_MISSION_TYPE = 2;
 const MOON_SELECTORS = {
   finishMoonBuildingUpgrade: "0x713b9e66",
   jumpGateJump: "0x36aaf8f8",
@@ -590,6 +592,23 @@ export function encodeLaunchFleetMissionCall({
     speedPercent,
     randomnessRequestId,
   ]);
+}
+
+export function encodeColonizationTargetId(galaxy: number, system: number, position: number): string {
+  if (!Number.isInteger(galaxy) || galaxy < 1 || galaxy > 9) {
+    throw new Error("Enter a valid galaxy.");
+  }
+  if (!Number.isInteger(system) || system < 1 || system > 499) {
+    throw new Error("Enter a valid system.");
+  }
+  if (!Number.isInteger(position) || position < 1 || position > 15) {
+    throw new Error("Enter a valid position.");
+  }
+
+  return (COLONIZATION_COORDINATE_FLAG
+    | (BigInt(galaxy) << 24n)
+    | (BigInt(system) << 8n)
+    | BigInt(position)).toString();
 }
 
 export function encodeJoinAttackMissionCall({
@@ -1577,7 +1596,8 @@ export async function sendCreateColonyTransaction(
   originPlanetId: string,
   galaxy: number,
   system: number,
-  position: number
+  position: number,
+  speedPercent = 100
 ): Promise<string> {
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -1585,7 +1605,28 @@ export async function sendCreateColonyTransaction(
       {
         from: account,
         to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.createColony, [originPlanetId, galaxy, system, position])
+        data: encodeLaunchFleetMissionCall({
+          originPlanetId,
+          targetPlanetId: encodeColonizationTargetId(galaxy, system, position),
+          missionType: COLONIZE_MISSION_TYPE,
+          ships: {
+            smallCargo: 0,
+            lightFighter: 0,
+            recycler: 0,
+            colonyShip: 1,
+            largeCargo: 0,
+            heavyFighter: 0,
+            cruiser: 0,
+            battleship: 0,
+            bomber: 0,
+            destroyer: 0,
+            deathstar: 0,
+            battlecruiser: 0,
+            reaper: 0,
+            pathfinder: 0,
+          },
+          speedPercent,
+        })
       }
     ]
   });

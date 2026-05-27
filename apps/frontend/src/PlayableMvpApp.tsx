@@ -1684,6 +1684,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         coords.galaxy,
         coords.system,
         coords.position,
+        speedPercent,
       ));
       return;
     }

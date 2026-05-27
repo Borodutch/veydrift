@@ -6,6 +6,7 @@ import {
   encodeQuantity,
   encodeAddressUintCall,
   encodeAddressCall,
+  encodeColonizationTargetId,
   encodeGameCall,
   encodeJoinAttackMissionCall,
   encodeLaunchInterplanetaryMissileAttackCall,
@@ -136,6 +137,28 @@ describe("walletFlow", () => {
       targetPlanetId: 9,
       ships,
     });
+    const colonyData = encodeLaunchFleetMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: encodeColonizationTargetId(2, 44, 10),
+      missionType: 2,
+      ships: {
+        smallCargo: 0,
+        lightFighter: 0,
+        recycler: 0,
+        colonyShip: 1,
+        largeCargo: 0,
+        heavyFighter: 0,
+        cruiser: 0,
+        battleship: 0,
+        bomber: 0,
+        destroyer: 0,
+        deathstar: 0,
+        battlecruiser: 0,
+        reaper: 0,
+        pathfinder: 0,
+      },
+      speedPercent: 40,
+    });
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
@@ -148,7 +171,7 @@ describe("walletFlow", () => {
       missionType: 3,
       ships,
     })).resolves.toBe("0xgalaxy1");
-    await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10)).resolves.toBe("0xgalaxy2");
+    await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10, 40)).resolves.toBe("0xgalaxy2");
     await expect(sendJoinAttackMissionTransaction(provider, account, contract, {
       originPlanetId: 7,
       attackMissionId: 12,
@@ -193,7 +216,7 @@ describe("walletFlow", () => {
         params: [{
           from: account,
           to: contract,
-          data: encodeGameCall("0x71358ab8", [7, 2, 44, 10]),
+          data: colonyData,
         }],
       },
       {
