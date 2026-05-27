@@ -21,6 +21,13 @@ interface IVeydriftCounterplayAllianceSystem {
     ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport);
 }
 
+interface IVeydriftAttackProtectionAllianceSystem {
+    function attackProtectionFlags(address attacker, address defender)
+        external
+        view
+        returns (uint256);
+}
+
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
     using SafeCast for uint256;
@@ -685,14 +692,23 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         view
         returns (AttackBlockReason)
     {
-        if (attacker == defender || _isAttackProtectionExempt(attacker, defender)) {
+        if (_isAttackProtectionExempt(attacker, defender)) {
             return AttackBlockReason.None;
         }
-        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(attacksInWindow, false)) {
+        uint256 allianceFlags;
+        // Unconfigured alliance systems fall back to plain anti-raid rules with no diplomacy exceptions.
+        address allianceSystem = _allianceSystem;
+        if (allianceSystem != address(0)) {
+            allianceFlags = IVeydriftAttackProtectionAllianceSystem(allianceSystem)
+                .attackProtectionFlags(attacker, defender);
+        }
+        if (allianceFlags & 1 != 0) return AttackBlockReason.ScoreProtection;
+        bool atWar = allianceFlags & 2 != 0;
+        if (VeydriftAntiRaidPrimitives.isBashingLimitReached(attacksInWindow, atWar)) {
             return AttackBlockReason.BashingLimit;
         }
         if (VeydriftAntiRaidPrimitives.isScoreProtected(
-                _totalUserScore(attacker), _totalUserScore(defender), false
+                _totalUserScore(attacker), _totalUserScore(defender), atWar
             )) {
             return AttackBlockReason.ScoreProtection;
         }
