@@ -416,6 +416,7 @@ class MockChainReader implements ChainReader {
       researchAvailable: true,
       resources: planet.resources,
       researchLabLevel: 1,
+      researchNetworkLabLevels: [],
       technologyLevels: {
         "0": 1
       },

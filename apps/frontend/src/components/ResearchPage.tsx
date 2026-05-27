@@ -6,6 +6,7 @@ import {
   canAfford,
   researchCatalog,
   researchDurationEstimate,
+  researchLabRequirementFor,
   researchRequirementsFor,
   unmetResearchRequirement,
 } from "../playableMvp";
@@ -443,7 +444,13 @@ function researchActionStatus({
   const active = state.researchQueue?.key === key;
   const queueOccupied = Boolean(state.researchQueue) && !active;
   const labMissing = state.buildings.researchLab === 0;
-  const durationSeconds = !labMissing && cost ? researchDurationEstimate(state.buildings, cost) : undefined;
+  const durationSeconds = !labMissing && cost
+    ? researchDurationEstimate(state.buildings, cost, {
+        networkLevel: state.research.intergalacticResearchNetwork,
+        requiredLabLevel: researchLabRequirementFor(key),
+        researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
+      })
+    : undefined;
 
   const reason = actionPending
     ? "Waiting for wallet confirmation"
