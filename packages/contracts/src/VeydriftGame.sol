@@ -15,21 +15,23 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _gameplayModule;
     address private immutable _planetManagementModule;
     address private immutable _attackProtectionModule;
+    address private immutable _colonizationModule;
 
     constructor(
         address admin,
         address gameplayModule,
         address planetManagementModule,
-        address attackProtectionModule
+        address attackProtectionModule,
+        address colonizationModule
     ) VeydriftResourceReserves(admin) {
-        if (gameplayModule == address(0)) {
-            revert UnsupportedGameplayModule();
-        }
-        if (planetManagementModule == address(0)) revert UnsupportedGameplayModule();
-        if (attackProtectionModule == address(0)) revert UnsupportedGameplayModule();
+        if (
+            gameplayModule == address(0) || planetManagementModule == address(0)
+                || attackProtectionModule == address(0) || colonizationModule == address(0)
+        ) revert UnsupportedGameplayModule();
         _gameplayModule = gameplayModule;
         _planetManagementModule = planetManagementModule;
         _attackProtectionModule = attackProtectionModule;
+        _colonizationModule = colonizationModule;
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -243,13 +245,11 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function createColonyAtNextSlot(uint256, uint256) external returns (uint256) {
-        _touchPlayer(msg.sender);
-        _delegateToPlanetManagementModule();
+        _delegateToColonizationModule();
     }
 
     function createColony(uint256, uint16, uint16, uint8) external returns (uint256) {
-        _touchPlayer(msg.sender);
-        _delegateToPlanetManagementModule();
+        _delegateToColonizationModule();
     }
 
     function renamePlanet(uint256, string calldata) external {
@@ -287,8 +287,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlayModule();
     }
 
-    function resolveFleetMission(uint256) external {
-        _touchPlayer(msg.sender);
+    function resolveFleetMission(uint256 missionId) external {
+        if (_fleetMissions[missionId].missionType == FleetMissionType.Colonize) {
+            _delegateToColonizationModule();
+        }
         _delegateToPlayModule();
     }
 
@@ -937,6 +939,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToAttackProtectionModule() private {
         (bool ok, bytes memory result) = _attackProtectionModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToColonizationModule() private {
+        (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

@@ -1664,6 +1664,16 @@ describe("Veydrift backend", () => {
       rank: 1,
       wallet: player,
       homePlanetId: planet.planetId,
+      homePlanet: {
+        planetId: planet.planetId,
+        name: "Eos",
+        coordinates: {
+          galaxy: 2,
+          system: 44,
+          position: 9
+        },
+        archetype: "temperate-ocean"
+      },
       planetCount: 1,
       score: {
         total: "15",

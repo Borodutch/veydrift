@@ -6,6 +6,7 @@ import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAlli
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -62,11 +63,13 @@ contract VeydriftAllianceSystemTest is Test {
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
+        VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         game = new VeydriftGame(
             admin,
             address(gameplayModule),
             address(planetManagementModule),
-            address(attackProtectionModule)
+            address(attackProtectionModule),
+            address(colonizationModule)
         );
         RandomnessEngine randomness = new RandomnessEngine(admin, fulfiller);
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));

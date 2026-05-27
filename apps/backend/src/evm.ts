@@ -907,7 +907,11 @@ export class VeydriftGameReader implements ChainReader {
     return summaries
       .filter((mission) =>
         mission.needsResolution
-          && (mission.missionType === "Attack" || mission.missionType === "Harvest")
+          && (
+            mission.missionType === "Attack"
+              || mission.missionType === "Harvest"
+              || mission.missionType === "Colonize"
+          )
       )
       .map(({ arrivalAt, missionId, missionType, originPlanetId, targetPlanetId }) => ({
         arrivalAt,

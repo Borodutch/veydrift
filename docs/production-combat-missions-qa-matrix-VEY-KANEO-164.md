@@ -56,8 +56,9 @@ After VEY-163 and VEY-165 are deployed to `test.veydrift.com`, run with controll
 Base Sepolia wallets and record non-secret wallet labels plus transaction hashes:
 
 1. Attack flow: launch attack, wait for due arrival, resolve, complete return.
-2. Defended attack: open/coordinate ACS defend or intercept, resolve hostile mission,
-   complete returning fleets.
+2. Defended attack: use Mission Control or the Overview inbound attack row to
+   coordinate ACS defend or intercept by hostile mission id, resolve the hostile
+   mission, and complete returning fleets.
 3. Transport/save: transport or deploy resources before hostile arrival, verify
    source debit and target credit.
 4. Recycler harvest: create or find debris, launch recycler, verify debris decreases

@@ -10,6 +10,7 @@ import {Deploy} from "../script/Deploy.s.sol";
 import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
@@ -190,11 +191,13 @@ contract VeydriftResourceTokenTest is Test {
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
+        VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftGame existingGame = new VeydriftGame(
             deployer,
             address(gameplayModule),
             address(planetManagementModule),
-            address(attackProtectionModule)
+            address(attackProtectionModule),
+            address(colonizationModule)
         );
         vm.setEnv("VEYDRIFT_GAME_CONTRACT_ADDRESS", vm.toString(address(existingGame)));
 

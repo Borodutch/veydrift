@@ -11,7 +11,7 @@ export type GalaxyActionKind =
   | "intercept"
   | "missileAttack";
 
-export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize">;
+export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize" | "missileAttack">;
 
 export type MissionShipKey =
   | "smallCargo"
@@ -211,20 +211,6 @@ export function galaxyActionsForSlot({
       },
     }),
     {
-      enabled: false,
-      kind: "acsDefend",
-      label: "ACS Defend",
-      mode: "future",
-      reason: "Alliance defense is not implemented yet.",
-    },
-    {
-      enabled: false,
-      kind: "intercept",
-      label: "Intercept",
-      mode: "future",
-      reason: "Alliance intercept is not implemented yet.",
-    },
-    {
       ...enabledOrDisabled({
         blocker: missileBlocker,
         enabled: {
@@ -259,8 +245,6 @@ export function missionTypeId(mission: GalaxyMissionKind): number {
       return 5;
     case "intercept":
       return 6;
-    case "missileAttack":
-      return 7;
   }
 }
 
