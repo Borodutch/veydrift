@@ -4,7 +4,7 @@ import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
-import { OverviewPage } from "./components/OverviewPage";
+import { OverviewPage, type PlanetRenameActionState } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
 import { AlliancePage } from "./components/AlliancePage";
@@ -22,9 +22,12 @@ import {
 
 export { infrastructureActionNoticeFor } from "./buildingActionNotice";
 import {
+  formatPlanetType,
   mergePlanetWithSettlement,
   planetFromSettlementPlanet,
+  planetImageForType,
   planetsFromSystemResponse,
+  planetTypeFromTemperature,
 } from "./data/mockUniverse";
 import {
   buildingContractIds,
@@ -41,7 +44,7 @@ import {
   type ResearchKey,
   type ShipKey,
 } from "./playableMvp";
-import { allianceContractAddress, gameContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
+import { allianceContractAddress, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   buildingQueueItemForDisplay,
   buildingCosts,
@@ -97,12 +100,16 @@ import {
   sendJoinAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
+  sendFinishMoonBuildingUpgradeTransaction,
+  sendJumpGateJumpTransaction,
+  sendMoonScanTransaction,
   sendRecallFleetMissionTransaction,
   sendResolveFleetMissionTransaction,
   sendDepositResourceTransaction,
   sendRenamePlanetTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendStartBuildingUpgradeTransaction,
+  sendStartMoonBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceJoinRequestTransaction,
@@ -150,7 +157,9 @@ type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
 type RiftActionState = ShipyardActionState;
 export type PlanetActionState = ShipyardActionState;
+type PlanetManagementActionState = PlanetActionState;
 type MissionActionState = ShipyardActionState;
+type MoonActionState = ShipyardActionState;
 
 export function displayHomeCoordinates(
   homePlanet: Coordinates | undefined,
@@ -375,8 +384,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [riftError, setRiftError] = useState<string | undefined>();
   const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
-  const [planetAction, setPlanetAction] = useState<PlanetActionState>({ status: "idle" });
+  const [planetManagementAction, setPlanetManagementAction] = useState<PlanetManagementActionState>({ status: "idle" });
+  const [planetRenameAction, setPlanetRenameAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
+  const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -462,6 +473,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [runtimeConfig]);
   const allianceContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? allianceContractAddress(runtimeConfig.config) : undefined;
+  }, [runtimeConfig]);
+  const moonContract = useMemo(() => {
+    return runtimeConfig.status === "ready" ? moonContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
 
   const isBuildingReadyToFinish = useMemo(() => {
@@ -722,7 +736,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     if (!apiBaseUrl) {
-      setHomePlanetIdentity(settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
+      setHomePlanetIdentity(namedSettlementPlanet(settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined, settlementPlanet?.name));
       return;
     }
 
@@ -739,14 +753,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         const systemPlanet = planetsFromSystemResponse(payload)
           .find((item) => item.position === homeCoords.position);
         const basePlanet = systemPlanet ?? (settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
-        setHomePlanetIdentity(basePlanet && settlementPlanet
+        const mergedPlanet = basePlanet && settlementPlanet
           ? mergePlanetWithSettlement(basePlanet, settlementPlanet)
-          : basePlanet);
+          : basePlanet;
+        setHomePlanetIdentity(namedSettlementPlanet(mergedPlanet, settlementPlanet?.name));
       })
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
-          setHomePlanetIdentity(settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
+          setHomePlanetIdentity(namedSettlementPlanet(
+            settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined,
+            settlementPlanet?.name,
+          ));
         }
       });
 
@@ -1245,6 +1263,27 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
 
+  const runMoonTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+    setMoonAction({ status: "pending", label });
+
+    try {
+      const txHash = await send();
+      setMoonAction({ status: "pending", label: `${label}: waiting for confirmation ${txHash.slice(0, 10)}...` });
+      if (provider) {
+        await waitForReceipt(provider, txHash);
+      }
+      setMoonAction({ status: "success", label: `${label} confirmed.` });
+      await refreshInfrastructureState();
+      void refreshOnChainState();
+    } catch (error) {
+      console.error(error);
+      setMoonAction({
+        status: "error",
+        label: error instanceof Error ? error.message : `${label} failed.`,
+      });
+    }
+  }, [provider, refreshInfrastructureState, refreshOnChainState]);
+
   const handleCollectResources = useCallback(() => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       return;
@@ -1572,55 +1611,55 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const handleSelectManagedPlanet = useCallback((planetId: string) => {
     setSelectedPlanetId(planetId);
-    setPlanetAction({ status: "idle" });
+    setPlanetManagementAction({ status: "idle" });
+    setPlanetRenameAction({ status: "idle" });
   }, []);
 
-  const handleRenamePlanet = useCallback(() => {
+  const handleRenamePlanet = useCallback((name: string) => {
     if (!provider || !account || !gameContract || !activePlanetId) {
-      setPlanetAction({ status: "error", label: "Wallet, game contract, or planet is unavailable." });
+      setPlanetRenameAction({ status: "error", label: "Wallet, game contract, or planet is unavailable." });
       return;
     }
-    const current = selectedManagedPlanet?.name ?? `Planet ${selectedManagedPlanet?.coordinates ?? activePlanetId}`;
-    const name = window.prompt("Planet name", current)?.trim();
-    if (!name) return;
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
 
-    setPlanetAction({ status: "pending", label: "Waiting for wallet confirmation" });
-    void sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, name)
+    setPlanetRenameAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    void sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, trimmedName)
       .then(async (txHash) => {
-        setPlanetAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
+        setPlanetRenameAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
         await waitForReceipt(provider, txHash);
         await refreshOnChainState();
-        setPlanetAction({ status: "success", label: "Planet renamed." });
+        setPlanetRenameAction({ status: "success", label: "Planet renamed." });
       })
       .catch((error) => {
         console.error(error);
-        setPlanetAction({
+        setPlanetRenameAction({
           status: "error",
           label: error instanceof Error ? error.message : "Rename transaction failed.",
         });
       });
-  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, selectedManagedPlanet]);
+  }, [account, activePlanetId, gameContract, provider, refreshOnChainState]);
 
   const handleAbandonPlanet = useCallback(() => {
     if (!provider || !account || !gameContract || !activePlanetId || selectedManagedPlanet?.isHomePlanet) {
-      setPlanetAction({ status: "error", label: "Only non-home colonies can be abandoned." });
+      setPlanetManagementAction({ status: "error", label: "Only non-home colonies can be abandoned." });
       return;
     }
     const label = selectedManagedPlanet?.name ?? `Planet ${selectedManagedPlanet?.coordinates ?? activePlanetId}`;
     if (!window.confirm(`Abandon ${label}? This requires an empty colony with no active queues or fleet missions.`)) return;
 
-    setPlanetAction({ status: "pending", label: "Waiting for wallet confirmation" });
+    setPlanetManagementAction({ status: "pending", label: "Waiting for wallet confirmation" });
     void sendAbandonPlanetTransaction(provider, account, gameContract, activePlanetId)
       .then(async (txHash) => {
-        setPlanetAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
+        setPlanetManagementAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
         await waitForReceipt(provider, txHash);
         setSelectedPlanetId(undefined);
         await refreshOnChainState();
-        setPlanetAction({ status: "success", label: "Colony abandoned." });
+        setPlanetManagementAction({ status: "success", label: "Colony abandoned." });
       })
       .catch((error) => {
         console.error(error);
-        setPlanetAction({
+        setPlanetManagementAction({
           status: "error",
           label: error instanceof Error ? error.message : "Abandon transaction failed.",
         });
@@ -1636,7 +1675,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     if (action.mode === "colonize") {
-      void runGalaxyTransaction("Colony launch", () => sendCreateColonyTransaction(
+      void runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
         gameContract,
@@ -1709,6 +1748,71 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       },
     ));
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
+
+  const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
+    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runMoonTransaction(`Start ${label}`, () => sendStartMoonBuildingUpgradeTransaction(
+      provider,
+      account,
+      moonContract,
+      moonState.homePlanetId ?? "",
+      buildingId,
+    ));
+  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
+
+  const handleFinishMoonBuilding = useCallback(() => {
+    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runMoonTransaction("Finish moon building", () => sendFinishMoonBuildingUpgradeTransaction(
+      provider,
+      account,
+      moonContract,
+      moonState.homePlanetId ?? "",
+    ));
+  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
+
+  const handleMoonScan = useCallback((galaxy: number, system: number) => {
+    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runMoonTransaction(`Scan ${galaxy}:${system}`, () => sendMoonScanTransaction(
+      provider,
+      account,
+      moonContract,
+      moonState.homePlanetId ?? "",
+      galaxy,
+      system,
+    ));
+  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
+
+  const handleJumpGate = useCallback((destinationPlanetId: string, ships: Partial<MissionShips>) => {
+    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
+      return;
+    }
+
+    const manifest = {
+      ...emptyMissionShips(),
+      ...ships,
+    };
+    void runMoonTransaction("Jump Gate transfer", () => sendJumpGateJumpTransaction(
+      provider,
+      account,
+      moonContract,
+      moonState.homePlanetId ?? "",
+      destinationPlanetId,
+      manifest,
+    ));
+  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
 
   const runMissionTransaction = useCallback((label: string, request: () => Promise<string>) => {
     if (!provider || !account || !gameContract) {
@@ -1850,12 +1954,24 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     />
   );
 
-  const planetSwitcher = walletPlanets.length > 0 ? (
-    <PlanetSwitcher
-      action={planetAction}
+  const mobilePlanetSelector = walletPlanets.length > 0 ? (
+    <PlanetSelector
+      action={planetManagementAction}
       canTransact={Boolean(provider && account && gameContract)}
+      layout="mobile"
       onAbandon={handleAbandonPlanet}
-      onRename={handleRenamePlanet}
+      onSelect={handleSelectManagedPlanet}
+      planets={walletPlanets}
+      selectedPlanetId={activePlanetId}
+    />
+  ) : null;
+
+  const planetSidebar = walletPlanets.length > 0 ? (
+    <PlanetSelector
+      action={planetManagementAction}
+      canTransact={Boolean(provider && account && gameContract)}
+      layout="sidebar"
+      onAbandon={handleAbandonPlanet}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
       selectedPlanetId={activePlanetId}
@@ -1927,10 +2043,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (page === "moon") {
       return (
         <MoonPage
+          action={moonAction}
+          canTransact={Boolean(provider && account && moonContract)}
           error={moonError}
           loading={moonLoading}
           moonState={moonState}
+          onFinishBuilding={handleFinishMoonBuilding}
+          onJumpGate={handleJumpGate}
           onRefresh={refreshInfrastructureState}
+          onScan={handleMoonScan}
+          onStartBuilding={handleStartMoonBuilding}
         />
       );
     }
@@ -2063,6 +2185,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onJoinAttack={handleJoinAttack}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onNavigate={(target) => handleNavigate(target)}
+        onRenamePlanet={handleRenamePlanet}
         onResolveMission={handleResolveMission}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
@@ -2073,6 +2196,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         settledState={settledState}
         shipProgress={shipProgress}
         state={state}
+        canRenamePlanet={Boolean(provider && account && gameContract && activePlanetId)}
+        planetRenameAction={planetRenameAction}
         usedFields={selectedManagedPlanet?.fieldsUsed}
       />
     );
@@ -2082,7 +2207,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     <div className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#05070f] text-slate-100">
       {topBar}
 
-      <div className="relative z-10 mx-auto flex max-w-7xl flex-col md:h-[calc(100dvh-52px)] md:flex-row md:overflow-hidden">
+      <div className="relative z-10 mx-auto flex max-w-[96rem] flex-col md:h-[calc(100dvh-52px)] md:flex-row md:overflow-hidden">
         <NavBar
           account={account}
           active={page}
@@ -2091,27 +2216,29 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         />
 
         <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
-          {planetSwitcher}
+          {mobilePlanetSelector}
           {content}
         </main>
+
+        {planetSidebar}
       </div>
     </div>
   );
 }
 
-function PlanetSwitcher({
+function PlanetSelector({
   action,
   canTransact,
+  layout,
   onAbandon,
-  onRename,
   onSelect,
   planets,
   selectedPlanetId,
 }: {
-  action: PlanetActionState;
+  action: PlanetManagementActionState;
   canTransact: boolean;
+  layout: "mobile" | "sidebar";
   onAbandon: () => void;
-  onRename: () => void;
   onSelect: (planetId: string) => void;
   planets: ManagedPlanetResponse[];
   selectedPlanetId: string | undefined;
@@ -2119,67 +2246,210 @@ function PlanetSwitcher({
   const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
   if (!selectedPlanet) return null;
   const abandonUnavailableLabel = abandonPlanetUnavailableLabel(selectedPlanet, canTransact, action);
-  const showAbandonButton = shouldShowAbandonPlanetButton(selectedPlanet, canTransact, action);
 
-  return (
-    <section className="mb-3 rounded border border-white/10 bg-[#101827]/80 p-2.5 shadow-lg shadow-black/10">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+  const actionLabel = action.status !== "idle" ? (
+    <span className={`truncate text-xs ${action.status === "error" ? "text-amber-200" : "text-slate-300"}`}>
+      {action.label}
+    </span>
+  ) : null;
+
+  if (layout === "mobile") {
+    return (
+      <section className="mb-3 rounded border border-white/10 bg-[#101827]/90 p-3 shadow-lg shadow-black/10 lg:hidden">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[0.68rem] font-bold uppercase tracking-normal text-cyan-200">Planet</p>
+            <p className="truncate text-sm font-semibold text-white">{planetDisplayName(selectedPlanet)}</p>
+          </div>
+          <span className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-[0.68rem] font-semibold text-slate-300">
+            {planetRoleLabel(selectedPlanet)}
+          </span>
+        </div>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
           <select
-            className="h-9 min-w-0 rounded border border-white/10 bg-black/30 px-2 text-sm text-white outline-none focus:border-cyan-300/60"
+            aria-label="Select planet"
+            className="h-10 min-w-0 flex-1 rounded border border-white/10 bg-black/40 px-3 text-sm text-white outline-none focus:border-cyan-300/60"
             onChange={(event) => onSelect(event.currentTarget.value)}
             value={selectedPlanet.planetId}
           >
             {planets.map((planet) => (
               <option key={planet.planetId} value={planet.planetId}>
-                {planet.name ?? `Planet ${planet.coordinates}`} · {planet.coordinates}
+                {planetDisplayName(planet)} · {planet.coordinates}
               </option>
             ))}
           </select>
-          <span className="text-xs text-slate-400">
-            {selectedPlanet.fieldsUsed}/{selectedPlanet.fieldsCapacity} fields
-          </span>
-          {selectedPlanet.moon?.exists && (
-            <span className="rounded border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 text-xs text-cyan-200">
-              Moon
-            </span>
-          )}
-          <span className="text-xs text-slate-500">
-            M{selectedPlanet.keyLevels.metalMine} C{selectedPlanet.keyLevels.crystalMine} D{selectedPlanet.keyLevels.deuteriumSynthesizer}
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            {actionLabel}
+            {action.status === "idle" && abandonUnavailableLabel && (
+              <span className="max-w-48 truncate text-xs text-slate-400">
+                {abandonUnavailableLabel}
+              </span>
+            )}
+            <PlanetAbandonButton
+              action={action}
+              canTransact={canTransact}
+              onAbandon={onAbandon}
+              selectedPlanet={selectedPlanet}
+            />
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {action.status !== "idle" && (
-            <span className={`max-w-48 truncate text-xs ${action.status === "error" ? "text-amber-200" : "text-slate-300"}`}>
-              {action.label}
-            </span>
-          )}
-          {action.status === "idle" && abandonUnavailableLabel && (
-            <span className="max-w-48 truncate text-xs text-slate-400">
-              {abandonUnavailableLabel}
-            </span>
-          )}
-          <button
-            className="h-8 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-            disabled={!canTransact || action.status === "pending"}
-            onClick={onRename}
-            type="button"
-          >
-            Rename
-          </button>
-          {showAbandonButton && (
+      </section>
+    );
+  }
+
+  return (
+    <aside className="hidden w-72 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
+      <div className="mb-4">
+        <p className="text-[0.68rem] font-bold uppercase tracking-normal text-cyan-200">Planet Selector</p>
+        <h2 className="mt-1 text-base font-semibold text-white">Owned planets</h2>
+        <p className="mt-1 text-xs leading-5 text-slate-400">
+          {planets.length} active {planets.length === 1 ? "world" : "worlds"}
+        </p>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        {planets.map((planet) => {
+          const selected = planet.planetId === selectedPlanet.planetId;
+          const image = planetImage(planet);
+          const queueLabel = planetQueueLabel(planet);
+          return (
             <button
-              className="h-8 rounded border border-red-300/20 bg-red-300/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-300/20"
-              onClick={onAbandon}
+              aria-current={selected ? "true" : undefined}
+              className={`group grid w-full grid-cols-[3.5rem_minmax(0,1fr)] gap-3 rounded border p-2.5 text-left transition ${
+                selected
+                  ? "border-cyan-300/60 bg-cyan-300/12 shadow-lg shadow-cyan-950/30"
+                  : "border-white/10 bg-white/[0.045] hover:border-cyan-200/40 hover:bg-white/[0.075]"
+              }`}
+              key={planet.planetId}
+              onClick={() => onSelect(planet.planetId)}
               type="button"
             >
-              Abandon
+              <span className="relative h-14 w-14 overflow-hidden rounded border border-white/10 bg-black/30">
+                <img
+                  alt=""
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                  src={image}
+                />
+                <span className={`absolute inset-0 ring-1 ring-inset ${selected ? "ring-cyan-200/50" : "ring-white/10"}`} />
+              </span>
+
+              <span className="min-w-0">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-semibold text-white">{planetDisplayName(planet)}</span>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[0.62rem] font-bold uppercase tracking-normal ${
+                    planet.isHomePlanet ? "bg-amber-300/15 text-amber-100" : "bg-cyan-300/12 text-cyan-100"
+                  }`}>
+                    {planetRoleLabel(planet)}
+                  </span>
+                </span>
+                <span className="mt-1 block truncate text-xs text-slate-400">{planet.coordinates}</span>
+                <span className="mt-1 block truncate text-[0.7rem] text-slate-500">{planetTypeLabel(planet)}</span>
+                <span className="mt-2 flex flex-wrap gap-1.5">
+                  <PlanetBadge label={`${planet.fieldsUsed}/${planet.fieldsCapacity} fields`} />
+                  {planet.moon?.exists ? <PlanetBadge label="Moon" /> : null}
+                  {queueLabel ? <PlanetBadge label={queueLabel} /> : null}
+                </span>
+              </span>
             </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 rounded border border-white/10 bg-black/20 p-3">
+        <div className="flex items-start gap-3">
+          <img
+            alt=""
+            className="h-12 w-12 rounded border border-white/10 object-cover"
+            src={planetImage(selectedPlanet)}
+          />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-white">{planetDisplayName(selectedPlanet)}</p>
+            <p className="mt-1 truncate text-xs text-slate-400">{selectedPlanet.coordinates}</p>
+            <p className="mt-1 truncate text-[0.7rem] text-slate-500">
+              M{selectedPlanet.keyLevels.metalMine} C{selectedPlanet.keyLevels.crystalMine} D{selectedPlanet.keyLevels.deuteriumSynthesizer}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-2">
+          {actionLabel ? (
+            <div className="min-w-0 flex-1">{actionLabel}</div>
+          ) : abandonUnavailableLabel ? (
+            <span className="min-w-0 flex-1 truncate text-xs text-slate-400">{abandonUnavailableLabel}</span>
+          ) : (
+            <span />
           )}
+          <PlanetAbandonButton
+            action={action}
+            canTransact={canTransact}
+            onAbandon={onAbandon}
+            selectedPlanet={selectedPlanet}
+          />
         </div>
       </div>
-    </section>
+    </aside>
   );
+}
+
+function PlanetAbandonButton({
+  action,
+  canTransact,
+  onAbandon,
+  selectedPlanet,
+}: {
+  action: PlanetManagementActionState;
+  canTransact: boolean;
+  onAbandon: () => void;
+  selectedPlanet: ManagedPlanetResponse;
+}) {
+  const showAbandonButton = shouldShowAbandonPlanetButton(selectedPlanet, canTransact, action);
+  if (!showAbandonButton) return null;
+
+  return (
+    <button
+      className="h-8 rounded border border-red-300/20 bg-red-300/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-300/20"
+      onClick={onAbandon}
+      type="button"
+    >
+      Abandon
+    </button>
+  );
+}
+
+function PlanetBadge({ label }: { label: string }) {
+  return (
+    <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[0.64rem] font-medium text-slate-300">
+      {label}
+    </span>
+  );
+}
+
+function planetDisplayName(planet: ManagedPlanetResponse): string {
+  return planet.name?.trim() || `Planet ${planet.coordinates}`;
+}
+
+function planetImage(planet: ManagedPlanetResponse): string {
+  return planetImageForType(planetTypeFromTemperature(planet.temperature));
+}
+
+function planetTypeLabel(planet: ManagedPlanetResponse): string {
+  return formatPlanetType(planetTypeFromTemperature(planet.temperature));
+}
+
+function planetRoleLabel(planet: ManagedPlanetResponse): string {
+  return planet.isHomePlanet ? "Home" : "Colony";
+}
+
+function planetQueueLabel(planet: ManagedPlanetResponse): string | null {
+  if (planet.queues.building?.active) return "Building";
+  if (planet.queues.ship?.active) return "Ships";
+  if (planet.queues.defense?.active) return "Defense";
+  return null;
+}
+
+function namedSettlementPlanet(planet: Planet | undefined, name: string | null | undefined): Planet | undefined {
+  const trimmedName = name?.trim();
+  return planet && trimmedName ? { ...planet, name: trimmedName } : planet;
 }
 
 function HydratingPlanetState({

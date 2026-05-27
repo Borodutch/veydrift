@@ -30,6 +30,7 @@ import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 const SMALL_CARGO_CAPACITY = 5_000;
 const SMALL_CARGO_SHIP_ID = 0;
+export const PUBLIC_INTEL_SUMMARY_LABEL = "Public intel";
 
 type MissionResources = {
   metal?: number;
@@ -288,6 +289,8 @@ export function GalaxyView({
                 <span>{moonChanceCount} moon chance</span>
               </>
             ) : null}
+            <span className="text-slate-700">/</span>
+            <span>{PUBLIC_INTEL_SUMMARY_LABEL}</span>
           </div>
           {occupancySource ? (
             <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
@@ -723,9 +726,15 @@ export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string 
   const chance = typeof moonChance.chanceBps === "number"
     ? ` ${(moonChance.chanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
     : "";
+  const destructionChance = typeof moonChance.moonDestructionChanceBps === "number"
+    ? ` ${(moonChance.moonDestructionChanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
+    : "";
   if (moonChance.status === "pending") return `Moon chance${chance} pending`;
   if (moonChance.status === "created") return `Moon created${moonChance.moonDiameterKm ? ` ${moonChance.moonDiameterKm.toLocaleString()} km` : ""}`;
   if (moonChance.status === "not_created") return `Moon chance${chance} missed`;
+  if (moonChance.status === "moon_destruction_pending") return `Moon destruction${destructionChance} pending`;
+  if (moonChance.status === "moon_destroyed") return "Moon destroyed";
+  if (moonChance.status === "moon_survived") return "Moon survived";
   return "Existing moon skipped";
 }
 

@@ -14,14 +14,22 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _gameplayModule;
     address private immutable _planetManagementModule;
+    address private immutable _colonizationModule;
 
-    constructor(address admin, address gameplayModule, address planetManagementModule)
-        VeydriftResourceReserves(admin)
-    {
-        if (gameplayModule == address(0)) revert UnsupportedGameplayModule();
+    constructor(
+        address admin,
+        address gameplayModule,
+        address planetManagementModule,
+        address colonizationModule
+    ) VeydriftResourceReserves(admin) {
+        if (gameplayModule == address(0)) {
+            revert UnsupportedGameplayModule();
+        }
         if (planetManagementModule == address(0)) revert UnsupportedGameplayModule();
+        if (colonizationModule == address(0)) revert UnsupportedGameplayModule();
         _gameplayModule = gameplayModule;
         _planetManagementModule = planetManagementModule;
+        _colonizationModule = colonizationModule;
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -171,6 +179,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         _moonSystem = nextMoonSystem;
     }
 
+    function setRandomnessEngine(address nextRandomnessEngine) external onlyOwner {
+        address oldRandomnessEngine = _randomnessEngine;
+        _randomnessEngine = nextRandomnessEngine;
+        emit RandomnessEngineUpdated(oldRandomnessEngine, nextRandomnessEngine);
+    }
+
     function setSpaceDockSystem(address) external {
         _delegateToPlayModule();
     }
@@ -185,12 +199,45 @@ contract VeydriftGame is VeydriftResourceReserves {
         _spend(planetId, cost);
     }
 
+    function moveMoonGateShips(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        address owner_,
+        MissionShips calldata ships
+    ) external {
+        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
+        if (
+            _planets[originPlanetId].owner != owner_
+                || _planets[destinationPlanetId].owner != owner_
+        ) {
+            revert NotPlanetOwner();
+        }
+        uint256 shipTotal;
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            if (ship != Ship.SolarSatellite) {
+                uint32 quantity = _missionShipQuantity(ships, ship);
+                if (quantity != 0) {
+                    uint32 available = _shipCounts[originPlanetId][ship];
+                    if (available < quantity) revert InsufficientShips(ship, available, quantity);
+                    shipTotal += quantity;
+                    _shipCounts[originPlanetId][ship] = available - quantity;
+                    _shipCounts[destinationPlanetId][ship] += quantity;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        if (shipTotal == 0) revert InvalidQuantity();
+    }
+
     function createColonyAtNextSlot(uint256, uint256) external returns (uint256) {
-        _delegateToPlanetManagementModule();
+        _delegateToColonizationModule();
     }
 
     function createColony(uint256, uint16, uint16, uint8) external returns (uint256) {
-        _delegateToPlanetManagementModule();
+        _delegateToColonizationModule();
     }
 
     function renamePlanet(uint256, string calldata) external {
@@ -223,7 +270,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlayModule();
     }
 
-    function resolveFleetMission(uint256) external {
+    function resolveFleetMission(uint256 missionId) external {
+        if (_fleetMissions[missionId].missionType == FleetMissionType.Colonize) {
+            _delegateToColonizationModule();
+        }
         _delegateToPlayModule();
     }
 
@@ -232,7 +282,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
-        _delegateToPlayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function attackProtectionStatus(address, uint256) external returns (AttackBlockReason) {
@@ -290,6 +340,10 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function debrisField(uint256) external returns (uint128, uint128) {
         _delegateToPlanetManagementModule();
+    }
+
+    function randomnessEngine() external view returns (address) {
+        return _randomnessEngine;
     }
 
     function activeBuildingConstruction(uint256 planetId)
@@ -519,6 +573,28 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
+    function _missionShipQuantity(MissionShips calldata ships, Ship ship)
+        private
+        pure
+        returns (uint32)
+    {
+        if (ship == Ship.SmallCargo) return ships.smallCargo;
+        if (ship == Ship.LightFighter) return ships.lightFighter;
+        if (ship == Ship.Recycler) return ships.recycler;
+        if (ship == Ship.ColonyShip) return ships.colonyShip;
+        if (ship == Ship.LargeCargo) return ships.largeCargo;
+        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
+        if (ship == Ship.Cruiser) return ships.cruiser;
+        if (ship == Ship.Battleship) return ships.battleship;
+        if (ship == Ship.Bomber) return ships.bomber;
+        if (ship == Ship.Destroyer) return ships.destroyer;
+        if (ship == Ship.Deathstar) return ships.deathstar;
+        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
+        if (ship == Ship.Reaper) return ships.reaper;
+        if (ship == Ship.Pathfinder) return ships.pathfinder;
+        return 0;
+    }
+
     function _firstPlanetFrom(uint256 planetId) private view returns (FirstPlanet memory) {
         Planet storage planetRef = _planets[planetId];
         return FirstPlanet({
@@ -654,6 +730,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             _buildingLevels[planetId][Building.NaniteFactory],
             cost.metal,
             cost.crystal,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
     }
@@ -670,6 +747,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             unitCost.crystal,
             unitCost.deuterium,
             quantity,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
     }
@@ -823,6 +901,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToPlanetManagementModule() private {
         (bool ok, bytes memory result) = _planetManagementModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToColonizationModule() private {
+        (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

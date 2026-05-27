@@ -8,6 +8,7 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
+import {IVeydriftAttackRandomnessEngine} from "./interfaces/IVeydriftAttackRandomnessEngine.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftCounterplayAllianceSystem {
@@ -135,8 +136,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 originPlanetId,
         uint256 targetPlanetId,
         FleetMissionType missionType,
-        MissionShips calldata ships,
-        Resources calldata cargo,
+        MissionShips memory ships,
+        Resources memory cargo,
         uint256 randomnessRequestId
     ) private returns (uint256 missionId) {
         _requirePlanetOwner(originPlanetId);
@@ -161,6 +162,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (
             missionType == FleetMissionType.MissileAttack
                 || missionType == FleetMissionType.AcsAttack
+                || missionType == FleetMissionType.Colonize
         ) {
             revert InvalidMissionType(missionType);
         }
@@ -188,10 +190,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 capacity = _missionCargoCapacity(ships);
         if (cargoTotal > capacity) revert CargoCapacityExceeded(capacity, cargoTotal);
 
-        if (
-            missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy
-                || missionType == FleetMissionType.Colonize
-        ) {
+        if (missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy) {
             _requirePlanetOwner(targetPlanetId);
         }
 
@@ -239,6 +238,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
+        if (missionType == FleetMissionType.Attack) {
+            randomnessRequestId = _requestAttackBattleRandomness(missionId);
+        }
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
@@ -278,8 +280,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 originPlanetId,
         uint256 attackMissionId,
         uint256 expectedTargetPlanetId,
-        MissionShips calldata ships,
-        Resources calldata cargo
+        MissionShips memory ships,
+        Resources memory cargo
     ) private returns (uint256 missionId) {
         _requirePlanetOwner(originPlanetId);
         FleetMission storage attack = _fleetMissions[attackMissionId];
@@ -368,7 +370,14 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _emitFleetMissionShips(missionId, ships);
     }
 
-    function _emitFleetMissionShips(uint256 missionId, MissionShips calldata ships) private {
+    function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
+        address randomnessEngine = _randomnessEngine;
+        if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
+        return IVeydriftAttackRandomnessEngine(randomnessEngine)
+            .requestRandomness(_attackBattlePurposeHash(missionId));
+    }
+
+    function _emitFleetMissionShips(uint256 missionId, MissionShips memory ships) private {
         emit FleetMissionShips(
             missionId,
             ships.smallCargo,
@@ -579,6 +588,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             unitCost.crystal,
             unitCost.deuterium,
             quantity,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
     }

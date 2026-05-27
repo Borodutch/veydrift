@@ -9,6 +9,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {Deploy} from "../script/Deploy.s.sol";
 import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
@@ -188,8 +189,13 @@ contract VeydriftResourceTokenTest is Test {
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
-        VeydriftGame existingGame =
-            new VeydriftGame(deployer, address(gameplayModule), address(planetManagementModule));
+        VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
+        VeydriftGame existingGame = new VeydriftGame(
+            deployer,
+            address(gameplayModule),
+            address(planetManagementModule),
+            address(colonizationModule)
+        );
         vm.setEnv("VEYDRIFT_GAME_CONTRACT_ADDRESS", vm.toString(address(existingGame)));
 
         (address metalToken, address crystalToken, address deuteriumToken) =

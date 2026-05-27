@@ -150,11 +150,15 @@ variables after deployment.
 Veydrift gameplay state is public onchain state. There is no privacy, zk,
 hidden-state backend, committed-root, or espionage roadmap for gameplay. See
 `docs/public-onchain-state-architecture.md` for the canonical state model and
-backend/indexer boundary.
+backend/indexer boundary, and
+`docs/espionage-hidden-intel-decision-VEY-KANEO-196.md` for the explicit
+classic-espionage exclusion decision.
 
 `packages/circuits` contains retired placeholder files only. It remains in the
 workspace so existing scripts keep passing until a cleanup task removes or
 repurposes it; it must not be used as product guidance for zk gameplay.
+`docs/ogame-parity-scope-VEY-KANEO-198.md` is the current scope record for
+Veydrift-only mechanics versus classic OGame parity work.
 
 ```sh
 cd packages/circuits
