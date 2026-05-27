@@ -34,6 +34,16 @@ describe("MissionControlPage", () => {
     }).map((action) => [action.kind, action.enabled])).toEqual([
       ["completeReturn", true],
     ]);
+
+    expect(missionLifecycleActions({
+      canTransact: true,
+      context: "incoming",
+      mission: mission({ arrivalAt: "1770000300", missionId: "4", missionType: "Attack", status: "Outbound" }),
+      now,
+    }).map((action) => [action.kind, action.enabled])).toEqual([
+      ["resolve", false],
+      ["counterplay", true],
+    ]);
   });
 
   test("renders fleet operations from visibility data with explicit espionage exclusion copy", () => {
