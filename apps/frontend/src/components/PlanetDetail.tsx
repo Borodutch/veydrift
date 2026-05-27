@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
-import { planetsFromSystemResponse } from "../data/mockUniverse";
+import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
@@ -15,6 +15,12 @@ interface Props {
   onBack: () => void;
   onNavigateSystem: (galaxy: number, system: number) => void;
 }
+
+type PlanetRecordRow = {
+  label: string;
+  value: string;
+  tone?: "default" | "accent" | "muted";
+};
 
 export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack, onNavigateSystem }: Props) {
   const trustedHomePlanet = useMemo(
@@ -154,13 +160,13 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <h2 className="text-xl font-semibold text-white">{planet.name}</h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
-              <span className="capitalize">{planet.type.replace(/-/g, " ")}</span>
+              <span>{formatPlanetType(planet.type)}</span>
               <span className="text-slate-700">|</span>
               <span>Position [{planet.galaxy}:{planet.system}:{planet.position}]</span>
               <span className="text-slate-700">|</span>
               <span>{planet.diameter.toLocaleString()} km</span>
               <span className="text-slate-700">|</span>
-              <span>{source === "api" ? "Indexed universe data" : "Loading current planet"}</span>
+              <span>{planetRecordStatusLabel(planet, source, isHome)}</span>
             </div>
           </div>
 
@@ -168,40 +174,9 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
             {/* Owner */}
             <div className="rounded-lg border border-white/10 bg-white/5 p-4">
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Owner
+                Public Commander
               </h3>
-              {isHome ? (
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-cyan-100">
-                    Home Planet
-                  </span>
-                  {planet.ownerId ? (
-                    <span className="font-mono text-xs text-slate-500">
-                      {shortAddress(planet.ownerId)}
-                    </span>
-                  ) : (
-                    <span className="text-xs leading-5 text-slate-600">
-                      This planet is settled by the connected wallet.
-                    </span>
-                  )}
-                </div>
-              ) : planet.ownerId ? (
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-white">
-                    Occupied
-                  </span>
-                  <span className="font-mono text-xs text-slate-500">
-                    {shortAddress(planet.ownerId)}
-                  </span>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <span className="text-sm text-slate-500">Unclaimed</span>
-                  <span className="text-xs leading-5 text-slate-600">
-                    Informational only. Planet claiming is not yet available.
-                  </span>
-                </div>
-              )}
+              <PublicRecordRows rows={publicCommanderRows(planet, isHome)} />
             </div>
 
             {/* Temperature */}
@@ -223,6 +198,14 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
                   }}
                 />
               </div>
+            </div>
+
+            {/* Public signals */}
+            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Public Signals
+              </h3>
+              <PublicRecordRows rows={publicSignalRows(planet)} columns />
             </div>
 
             {/* Resources */}
@@ -272,6 +255,106 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       </div>
     </div>
   );
+}
+
+export function planetRecordStatusLabel(
+  planet: Planet,
+  source: "api" | "error" | "loading",
+  isHome: boolean
+): string {
+  if (source === "loading") return "Refreshing public records";
+  if (source === "error") return "Last known public profile";
+  if (isHome) return "Your settled world";
+  if (planet.occupiedBy) return "Occupied public world";
+  return "Open public world";
+}
+
+export function publicCommanderRows(planet: Planet, isHome: boolean): PlanetRecordRow[] {
+  if (isHome) {
+    return [
+      { label: "Settlement", value: "Your home world", tone: "accent" },
+      ...(planet.ownerId ? [{ label: "Wallet", value: shortAddress(planet.ownerId) }] : []),
+      ...(planet.occupiedBy?.planetId ? [{ label: "Planet ID", value: `#${planet.occupiedBy.planetId}` }] : []),
+    ];
+  }
+
+  if (planet.occupiedBy) {
+    return [
+      { label: "Settlement", value: "Occupied", tone: "accent" },
+      { label: "Wallet", value: shortAddress(planet.occupiedBy.owner) },
+      { label: "Planet ID", value: `#${planet.occupiedBy.planetId}` },
+    ];
+  }
+
+  return [
+    { label: "Settlement", value: "Unclaimed", tone: "muted" },
+    { label: "Wallet", value: "No public owner yet", tone: "muted" },
+  ];
+}
+
+export function publicSignalRows(planet: Planet): PlanetRecordRow[] {
+  return [
+    { label: "Coordinates", value: `[${planet.galaxy}:${planet.system}:${planet.position}]` },
+    { label: "Type", value: formatPlanetType(planet.type) },
+    { label: "Fields", value: planet.fields.toLocaleString() },
+    { label: "Debris", value: debrisFieldLabel(planet), tone: planet.debrisField ? "accent" : "muted" },
+    { label: "Moon signal", value: moonSignalLabel(planet), tone: planet.moonChance || planet.hasMoon ? "accent" : "muted" },
+  ];
+}
+
+function debrisFieldLabel(planet: Planet): string {
+  if (!planet.debrisField) return "No debris field";
+  const metal = planet.debrisField.metal.toLocaleString();
+  const crystal = planet.debrisField.crystal.toLocaleString();
+  return `${metal} metal / ${crystal} crystal`;
+}
+
+function moonSignalLabel(planet: Planet): string {
+  if (planet.hasMoon) return planet.moonName ? `Moon: ${planet.moonName}` : "Moon present";
+  if (!planet.moonChance) return "No moon activity";
+
+  if (planet.moonChance.status === "created") {
+    return planet.moonChance.moonDiameterKm
+      ? `Moon created, ${planet.moonChance.moonDiameterKm.toLocaleString()} km`
+      : "Moon created";
+  }
+
+  if (planet.moonChance.status === "pending") {
+    return planet.moonChance.chanceBps === undefined
+      ? "Moon chance pending"
+      : `Moon chance ${(planet.moonChance.chanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}% pending`;
+  }
+
+  if (planet.moonChance.status === "not_created") return "Moon chance missed";
+  if (planet.moonChance.status === "moon_destruction_pending") return "Moon destruction pending";
+  if (planet.moonChance.status === "moon_destroyed") return "Moon destroyed";
+  if (planet.moonChance.status === "moon_survived") return "Moon survived";
+  return "Existing moon preserved";
+}
+
+function PublicRecordRows({
+  columns = false,
+  rows,
+}: {
+  columns?: boolean;
+  rows: PlanetRecordRow[];
+}) {
+  return (
+    <dl className={`grid gap-2 ${columns ? "sm:grid-cols-2" : ""}`}>
+      {rows.map((row) => (
+        <div className="flex min-w-0 items-baseline justify-between gap-3" key={row.label}>
+          <dt className="text-xs text-slate-500">{row.label}</dt>
+          <dd className={`truncate text-right text-sm ${recordToneClass(row.tone)}`}>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function recordToneClass(tone: PlanetRecordRow["tone"]): string {
+  if (tone === "accent") return "text-cyan-100";
+  if (tone === "muted") return "text-slate-500";
+  return "text-slate-300";
 }
 
 function sameCoordinates(homeCoords: Coordinates | undefined, planet: Coordinates): boolean {

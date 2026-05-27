@@ -20,6 +20,11 @@ import {
   galaxyMissionFuelCost,
   galaxyMissionTravelSeconds
 } from "../src/components/GalaxyView";
+import {
+  planetRecordStatusLabel,
+  publicCommanderRows,
+  publicSignalRows
+} from "../src/components/PlanetDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
 
@@ -129,6 +134,54 @@ describe("tester universe display data", () => {
       "Preview system",
     ]);
     expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
+  });
+
+  test("planet detail public records replace indexed-universe jargon", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          archetype: "cold-tundra",
+          fields: 211,
+          galaxy: 2,
+          key: "2:44:8",
+          occupiedBy: {
+            owner: "0x2222222222222222222222222222222222222222",
+            planetId: "7",
+          },
+          position: 8,
+          system: 44,
+          temperature: -8,
+          debrisField: {
+            metal: "40000",
+            crystal: "15000",
+          },
+          moonChance: {
+            battleId: "42",
+            targetPlanetId: "7",
+            status: "pending",
+            chanceBps: 1500,
+          },
+        },
+      ],
+    });
+
+    expect(planetRecordStatusLabel(planet, "api", false)).toBe("Occupied public world");
+    expect(publicCommanderRows(planet, false).map((row) => `${row.label}: ${row.value}`)).toEqual([
+      "Settlement: Occupied",
+      "Wallet: 0x2222...2222",
+      "Planet ID: #7",
+    ]);
+    expect(publicSignalRows(planet).map((row) => `${row.label}: ${row.value}`)).toContain("Debris: 40,000 metal / 15,000 crystal");
+    expect(publicSignalRows(planet).map((row) => `${row.label}: ${row.value}`)).toContain("Moon signal: Moon chance 15% pending");
+
+    const copy = [
+      planetRecordStatusLabel(planet, "api", false),
+      ...publicCommanderRows(planet, false).map((row) => row.value),
+      ...publicSignalRows(planet).map((row) => row.value),
+    ].join(" ");
+    expect(copy).not.toMatch(/\b(indexed|indexer|backend|universe data|OGame|ogame)\b/i);
   });
 
   test("formats moon chance status for galaxy rows", () => {
