@@ -1,3 +1,6 @@
+import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ChainReader, DebrisFieldEvent, MoonChanceReportEvent, SettledPlanetEvent } from "./evm";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -11,11 +14,25 @@ export type IndexerSnapshot = {
   lastRebuiltAt: string | null;
 };
 
+export type SettlementIndexerOptions = {
+  database?: Database;
+  databasePath?: string;
+};
+
+type CountRow = {
+  count: number;
+};
+
+type MetadataRow = {
+  value: string;
+};
+
+type EventRow = {
+  event_json: string;
+};
+
 export class SettlementIndexer {
-  private readonly debrisFields = new Map<string, DebrisFieldEvent>();
-  private readonly moonChanceReports = new Map<string, MoonChanceReportEvent>();
-  private readonly planets = new Map<string, SettledPlanetEvent>();
-  private lastRebuiltAt: string | null = null;
+  private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
 
@@ -24,71 +41,140 @@ export class SettlementIndexer {
       ChainReader,
       "listDebrisFieldEvents" | "listMoonChanceReportEvents" | "listSettledPlanetEvents"
     > & Pick<Partial<ChainReader>, "listCurrentPlanets">,
-    private readonly fromBlock: bigint
-  ) {}
+    private readonly fromBlock: bigint,
+    options: SettlementIndexerOptions = {}
+  ) {
+    this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:");
+    this.migrate();
+  }
 
   snapshot(): IndexerSnapshot {
     return {
-      indexedDebrisFields: this.debrisFields.size,
-      indexedMoonChanceReports: this.moonChanceReports.size,
-      indexedPlanets: this.planets.size,
+      indexedDebrisFields: this.count("indexed_debris_fields"),
+      indexedMoonChanceReports: this.count("indexed_moon_chance_reports"),
+      indexedPlanets: this.count("indexed_planets"),
       fromBlock: this.fromBlock.toString(),
-      lastRebuiltAt: this.lastRebuiltAt
+      lastRebuiltAt: this.metadata("lastRebuiltAt")
     };
   }
 
   settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
-    return [...this.planets.values()].filter((planet) => planet.galaxy === galaxy && planet.system === system);
+    return this.rows<SettledPlanetEvent>(
+      "SELECT event_json FROM indexed_planets WHERE galaxy = ? AND system = ? ORDER BY position ASC",
+      galaxy,
+      system
+    );
   }
 
   debrisFieldsInSystem(galaxy: number, system: number): IndexedDebrisFieldEvent[] {
-    return [...this.debrisFields.values()].flatMap((field) => {
-      const planet = this.planets.get(field.planetId);
-      if (!planet || planet.galaxy !== galaxy || planet.system !== system) return [];
+    const rows = this.db.query(`
+      SELECT debris.event_json
+      FROM indexed_debris_fields debris
+      INNER JOIN indexed_planets planet ON planet.planet_id = debris.planet_id
+      WHERE planet.galaxy = ? AND planet.system = ?
+      ORDER BY planet.position ASC
+    `).all(galaxy, system) as EventRow[];
+
+    return rows.flatMap((row) => {
+      const field = parseEvent<DebrisFieldEvent>(row.event_json);
+      const planet = this.planet(field.planetId);
+      if (!planet) return [];
       return [{ ...field, galaxy: planet.galaxy, system: planet.system, position: planet.position }];
     });
   }
 
   moonChanceReportsInSystem(galaxy: number, system: number): IndexedMoonChanceReportEvent[] {
-    return [...this.moonChanceReports.values()].flatMap((report) => {
-      const planet = this.planets.get(report.targetPlanetId);
-      if (!planet || planet.galaxy !== galaxy || planet.system !== system) return [];
+    const rows = this.db.query(`
+      SELECT report.event_json
+      FROM indexed_moon_chance_reports report
+      INNER JOIN indexed_planets planet ON planet.planet_id = report.target_planet_id
+      WHERE planet.galaxy = ? AND planet.system = ?
+      ORDER BY planet.position ASC, report.block_number ASC
+    `).all(galaxy, system) as EventRow[];
+
+    return rows.flatMap((row) => {
+      const report = parseEvent<MoonChanceReportEvent>(row.event_json);
+      const planet = this.planet(report.targetPlanetId);
+      if (!planet) return [];
       return [{ ...report, galaxy: planet.galaxy, system: planet.system, position: planet.position }];
     });
   }
 
   settledPlanets(): SettledPlanetEvent[] {
-    return [...this.planets.values()];
+    return this.rows<SettledPlanetEvent>("SELECT event_json FROM indexed_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
   }
 
   settledPlanetsByOwner(): Map<string, SettledPlanetEvent[]> {
     const planetsByOwner = new Map<string, SettledPlanetEvent[]>();
-    for (const planet of this.planets.values()) {
+    for (const planet of this.settledPlanets()) {
       const owner = planet.owner.toLowerCase();
       planetsByOwner.set(owner, [...(planetsByOwner.get(owner) ?? []), planet]);
     }
     return planetsByOwner;
   }
 
+  planet(planetId: string): SettledPlanetEvent | null {
+    const row = this.db.query("SELECT event_json FROM indexed_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
+    return row ? parseEvent<SettledPlanetEvent>(row.event_json) : null;
+  }
+
+  walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
+    const planets = this.rows<SettledPlanetEvent>(
+      "SELECT event_json FROM indexed_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
+      wallet
+    );
+    const planet = planets.find((item) => item.eventName === "PlanetStarted") ?? planets[0] ?? null;
+
+    return {
+      wallet,
+      hasFirstPlanet: planet !== null,
+      homePlanetId: planet?.planetId ?? null,
+      planet,
+      contractKind: "game"
+    };
+  }
+
   applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
-    this.planets.set(event.planetId, event);
-    this.lastRebuiltAt = new Date().toISOString();
+    this.upsertPlanet(event);
+    this.touch();
     return this.snapshot();
   }
 
   applyDebrisEvent(event: DebrisFieldEvent): IndexerSnapshot {
     if (event.resources.metal === "0" && event.resources.crystal === "0") {
-      this.debrisFields.delete(event.planetId);
+      this.db.query("DELETE FROM indexed_debris_fields WHERE planet_id = ?").run(event.planetId);
     } else {
-      this.debrisFields.set(event.planetId, event);
+      this.db.query(`
+        INSERT INTO indexed_debris_fields (planet_id, block_number, event_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(planet_id) DO UPDATE SET
+          block_number = excluded.block_number,
+          event_json = excluded.event_json
+      `).run(event.planetId, event.blockNumber, JSON.stringify(event));
     }
-    this.lastRebuiltAt = new Date().toISOString();
+    this.touch();
     return this.snapshot();
   }
 
   applyMoonChanceEvent(event: MoonChanceReportEvent): IndexerSnapshot {
-    this.moonChanceReports.set(moonChanceReportKey(event), event);
-    this.lastRebuiltAt = new Date().toISOString();
+    this.db.query(`
+      INSERT INTO indexed_moon_chance_reports (report_key, target_planet_id, battle_id, outcome_id, block_number, event_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(report_key) DO UPDATE SET
+        target_planet_id = excluded.target_planet_id,
+        battle_id = excluded.battle_id,
+        outcome_id = excluded.outcome_id,
+        block_number = excluded.block_number,
+        event_json = excluded.event_json
+    `).run(
+      moonChanceReportKey(event),
+      event.targetPlanetId,
+      event.battleId,
+      event.outcomeId ?? null,
+      event.blockNumber,
+      JSON.stringify(event)
+    );
+    this.touch();
     return this.snapshot();
   }
 
@@ -123,19 +209,37 @@ export class SettlementIndexer {
     const events = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
     const debrisEvents = await this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest");
     const moonChanceEvents = await this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest");
-    this.planets.clear();
-    this.debrisFields.clear();
-    this.moonChanceReports.clear();
-    for (const event of events) {
-      this.planets.set(event.planetId, event);
-    }
-    for (const event of debrisEvents) {
-      this.applyDebrisEvent(event);
-    }
-    for (const event of moonChanceEvents) {
-      this.applyMoonChanceEvent(event);
-    }
-    this.lastRebuiltAt = new Date().toISOString();
+    const rebuild = this.db.transaction(() => {
+      this.db.query("DELETE FROM indexed_planets").run();
+      this.db.query("DELETE FROM indexed_debris_fields").run();
+      this.db.query("DELETE FROM indexed_moon_chance_reports").run();
+      for (const event of events) {
+        this.upsertPlanet(event);
+      }
+      for (const event of debrisEvents) {
+        if (event.resources.metal !== "0" || event.resources.crystal !== "0") {
+          this.db.query(`
+            INSERT INTO indexed_debris_fields (planet_id, block_number, event_json)
+            VALUES (?, ?, ?)
+          `).run(event.planetId, event.blockNumber, JSON.stringify(event));
+        }
+      }
+      for (const event of moonChanceEvents) {
+        this.db.query(`
+          INSERT INTO indexed_moon_chance_reports (report_key, target_planet_id, battle_id, outcome_id, block_number, event_json)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          moonChanceReportKey(event),
+          event.targetPlanetId,
+          event.battleId,
+          event.outcomeId ?? null,
+          event.blockNumber,
+          JSON.stringify(event)
+        );
+      }
+      this.touch();
+    });
+    rebuild();
     return this.snapshot();
   }
 
@@ -143,15 +247,105 @@ export class SettlementIndexer {
     const events = this.chainReader.listCurrentPlanets
       ? await this.chainReader.listCurrentPlanets()
       : await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
-    this.planets.clear();
-    for (const event of events) {
-      this.planets.set(event.planetId, event);
-    }
-    this.lastRebuiltAt = new Date().toISOString();
+    const rebuild = this.db.transaction(() => {
+      this.db.query("DELETE FROM indexed_planets").run();
+      for (const event of events) {
+        this.upsertPlanet(event);
+      }
+      this.touch();
+    });
+    rebuild();
     return this.snapshot();
+  }
+
+  private migrate(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS indexer_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS indexed_planets (
+        planet_id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        galaxy INTEGER NOT NULL,
+        system INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_planets_owner_idx ON indexed_planets (owner);
+      CREATE INDEX IF NOT EXISTS indexed_planets_coordinates_idx ON indexed_planets (galaxy, system, position);
+      CREATE TABLE IF NOT EXISTS indexed_debris_fields (
+        planet_id TEXT PRIMARY KEY,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS indexed_moon_chance_reports (
+        report_key TEXT PRIMARY KEY,
+        target_planet_id TEXT NOT NULL,
+        battle_id TEXT NOT NULL,
+        outcome_id TEXT,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_moon_chance_reports_target_idx
+        ON indexed_moon_chance_reports (target_planet_id);
+    `);
+  }
+
+  private upsertPlanet(event: SettledPlanetEvent): void {
+    this.db.query(`
+      INSERT INTO indexed_planets (planet_id, owner, galaxy, system, position, event_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(planet_id) DO UPDATE SET
+        owner = excluded.owner,
+        galaxy = excluded.galaxy,
+        system = excluded.system,
+        position = excluded.position,
+        event_json = excluded.event_json
+    `).run(
+      event.planetId,
+      event.owner.toLowerCase(),
+      event.galaxy,
+      event.system,
+      event.position,
+      JSON.stringify(event)
+    );
+  }
+
+  private touch(): void {
+    this.db.query(`
+      INSERT INTO indexer_metadata (key, value)
+      VALUES ('lastRebuiltAt', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(new Date().toISOString());
+  }
+
+  private count(table: "indexed_debris_fields" | "indexed_moon_chance_reports" | "indexed_planets"): number {
+    const row = this.db.query(`SELECT COUNT(*) AS count FROM ${table}`).get() as CountRow;
+    return row.count;
+  }
+
+  private metadata(key: string): string | null {
+    const row = this.db.query("SELECT value FROM indexer_metadata WHERE key = ?").get(key) as MetadataRow | null;
+    return row?.value ?? null;
+  }
+
+  private rows<T>(sql: string, ...params: SQLQueryBindings[]): T[] {
+    return (this.db.query(sql).all(...params) as EventRow[]).map((row) => parseEvent<T>(row.event_json));
   }
 }
 
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
   return event.outcomeId ? `outcome:${event.outcomeId}` : `battle:${event.battleId}:${event.targetPlanetId}`;
+}
+
+function openIndexerDatabase(databasePath: string): Database {
+  if (databasePath !== ":memory:") {
+    mkdirSync(dirname(databasePath), { recursive: true });
+  }
+  return new Database(databasePath);
+}
+
+function parseEvent<T>(value: string): T {
+  return JSON.parse(value) as T;
 }

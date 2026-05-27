@@ -28,6 +28,7 @@ import { createRequestHandler } from "./server";
 const configuredTestConfig: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
+  indexDbPath: ":memory:",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {

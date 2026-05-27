@@ -5,6 +5,7 @@ export type BackendConfig = {
   chainId: number;
   deploymentMode: DeploymentMode;
   gameContractAddress?: `0x${string}`;
+  indexDbPath: string;
   indexFromBlock: bigint;
   missionResolutionEnabled: boolean;
   missionResolverAddress?: `0x${string}`;
@@ -59,6 +60,7 @@ export type SafeConfigSummary = {
 
 const defaultChainId = 84532;
 const defaultDeploymentMode: DeploymentMode = "local";
+const defaultIndexDbPath = ".data/contract-state.sqlite";
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
 
@@ -137,6 +139,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       chainId,
       deploymentMode,
       ...(gameContractAddress ? { gameContractAddress } : {}),
+      indexDbPath: env.VEYDRIFT_INDEX_DB_PATH ?? defaultIndexDbPath,
       indexFromBlock,
       missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),

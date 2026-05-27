@@ -77,7 +77,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const chainReader = cacheReader ?? rawChainReader;
   const indexer =
     dependencies.indexer ??
-    (chainReader ? new SettlementIndexer(chainReader, loaded.config.indexFromBlock) : undefined);
+    (chainReader ? new SettlementIndexer(chainReader, loaded.config.indexFromBlock, {
+      databasePath: loaded.config.indexDbPath
+    }) : undefined);
   const chainSync =
     dependencies.chainSync ??
     (loaded.problems.length === 0 ? new ChainSyncService(loaded.config, indexer) : undefined);
@@ -170,6 +172,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
+        if (indexer) {
+          await ensurePlanetIndex(indexer);
+          return Response.json(indexer.walletSettlement(wallet), {
+            headers: corsHeaders
+          });
+        }
         return Response.json(await ready.getWalletSettlement(wallet), {
           headers: corsHeaders
         });
@@ -351,9 +359,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        if (indexer?.snapshot().indexedPlanets === 0) {
-          await indexer.rebuildPlanets();
-        }
+        if (indexer) await ensurePlanetIndex(indexer);
         const indexedPlanets = indexer?.settledPlanetsByOwner().get(wallet.toLowerCase()) ?? [];
         return Response.json(
           {
@@ -375,9 +381,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 250);
-        if (indexer?.snapshot().indexedPlanets === 0) {
-          await indexer.rebuildPlanets();
-        }
+        if (indexer) await ensurePlanetIndex(indexer);
         const planetsByOwner: Map<string, SettledPlanetEvent[]> = indexer?.settledPlanetsByOwner() ?? new Map();
         const entries = ready.getHighscoresForWallets
           ? await ready.getHighscoresForWallets(planetsByOwner)
@@ -404,6 +408,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       if (ready instanceof Response) return ready;
 
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
+      if (indexer) {
+        await ensurePlanetIndex(indexer);
+        return Response.json(indexer.planet(planetId.toString()), {
+          headers: corsHeaders
+        });
+      }
       return Response.json(await ready.getPlanet(planetId), {
         headers: corsHeaders
       });
@@ -596,6 +606,12 @@ async function highscoreEntriesForOwners(
     ));
   }
   return entries;
+}
+
+async function ensurePlanetIndex(indexer: SettlementIndexer): Promise<void> {
+  if (indexer.snapshot().indexedPlanets === 0) {
+    await indexer.rebuildPlanets();
+  }
 }
 
 function includeOccupiedPlanets(

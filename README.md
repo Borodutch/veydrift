@@ -83,6 +83,7 @@ VEYDRIFT_GAME_CONTRACT_ADDRESS=0x...
 VEYDRIFT_METAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
+VEYDRIFT_INDEX_DB_PATH=.data/contract-state.sqlite
 VEYDRIFT_INDEX_FROM_BLOCK=0
 ALCHEMY_BASE_SEPOLIA_API_KEY=...
 # Optional explicit websocket overrides; otherwise the Alchemy key derives the Base Sepolia WS URL.
@@ -108,9 +109,10 @@ contract.
 proxies deployed for the game.
 Health/debug responses only report safe configuration metadata and never echo
 RPC URLs or API keys. Ownership remains canonical onchain; the websocket chain
-sync keeps the in-memory event index warm, `GET /chain/events` streams backend
-chain-event notifications to the frontend, and `POST /index/rebuild` remains the
-manual HTTP fallback for rebuilding settlement events.
+sync keeps the SQLite-backed contract state index warm, `GET /chain/events`
+streams backend chain-event notifications to the frontend, and
+`POST /index/rebuild` remains the manual HTTP fallback for rebuilding settlement
+events.
 
 ### Frontend
 
