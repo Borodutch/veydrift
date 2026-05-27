@@ -5,12 +5,15 @@ import { TopBar } from "../src/components/TopBar";
 describe("TopBar", () => {
   test("keeps mobile resources and collect action in a compact row", () => {
     const topBar = renderTopBar();
-    const resourceRow = elementNodes(topBar).find((node) =>
-      typeof node.props?.className === "string" && node.props.className.includes("grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem]")
+    const resourceRow = elementNodes(topBar).find(
+      (node) =>
+        typeof node.props?.className === "string" &&
+        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem]")
     );
     const collectButton = buttonWithLabel(topBar, "Collect accrued resources: Metal +10 / Crystal +5");
 
     expect(resourceRow?.props?.className).toContain("sm:flex-wrap");
+    expect(resourceRow?.props?.className).toContain("gap-0.5");
     expect(collectButton?.props?.className).toContain("h-7 w-7");
     expect(collectButton?.props?.className).toContain("col-start-5");
     expect(collectButton?.props?.className).toContain("sm:w-auto");
@@ -30,6 +33,15 @@ describe("TopBar", () => {
     expect(text).toContain("Deuterium");
     expect(text).toContain("Energy");
     expect(text).toContain("Collect");
+  });
+
+  test("shows compact nonzero collectable deltas next to mobile resources", () => {
+    const topBar = renderTopBar();
+    const text = visibleText(topBar).replace(/\s+/g, "");
+
+    expect(text).toContain("(+10)");
+    expect(text).toContain("(+5)");
+    expect(text).not.toContain("(+0)");
   });
 });
 

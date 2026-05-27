@@ -50,7 +50,7 @@ export function TopBar({
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
       <div className="mx-auto flex min-h-10 max-w-7xl flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
-        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem] items-center gap-1 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
+        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
           {resourceStatus === "loading" ? (
             <span className="text-xs text-slate-400">Resources loading</span>
           ) : resourceStatus === "error" || !resources ? (
@@ -156,19 +156,24 @@ function ResourcePip({
   const wholeDelta = Math.floor(Math.max(0, delta ?? 0));
   return (
     <div
-      className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1.5 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
+      className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
       title={resourceTitle(label, value, rate, cap, wholeDelta)}
     >
-      <span className="inline-flex min-w-0 items-baseline gap-1 sm:gap-1.5">
-        <span className={`text-[11px] font-semibold leading-none sm:text-xs ${color}`}>
+      <span className="inline-flex min-w-0 items-baseline gap-0.5 sm:gap-1.5">
+        <span className={`text-[10px] font-semibold leading-none sm:text-xs ${color}`}>
           <span className="sm:hidden">{abbr}</span>
           <span className="hidden sm:inline">{label}</span>
         </span>
-        <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${pct >= 90 ? "text-amber-100" : "text-white"}`}>
+        <span className={`min-w-0 truncate text-[10px] leading-none sm:text-xs ${pct >= 90 ? "text-amber-100" : "text-white"}`}>
           <span className="sm:hidden">{formatCompact(value)}</span>
           <span className="hidden sm:inline">{format(value)}</span>
         </span>
-        {wholeDelta > 0 && <span className="hidden text-[10px] font-semibold leading-none text-lime-300 sm:inline">+{format(wholeDelta)}</span>}
+        {wholeDelta > 0 && (
+          <span className="text-[10px] font-semibold leading-none text-lime-300">
+            <span className="sm:hidden">(+{formatCompact(wholeDelta)})</span>
+            <span className="hidden sm:inline">+{format(wholeDelta)}</span>
+          </span>
+        )}
         {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
         {pct >= 90 && (
           <span className="hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>
@@ -194,17 +199,17 @@ function EnergyPip({
 
   return (
     <div
-      className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1.5 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
+      className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
       title={showShortageFactor
         ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%`
         : `${format(produced)} produced / ${format(required)} required`}
     >
-      <span className="inline-flex min-w-0 items-baseline gap-1 sm:gap-1.5">
-        <span className={`text-[11px] font-semibold leading-none sm:text-xs ${tone}`}>
+      <span className="inline-flex min-w-0 items-baseline gap-0.5 sm:gap-1.5">
+        <span className={`text-[10px] font-semibold leading-none sm:text-xs ${tone}`}>
           <span className="sm:hidden">E</span>
           <span className="hidden sm:inline">Energy</span>
         </span>
-        <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${current < 0 ? "text-red-200" : "text-white"}`}>
+        <span className={`min-w-0 truncate text-[10px] leading-none sm:text-xs ${current < 0 ? "text-red-200" : "text-white"}`}>
           <span className="sm:hidden">{formatCompact(current)}</span>
           <span className="hidden sm:inline">{format(current)}</span>
         </span>
