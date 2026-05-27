@@ -1928,6 +1928,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
+    setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
     setPage("planet");
   }, []);
@@ -2167,7 +2168,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     if (page === "rankings") {
       return (
-        <RankingsPage apiBaseUrl={apiBaseUrl} />
+        <RankingsPage apiBaseUrl={apiBaseUrl} onSelectPlanet={handleSelectPlanet} />
       );
     }
 
