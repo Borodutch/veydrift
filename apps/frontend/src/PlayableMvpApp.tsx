@@ -1691,7 +1691,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     const targetPlanetId = target?.occupiedBy?.planetId;
     if (!targetPlanetId) {
-      setGalaxyAction({ status: "error", label: "Target planet is not contract-indexed yet." });
+      setGalaxyAction({ status: "error", label: "Target planet has no public settlement record yet." });
       return;
     }
 
