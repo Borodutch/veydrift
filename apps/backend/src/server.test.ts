@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
   Address,
@@ -44,6 +45,7 @@ const configuredTestConfig: BackendConfig = {
 };
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
+const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const planet: PlanetState = {
   planetId: "7",
   owner: player,
@@ -630,8 +632,9 @@ describe("Veydrift backend", () => {
 
     await expect(response.json()).resolves.toEqual({
       chain: {
-        chainId: 84532,
+        alchemyWebhookConfigured: false,
         allianceContractConfigured: false,
+        chainId: 84532,
         deploymentMode: "local",
         hasRpcUrl: false,
         indexFromBlock: "0",
@@ -1603,6 +1606,71 @@ describe("Veydrift backend", () => {
     });
     expect(second).toEqual(first);
     expect(chainReader.rebuildCalls).toBe(1);
+  });
+
+  test("accepts signed Alchemy webhook logs and deduplicates retries", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const handler = createRequestHandler({
+      config: {
+        ...configuredTestConfig,
+        alchemyWebhookSigningKey: "webhook-secret"
+      },
+      chainReader,
+      indexer
+    });
+    const body = JSON.stringify({
+      event: {
+        data: {
+          block: {
+            logs: [
+              {
+                blockNumber: "0x7c",
+                transactionHash: "0xabc",
+                logIndex: "0x0",
+                topics: [
+                  planetStartedTopic,
+                  `0x${player.slice(2).padStart(64, "0")}`,
+                  `0x${(7n).toString(16).padStart(64, "0")}`
+                ],
+                data: abiWords(2n, 44n, 9n, 211n, 1n)
+              }
+            ]
+          }
+        }
+      }
+    });
+    const signature = createHmac("sha256", "webhook-secret").update(body).digest("hex");
+    const request = () => new Request("http://localhost/webhooks/alchemy", {
+      body,
+      headers: {
+        "content-type": "application/json",
+        "x-alchemy-signature": signature
+      },
+      method: "POST"
+    });
+
+    const first = await handler(request());
+    await expect(first.json()).resolves.toMatchObject({
+      receivedLogs: 1,
+      applied: 1,
+      duplicates: 0,
+      indexer: {
+        indexedEventLogs: 1,
+        indexedPlanets: 1,
+        latestIndexedBlock: "124"
+      }
+    });
+    const second = await handler(request());
+    await expect(second.json()).resolves.toMatchObject({
+      receivedLogs: 1,
+      applied: 0,
+      duplicates: 1,
+      indexer: {
+        indexedEventLogs: 1,
+        indexedPlanets: 1
+      }
+    });
   });
 
   test("warms highscore rankings with settled planets only", async () => {

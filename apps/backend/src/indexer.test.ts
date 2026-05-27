@@ -6,6 +6,7 @@ import type { Address, DebrisFieldEvent, MoonChanceReportEvent, SettledPlanetEve
 import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
+const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -108,4 +109,45 @@ describe("SettlementIndexer", () => {
       rmSync(dir, { force: true, recursive: true });
     }
   });
+
+  test("applies duplicate webhook logs only once", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const log = {
+      blockNumber: "0x7c",
+      transactionHash: "0xabc",
+      logIndex: "0x0",
+      topics: [
+        planetStartedTopic,
+        `0x${player.slice(2).padStart(64, "0")}`,
+        `0x${(7n).toString(16).padStart(64, "0")}`
+      ],
+      data: abiWords(2n, 44n, 9n, 211n, 1n)
+    };
+
+    expect(indexer.applyLog(log)).toMatchObject({
+      applied: true,
+      duplicate: false,
+      snapshot: {
+        indexedEventLogs: 1,
+        indexedPlanets: 1,
+        latestIndexedBlock: "124"
+      }
+    });
+    expect(indexer.applyLog(log)).toMatchObject({
+      applied: false,
+      duplicate: true,
+      snapshot: {
+        indexedEventLogs: 1,
+        indexedPlanets: 1
+      }
+    });
+  });
 });
+
+function abiWords(...values: bigint[]): string {
+  return `0x${values.map((value) => value.toString(16).padStart(64, "0")).join("")}`;
+}

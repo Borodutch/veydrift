@@ -1,17 +1,32 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChainReader, DebrisFieldEvent, MoonChanceReportEvent, SettledPlanetEvent } from "./evm";
+import {
+  decodeDebrisFieldLog,
+  decodeMoonChanceReportLog,
+  decodeSettledPlanetLog,
+  isDebrisFieldLog,
+  isMoonChanceReportLog,
+  isSettledPlanetLog,
+  type ChainReader,
+  type DebrisFieldEvent,
+  type MoonChanceReportEvent,
+  type RpcLog,
+  type SettledPlanetEvent
+} from "./evm";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 
 export type IndexerSnapshot = {
   indexedDebrisFields: number;
+  indexedEventLogs: number;
   indexedMoonChanceReports: number;
   indexedPlanets: number;
   fromBlock: string;
   lastRebuiltAt: string | null;
+  latestIndexedBlock: string | null;
+  reorgDetectedAt: string | null;
 };
 
 export type SettlementIndexerOptions = {
@@ -29,6 +44,19 @@ type MetadataRow = {
 
 type EventRow = {
   event_json: string;
+};
+
+export type IndexedRpcLog = RpcLog & {
+  logIndex?: string;
+  removed?: boolean;
+};
+
+export type ApplyLogResult = {
+  applied: boolean;
+  duplicate: boolean;
+  ignored: boolean;
+  removed: boolean;
+  snapshot: IndexerSnapshot;
 };
 
 export class SettlementIndexer {
@@ -51,10 +79,13 @@ export class SettlementIndexer {
   snapshot(): IndexerSnapshot {
     return {
       indexedDebrisFields: this.count("indexed_debris_fields"),
+      indexedEventLogs: this.count("indexed_event_logs"),
       indexedMoonChanceReports: this.count("indexed_moon_chance_reports"),
       indexedPlanets: this.count("indexed_planets"),
       fromBlock: this.fromBlock.toString(),
-      lastRebuiltAt: this.metadata("lastRebuiltAt")
+      lastRebuiltAt: this.metadata("lastRebuiltAt"),
+      latestIndexedBlock: this.metadata("latestIndexedBlock"),
+      reorgDetectedAt: this.metadata("reorgDetectedAt")
     };
   }
 
@@ -178,6 +209,41 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  applyLog(log: IndexedRpcLog): ApplyLogResult {
+    const eventId = indexedLogKey(log);
+    const existing = this.db.query("SELECT event_json FROM indexed_event_logs WHERE event_id = ?").get(eventId) as EventRow | null;
+    if (existing) {
+      return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+
+    this.recordLog(eventId, log);
+    this.recordLatestBlock(log.blockNumber);
+
+    if (log.removed) {
+      this.db.query(`
+        INSERT INTO indexer_metadata (key, value)
+        VALUES ('reorgDetectedAt', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(new Date().toISOString());
+      return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
+    }
+
+    if (isSettledPlanetLog(log)) {
+      this.applyEvent(decodeSettledPlanetLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isDebrisFieldLog(log)) {
+      this.applyDebrisEvent(decodeDebrisFieldLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isMoonChanceReportLog(log)) {
+      this.applyMoonChanceEvent(decodeMoonChanceReportLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+
+    return { applied: false, duplicate: false, ignored: true, removed: false, snapshot: this.snapshot() };
+  }
+
   async rebuild(): Promise<IndexerSnapshot> {
     if (this.rebuildPromise) {
       return this.rebuildPromise;
@@ -289,6 +355,17 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_moon_chance_reports_target_idx
         ON indexed_moon_chance_reports (target_planet_id);
+      CREATE TABLE IF NOT EXISTS indexed_event_logs (
+        event_id TEXT PRIMARY KEY,
+        transaction_hash TEXT NOT NULL,
+        log_index TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        removed INTEGER NOT NULL DEFAULT 0,
+        event_json TEXT NOT NULL,
+        received_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_event_logs_block_idx
+        ON indexed_event_logs (block_number);
     `);
   }
 
@@ -320,7 +397,30 @@ export class SettlementIndexer {
     `).run(new Date().toISOString());
   }
 
-  private count(table: "indexed_debris_fields" | "indexed_moon_chance_reports" | "indexed_planets"): number {
+  private recordLog(eventId: string, log: IndexedRpcLog): void {
+    this.db.query(`
+      INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      eventId,
+      log.transactionHash,
+      log.logIndex ?? "0x0",
+      blockNumberToDecimal(log.blockNumber),
+      log.removed ? 1 : 0,
+      JSON.stringify(log),
+      new Date().toISOString()
+    );
+  }
+
+  private recordLatestBlock(blockNumber: string): void {
+    this.db.query(`
+      INSERT INTO indexer_metadata (key, value)
+      VALUES ('latestIndexedBlock', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(blockNumberToDecimal(blockNumber));
+  }
+
+  private count(table: "indexed_debris_fields" | "indexed_event_logs" | "indexed_moon_chance_reports" | "indexed_planets"): number {
     const row = this.db.query(`SELECT COUNT(*) AS count FROM ${table}`).get() as CountRow;
     return row.count;
   }
@@ -348,4 +448,20 @@ function openIndexerDatabase(databasePath: string): Database {
 
 function parseEvent<T>(value: string): T {
   return JSON.parse(value) as T;
+}
+
+function indexedLogKey(log: IndexedRpcLog): string {
+  return `${log.transactionHash.toLowerCase()}:${log.logIndex ?? fallbackLogIndex(log)}`;
+}
+
+function fallbackLogIndex(log: RpcLog): string {
+  return `${log.blockNumber}:${log.topics.join(",")}:${log.data}`;
+}
+
+function blockNumberToDecimal(blockNumber: string): string {
+  try {
+    return BigInt(blockNumber).toString();
+  } catch {
+    return blockNumber;
+  }
 }

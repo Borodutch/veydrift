@@ -85,6 +85,7 @@ VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
 VEYDRIFT_INDEX_DB_PATH=.data/contract-state.sqlite
 VEYDRIFT_INDEX_FROM_BLOCK=0
+VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY=...
 ALCHEMY_BASE_SEPOLIA_API_KEY=...
 # Optional explicit websocket overrides; otherwise the Alchemy key derives the Base Sepolia WS URL.
 VEYDRIFT_WS_RPC_URL=
@@ -112,7 +113,9 @@ RPC URLs or API keys. Ownership remains canonical onchain; the websocket chain
 sync keeps the SQLite-backed contract state index warm, `GET /chain/events`
 streams backend chain-event notifications to the frontend, and
 `POST /index/rebuild` remains the manual HTTP fallback for rebuilding settlement
-events.
+events. `POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads,
+verifies `X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is
+configured, and applies duplicate-safe indexed event updates.
 
 ### Frontend
 

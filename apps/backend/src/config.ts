@@ -1,6 +1,7 @@
 export type DeploymentMode = "local" | "test" | "staging" | "production";
 
 export type BackendConfig = {
+  alchemyWebhookSigningKey?: string;
   allianceContractAddress?: `0x${string}`;
   chainId: number;
   deploymentMode: DeploymentMode;
@@ -37,6 +38,7 @@ export type ConfigResult = {
 
 export type SafeConfigSummary = {
   allianceContractConfigured: boolean;
+  alchemyWebhookConfigured: boolean;
   chainId: number;
   deploymentMode: DeploymentMode;
   gameContractConfigured: boolean;
@@ -67,6 +69,7 @@ const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "pr
 export function loadBackendConfig(env: Record<string, string | undefined> = process.env): ConfigResult {
   const problems: ConfigProblem[] = [];
   const deploymentMode = parseDeploymentMode(env.VEYDRIFT_DEPLOYMENT_MODE, problems);
+  const alchemyWebhookSigningKey = env.VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY;
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
@@ -135,6 +138,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 
   return {
     config: {
+      ...(alchemyWebhookSigningKey ? { alchemyWebhookSigningKey } : {}),
       ...(allianceContractAddress ? { allianceContractAddress } : {}),
       chainId,
       deploymentMode,
@@ -159,6 +163,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
   return {
     allianceContractConfigured: Boolean(config.allianceContractAddress),
+    alchemyWebhookConfigured: Boolean(config.alchemyWebhookSigningKey),
     chainId: config.chainId,
     deploymentMode: config.deploymentMode,
     gameContractConfigured: Boolean(config.gameContractAddress),

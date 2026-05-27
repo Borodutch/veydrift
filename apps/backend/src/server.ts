@@ -1,10 +1,11 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { generateSystem } from "@veydrift/universe";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
-import { assertAddress, type ChainReader, type MoonChanceReportEvent, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
+import { assertAddress, type ChainReader, type MoonChanceReportEvent, type RpcLog, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
-import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent } from "./indexer";
+import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
@@ -561,6 +562,48 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "POST" && url.pathname === "/webhooks/alchemy") {
+      if (!indexer) {
+        return unavailableResponse(loaded.problems);
+      }
+
+      const rawBody = await request.text();
+      const signatureFailure = verifyAlchemyWebhookSignature(rawBody, request.headers, loaded.config.alchemyWebhookSigningKey);
+      if (signatureFailure) return signatureFailure;
+
+      try {
+        const payload = JSON.parse(rawBody) as unknown;
+        const logs = alchemyWebhookLogs(payload);
+        let applied = 0;
+        let duplicates = 0;
+        let ignored = 0;
+        let removed = 0;
+        for (const log of logs) {
+          const result = indexer.applyLog(log);
+          if (result.applied) applied += 1;
+          if (result.duplicate) duplicates += 1;
+          if (result.ignored) ignored += 1;
+          if (result.removed) removed += 1;
+        }
+
+        return Response.json(
+          {
+            receivedLogs: logs.length,
+            applied,
+            duplicates,
+            ignored,
+            removed,
+            indexer: indexer.snapshot()
+          },
+          {
+            headers: corsHeaders
+          }
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "POST" && url.pathname === "/graphql") {
       return handleGraphQLRequest(request);
     }
@@ -612,6 +655,71 @@ async function ensurePlanetIndex(indexer: SettlementIndexer): Promise<void> {
   if (indexer.snapshot().indexedPlanets === 0) {
     await indexer.rebuildPlanets();
   }
+}
+
+function verifyAlchemyWebhookSignature(
+  rawBody: string,
+  headers: Headers,
+  signingKey: string | undefined
+): Response | null {
+  if (!signingKey) return null;
+
+  const signature = headers.get("x-alchemy-signature");
+  if (!signature) {
+    return Response.json(
+      { error: "webhook_signature_required" },
+      { headers: corsHeaders, status: 401 }
+    );
+  }
+
+  const expected = createHmac("sha256", signingKey).update(rawBody).digest("hex");
+  if (!constantTimeEqual(signature, expected)) {
+    return Response.json(
+      { error: "webhook_signature_invalid" },
+      { headers: corsHeaders, status: 401 }
+    );
+  }
+
+  return null;
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, "hex");
+  const rightBuffer = Buffer.from(right, "hex");
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function alchemyWebhookLogs(payload: unknown): IndexedRpcLog[] {
+  const logs: IndexedRpcLog[] = [];
+  collectAlchemyLogs(payload, logs);
+  return logs;
+}
+
+function collectAlchemyLogs(value: unknown, logs: IndexedRpcLog[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectAlchemyLogs(item, logs);
+    return;
+  }
+  if (!isRecord(value)) return;
+
+  if (isWebhookLog(value)) {
+    logs.push(value);
+    return;
+  }
+
+  for (const child of Object.values(value)) {
+    collectAlchemyLogs(child, logs);
+  }
+}
+
+function isWebhookLog(value: Record<string, unknown>): value is IndexedRpcLog {
+  return typeof value.blockNumber === "string"
+    && typeof value.transactionHash === "string"
+    && Array.isArray(value.topics)
+    && value.topics.every((topic) => typeof topic === "string")
+    && typeof value.data === "string"
+    && (value.logIndex === undefined || typeof value.logIndex === "string")
+    && (value.removed === undefined || typeof value.removed === "boolean");
 }
 
 function includeOccupiedPlanets(
@@ -770,6 +878,10 @@ function highscoreFailureResponse(error: unknown): Response {
 
 function isRpcTransportError(error: unknown): boolean {
   return error instanceof Error && /^RPC(?: HTTP)?\b/.test(error.message);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 type RankedHighscoreEntry = HighscoreEntry & {
