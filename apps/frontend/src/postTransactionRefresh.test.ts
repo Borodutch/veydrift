@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  hydratedWalletPlanetSnapshot,
   isFinishedBuildingStateVisible,
+  waitForCollectedWalletPlanet,
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
   type WalletPlanetSyncSnapshot,
@@ -101,6 +103,51 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.selectedPlanet.planetId).toBe("7");
   });
 
+  test("uses fresher settlement resources when the managed planet list lags", () => {
+    const snapshot = hydratedWalletPlanetSyncSnapshot({
+      planetResources: { metal: "0", crystal: "0", deuterium: "0" },
+      planetLastSettledAt: "1770000000",
+      settlementResources: { metal: "5010", crystal: "4905", deuterium: "4800" },
+      settlementLastSettledAt: "1770003600",
+    });
+
+    const hydrated = waitlessHydratedSnapshot(snapshot);
+
+    expect(hydrated.selectedPlanet.resources).toEqual({ metal: "5010", crystal: "4905", deuterium: "4800" });
+    expect(hydrated.selectedPlanet.lastSettledAt).toBe("1770003600");
+  });
+
+  test("polls past stale post-collect resources until lastSettledAt advances", async () => {
+    const snapshots = [
+      hydratedWalletPlanetSyncSnapshot({
+        planetResources: { metal: "0", crystal: "0", deuterium: "0" },
+        planetLastSettledAt: "1770000000",
+        settlementResources: { metal: "0", crystal: "0", deuterium: "0" },
+        settlementLastSettledAt: "1770000000",
+      }),
+      hydratedWalletPlanetSyncSnapshot({
+        settlementResources: { metal: "5010", crystal: "4905", deuterium: "4800" },
+        settlementLastSettledAt: "1770003600",
+      }),
+    ];
+    const loads: WalletPlanetSyncSnapshot[] = [];
+
+    const result = await waitForCollectedWalletPlanet(
+      async () => {
+        const snapshot = snapshots.shift() ?? hydratedWalletPlanetSyncSnapshot();
+        loads.push(snapshot);
+        return snapshot;
+      },
+      "7",
+      1770000000,
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.selectedPlanet.resources.metal).toBe("5010");
+    expect(result.selectedPlanet.lastSettledAt).toBe("1770003600");
+  });
+
   test("reports a specific retryable status when hydration times out", async () => {
     await expect(waitForHydratedWalletPlanet(
       async () => unhydratedWalletPlanetSnapshot(),
@@ -109,6 +156,12 @@ describe("post-transaction refresh reconciliation", () => {
     )).rejects.toThrow("game API did not hydrate a complete planet");
   });
 });
+
+function waitlessHydratedSnapshot(snapshot: WalletPlanetSyncSnapshot) {
+  const hydrated = hydratedWalletPlanetSnapshot(snapshot, "7");
+  if (!hydrated) throw new Error("test snapshot did not hydrate");
+  return hydrated;
+}
 
 function staleSolarPlantSnapshot(): FinishedBuildingSnapshot {
   return {
@@ -219,10 +272,27 @@ function unhydratedWalletPlanetSnapshot(): WalletPlanetSyncSnapshot {
   };
 }
 
-function hydratedWalletPlanetSyncSnapshot(): WalletPlanetSyncSnapshot {
+function hydratedWalletPlanetSyncSnapshot(options: {
+  planetLastSettledAt?: string;
+  planetResources?: { metal: string; crystal: string; deuterium: string };
+  settlementLastSettledAt?: string;
+  settlementResources?: { metal: string; crystal: string; deuterium: string };
+} = {}): WalletPlanetSyncSnapshot {
   const settlement = settlementSnapshot();
+  if (settlement.planet) {
+    settlement.planet = {
+      ...settlement.planet,
+      lastSettledAt: options.settlementLastSettledAt ?? settlement.planet.lastSettledAt,
+      resources: options.settlementResources ?? settlement.planet.resources,
+    };
+  }
   const planet = settlement.planet;
   if (!planet) throw new Error("test settlement missing planet");
+  const listedPlanet = {
+    ...planet,
+    lastSettledAt: options.planetLastSettledAt ?? planet.lastSettledAt,
+    resources: options.planetResources ?? planet.resources,
+  };
 
   return {
     settlement,
@@ -231,7 +301,7 @@ function hydratedWalletPlanetSyncSnapshot(): WalletPlanetSyncSnapshot {
       homePlanetId: "7",
       planets: [
         {
-          ...planet,
+          ...listedPlanet,
           coordinates: "2:44:9",
           fieldsUsed: 2,
           fieldsCapacity: 211,

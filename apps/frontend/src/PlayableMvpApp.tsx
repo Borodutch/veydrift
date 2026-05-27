@@ -57,8 +57,10 @@ import {
   type ChainLoadStatus,
 } from "./overviewData";
 import {
+  waitForCollectedWalletPlanet,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
+  type HydratedWalletPlanetSnapshot,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
@@ -342,6 +344,11 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
   };
 }
 
+type RefreshOnChainStateOptions = {
+  minSelectedLastSettledAt?: number;
+  throwOnError?: boolean;
+};
+
 export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
@@ -623,7 +630,27 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       });
   }, [account, activePlanetId, apiBaseUrl]);
 
-  const refreshOnChainState = useCallback(async () => {
+  const applyWalletPlanetSnapshot = useCallback((snapshot: HydratedWalletPlanetSnapshot) => {
+    const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
+    const planets = planetsResponse.planets;
+    setWalletPlanets(planets);
+    if (!selectedPlanetId && selectedPlanet?.planetId) {
+      setSelectedPlanetId(selectedPlanet.planetId);
+    }
+    setOnChainSettlement(selectedPlanet
+      ? {
+          ...settlement,
+          homePlanetId: selectedPlanet.planetId,
+          planet: selectedPlanet,
+        }
+      : settlement);
+    setOnChainQueues(queues);
+    setFleetVisibility(fleetVisibility);
+    setOnChainError(undefined);
+    setOnChainStatus("ready");
+  }, [selectedPlanetId]);
+
+  const refreshOnChainState = useCallback(async (options: RefreshOnChainStateOptions = {}) => {
     if (!apiBaseUrl || !account) {
       setOnChainSettlement(undefined);
       setWalletPlanets([]);
@@ -636,27 +663,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
     try {
-      const snapshot = await waitForHydratedWalletPlanet(
-        () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId),
-        activePlanetId,
-      );
-      const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
-      const planets = planetsResponse.planets;
-      setWalletPlanets(planets);
-      if (!selectedPlanetId && selectedPlanet?.planetId) {
-        setSelectedPlanetId(selectedPlanet.planetId);
-      }
-      setOnChainSettlement(selectedPlanet
-        ? {
-            ...settlement,
-            homePlanetId: selectedPlanet.planetId,
-            planet: selectedPlanet,
-          }
-        : settlement);
-      setOnChainQueues(queues);
-      setFleetVisibility(fleetVisibility);
-      setOnChainError(undefined);
-      setOnChainStatus("ready");
+      const loadSnapshot = () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId);
+      const snapshot = options.minSelectedLastSettledAt === undefined
+        ? await waitForHydratedWalletPlanet(loadSnapshot, activePlanetId)
+        : await waitForCollectedWalletPlanet(loadSnapshot, activePlanetId, options.minSelectedLastSettledAt);
+      applyWalletPlanetSnapshot(snapshot);
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainSettlement(undefined);
@@ -664,8 +675,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setOnChainQueues(undefined);
       setFleetVisibility(undefined);
       setOnChainStatus("error");
+      if (options.throwOnError) {
+        throw error;
+      }
     }
-  }, [account, activePlanetId, apiBaseUrl, isWalletConnected, selectedPlanetId]);
+  }, [account, activePlanetId, apiBaseUrl, applyWalletPlanetSnapshot, isWalletConnected]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation) => {
     if (!apiBaseUrl || !account) {
@@ -1289,13 +1303,41 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return;
     }
 
-    void runShipyardTransaction("Resource collection", () => sendCollectResourcesTransaction(
-      provider,
-      account,
-      gameContract,
-      onChainSettlement.homePlanetId ?? "0",
-    ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runShipyardTransaction]);
+    const previousLastSettledAt = Number(onChainSettlement.planet?.lastSettledAt ?? 0);
+    const minSelectedLastSettledAt = Number.isFinite(previousLastSettledAt) ? previousLastSettledAt : 0;
+    setShipyardAction({ status: "pending", label: "Resource collection" });
+
+    void (async () => {
+      try {
+        const txHash = await sendCollectResourcesTransaction(
+          provider,
+          account,
+          gameContract,
+          onChainSettlement.homePlanetId ?? "0",
+        );
+        setShipyardAction({ status: "pending", label: `Resource collection: waiting for confirmation ${txHash.slice(0, 10)}...` });
+        await waitForReceipt(provider, txHash);
+        setShipyardAction({ status: "pending", label: "Resource collection: syncing updated resources..." });
+        await refreshOnChainState({ minSelectedLastSettledAt, throwOnError: true });
+        refreshInfrastructureState();
+        setShipyardAction({ status: "success", label: "Resource collection confirmed." });
+      } catch (error) {
+        console.error(error);
+        setShipyardAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Resource collection failed.",
+        });
+      }
+    })();
+  }, [
+    account,
+    gameContract,
+    onChainSettlement?.homePlanetId,
+    onChainSettlement?.planet?.lastSettledAt,
+    provider,
+    refreshInfrastructureState,
+    refreshOnChainState,
+  ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
     if (!provider || !account || !gameContract || !shipyardState?.homePlanetId) {
