@@ -275,14 +275,20 @@ export class SettlementIndexer {
   }
 
   private async rebuildUncached(): Promise<IndexerSnapshot> {
-    const events = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    const settledPlanetEvents = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    const currentPlanets = this.chainReader.listCurrentPlanets
+      ? await this.chainReader.listCurrentPlanets()
+      : null;
+    const planetEvents = currentPlanets
+      ? mergeCurrentPlanetSnapshots(settledPlanetEvents, currentPlanets)
+      : settledPlanetEvents;
     const debrisEvents = await this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest");
     const moonChanceEvents = await this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest");
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();
       this.db.query("DELETE FROM indexed_moon_chance_reports").run();
-      for (const event of events) {
+      for (const event of planetEvents) {
         this.upsertPlanet(event);
       }
       for (const event of debrisEvents) {
@@ -291,7 +297,7 @@ export class SettlementIndexer {
       for (const event of moonChanceEvents) {
         this.upsertMoonChanceReport(event);
       }
-      const latestBlock = latestEventBlock([...events, ...debrisEvents, ...moonChanceEvents]);
+      const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents]);
       this.touch();
       this.recordSuccessfulReconciliation(latestBlock);
     });
@@ -487,6 +493,24 @@ function openIndexerDatabase(databasePath: string): Database {
 
 function parseEvent<T>(value: string): T {
   return JSON.parse(value) as T;
+}
+
+function mergeCurrentPlanetSnapshots(
+  settledPlanetEvents: SettledPlanetEvent[],
+  currentPlanets: SettledPlanetEvent[]
+): SettledPlanetEvent[] {
+  const settledByPlanetId = new Map(settledPlanetEvents.map((event) => [event.planetId, event]));
+  return currentPlanets.map((planet) => {
+    const settled = settledByPlanetId.get(planet.planetId);
+    if (!settled) return planet;
+
+    return {
+      ...planet,
+      blockNumber: settled.blockNumber,
+      eventName: settled.eventName,
+      transactionHash: settled.transactionHash
+    };
+  });
 }
 
 function indexedManagedPlanet(planet: SettledPlanetEvent, homePlanetId: string | null): ManagedPlanet {

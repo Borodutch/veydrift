@@ -316,5 +316,30 @@ export function resolveWsRpcUrl(
     };
   }
 
+  const alchemyHttpRpcUrl =
+    env.ALCHEMY_BASE_SEPOLIA_RPC_URL
+    ?? env.VEYDRIFT_RPC_URL
+    ?? env.BASE_SEPOLIA_RPC_URL;
+  const derivedAlchemyWsRpcUrl = alchemyWebsocketUrlFromHttp(alchemyHttpRpcUrl);
+  if (derivedAlchemyWsRpcUrl) {
+    return { wsRpcUrl: derivedAlchemyWsRpcUrl, wsRpcSource: "alchemy-url" };
+  }
+
   return { wsRpcSource: "missing" };
+}
+
+function alchemyWebsocketUrlFromHttp(value: string | undefined): string | null {
+  if (!value) return null;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || !url.hostname.endsWith(".g.alchemy.com")) {
+      return null;
+    }
+
+    url.protocol = "wss:";
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
