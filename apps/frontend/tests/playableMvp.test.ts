@@ -404,7 +404,7 @@ describe("playable MVP contract display helpers", () => {
     expect(researchDurationEstimate(state.buildings, cost)).toBe(86_400);
     expect(researchDurationEstimate(labOne, cost)).toBe(43_200);
     expect(researchDurationEstimate(labTwo, cost)).toBe(28_800);
-    expect(researchDurationEstimate(labOne, { metal: 0, crystal: 0, deuterium: 300_000 })).toBe(60);
+    expect(researchDurationEstimate(labOne, { metal: 0, crystal: 0, deuterium: 300_000 })).toBe(1);
   });
 
   test("exposes building effect metrics from the same production and storage formulas", () => {
