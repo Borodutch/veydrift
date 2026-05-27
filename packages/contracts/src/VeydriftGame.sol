@@ -14,21 +14,23 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _gameplayModule;
     address private immutable _planetManagementModule;
+    address private immutable _attackProtectionModule;
     address private immutable _colonizationModule;
 
     constructor(
         address admin,
         address gameplayModule,
         address planetManagementModule,
+        address attackProtectionModule,
         address colonizationModule
     ) VeydriftResourceReserves(admin) {
-        if (gameplayModule == address(0)) {
-            revert UnsupportedGameplayModule();
-        }
-        if (planetManagementModule == address(0)) revert UnsupportedGameplayModule();
-        if (colonizationModule == address(0)) revert UnsupportedGameplayModule();
+        if (
+            gameplayModule == address(0) || planetManagementModule == address(0)
+                || attackProtectionModule == address(0) || colonizationModule == address(0)
+        ) revert UnsupportedGameplayModule();
         _gameplayModule = gameplayModule;
         _planetManagementModule = planetManagementModule;
+        _attackProtectionModule = attackProtectionModule;
         _colonizationModule = colonizationModule;
     }
 
@@ -77,14 +79,17 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function settlePlanet(uint256 planetId) external {
+        _touchPlayer(msg.sender);
         _collectPlanetResources(planetId);
     }
 
     function collectResources(uint256 planetId) external {
+        _touchPlayer(msg.sender);
         _collectPlanetResources(planetId);
     }
 
     function startBuildingUpgrade(uint256 planetId, Building building) external {
+        _touchPlayer(msg.sender);
         _requirePlanetOwner(planetId);
         if (buildingConstructions[planetId].active) revert ConstructionActive();
 
@@ -115,6 +120,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function finishBuildingUpgrade(uint256 planetId) external {
+        _touchPlayer(msg.sender);
         _requirePlanetOwner(planetId);
         BuildingConstruction memory construction = buildingConstructions[planetId];
         if (!construction.active) revert ConstructionInactive();
@@ -127,6 +133,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity) external {
+        _touchPlayer(msg.sender);
         _requirePlanetOwner(planetId);
         if (quantity == 0) revert InvalidQuantity();
         if (defenseQueues[planetId].active) revert QueueActive();
@@ -156,22 +163,27 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function finishDefenseProduction(uint256) external {
+        _touchPlayer(msg.sender);
         _delegateToPlayModule();
     }
 
     function startShipProduction(uint256, Ship, uint32) external {
+        _touchPlayer(msg.sender);
         _delegateToPlayModule();
     }
 
     function finishShipProduction(uint256) external {
+        _touchPlayer(msg.sender);
         _delegateToPlayModule();
     }
 
     function startResearch(uint256, Technology) external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
     function finishResearch() external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
@@ -241,10 +253,12 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function renamePlanet(uint256, string calldata) external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
     function abandonPlanet(uint256) external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
@@ -256,6 +270,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources calldata,
         uint256
     ) external returns (uint256) {
+        _touchPlayer(msg.sender);
         _delegateToPlayModule();
     }
 
@@ -263,10 +278,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         external
         returns (uint256)
     {
+        _touchPlayer(msg.sender);
         _delegateToPlayModule();
     }
 
     function recallFleetMission(uint256) external {
+        _touchPlayer(msg.sender);
         _delegateToPlayModule();
     }
 
@@ -278,26 +295,34 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function completeFleetMissionReturn(uint256) external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
-    function attackProtectionStatus(address, uint256) external returns (AttackBlockReason) {
-        _delegateToPlayModule();
+    function attackProtectionStatus(address, uint256)
+        external
+        returns (AttackBlockReason, uint8, uint16)
+    {
+        _delegateToAttackProtectionModule();
     }
 
     function depositMarketResource(uint256, Resource, uint128) external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
     function requestMarketResourceWithdrawal(uint256, Resource, uint128) external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
     function finishMarketResourceWithdrawal(Resource) external {
+        _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
     }
 
@@ -533,6 +558,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _startPlanet(address player, uint256 payment) private returns (uint256 planetId) {
         if (homePlanetOf[player] != 0) revert AlreadyStarted();
         if (payment != startPrice) revert BadStartPayment();
+        _touchPlayer(player);
 
         Resources memory startingResources = Resources({metal: 500, crystal: 500, deuterium: 0});
         _increaseInternalResources(startingResources);
@@ -901,6 +927,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToPlanetManagementModule() private {
         (bool ok, bytes memory result) = _planetManagementModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToAttackProtectionModule() private {
+        (bool ok, bytes memory result) = _attackProtectionModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

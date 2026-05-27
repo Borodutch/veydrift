@@ -55,6 +55,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (originPlanetId == targetPlanetId) revert SamePlanet();
         Planet storage target = _planets[targetPlanetId];
         if (target.owner == address(0)) revert NoPlanet();
+        if (target.owner == msg.sender) revert SelfAttack();
+        (AttackBlockReason reason,) = _attackProtectionPreview(msg.sender, targetPlanetId);
+        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
@@ -1087,7 +1090,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
         if (totalCapacity == 0) return;
 
-        Resources memory loot = _raidResources(mission.targetPlanetId, totalCapacity);
+        (, uint16 plunderBps) = _attackProtectionPreview(mission.owner, mission.targetPlanetId);
+        Resources memory loot = _raidResources(mission.targetPlanetId, totalCapacity, plunderBps);
         _distributeAttackGroupLoot(attackMissionId, mission, loot, totalCapacity);
     }
 
@@ -1152,17 +1156,16 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         return capacity > used ? capacity - used : 0;
     }
 
-    function _raidResources(uint256 targetPlanetId, uint256 capacity)
+    function _raidResources(uint256 targetPlanetId, uint256 capacity, uint16 plunderBps)
         private
         returns (Resources memory raided)
     {
         Resources storage target = _planets[targetPlanetId].resources;
-        (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = _storageCaps(targetPlanetId);
-        uint128 metal = _lootable(target.metal, metalCap, capacity);
+        uint128 metal = _lootable(target.metal, capacity, plunderBps);
         capacity -= metal;
-        uint128 crystal = _lootable(target.crystal, crystalCap, capacity);
+        uint128 crystal = _lootable(target.crystal, capacity, plunderBps);
         capacity -= crystal;
-        uint128 deuterium = _lootable(target.deuterium, deuteriumCap, capacity);
+        uint128 deuterium = _lootable(target.deuterium, capacity, plunderBps);
         target.metal -= metal;
         target.crystal -= crystal;
         target.deuterium -= deuterium;
@@ -1211,28 +1214,34 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         );
     }
 
-    function _storageCaps(uint256 planetId)
-        private
-        view
-        returns (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap)
-    {
-        if (_planets[planetId].owner == address(0)) revert NoPlanet();
-        return VeydriftFormulas.storageCaps(
-            _buildingLevels[planetId][Building.MetalStorage],
-            _buildingLevels[planetId][Building.CrystalStorage],
-            _buildingLevels[planetId][Building.DeuteriumTank]
-        );
-    }
-
-    function _lootable(uint128 available, uint128 storageCap, uint256 capacity)
+    function _lootable(uint128 available, uint256 capacity, uint16 plunderBps)
         private
         pure
         returns (uint128)
     {
-        uint256 protectedAmount = (uint256(storageCap) * RAID_PROTECTED_STORAGE_BPS) / BPS;
-        if (available <= protectedAmount) return 0;
-        uint256 loot = ((uint256(available) - protectedAmount) * RAID_LOOT_BPS) / BPS;
+        uint256 loot = (uint256(available) * plunderBps) / BPS;
         return _toUint128(_min(loot, capacity));
+    }
+
+    function _attackProtectionPreview(address attacker, uint256 targetPlanetId)
+        private
+        view
+        returns (AttackBlockReason reason, uint16 plunderBps)
+    {
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, shl(224, 0x8a6b2246))
+            mstore(add(ptr, 4), attacker)
+            mstore(add(ptr, 36), targetPlanetId)
+            switch staticcall(gas(), address(), ptr, 68, ptr, 96)
+            case 0 {
+                plunderBps := 5000
+            }
+            default {
+                reason := mload(ptr)
+                plunderBps := mload(add(ptr, 64))
+            }
+        }
     }
 
     function _combatScaled(uint256 value, uint16 technologyLevel) private pure returns (uint256) {

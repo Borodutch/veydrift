@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
@@ -33,11 +34,13 @@ contract VeydriftSpaceDockSystemTest is Test {
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
+        VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         game = new VeydriftGame(
             admin,
             address(gameplayModule),
             address(planetManagementModule),
+            address(attackProtectionModule),
             address(colonizationModule)
         );
         spaceDock = new VeydriftSpaceDockSystem(address(game), admin);

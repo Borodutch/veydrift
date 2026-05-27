@@ -541,7 +541,11 @@ class MockChainReader implements ChainReader {
       targetPlanetId: targetPlanetId.toString(),
       allowed: true,
       blockedReason: "none",
-      blockedReasonLabel: null
+      blockedReasonLabel: null,
+      relation: "peer",
+      defenderHonorStatus: "neutral",
+      plunderBps: 5000,
+      defenderInactive: false
     };
   }
 
