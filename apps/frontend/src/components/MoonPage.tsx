@@ -1,17 +1,36 @@
 import { Moon, Orbit, RadioTower } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
+import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
+import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
 import { formatCost } from "../buildingDetails";
 
 interface MoonPageProps {
+  action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
+  canTransact?: boolean | undefined;
   error?: string | undefined;
   loading?: boolean | undefined;
   moonState?: ChainMoonState | null | undefined;
+  onFinishBuilding?: (() => void) | undefined;
+  onJumpGate?: ((destinationPlanetId: string, ships: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
+  onScan?: ((galaxy: number, system: number) => void) | undefined;
+  onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
 }
 
-export function MoonPage({ error, loading, moonState, onRefresh }: MoonPageProps) {
+export function MoonPage({
+  action,
+  canTransact,
+  error,
+  loading,
+  moonState,
+  onFinishBuilding,
+  onJumpGate,
+  onRefresh,
+  onScan,
+  onStartBuilding,
+}: MoonPageProps) {
   const moon = moonState?.moon;
   const hasMoon = Boolean(moon?.exists);
 
@@ -40,7 +59,16 @@ export function MoonPage({ error, loading, moonState, onRefresh }: MoonPageProps
       ) : error ? (
         <MoonStatusPanel title="Moon state unavailable" body={error} tone="warning" />
       ) : hasMoon && moon ? (
-        <MoonSystemsPanel moon={moon} moonState={moonState} />
+        <MoonSystemsPanel
+          action={action}
+          canTransact={canTransact}
+          moon={moon}
+          moonState={moonState}
+          onFinishBuilding={onFinishBuilding}
+          onJumpGate={onJumpGate}
+          onScan={onScan}
+          onStartBuilding={onStartBuilding}
+        />
       ) : (
         <NoMoonGuidance reason={moonState?.unavailableReason} />
       )}
@@ -98,12 +126,31 @@ function MoonStatusPanel({
 }
 
 function MoonSystemsPanel({
+  action,
+  canTransact,
   moon,
   moonState,
+  onFinishBuilding,
+  onJumpGate,
+  onScan,
+  onStartBuilding,
 }: {
+  action?: MoonPageProps["action"];
+  canTransact?: boolean | undefined;
   moon: NonNullable<ChainMoonState["moon"]>;
   moonState?: ChainMoonState | null | undefined;
+  onFinishBuilding?: MoonPageProps["onFinishBuilding"];
+  onJumpGate?: MoonPageProps["onJumpGate"];
+  onScan?: MoonPageProps["onScan"];
+  onStartBuilding?: MoonPageProps["onStartBuilding"];
 }) {
+  const [scanGalaxy, setScanGalaxy] = useState("1");
+  const [scanSystem, setScanSystem] = useState("");
+  const [jumpDestination, setJumpDestination] = useState("");
+  const [jumpSmallCargo, setJumpSmallCargo] = useState("");
+  const [jumpLargeCargo, setJumpLargeCargo] = useState("");
+  const pending = action?.status === "pending";
+
   return (
     <div className="grid gap-4">
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
@@ -136,17 +183,85 @@ function MoonSystemsPanel({
                 <span className="shrink-0 text-xs text-signal">L{building.level}</span>
               </div>
               <div className="mt-2 text-xs text-slate-400">{formatCost(resourcesFromChain(building.cost))}</div>
+              {onStartBuilding ? (
+                <button
+                  className="mt-3 h-8 w-full rounded border border-cyan-200/20 bg-cyan-200/10 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!canTransact || pending || moonState?.queue?.active}
+                  onClick={() => onStartBuilding(building.id, building.label)}
+                  type="button"
+                >
+                  Upgrade
+                </button>
+              ) : null}
             </div>
           ))}
         </div>
 
         {moonState?.queue?.active ? (
-          <div className="mt-3 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
-            Moon queue: {moonBuildingLabel(moonState.queue.itemId)}{" "}
-            {moonState.queue.targetLevel ? "L" + moonState.queue.targetLevel : ""} / ready{" "}
-            {formatMoonReadyAt(moonState.queue.readyAt)}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
+            <span>
+              Moon queue: {moonBuildingLabel(moonState.queue.itemId)}{" "}
+              {moonState.queue.targetLevel ? "L" + moonState.queue.targetLevel : ""} / ready{" "}
+              {formatMoonReadyAt(moonState.queue.readyAt)}
+            </span>
+            {onFinishBuilding ? (
+              <button
+                className="h-8 rounded border border-amber-200/30 bg-amber-200/10 px-3 font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!canTransact || pending || !queueReady(moonState.queue.readyAt)}
+                onClick={onFinishBuilding}
+                type="button"
+              >
+                Finish
+              </button>
+            ) : null}
           </div>
         ) : null}
+
+        {action && action.status !== "idle" && action.label ? (
+          <p className={"mt-3 text-xs " + (action.status === "error" ? "text-rose-200" : "text-cyan-100")}>
+            {action.label}
+          </p>
+        ) : null}
+      </section>
+
+      <section className="rounded-md border border-white/10 bg-[#101624] p-4">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Sensor Phalanx</h3>
+            <div className="mt-3 grid grid-cols-[5rem_1fr_auto] gap-2">
+              <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setScanGalaxy(event.currentTarget.value)} value={scanGalaxy} />
+              <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setScanSystem(event.currentTarget.value)} placeholder="System" value={scanSystem} />
+              <button
+                className="h-9 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!canTransact || pending || !onScan}
+                onClick={() => onScan?.(Number(scanGalaxy), Number(scanSystem))}
+                type="button"
+              >
+                Scan
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-white">Jump Gate</h3>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
+              <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpDestination(event.currentTarget.value)} placeholder="Destination planet ID" value={jumpDestination} />
+              <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpSmallCargo(event.currentTarget.value)} placeholder="Small" value={jumpSmallCargo} />
+              <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpLargeCargo(event.currentTarget.value)} placeholder="Large" value={jumpLargeCargo} />
+              <button
+                className="h-9 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!canTransact || pending || !onJumpGate || !jumpDestination}
+                onClick={() => onJumpGate?.(jumpDestination, {
+                  smallCargo: parsePositiveInteger(jumpSmallCargo),
+                  largeCargo: parsePositiveInteger(jumpLargeCargo),
+                })}
+                type="button"
+              >
+                Jump
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   );
@@ -209,4 +324,15 @@ function formatMoonReadyAt(value: string | null | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function queueReady(value: string | null | undefined): boolean {
+  if (!value || value === "0") return true;
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp * 1_000 <= Date.now();
+}
+
+function parsePositiveInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }

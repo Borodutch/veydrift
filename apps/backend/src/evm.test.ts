@@ -13,6 +13,8 @@ import {
 const requestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";
 const finalizedTopic = "0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d76e501b618572e6705d04";
 const skippedTopic = "0x93793f9a66f3a0a4cea93b7eb92e142d7283b5b33f657e14277879f2f8e7ab4e";
+const moonDestructionRequestedTopic = "0x719ab77026e22a766a85f5c32e5294b20e76b8a0490812761ab98ab3a1739884";
+const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e9e011bd7eddc6c104221ed803";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -227,6 +229,46 @@ describe("moon chance report event decoding", () => {
     });
   });
 
+  test("decodes moon destruction report logs", () => {
+    const requested = decodeMoonChanceReportLog(makeLog({
+      topics: [moonDestructionRequestedTopic, topic(5n), topic(88n), topic(13n)],
+      data: dataWords([
+        addressWord("0x0000000000000000000000000000000000000abc"),
+        word(3n),
+        word(3_700n),
+        word(1_200n),
+        word(10n),
+        "def".padStart(64, "0")
+      ])
+    }));
+    expect(requested).toMatchObject({
+      eventName: "MoonDestructionRequested",
+      outcomeId: "5",
+      battleId: "88",
+      targetPlanetId: "13",
+      attacker: "0x0000000000000000000000000000000000000abc",
+      deathstars: 3,
+      moonDestructionChanceBps: 3700,
+      deathstarDestructionChanceBps: 1200,
+      randomnessRequestId: "10",
+      purposeHash: `0x${"def".padStart(64, "0")}`
+    });
+
+    const finalized = decodeMoonChanceReportLog(makeLog({
+      topics: [moonDestructionFinalizedTopic, topic(5n), topic(88n), topic(13n)],
+      data: dataWords([word(1n), word(0n), word(456n)])
+    }));
+    expect(finalized).toMatchObject({
+      eventName: "MoonDestructionFinalized",
+      outcomeId: "5",
+      battleId: "88",
+      targetPlanetId: "13",
+      moonDestroyed: true,
+      deathstarsDestroyed: false,
+      randomWord: "456"
+    });
+  });
+
   test("lists moon chance report logs from the moon contract", async () => {
     const moonContractAddress = "0x2222222222222222222222222222222222222222";
     const reader = new VeydriftGameReader(
@@ -242,7 +284,13 @@ describe("moon chance report event decoding", () => {
               address: moonContractAddress,
               fromBlock: "0x64",
               toBlock: "0xc8",
-              topics: [[requestedTopic, finalizedTopic, skippedTopic]]
+              topics: [[
+                requestedTopic,
+                finalizedTopic,
+                skippedTopic,
+                moonDestructionRequestedTopic,
+                moonDestructionFinalizedTopic
+              ]]
             }
           ]);
           return [

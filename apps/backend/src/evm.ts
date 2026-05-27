@@ -336,19 +336,30 @@ export type SettledPlanetEvent = PlanetState & {
 };
 
 export type MoonChanceReportEvent = {
-  eventName: "MoonChanceRequested" | "MoonChanceFinalized" | "MoonChanceSkippedExistingMoon";
+  eventName:
+    | "MoonChanceRequested"
+    | "MoonChanceFinalized"
+    | "MoonChanceSkippedExistingMoon"
+    | "MoonDestructionRequested"
+    | "MoonDestructionFinalized";
   transactionHash: string;
   blockNumber: string;
   battleId: string;
   targetPlanetId: string;
   outcomeId?: string;
   defender?: Address;
+  attacker?: Address;
   metalDebris?: string;
   crystalDebris?: string;
   chanceBps?: number;
+  deathstars?: number;
+  moonDestructionChanceBps?: number;
+  deathstarDestructionChanceBps?: number;
   randomnessRequestId?: string;
   purposeHash?: string;
   moonCreated?: boolean;
+  moonDestroyed?: boolean;
+  deathstarsDestroyed?: boolean;
   randomWord?: string;
   moonFields?: number;
   moonDiameterKm?: number;
@@ -1656,7 +1667,9 @@ export class VeydriftGameReader implements ChainReader {
         topics: [[
           moonChanceRequestedTopic,
           moonChanceFinalizedTopic,
-          moonChanceSkippedExistingMoonTopic
+          moonChanceSkippedExistingMoonTopic,
+          moonDestructionRequestedTopic,
+          moonDestructionFinalizedTopic
         ]]
       }
     );
@@ -2566,6 +2579,8 @@ const moonChanceRequestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c
 const moonChanceFinalizedTopic = "0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d76e501b618572e6705d04";
 const moonChanceSkippedExistingMoonTopic =
   "0x93793f9a66f3a0a4cea93b7eb92e142d7283b5b33f657e14277879f2f8e7ab4e";
+const moonDestructionRequestedTopic = "0x719ab77026e22a766a85f5c32e5294b20e76b8a0490812761ab98ab3a1739884";
+const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e9e011bd7eddc6c104221ed803";
 
 export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
@@ -2702,7 +2717,9 @@ export function isMoonChanceReportLog(log: RpcLog): boolean {
   const topic = topicAt(log.topics, 0);
   return topic === moonChanceRequestedTopic
     || topic === moonChanceFinalizedTopic
-    || topic === moonChanceSkippedExistingMoonTopic;
+    || topic === moonChanceSkippedExistingMoonTopic
+    || topic === moonDestructionRequestedTopic
+    || topic === moonDestructionFinalizedTopic;
 }
 
 export function decodeMoonChanceReportLog(log: RpcLog): MoonChanceReportEvent {
@@ -2741,6 +2758,35 @@ export function decodeMoonChanceReportLog(log: RpcLog): MoonChanceReportEvent {
       randomWord: decodeUintWord(wordAt(words, 2)).toString(),
       moonFields: Number(decodeUintWord(wordAt(words, 3))),
       moonDiameterKm: Number(decodeUintWord(wordAt(words, 4)))
+    };
+  }
+
+  if (topic === moonDestructionRequestedTopic) {
+    return {
+      ...base,
+      eventName: "MoonDestructionRequested",
+      outcomeId: decodeUint(topicAt(log.topics, 1)).toString(),
+      battleId: decodeUint(topicAt(log.topics, 2)).toString(),
+      targetPlanetId: decodeUint(topicAt(log.topics, 3)).toString(),
+      attacker: decodeAddressWord(wordAt(words, 0)),
+      deathstars: Number(decodeUintWord(wordAt(words, 1))),
+      moonDestructionChanceBps: Number(decodeUintWord(wordAt(words, 2))),
+      deathstarDestructionChanceBps: Number(decodeUintWord(wordAt(words, 3))),
+      randomnessRequestId: decodeUintWord(wordAt(words, 4)).toString(),
+      purposeHash: `0x${wordAt(words, 5)}`
+    };
+  }
+
+  if (topic === moonDestructionFinalizedTopic) {
+    return {
+      ...base,
+      eventName: "MoonDestructionFinalized",
+      outcomeId: decodeUint(topicAt(log.topics, 1)).toString(),
+      battleId: decodeUint(topicAt(log.topics, 2)).toString(),
+      targetPlanetId: decodeUint(topicAt(log.topics, 3)).toString(),
+      moonDestroyed: decodeBoolWord(wordAt(words, 0)),
+      deathstarsDestroyed: decodeBoolWord(wordAt(words, 1)),
+      randomWord: decodeUintWord(wordAt(words, 2)).toString()
     };
   }
 
