@@ -3,7 +3,22 @@ import { generateSystem } from "@veydrift/universe";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
-import { assertAddress, type ChainReader, type MoonChanceReportEvent, type RpcLog, type SettledPlanetEvent, VeydriftGameReader } from "./evm";
+import {
+  assertAddress,
+  type ChainReader,
+  type DefenseState,
+  type FleetMissionVisibility,
+  type InfrastructureState,
+  type MoonChanceReportEvent,
+  type MoonState,
+  type PlayerQueues,
+  type ResearchState,
+  type RiftState,
+  type RpcLog,
+  type SettledPlanetEvent,
+  type ShipyardState,
+  VeydriftGameReader
+} from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
@@ -173,9 +188,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/settlement$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
         if (indexer) {
@@ -184,6 +196,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             headers: corsHeaders
           });
         }
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) return ready;
         return Response.json(await ready.getWalletSettlement(wallet), {
           headers: corsHeaders
         });
@@ -194,11 +208,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/planets$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
+        if (indexer) {
+          await ensurePlanetIndex(indexer);
+          return Response.json(indexer.walletPlanets(wallet), {
+            headers: corsHeaders
+          });
+        }
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) return ready;
         return Response.json(await ready.getWalletPlanets(wallet), {
           headers: corsHeaders
         });
@@ -209,105 +228,139 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/queues$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getPlayerQueues(wallet, selectedPlanetId(url)), {
+        const planetId = selectedPlanetId(url);
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) {
+          return await indexedDegradedResponse(indexer, wallet, planetId, "player queues", new Error("backend_not_configured"), indexedPlayerQueues)
+            ?? ready;
+        }
+        return Response.json(await ready.getPlayerQueues(wallet, planetId), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "player queues", error, indexedPlayerQueues);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) {
+          return await indexedDegradedResponse(indexer, wallet, undefined, "fleet visibility", new Error("backend_not_configured"), indexedFleetVisibility)
+            ?? ready;
+        }
         return Response.json(await ready.getFleetMissionVisibility(wallet), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, undefined, "fleet visibility", error, indexedFleetVisibility);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getInfrastructureState(wallet, selectedPlanetId(url)), {
+        const planetId = selectedPlanetId(url);
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) {
+          return await indexedDegradedResponse(indexer, wallet, planetId, "infrastructure", new Error("backend_not_configured"), indexedInfrastructureState)
+            ?? ready;
+        }
+        return Response.json(await ready.getInfrastructureState(wallet, planetId), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "infrastructure", error, indexedInfrastructureState);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/moon$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getMoonState(wallet, selectedPlanetId(url)), {
+        const planetId = selectedPlanetId(url);
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) {
+          return await indexedDegradedResponse(indexer, wallet, planetId, "moon", new Error("backend_not_configured"), indexedMoonState)
+            ?? ready;
+        }
+        return Response.json(await ready.getMoonState(wallet, planetId), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "moon", error, indexedMoonState);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getShipyardState(wallet, selectedPlanetId(url)), {
+        const planetId = selectedPlanetId(url);
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) {
+          return await indexedDegradedResponse(indexer, wallet, planetId, "shipyard", new Error("backend_not_configured"), indexedShipyardState)
+            ?? ready;
+        }
+        return Response.json(await ready.getShipyardState(wallet, planetId), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "shipyard", error, indexedShipyardState);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/defenses$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getDefenseState(wallet, selectedPlanetId(url)), {
+        const planetId = selectedPlanetId(url);
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) {
+          return await indexedDegradedResponse(indexer, wallet, planetId, "defenses", new Error("backend_not_configured"), indexedDefenseState)
+            ?? ready;
+        }
+        return Response.json(await ready.getDefenseState(wallet, planetId), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "defenses", error, indexedDefenseState);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/research$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getResearchState(wallet, selectedPlanetId(url)), {
+        const planetId = selectedPlanetId(url);
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) {
+          return await indexedDegradedResponse(indexer, wallet, planetId, "research", new Error("backend_not_configured"), indexedResearchState)
+            ?? ready;
+        }
+        return Response.json(await ready.getResearchState(wallet, planetId), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "research", error, indexedResearchState);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -329,15 +382,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/rift$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getRiftState(wallet, selectedPlanetId(url)), {
+        const planetId = selectedPlanetId(url);
+        const ready = requireChainReader(chainReader, loaded.problems);
+        if (ready instanceof Response) {
+          return await indexedDegradedResponse(indexer, wallet, planetId, "rift", new Error("backend_not_configured"), indexedRiftState)
+            ?? ready;
+        }
+        return Response.json(await ready.getRiftState(wallet, planetId), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "rift", error, indexedRiftState);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -410,9 +468,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
-      const ready = requireChainReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
       if (indexer) {
         await ensurePlanetIndex(indexer);
@@ -420,6 +475,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           headers: corsHeaders
         });
       }
+      const ready = requireChainReader(chainReader, loaded.problems);
+      if (ready instanceof Response) return ready;
       return Response.json(await ready.getPlanet(planetId), {
         headers: corsHeaders
       });
@@ -671,6 +728,240 @@ async function ensurePlanetIndex(indexer: SettlementIndexer): Promise<void> {
   if (indexer.snapshot().indexedPlanets === 0) {
     await indexer.rebuildPlanets();
   }
+}
+
+type IndexedDegradedBody<T extends object> = T & {
+  degraded: true;
+  detail: string;
+  indexer: ReturnType<SettlementIndexer["snapshot"]>;
+  liveReadFailedAt: string;
+  source: "contract-state-indexer";
+  stale: true;
+};
+
+async function indexedDegradedResponse<T extends object>(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`,
+  selectedPlanetId: bigint | undefined,
+  surface: string,
+  error: unknown,
+  build: (
+    wallet: `0x${string}`,
+    settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+    planet: SettledPlanetEvent | null,
+    detail: string
+  ) => T
+): Promise<Response | null> {
+  if (!indexer || !isDegradableReadError(error)) return null;
+
+  await ensurePlanetIndex(indexer);
+  const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
+  if (!settlement) return null;
+
+  const detail = `${surface} live contract read failed; returning DB-indexed contract state.`;
+  const body: IndexedDegradedBody<T> = {
+    ...build(wallet, settlement.settlement, settlement.planet, detail),
+    degraded: true,
+    detail: error instanceof Error ? error.message : detail,
+    indexer: indexer.snapshot(),
+    liveReadFailedAt: new Date().toISOString(),
+    source: "contract-state-indexer",
+    stale: true
+  };
+
+  return Response.json(body, {
+    headers: {
+      ...corsHeaders,
+      "x-veydrift-index-state": "stale"
+    }
+  });
+}
+
+function indexedWalletSettlement(
+  indexer: SettlementIndexer,
+  wallet: `0x${string}`,
+  selectedPlanetId: bigint | undefined
+): { settlement: ReturnType<SettlementIndexer["walletSettlement"]>; planet: SettledPlanetEvent | null } | null {
+  const settlement = indexer.walletSettlement(wallet);
+  if (!selectedPlanetId) {
+    return { settlement, planet: settlement.planet };
+  }
+
+  const planet = indexer.planet(selectedPlanetId.toString());
+  if (!planet || planet.owner.toLowerCase() !== wallet.toLowerCase()) {
+    return null;
+  }
+
+  return {
+    settlement: {
+      ...settlement,
+      homePlanetId: planet.planetId,
+      planet
+    },
+    planet
+  };
+}
+
+function isDegradableReadError(error: unknown): boolean {
+  return error instanceof Error
+    && (error.message === "backend_not_configured" || isRpcTransportError(error));
+}
+
+function selectedPlanetIdOrUndefined(url: URL): bigint | undefined {
+  try {
+    return selectedPlanetId(url);
+  } catch {
+    return undefined;
+  }
+}
+
+function indexedPlayerQueues(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>
+): PlayerQueues {
+  return {
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    building: null,
+    defense: null,
+    ship: null,
+    research: null
+  };
+}
+
+function indexedFleetVisibility(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>
+): FleetMissionVisibility {
+  return {
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    incoming: [],
+    outgoing: [],
+    returning: [],
+    joinableAttacks: []
+  };
+}
+
+function indexedInfrastructureState(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  planet: SettledPlanetEvent | null,
+  unavailableReason: string
+): InfrastructureState {
+  return {
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    infrastructureAvailable: false,
+    unavailableReason,
+    resources: planet?.resources ?? null,
+    productionPerHour: null,
+    energyBalance: null,
+    storageCaps: null,
+    protectedResources: null,
+    raidableResources: null,
+    technologyLevels: {},
+    buildings: [],
+    queue: null
+  };
+}
+
+function indexedMoonState(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  _planet: SettledPlanetEvent | null,
+  unavailableReason: string
+): MoonState {
+  return {
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    moonAvailable: false,
+    unavailableReason,
+    moon: null,
+    sensorPhalanxRange: null,
+    buildings: [],
+    queue: null
+  };
+}
+
+function indexedShipyardState(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  planet: SettledPlanetEvent | null,
+  unavailableReason: string
+): ShipyardState {
+  return {
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    productionAvailable: false,
+    unavailableReason,
+    resources: planet?.resources ?? null,
+    fleetSlots: { active: 0, limit: 1 },
+    shipyardLevel: 0,
+    naniteLevel: 0,
+    technologyLevels: {},
+    ships: [],
+    queue: null
+  };
+}
+
+function indexedDefenseState(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  planet: SettledPlanetEvent | null,
+  unavailableReason: string
+): DefenseState {
+  return {
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    productionAvailable: false,
+    unavailableReason,
+    resources: planet?.resources ?? null,
+    shipyardLevel: 0,
+    missileSiloLevel: 0,
+    technologyLevels: {},
+    defenses: [],
+    queue: null
+  };
+}
+
+function indexedResearchState(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  planet: SettledPlanetEvent | null,
+  unavailableReason: string
+): ResearchState {
+  return {
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    researchAvailable: false,
+    unavailableReason,
+    resources: planet?.resources ?? null,
+    researchLabLevel: 0,
+    researchNetworkLabLevels: [],
+    technologyLevels: {},
+    technologies: [],
+    queue: null
+  };
+}
+
+function indexedRiftState(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  _planet: SettledPlanetEvent | null,
+  unavailableReason: string
+): RiftState {
+  return {
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    riftAvailable: false,
+    unlocked: false,
+    unavailableReason,
+    withdrawalDelaySeconds: "2592000",
+    requirements: [],
+    resources: [],
+    pendingWithdrawals: []
+  };
 }
 
 function verifyAlchemyWebhookSignature(
