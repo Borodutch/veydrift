@@ -3897,7 +3897,7 @@ contract VeydriftGameTest is Test {
         returns (uint256 colonyPlanetId)
     {
         colonyPlanetId = game.nextPlanetId();
-        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
         vm.prank(account);
         uint256 missionId = game.createColonyAtNextSlot(originPlanetId, salt);
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
