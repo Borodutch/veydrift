@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
@@ -10,6 +12,11 @@ import {
   queueProgressFillState,
 } from "../src/overviewData";
 import type { Planet } from "../src/types";
+
+const OVERVIEW_PAGE_SOURCE = readFileSync(
+  join(import.meta.dir, "..", "src", "components", "OverviewPage.tsx"),
+  "utf8",
+);
 
 const homePlanet: Planet = {
   alliance: null,
@@ -61,6 +68,24 @@ describe("overview planet hero image", () => {
       { image: homePlanet.image, planetKey: "1:42:7" },
       "1:42:8"
     )).toBeUndefined();
+  });
+});
+
+describe("overview planet management actions", () => {
+  test("keeps the rename trigger compact, icon-only, and accessible", () => {
+    const renameButtonSource = OVERVIEW_PAGE_SOURCE.match(/aria-label="Rename planet"[\s\S]*?<\/button>/)?.[0] ?? "";
+
+    expect(renameButtonSource).toContain('title="Rename planet"');
+    expect(renameButtonSource).toContain("h-7 w-7");
+    expect(renameButtonSource).toContain("<Pencil");
+    expect(renameButtonSource).toContain("size={13}");
+    expect(renameButtonSource).not.toMatch(/>\s*Rename\s*</);
+  });
+
+  test("keeps abandon gated in the overview action cluster", () => {
+    expect(OVERVIEW_PAGE_SOURCE).toContain("{showAbandonAction && (");
+    expect(OVERVIEW_PAGE_SOURCE).toContain('aria-label="Abandon planet"');
+    expect(OVERVIEW_PAGE_SOURCE).toContain("<Trash2");
   });
 });
 
