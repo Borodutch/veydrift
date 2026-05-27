@@ -157,6 +157,8 @@ classic-espionage exclusion decision.
 `packages/circuits` contains retired placeholder files only. It remains in the
 workspace so existing scripts keep passing until a cleanup task removes or
 repurposes it; it must not be used as product guidance for zk gameplay.
+`docs/ogame-parity-scope-VEY-KANEO-198.md` is the current scope record for
+Veydrift-only mechanics versus classic OGame parity work.
 
 ```sh
 cd packages/circuits

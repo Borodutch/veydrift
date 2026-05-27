@@ -350,4 +350,9 @@ public counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
 VEY-KANEO-133: visible commitment, recall limits, return exposure, and future
 ACS/intercept rules.
 
+VEY-KANEO-198 records the broader parity boundary: public onchain state, Rift
+resource bridging, protected storage, Space Dock recovery, and Veydrift naming
+are product-mode decisions unless a later scope ticket explicitly gates or
+replaces them.
+
 The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, missile silo capacity, interplanetary missile interception and defense damage, one active construction or production slot per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.
