@@ -144,7 +144,8 @@ abstract contract VeydriftGameStorage {
     enum AttackBlockReason {
         None,
         BashingLimit,
-        ScoreProtection
+        ScoreProtection,
+        SameAlliance
     }
 
     struct MissionShips {
@@ -287,6 +288,7 @@ abstract contract VeydriftGameStorage {
     error InterplanetaryMissileOutOfRange(uint16 originSystem, uint16 targetSystem, uint256 range);
     error AttackBashingLimitReached();
     error AttackScoreProtection();
+    error SameAllianceAttack();
     error InvalidPlanetName();
     error CannotAbandonHomePlanet();
     error PlanetHasActiveQueues();
