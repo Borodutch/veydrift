@@ -258,6 +258,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint16,
         uint256
     ) external returns (uint256) {
+        _touchPlayer(msg.sender);
         _delegateToPlayModule();
     }
 
