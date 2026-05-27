@@ -3046,6 +3046,35 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
     }
 
+    function testAttackBattleSelectsTargetsByIndividualUnitsInsteadOfGroups() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 1);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 200);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 1;
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            783
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 2);
+        game.resolveFleetMission(missionId);
+
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 199);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 1);
+    }
+
     function testAttackBattleIgnoresCallerRandomnessRequestIdAndBlocksPendingOracle() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
