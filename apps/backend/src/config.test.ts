@@ -33,6 +33,18 @@ describe("backend config", () => {
       wsRpcSource: "alchemy-key",
       wsRpcUrl: "wss://base-sepolia.g.alchemy.com/v2/secret-key"
     });
+    expect(result.config.indexDbPath).toBe(".data/contract-state.sqlite");
+  });
+
+  test("accepts an explicit contract state index database path", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_INDEX_DB_PATH: "/tmp/veydrift-contract-state.sqlite",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.indexDbPath).toBe("/tmp/veydrift-contract-state.sqlite");
   });
 
   test("enables the public mission resolver only for test deployments with a resolver address", () => {

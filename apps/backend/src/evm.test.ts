@@ -618,6 +618,7 @@ const readerConfig: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
   gameContractAddress: "0x1111111111111111111111111111111111111111",
+  indexDbPath: ":memory:",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {},
