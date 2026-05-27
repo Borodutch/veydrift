@@ -22,7 +22,6 @@ import {
 
 export { infrastructureActionNoticeFor } from "./buildingActionNotice";
 import {
-  formatPlanetType,
   mergePlanetWithSettlement,
   planetFromSettlementPlanet,
   planetImageForType,
@@ -1966,10 +1965,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const mobilePlanetSelector = walletPlanets.length > 0 ? (
     <PlanetSelector
-      action={planetManagementAction}
-      canTransact={Boolean(provider && account && gameContract)}
       layout="mobile"
-      onAbandon={handleAbandonPlanet}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
       selectedPlanetId={activePlanetId}
@@ -1978,10 +1974,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const planetSidebar = walletPlanets.length > 0 ? (
     <PlanetSelector
-      action={planetManagementAction}
-      canTransact={Boolean(provider && account && gameContract)}
       layout="sidebar"
-      onAbandon={handleAbandonPlanet}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
       selectedPlanetId={activePlanetId}
@@ -2208,6 +2201,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         state={state}
         canRenamePlanet={Boolean(provider && account && gameContract && activePlanetId)}
         planetRenameAction={planetRenameAction}
+        canAbandonPlanet={selectedManagedPlanet
+          ? shouldShowAbandonPlanetButton(selectedManagedPlanet, Boolean(provider && account && gameContract), planetManagementAction)
+          : false}
+        onAbandonPlanet={handleAbandonPlanet}
+        planetManagementAction={planetManagementAction}
         usedFields={selectedManagedPlanet?.fieldsUsed}
       />
     );
@@ -2222,11 +2220,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           account={account}
           active={page}
           coordinates={homeCoordinateLabel}
+          mobilePlanetSelector={walletPlanets.length > 1 ? mobilePlanetSelector : undefined}
           onNavigate={handleNavigate}
         />
 
         <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
-          {mobilePlanetSelector}
           {content}
         </main>
 
@@ -2237,200 +2235,93 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 }
 
 function PlanetSelector({
-  action,
-  canTransact,
   layout,
-  onAbandon,
   onSelect,
   planets,
   selectedPlanetId,
 }: {
-  action: PlanetManagementActionState;
-  canTransact: boolean;
   layout: "mobile" | "sidebar";
-  onAbandon: () => void;
   onSelect: (planetId: string) => void;
   planets: ManagedPlanetResponse[];
   selectedPlanetId: string | undefined;
 }) {
   const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
   if (!selectedPlanet) return null;
-  const abandonUnavailableLabel = abandonPlanetUnavailableLabel(selectedPlanet, canTransact, action);
-
-  const actionLabel = action.status !== "idle" ? (
-    <span className={`truncate text-xs ${action.status === "error" ? "text-amber-200" : "text-slate-300"}`}>
-      {action.label}
-    </span>
-  ) : null;
 
   if (layout === "mobile") {
+    if (planets.length < 2) return null;
+
     return (
-      <section className="mb-3 rounded border border-white/10 bg-[#101827]/90 p-3 shadow-lg shadow-black/10 lg:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[0.68rem] font-bold uppercase tracking-normal text-cyan-200">Planet</p>
-            <p className="truncate text-sm font-semibold text-white">{planetDisplayName(selectedPlanet)}</p>
-          </div>
-          <span className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-[0.68rem] font-semibold text-slate-300">
-            {planetRoleLabel(selectedPlanet)}
-          </span>
-        </div>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <select
-            aria-label="Select planet"
-            className="h-10 min-w-0 flex-1 rounded border border-white/10 bg-black/40 px-3 text-sm text-white outline-none focus:border-cyan-300/60"
-            onChange={(event) => onSelect(event.currentTarget.value)}
-            value={selectedPlanet.planetId}
-          >
-            {planets.map((planet) => (
-              <option key={planet.planetId} value={planet.planetId}>
-                {planetDisplayName(planet)} · {planet.coordinates}
-              </option>
-            ))}
-          </select>
-          <div className="flex shrink-0 items-center gap-2">
-            {actionLabel}
-            {action.status === "idle" && abandonUnavailableLabel && (
-              <span className="max-w-48 truncate text-xs text-slate-400">
-                {abandonUnavailableLabel}
-              </span>
-            )}
-            <PlanetAbandonButton
-              action={action}
-              canTransact={canTransact}
-              onAbandon={onAbandon}
-              selectedPlanet={selectedPlanet}
-            />
-          </div>
+      <section aria-label="Select planet" className="overflow-x-auto">
+        <div className="flex min-w-max gap-2 pb-1">
+          {planets.map((planet) => {
+            const selected = planet.planetId === selectedPlanet.planetId;
+            return (
+              <PlanetSelectorButton
+                key={planet.planetId}
+                onSelect={onSelect}
+                planet={planet}
+                selected={selected}
+              />
+            );
+          })}
         </div>
       </section>
     );
   }
 
   return (
-    <aside className="hidden w-72 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
-      <div className="mb-4">
-        <p className="text-[0.68rem] font-bold uppercase tracking-normal text-cyan-200">Planet Selector</p>
-        <h2 className="mt-1 text-base font-semibold text-white">Owned planets</h2>
-        <p className="mt-1 text-xs leading-5 text-slate-400">
-          {planets.length} active {planets.length === 1 ? "world" : "worlds"}
-        </p>
-      </div>
-
+    <aside aria-label="Select planet" className="hidden w-28 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {planets.map((planet) => {
           const selected = planet.planetId === selectedPlanet.planetId;
-          const image = planetImage(planet);
-          const queueLabel = planetQueueLabel(planet);
           return (
-            <button
-              aria-current={selected ? "true" : undefined}
-              className={`group grid w-full grid-cols-[3.5rem_minmax(0,1fr)] gap-3 rounded border p-2.5 text-left transition ${
-                selected
-                  ? "border-cyan-300/60 bg-cyan-300/12 shadow-lg shadow-cyan-950/30"
-                  : "border-white/10 bg-white/[0.045] hover:border-cyan-200/40 hover:bg-white/[0.075]"
-              }`}
+            <PlanetSelectorButton
               key={planet.planetId}
-              onClick={() => onSelect(planet.planetId)}
-              type="button"
-            >
-              <span className="relative h-14 w-14 overflow-hidden rounded border border-white/10 bg-black/30">
-                <img
-                  alt=""
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                  src={image}
-                />
-                <span className={`absolute inset-0 ring-1 ring-inset ${selected ? "ring-cyan-200/50" : "ring-white/10"}`} />
-              </span>
-
-              <span className="min-w-0">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-semibold text-white">{planetDisplayName(planet)}</span>
-                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[0.62rem] font-bold uppercase tracking-normal ${
-                    planet.isHomePlanet ? "bg-amber-300/15 text-amber-100" : "bg-cyan-300/12 text-cyan-100"
-                  }`}>
-                    {planetRoleLabel(planet)}
-                  </span>
-                </span>
-                <span className="mt-1 block truncate text-xs text-slate-400">{planet.coordinates}</span>
-                <span className="mt-1 block truncate text-[0.7rem] text-slate-500">{planetTypeLabel(planet)}</span>
-                <span className="mt-2 flex flex-wrap gap-1.5">
-                  <PlanetBadge label={`${planet.fieldsUsed}/${planet.fieldsCapacity} fields`} />
-                  {planet.moon?.exists ? <PlanetBadge label="Moon" /> : null}
-                  {queueLabel ? <PlanetBadge label={queueLabel} /> : null}
-                </span>
-              </span>
-            </button>
+              onSelect={onSelect}
+              planet={planet}
+              selected={selected}
+            />
           );
         })}
-      </div>
-
-      <div className="mt-4 rounded border border-white/10 bg-black/20 p-3">
-        <div className="flex items-start gap-3">
-          <img
-            alt=""
-            className="h-12 w-12 rounded border border-white/10 object-cover"
-            src={planetImage(selectedPlanet)}
-          />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-white">{planetDisplayName(selectedPlanet)}</p>
-            <p className="mt-1 truncate text-xs text-slate-400">{selectedPlanet.coordinates}</p>
-            <p className="mt-1 truncate text-[0.7rem] text-slate-500">
-              M{selectedPlanet.keyLevels.metalMine} C{selectedPlanet.keyLevels.crystalMine} D{selectedPlanet.keyLevels.deuteriumSynthesizer}
-            </p>
-          </div>
-        </div>
-        <div className="mt-3 flex items-center justify-between gap-2">
-          {actionLabel ? (
-            <div className="min-w-0 flex-1">{actionLabel}</div>
-          ) : abandonUnavailableLabel ? (
-            <span className="min-w-0 flex-1 truncate text-xs text-slate-400">{abandonUnavailableLabel}</span>
-          ) : (
-            <span />
-          )}
-          <PlanetAbandonButton
-            action={action}
-            canTransact={canTransact}
-            onAbandon={onAbandon}
-            selectedPlanet={selectedPlanet}
-          />
-        </div>
       </div>
     </aside>
   );
 }
 
-function PlanetAbandonButton({
-  action,
-  canTransact,
-  onAbandon,
-  selectedPlanet,
+function PlanetSelectorButton({
+  onSelect,
+  planet,
+  selected,
 }: {
-  action: PlanetManagementActionState;
-  canTransact: boolean;
-  onAbandon: () => void;
-  selectedPlanet: ManagedPlanetResponse;
+  onSelect: (planetId: string) => void;
+  planet: ManagedPlanetResponse;
+  selected: boolean;
 }) {
-  const showAbandonButton = shouldShowAbandonPlanetButton(selectedPlanet, canTransact, action);
-  if (!showAbandonButton) return null;
-
   return (
     <button
-      className="h-8 rounded border border-red-300/20 bg-red-300/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-300/20"
-      onClick={onAbandon}
+      aria-current={selected ? "true" : undefined}
+      aria-label={`Select ${planetDisplayName(planet)} at ${planet.coordinates}`}
+      className={`group grid w-20 shrink-0 justify-items-center gap-1 rounded border p-1.5 text-center transition focus:outline-none focus:ring-2 focus:ring-cyan-300/60 ${
+        selected
+          ? "border-cyan-300/70 bg-cyan-300/12 shadow-lg shadow-cyan-950/25"
+          : "border-white/10 bg-white/[0.045] hover:border-cyan-200/40 hover:bg-white/[0.075]"
+      }`}
+      onClick={() => onSelect(planet.planetId)}
       type="button"
     >
-      Abandon
+      <span className="h-14 w-14 overflow-hidden rounded bg-black/30">
+        <img
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          src={planetImage(planet)}
+        />
+      </span>
+      <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
+        {planetDisplayName(planet)}
+      </span>
     </button>
-  );
-}
-
-function PlanetBadge({ label }: { label: string }) {
-  return (
-    <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[0.64rem] font-medium text-slate-300">
-      {label}
-    </span>
   );
 }
 
@@ -2440,21 +2331,6 @@ function planetDisplayName(planet: ManagedPlanetResponse): string {
 
 function planetImage(planet: ManagedPlanetResponse): string {
   return planetImageForType(planetTypeFromTemperature(planet.temperature));
-}
-
-function planetTypeLabel(planet: ManagedPlanetResponse): string {
-  return formatPlanetType(planetTypeFromTemperature(planet.temperature));
-}
-
-function planetRoleLabel(planet: ManagedPlanetResponse): string {
-  return planet.isHomePlanet ? "Home" : "Colony";
-}
-
-function planetQueueLabel(planet: ManagedPlanetResponse): string | null {
-  if (planet.queues.building?.active) return "Building";
-  if (planet.queues.ship?.active) return "Ships";
-  if (planet.queues.defense?.active) return "Defense";
-  return null;
 }
 
 function namedSettlementPlanet(planet: Planet | undefined, name: string | null | undefined): Planet | undefined {

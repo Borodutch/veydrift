@@ -1,5 +1,7 @@
+import type { ComponentChildren } from "preact";
+import { useEffect, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Factory, FlaskConical, Moon, Orbit, Radar, Rocket, SatelliteDish, Shield, Trophy, Users } from "lucide-preact";
+import { ArrowLeftRight, Factory, FlaskConical, Menu, Moon, Orbit, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
 import { shortAddress } from "../walletFlow";
 
@@ -21,6 +23,7 @@ interface NavBarProps {
   active: Page;
   coordinates?: string | undefined;
   account?: string | undefined;
+  mobilePlanetSelector?: ComponentChildren | undefined;
   onNavigate: (page: Page) => void;
 }
 
@@ -38,7 +41,25 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },
 ];
 
-export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps) {
+export function NavBar({ active, account, coordinates, mobilePlanetSelector, onNavigate }: NavBarProps) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileMenuOpen(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [mobileMenuOpen]);
+
+  const handleMobileNavigate = (page: Page) => {
+    onNavigate(page);
+    setMobileMenuOpen(false);
+  };
+
   return (
     <>
       {/* Desktop sidebar */}
@@ -80,18 +101,47 @@ export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps
         </div>
       </nav>
 
-      {/* Mobile top tabs */}
-      <nav className="grid grid-cols-4 border-b border-white/10 bg-[#0c111b]/95 backdrop-blur sm:grid-cols-9 md:hidden">
-        {pages.map((page) => (
-          <MobileTab
-            active={active === page.key || (active === "planet" && page.key === "galaxy")}
-            key={page.key}
-            icon={page.icon}
-            label={page.mobileLabel}
-            onClick={() => onNavigate(page.key)}
-          />
-        ))}
-      </nav>
+      {/* Mobile navigation */}
+      <div className="border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
+        <div className="flex h-12 items-center justify-between gap-3 px-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-white">Veydrift</p>
+            <p className="font-mono text-[11px] leading-none text-slate-500">
+              {coordinates ?? "--:--:--"}
+            </p>
+          </div>
+          <button
+            aria-controls="mobile-navigation-menu"
+            aria-expanded={mobileMenuOpen}
+            aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.06] text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+            type="button"
+          >
+            {mobileMenuOpen ? <X aria-hidden="true" size={18} strokeWidth={2} /> : <Menu aria-hidden="true" size={18} strokeWidth={2} />}
+          </button>
+        </div>
+
+        {mobileMenuOpen && (
+          <div
+            className="grid gap-3 border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
+            id="mobile-navigation-menu"
+          >
+            {mobilePlanetSelector}
+            <nav aria-label="Mobile app sections" className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+              {pages.map((page) => (
+                <MobileTab
+                  active={active === page.key || (active === "planet" && page.key === "galaxy")}
+                  key={page.key}
+                  icon={page.icon}
+                  label={page.mobileLabel}
+                  onClick={() => handleMobileNavigate(page.key)}
+                />
+              ))}
+            </nav>
+          </div>
+        )}
+      </div>
     </>
   );
 }
@@ -139,10 +189,10 @@ function MobileTab({
 }) {
   return (
     <button
-      className={`flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 px-1 text-[11px] font-medium transition ${
+      className={`flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded border px-1 text-[11px] font-medium transition ${
         active
-          ? "border-b-2 border-cyan-300 bg-cyan-300/5 text-cyan-300"
-          : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+          ? "border-cyan-300/45 bg-cyan-300/10 text-cyan-200"
+          : "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/[0.075] hover:text-slate-200"
       }`}
       onClick={onClick}
       type="button"
