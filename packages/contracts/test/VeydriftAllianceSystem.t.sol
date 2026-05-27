@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
+import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
@@ -47,6 +48,7 @@ contract VeydriftAllianceSystemTest is Test {
     address internal member = address(0xCAFE);
     address internal enemy = address(0xE11A);
     address internal recruit = address(0xBEEF);
+    address internal fulfiller = address(0xF17F);
 
     VeydriftGame internal game;
     VeydriftAllianceSystem internal alliances;
@@ -59,11 +61,16 @@ contract VeydriftAllianceSystemTest is Test {
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         game = new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
+        RandomnessEngine randomness = new RandomnessEngine(admin, fulfiller);
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         metalToken = new AllianceMockResourceToken();
         crystalToken = new AllianceMockResourceToken();
         deuteriumToken = new AllianceMockResourceToken();
         _fundGameReserves(1_000_000_000);
+        vm.startPrank(admin);
+        game.setRandomnessEngine(address(randomness));
+        randomness.setRequesterAuthorization(address(game), true);
+        vm.stopPrank();
         vm.deal(leader, 1 ether);
         vm.deal(member, 1 ether);
         vm.deal(enemy, 1 ether);

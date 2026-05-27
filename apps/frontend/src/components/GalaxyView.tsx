@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
+  DEFAULT_MISSION_SPEED_PERCENT,
+  MISSION_SPEED_OPTIONS,
+  type FleetDriveLevels,
   fleetMissionAvailableCargoCapacity,
   fleetMissionDistance,
   fleetMissionFuelCost,
@@ -31,6 +34,7 @@ import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
+export const PUBLIC_INTEL_SUMMARY_LABEL = "Public intel";
 
 type MissionResources = {
   metal?: number;
@@ -45,6 +49,9 @@ export type GalaxyMissionPlanner = {
   } | undefined;
   resources?: MissionResources | undefined;
   missionShips?: Partial<MissionShips> | undefined;
+  driveLevels?: FleetDriveLevels | undefined;
+  speedPercent?: number | undefined;
+  universeSpeed?: number | undefined;
   ships?: Array<{ id: number; count: number }> | undefined;
   now?: number | undefined;
 };
@@ -85,7 +92,7 @@ interface Props {
   homePlanet?: Planet | undefined;
   defenseState?: ChainDefenseState | null | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
-  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
 }
@@ -108,6 +115,7 @@ export function GalaxyView({
   const [planets, setPlanets] = useState<Planet[]>([]);
   const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
   const [loading, setLoading] = useState(true);
+  const [missionSpeedPercent, setMissionSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
@@ -269,6 +277,25 @@ export function GalaxyView({
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-[#101624] p-2">
+        <span className="px-1 text-[11px] font-medium uppercase text-slate-500">Mission speed</span>
+        {MISSION_SPEED_OPTIONS.map((speed) => (
+          <button
+            aria-pressed={missionSpeedPercent === speed}
+            className={`h-8 rounded border px-2 text-xs font-semibold transition ${
+              missionSpeedPercent === speed
+                ? "border-signal/45 bg-signal/15 text-signal"
+                : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
+            }`}
+            key={speed}
+            onClick={() => setMissionSpeedPercent(speed)}
+            type="button"
+          >
+            {speed}%
+          </button>
+        ))}
+      </div>
+
       <div className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-2 sm:p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-1 pb-2">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -289,6 +316,8 @@ export function GalaxyView({
                 <span>{moonChanceCount} moon chance</span>
               </>
             ) : null}
+            <span className="text-slate-700">/</span>
+            <span>{PUBLIC_INTEL_SUMMARY_LABEL}</span>
           </div>
           {occupancySource ? (
             <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
@@ -328,6 +357,7 @@ export function GalaxyView({
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
                   onAction={onAction}
+                  missionSpeedPercent={missionSpeedPercent}
                   attackProtection={planet?.occupiedBy ? attackProtection[planet.occupiedBy.planetId] : undefined}
                   homeCoords={homeCoordsInSystem}
                   homePlanetId={homePlanetId}
@@ -441,11 +471,12 @@ export function estimateGalaxyMissionPreview({
   const missionShips = planner.missionShips ?? defaultMissionShips();
   const missionShipCount = fleetMissionShipCount(missionShips);
   const distance = fleetMissionDistance(homeCoords, target);
-  const travelSeconds = fleetMissionTravelSeconds(distance, missionShips);
-  const fuelCost = fleetMissionFuelCost(missionShips, distance);
+  const speedPercent = planner.speedPercent ?? DEFAULT_MISSION_SPEED_PERCENT;
+  const travelSeconds = fleetMissionTravelSeconds(distance, missionShips, planner.driveLevels, speedPercent, planner.universeSpeed);
+  const fuelCost = fleetMissionFuelCost(missionShips, distance, planner.driveLevels, speedPercent);
   const arrivalAt = now + travelSeconds * 1_000;
   const returnAt = arrivalAt + travelSeconds * 1_000;
-  const cargoCapacity = fleetMissionAvailableCargoCapacity(missionShips, distance);
+  const cargoCapacity = fleetMissionAvailableCargoCapacity(missionShips, distance, planner.driveLevels, speedPercent);
   let blockedReason: string | undefined;
 
   if (sameCoordinateValues(homeCoords, target)) {
@@ -491,6 +522,7 @@ function GalaxySlot({
   isHome,
   defenseState,
   shipyardState,
+  missionSpeedPercent,
   onAction,
   attackProtection,
   onSelectPlanet,
@@ -506,7 +538,8 @@ function GalaxySlot({
   isHome: boolean;
   defenseState: ChainDefenseState | null;
   shipyardState: ChainShipyardState | null;
-  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  missionSpeedPercent: number;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
   attackProtection: AttackProtectionStatus | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
 }) {
@@ -555,6 +588,7 @@ function GalaxySlot({
           actions={actions}
           busy={actionState.status === "pending"}
           coords={coords}
+          missionSpeedPercent={missionSpeedPercent}
           onAction={onAction}
           planet={undefined}
         />
@@ -665,6 +699,7 @@ function GalaxySlot({
           actions={actions}
           busy={actionState.status === "pending"}
           coords={coords}
+          missionSpeedPercent={missionSpeedPercent}
           onAction={onAction}
           planet={planet}
         />
@@ -677,13 +712,15 @@ function ActionButtons({
   actions,
   busy,
   coords,
+  missionSpeedPercent,
   onAction,
   planet,
 }: {
   actions: GalaxyAction[];
   busy: boolean;
   coords: Coordinates;
-  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  missionSpeedPercent: number;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
   planet: Planet | undefined;
 }) {
   return (
@@ -698,7 +735,7 @@ function ActionButtons({
           disabled={!action.enabled || busy || !onAction}
           key={action.kind}
           onClick={() => {
-            if (action.enabled) onAction?.(action, planet, coords);
+            if (action.enabled) onAction?.(action, planet, coords, missionSpeedPercent);
           }}
           title={action.enabled ? action.label : action.reason}
           type="button"
@@ -730,9 +767,15 @@ export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string 
   const chance = typeof moonChance.chanceBps === "number"
     ? ` ${(moonChance.chanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
     : "";
+  const destructionChance = typeof moonChance.moonDestructionChanceBps === "number"
+    ? ` ${(moonChance.moonDestructionChanceBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
+    : "";
   if (moonChance.status === "pending") return `Moon chance${chance} pending`;
   if (moonChance.status === "created") return `Moon created${moonChance.moonDiameterKm ? ` ${moonChance.moonDiameterKm.toLocaleString()} km` : ""}`;
   if (moonChance.status === "not_created") return `Moon chance${chance} missed`;
+  if (moonChance.status === "moon_destruction_pending") return `Moon destruction${destructionChance} pending`;
+  if (moonChance.status === "moon_destroyed") return "Moon destroyed";
+  if (moonChance.status === "moon_survived") return "Moon survived";
   return "Existing moon skipped";
 }
 

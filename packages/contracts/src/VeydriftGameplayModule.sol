@@ -7,6 +7,7 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
+import {IVeydriftAttackRandomnessEngine} from "./interfaces/IVeydriftAttackRandomnessEngine.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftCounterplayAllianceSystem {
@@ -107,7 +108,33 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 randomnessRequestId
     ) external returns (uint256 missionId) {
         return _launchFleetMission(
-            originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId
+            originPlanetId,
+            targetPlanetId,
+            missionType,
+            ships,
+            cargo,
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            randomnessRequestId
+        );
+    }
+
+    function launchFleetMission(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        FleetMissionType missionType,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint16 speedPercent,
+        uint256 randomnessRequestId
+    ) external returns (uint256 missionId) {
+        return _launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            missionType,
+            ships,
+            cargo,
+            speedPercent,
+            randomnessRequestId
         );
     }
 
@@ -129,8 +156,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         FleetMissionType missionType,
         MissionShips calldata ships,
         Resources calldata cargo,
+        uint16 speedPercent,
         uint256 randomnessRequestId
     ) private returns (uint256 missionId) {
+        if (!VeydriftAntiRaidPrimitives.isValidMissionSpeed(speedPercent)) {
+            revert InvalidQuantity();
+        }
         _requirePlanetOwner(originPlanetId);
         uint256 hostileMissionId;
         bool counterplayMission =
@@ -186,11 +217,14 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _settleResources(originPlanetId);
         uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
-            VeydriftAntiRaidPrimitives.missionFuelCost(fleetFuelConsumption, travelDistance)
+            VeydriftAntiRaidPrimitives.missionFuelCost(
+                fleetFuelConsumption, travelDistance, speedPercent
+            )
         );
         uint64 departureAt = _currentTimestamp();
-        uint256 travelSeconds =
-            VeydriftAntiRaidPrimitives.travelSeconds(travelDistance, slowestSpeed);
+        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
+            travelDistance, slowestSpeed, speedPercent, FLEET_UNIVERSE_SPEED
+        );
         uint64 arrivalAt;
         unchecked {
             arrivalAt = uint64(uint256(departureAt) + travelSeconds);
@@ -243,6 +277,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             returnAt = uint64(uint256(arrivalAt) + travelSeconds);
         }
         missionId = nextFleetId++;
+        if (missionType == FleetMissionType.Attack) {
+            randomnessRequestId = _requestAttackBattleRandomness(missionId);
+        }
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
@@ -317,11 +354,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _settleResources(originPlanetId);
         uint256 travelDistance = _planetDistance(originPlanetId, attack.targetPlanetId);
         uint128 fuelCost = _toUint128(
-            VeydriftAntiRaidPrimitives.missionFuelCost(fleetFuelConsumption, travelDistance)
+            VeydriftAntiRaidPrimitives.missionFuelCost(
+                fleetFuelConsumption,
+                travelDistance,
+                VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+            )
         );
         uint64 departureAt = _currentTimestamp();
-        uint256 travelSeconds =
-            VeydriftAntiRaidPrimitives.travelSeconds(travelDistance, slowestSpeed);
+        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
+            travelDistance,
+            slowestSpeed,
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            FLEET_UNIVERSE_SPEED
+        );
         uint64 naturalArrivalAt;
         unchecked {
             naturalArrivalAt = uint64(uint256(departureAt) + travelSeconds);
@@ -382,6 +427,13 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
         emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
         _emitFleetMissionShips(missionId, ships);
+    }
+
+    function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
+        address randomnessEngine = _randomnessEngine;
+        if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
+        return IVeydriftAttackRandomnessEngine(randomnessEngine)
+            .requestRandomness(_attackBattlePurposeHash(missionId));
     }
 
     function _emitFleetMissionShips(uint256 missionId, MissionShips calldata ships) private {
@@ -595,6 +647,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             unitCost.crystal,
             unitCost.deuterium,
             quantity,
+            QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
     }

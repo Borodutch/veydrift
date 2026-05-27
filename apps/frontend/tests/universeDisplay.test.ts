@@ -11,6 +11,7 @@ import { buildingCatalog, shipCatalog } from "../src/playableMvp";
 import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
+  PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
   formatMoonChanceLabel,
   formatMissionPreview,
@@ -214,6 +215,13 @@ describe("tester universe display data", () => {
         },
       ],
     })[0];
+    const enemyWithDebris = {
+      ...enemy,
+      debrisField: {
+        metal: 40_000,
+        crystal: 15_000,
+      },
+    };
     const own = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
@@ -239,6 +247,7 @@ describe("tester universe display data", () => {
       ships: [
         { id: 0, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 2, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
         { id: 3, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
       ],
       queue: null,
@@ -270,6 +279,23 @@ describe("tester universe display data", () => {
       homePlanetId: "7",
       planet: own,
       shipyardState,
+    });
+    const harvestActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: enemyWithDebris,
+      defenseState,
+      shipyardState,
+    });
+    const noRecyclerHarvestActions = galaxyActionsForSlot({
+      account: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planet: enemyWithDebris,
+      defenseState,
+      shipyardState: {
+        ...shipyardState,
+        ships: shipyardState.ships.filter((ship) => ship.id !== 2),
+      },
     });
     const originActions = galaxyActionsForSlot({
       account: "0x1111111111111111111111111111111111111111",
@@ -312,7 +338,19 @@ describe("tester universe display data", () => {
     });
     expect(enemyActions.find((action) => action.kind === "harvest")).toMatchObject({
       enabled: false,
-      reason: "Debris fields are not live on this deployment yet.",
+      reason: "No debris field at this coordinate.",
+    });
+    expect(harvestActions.find((action) => action.kind === "harvest")).toMatchObject({
+      enabled: true,
+      mode: "mission",
+      mission: "harvest",
+      ships: {
+        recycler: 1,
+      },
+    });
+    expect(noRecyclerHarvestActions.find((action) => action.kind === "harvest")).toMatchObject({
+      enabled: false,
+      reason: "Requires a recycler on your home planet.",
     });
     expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy"]);
     expect(originActions).toEqual([]);
@@ -322,6 +360,7 @@ describe("tester universe display data", () => {
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
     ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
+    expect(PUBLIC_INTEL_SUMMARY_LABEL).toBe("Public intel");
     expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
       Object.keys(emptyMissionShips())
     );

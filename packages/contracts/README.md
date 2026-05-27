@@ -119,9 +119,9 @@ Fleet missions:
 - `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, and intercept mission types. Missile attacks use `launchInterplanetaryMissileAttack(...)`.
 - Departure settles involved planets, enforces fleet slots, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
 - For `AcsDefend` and `Intercept`, the `targetPlanetId` argument is the hostile attack mission id. The contract resolves the actual defended planet from that mission, requires alliance defense permission from `VeydriftAllianceSystem`, and links the launched fleet into the combat module's defender-side battle resolution.
-- Attack battles use six canonical Veydrift rounds with cataloged attack, shield, and hull values, separate Weapons/Shielding/Armor scaling, shield absorption, hull explosion checks once damage exceeds 30% of hull, deterministic seed-derived target selection, and cataloged rapid-fire multipliers. ACS defending and intercepting fleets join the defender side when they arrive before the hostile attack.
-- For bounded gas, Veydrift resolves combat at the unit-stack level: one deterministic target stack per firing stack, rapid-fire as a catalog multiplier, and no persisted partial hull damage between rounds. This keeps the catalog, round count, shields, tech modifiers, debris, and outcomes aligned with Veydrift combat concepts without claiming byte-for-byte battle-simulator parity for every large mixed fleet.
-- Battle randomness is deterministic from `ATTACK_BATTLE_DOMAIN`, chain id, mission id, attacker, origin, target, and the mission `randomnessRequestId`; the contract emits that seed in `AttackBattleResolved`.
+- Attack battles use six classic OGame-style rounds with cataloged attack, shield, and hull values, separate Weapons/Shielding/Armor scaling, shield absorption, hull explosion checks once damage exceeds 30% of hull, deterministic seed-derived target selection, cataloged rapid-fire expectations, and 70% end-of-battle defense repair. ACS defending and intercepting fleets join the defender side when they arrive before the hostile attack.
+- For bounded gas, Veydrift resolves combat at the unit-stack level instead of rolling every individual shot. This keeps battle resolution deterministic and gas-bounded while matching the classic OGame round count, shield/hull thresholds, debris, and defense repair.
+- Attack launches request battle randomness from the configured `RandomnessEngine`; the caller-supplied `randomnessRequestId` argument is ignored for Attack missions. `resolveFleetMission` consumes the fulfilled oracle word for the mission purpose and reverts while the request is pending, then emits the derived seed in `AttackBattleResolved`.
 - Public-state anti-raid primitives are centralized in `VeydriftAntiRaidPrimitives`: fleet slots,
   travel/fuel, recall timing, hostile mission visibility, ACS cutoff, bashing/cooldown limits,
   score protection, loot/protected-storage caps, and defender recovery constants. Frontend/backend
@@ -272,14 +272,14 @@ forge script script/Deploy.s.sol:Deploy \
 ```
 
 `Deploy.s.sol` deploys the game, `RandomnessEngine`, the Moon System module, and
-the Metal, Crystal, and Deuterium ERC-20 proxy contracts. It authorizes the moon
-module as a randomness requester, wires the moon module into the game for
-moon-building resource debits, wires the resource tokens into the game as reserve
-tokens, and emits all proxy/module addresses. Configure the emitted moon module
-address as `VEYDRIFT_MOON_CONTRACT_ADDRESS` for backend moon reads, and the
-emitted randomness engine address for the backend fulfiller. Because the setup
-calls are owner-only, `ADMIN_ADDRESS` must match the `PRIVATE_KEY` broadcaster
-for this script.
+the Metal, Crystal, and Deuterium ERC-20 proxy contracts. It authorizes the game
+and moon module as randomness requesters, wires the randomness and moon modules
+into the game, wires the resource tokens into the game as reserve tokens, and
+emits all proxy/module addresses. Configure the emitted moon module address as
+`VEYDRIFT_MOON_CONTRACT_ADDRESS` for backend moon reads, and the emitted
+randomness engine address for the backend fulfiller. Because the setup calls are
+owner-only, `ADMIN_ADDRESS` must match the `PRIVATE_KEY` broadcaster for this
+script.
 
 To attach resource tokens to an already deployed game contract, run:
 
@@ -344,9 +344,15 @@ Veydrift uses public blockchain state as the source of truth. Espionage reports,
 hidden fleet intent, commit-reveal protections, private orderflow, and other
 hidden-state mechanics are out of scope permanently for the product direction.
 There is no private state, spy report flow, probe unit, or research path for
-revealing information. Fleet and combat systems should use the public
-counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
+revealing information. VEY-KANEO-196 records this as the formal classic
+espionage and hidden-intel exclusion. Fleet and combat systems should use the
+public counterplay and anti-raid mechanics tracked from VEY-KANEO-119 through
 VEY-KANEO-133: visible commitment, recall limits, return exposure, and future
 ACS/intercept rules.
+
+VEY-KANEO-198 records the broader parity boundary: public onchain state, Rift
+resource bridging, protected storage, Space Dock recovery, and Veydrift naming
+are product-mode decisions unless a later scope ticket explicitly gates or
+replaces them.
 
 The MVP still enforces payment, duplicate-start prevention, coordinate collision prevention, planet limits, resource/fuel costs, cargo capacity, missile silo capacity, interplanetary missile interception and defense damage, one active construction or production slot per domain, basic dependencies, owner-gated upgrades/configuration, and timestamp-based lazy settlement.

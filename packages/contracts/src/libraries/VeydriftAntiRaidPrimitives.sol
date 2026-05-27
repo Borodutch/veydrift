@@ -6,6 +6,8 @@ pragma solidity ^0.8.28;
 /// but cannot become the authority for raid safety.
 library VeydriftAntiRaidPrimitives {
     uint16 public constant BPS = 10_000;
+    uint16 public constant FULL_MISSION_SPEED_PERCENT = 100;
+    uint16 public constant MIN_MISSION_SPEED_PERCENT = 10;
 
     uint8 public constant BASE_FLEET_SLOTS = 1;
     uint8 public constant FLEET_SLOTS_PER_COMPUTER_LEVEL = 1;
@@ -35,8 +37,21 @@ library VeydriftAntiRaidPrimitives {
         pure
         returns (uint256)
     {
+        return travelSeconds(distance, slowestShipSpeed, FULL_MISSION_SPEED_PERCENT, 1);
+    }
+
+    function travelSeconds(
+        uint256 distance,
+        uint256 slowestShipSpeed,
+        uint16 speedPercent,
+        uint16 universeSpeed
+    ) public pure returns (uint256) {
         if (slowestShipSpeed == 0) return 0;
-        return 10 + _sqrt((distance * 10 * 122_500) / slowestShipSpeed);
+        uint16 normalizedSpeed = _requireMissionSpeed(speedPercent);
+        uint256 speedFactor = universeSpeed == 0 ? 1 : universeSpeed;
+        uint256 variableSeconds = _sqrt((distance * 10 * 122_500) / slowestShipSpeed);
+        return 10 + (variableSeconds * FULL_MISSION_SPEED_PERCENT)
+            / (uint256(normalizedSpeed) * speedFactor);
     }
 
     function missionFuelCost(uint256 fleetFuelConsumption, uint256 distance)
@@ -44,8 +59,28 @@ library VeydriftAntiRaidPrimitives {
         pure
         returns (uint256)
     {
+        return missionFuelCost(fleetFuelConsumption, distance, FULL_MISSION_SPEED_PERCENT);
+    }
+
+    function missionFuelCost(uint256 fleetFuelConsumption, uint256 distance, uint16 speedPercent)
+        public
+        pure
+        returns (uint256)
+    {
         if (fleetFuelConsumption == 0) return 0;
-        return 1 + ((fleetFuelConsumption * distance * 4) + 17_500) / 35_000;
+        uint16 normalizedSpeed = _requireMissionSpeed(speedPercent);
+        uint256 speedMultiplier = uint256(normalizedSpeed) + FULL_MISSION_SPEED_PERCENT;
+        uint256 denominator =
+            35_000 * uint256(FULL_MISSION_SPEED_PERCENT) * FULL_MISSION_SPEED_PERCENT;
+        return 1
+            + ((fleetFuelConsumption * distance * speedMultiplier * speedMultiplier)
+                + denominator
+                / 2) / denominator;
+    }
+
+    function isValidMissionSpeed(uint16 speedPercent) internal pure returns (bool) {
+        return speedPercent >= MIN_MISSION_SPEED_PERCENT
+            && speedPercent <= FULL_MISSION_SPEED_PERCENT && speedPercent % 10 == 0;
     }
 
     function recallReturnSeconds(uint256 elapsedOutboundSeconds) internal pure returns (uint256) {
@@ -162,5 +197,10 @@ library VeydriftAntiRaidPrimitives {
         }
         uint256 roundedDown = value / result;
         return result < roundedDown ? result : roundedDown;
+    }
+
+    function _requireMissionSpeed(uint16 speedPercent) private pure returns (uint16) {
+        require(isValidMissionSpeed(speedPercent), "INVALID_MISSION_SPEED");
+        return speedPercent;
     }
 }

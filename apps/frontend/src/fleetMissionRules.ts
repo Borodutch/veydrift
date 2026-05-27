@@ -3,6 +3,9 @@ import type { MissionShips } from "./galaxyActions";
 
 export const FLEET_RULE_BPS = 10_000;
 export const FULL_SPEED_PERCENT = 100;
+export const DEFAULT_FLEET_UNIVERSE_SPEED = 1;
+export const DEFAULT_MISSION_SPEED_PERCENT = 100;
+export const MISSION_SPEED_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10] as const;
 
 const missionShipKeys = [
   "smallCargo",
@@ -127,24 +130,35 @@ export function fleetMissionTravelSeconds(
   distance: number,
   ships: Partial<MissionShips> | undefined,
   drives: FleetDriveLevels = {},
+  speedPercent = DEFAULT_MISSION_SPEED_PERCENT,
+  universeSpeed = DEFAULT_FLEET_UNIVERSE_SPEED,
 ): number {
   const slowestSpeed = fleetMissionSlowestSpeed(ships, drives);
   if (slowestSpeed <= 0) return 0;
   const normalizedDistance = Math.max(0, Math.trunc(distance));
-  return 10 + Math.floor(350 * Math.sqrt((normalizedDistance * 10) / slowestSpeed));
+  const speed = normalizeMissionSpeedPercent(speedPercent);
+  const speedFactor = Math.max(1, Math.trunc(universeSpeed));
+  const variableSeconds = Math.floor(350 * Math.sqrt((normalizedDistance * 10) / slowestSpeed));
+  return 10 + Math.floor((variableSeconds * FULL_SPEED_PERCENT) / (speed * speedFactor));
 }
 
 export function fleetMissionFuelCost(
   ships: Partial<MissionShips> | undefined,
   distance: number,
+  drives: FleetDriveLevels = {},
+  speedPercent = DEFAULT_MISSION_SPEED_PERCENT,
 ): number {
   if (fleetMissionShipCount(ships) === 0) return 0;
   const normalizedDistance = Math.max(0, Math.trunc(distance));
+  const normalizedDrives = normalizeDriveLevels(drives);
+  const speed = normalizeMissionSpeedPercent(speedPercent);
+  const speedMultiplier = speed + FULL_SPEED_PERCENT;
   const consumption = missionShipKeys.reduce((total, key) => {
     const quantity = Math.max(0, Math.trunc(ships?.[key] ?? 0));
-    return total + quantity * shipStats[key].fuel;
+    return total + quantity * shipFuelConsumption(key, normalizedDrives);
   }, 0);
-  return 1 + Math.floor(((consumption * normalizedDistance * 4) + 17_500) / 35_000);
+  const denominator = 35_000 * FULL_SPEED_PERCENT * FULL_SPEED_PERCENT;
+  return 1 + Math.floor(((consumption * normalizedDistance * speedMultiplier * speedMultiplier) + Math.floor(denominator / 2)) / denominator);
 }
 
 export function fleetMissionCargoCapacity(ships: Partial<MissionShips> | undefined): number {
@@ -158,8 +172,10 @@ export function fleetMissionCargoCapacity(ships: Partial<MissionShips> | undefin
 export function fleetMissionAvailableCargoCapacity(
   ships: Partial<MissionShips> | undefined,
   distance: number,
+  drives: FleetDriveLevels = {},
+  speedPercent = DEFAULT_MISSION_SPEED_PERCENT,
 ): number {
-  return Math.max(0, fleetMissionCargoCapacity(ships) - fleetMissionFuelCost(ships, distance));
+  return Math.max(0, fleetMissionCargoCapacity(ships) - fleetMissionFuelCost(ships, distance, drives, speedPercent));
 }
 
 export function fleetMissionShipCount(ships: Partial<MissionShips> | undefined): number {
@@ -186,6 +202,21 @@ function normalizeDriveLevels(drives: FleetDriveLevels): Required<FleetDriveLeve
     impulseDrive: Math.max(0, Math.trunc(drives.impulseDrive ?? 0)),
     hyperspaceDrive: Math.max(0, Math.trunc(drives.hyperspaceDrive ?? 0)),
   };
+}
+
+function normalizeMissionSpeedPercent(speedPercent: number): number {
+  const speed = Math.trunc(speedPercent);
+  return MISSION_SPEED_OPTIONS.includes(speed as (typeof MISSION_SPEED_OPTIONS)[number])
+    ? speed
+    : DEFAULT_MISSION_SPEED_PERCENT;
+}
+
+function shipFuelConsumption(
+  ship: (typeof missionShipKeys)[number],
+  drives: Required<FleetDriveLevels>,
+): number {
+  if (ship === "smallCargo" && drives.impulseDrive >= 5) return 20;
+  return shipStats[ship].fuel;
 }
 
 function driveSpeed(baseSpeed: number, driveLevel: number, bpsPerLevel: number): number {
