@@ -69,6 +69,7 @@ bun run dev:frontend
 - `GET /universe/galaxies/:galaxy/systems/:system`
 - `GET /universe/systems?galaxy=1&center=250&radius=2`
 - `POST /index/rebuild`
+- `POST /webhooks/alchemy`
 - `GET /graphql` / `POST /graphql` for the existing minimal service status response
 
 Copy `apps/backend/.env.example` to `apps/backend/.env` and provide the Base
@@ -83,7 +84,9 @@ VEYDRIFT_GAME_CONTRACT_ADDRESS=0x...
 VEYDRIFT_METAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
+VEYDRIFT_INDEX_DB_PATH=.data/contract-state.sqlite
 VEYDRIFT_INDEX_FROM_BLOCK=0
+VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY=...
 ALCHEMY_BASE_SEPOLIA_API_KEY=...
 # Optional explicit websocket overrides; otherwise the Alchemy key derives the Base Sepolia WS URL.
 VEYDRIFT_WS_RPC_URL=
@@ -107,10 +110,17 @@ contract.
 `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
 proxies deployed for the game.
 Health/debug responses only report safe configuration metadata and never echo
-RPC URLs or API keys. Ownership remains canonical onchain; the websocket chain
-sync keeps the in-memory event index warm, `GET /chain/events` streams backend
-chain-event notifications to the frontend, and `POST /index/rebuild` remains the
-manual HTTP fallback for rebuilding settlement events.
+RPC URLs or API keys. Ownership remains canonical onchain; when the default
+backend starts with valid chain config it kicks off a background SQLite index
+reconciliation from `VEYDRIFT_INDEX_FROM_BLOCK` and reports the last
+reconciled block, latest indexed block, in-progress state, reorg detection, and
+last reconciliation error in `GET /health`. The websocket chain sync keeps the
+SQLite-backed contract state index warm, `GET /chain/events` streams backend
+chain-event notifications to the frontend, and `POST /index/rebuild` remains
+the manual HTTP fallback for rebuilding settlement events.
+`POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads, verifies
+`X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is configured,
+and applies duplicate-safe indexed event updates.
 
 ### Frontend
 

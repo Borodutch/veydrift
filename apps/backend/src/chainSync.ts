@@ -76,7 +76,7 @@ export class ChainSyncService {
 
   constructor(
     private readonly config: BackendConfig,
-    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> | undefined,
+    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog">> | undefined,
     private readonly options: {
       reconnectBaseMs?: number;
       WebSocketCtor?: WebSocketConstructor;
@@ -278,7 +278,13 @@ export class ChainSyncService {
     this.lastEventAt = new Date().toISOString();
     this.latestSyncedBlock = BigInt(result.blockNumber).toString();
 
-    if (isSettledPlanetLog(result)) {
+    if (this.indexer?.applyLog) {
+      try {
+        this.indexer.applyLog(result);
+      } catch (error) {
+        this.lastError = error instanceof Error ? error.message : "Failed to index contract log.";
+      }
+    } else if (isSettledPlanetLog(result)) {
       try {
         this.indexer?.applyEvent(decodeSettledPlanetLog(result));
       } catch (error) {
