@@ -172,39 +172,13 @@ export class SettlementIndexer {
   }
 
   applyDebrisEvent(event: DebrisFieldEvent): IndexerSnapshot {
-    if (event.resources.metal === "0" && event.resources.crystal === "0") {
-      this.db.query("DELETE FROM indexed_debris_fields WHERE planet_id = ?").run(event.planetId);
-    } else {
-      this.db.query(`
-        INSERT INTO indexed_debris_fields (planet_id, block_number, event_json)
-        VALUES (?, ?, ?)
-        ON CONFLICT(planet_id) DO UPDATE SET
-          block_number = excluded.block_number,
-          event_json = excluded.event_json
-      `).run(event.planetId, event.blockNumber, JSON.stringify(event));
-    }
+    this.upsertDebris(event);
     this.touch();
     return this.snapshot();
   }
 
   applyMoonChanceEvent(event: MoonChanceReportEvent): IndexerSnapshot {
-    this.db.query(`
-      INSERT INTO indexed_moon_chance_reports (report_key, target_planet_id, battle_id, outcome_id, block_number, event_json)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(report_key) DO UPDATE SET
-        target_planet_id = excluded.target_planet_id,
-        battle_id = excluded.battle_id,
-        outcome_id = excluded.outcome_id,
-        block_number = excluded.block_number,
-        event_json = excluded.event_json
-    `).run(
-      moonChanceReportKey(event),
-      event.targetPlanetId,
-      event.battleId,
-      event.outcomeId ?? null,
-      event.blockNumber,
-      JSON.stringify(event)
-    );
+    this.upsertMoonChanceReport(event);
     this.touch();
     return this.snapshot();
   }
@@ -283,25 +257,10 @@ export class SettlementIndexer {
         this.upsertPlanet(event);
       }
       for (const event of debrisEvents) {
-        if (event.resources.metal !== "0" || event.resources.crystal !== "0") {
-          this.db.query(`
-            INSERT INTO indexed_debris_fields (planet_id, block_number, event_json)
-            VALUES (?, ?, ?)
-          `).run(event.planetId, event.blockNumber, JSON.stringify(event));
-        }
+        this.upsertDebris(event);
       }
       for (const event of moonChanceEvents) {
-        this.db.query(`
-          INSERT INTO indexed_moon_chance_reports (report_key, target_planet_id, battle_id, outcome_id, block_number, event_json)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(
-          moonChanceReportKey(event),
-          event.targetPlanetId,
-          event.battleId,
-          event.outcomeId ?? null,
-          event.blockNumber,
-          JSON.stringify(event)
-        );
+        this.upsertMoonChanceReport(event);
       }
       this.touch();
     });
@@ -385,6 +344,41 @@ export class SettlementIndexer {
       event.galaxy,
       event.system,
       event.position,
+      JSON.stringify(event)
+    );
+  }
+
+  private upsertDebris(event: DebrisFieldEvent): void {
+    if (event.resources.metal === "0" && event.resources.crystal === "0") {
+      this.db.query("DELETE FROM indexed_debris_fields WHERE planet_id = ?").run(event.planetId);
+      return;
+    }
+
+    this.db.query(`
+      INSERT INTO indexed_debris_fields (planet_id, block_number, event_json)
+      VALUES (?, ?, ?)
+      ON CONFLICT(planet_id) DO UPDATE SET
+        block_number = excluded.block_number,
+        event_json = excluded.event_json
+    `).run(event.planetId, event.blockNumber, JSON.stringify(event));
+  }
+
+  private upsertMoonChanceReport(event: MoonChanceReportEvent): void {
+    this.db.query(`
+      INSERT INTO indexed_moon_chance_reports (report_key, target_planet_id, battle_id, outcome_id, block_number, event_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(report_key) DO UPDATE SET
+        target_planet_id = excluded.target_planet_id,
+        battle_id = excluded.battle_id,
+        outcome_id = excluded.outcome_id,
+        block_number = excluded.block_number,
+        event_json = excluded.event_json
+    `).run(
+      moonChanceReportKey(event),
+      event.targetPlanetId,
+      event.battleId,
+      event.outcomeId ?? null,
+      event.blockNumber,
       JSON.stringify(event)
     );
   }

@@ -41,6 +41,26 @@ const debris: DebrisFieldEvent = {
   }
 };
 
+const updatedDebris: DebrisFieldEvent = {
+  ...debris,
+  transactionHash: "0xdef2",
+  blockNumber: "126",
+  resources: {
+    metal: "31000",
+    crystal: "12000"
+  }
+};
+
+const clearedDebris: DebrisFieldEvent = {
+  ...debris,
+  transactionHash: "0xdef3",
+  blockNumber: "127",
+  resources: {
+    metal: "0",
+    crystal: "0"
+  }
+};
+
 const moonChance: MoonChanceReportEvent = {
   eventName: "MoonChanceRequested",
   transactionHash: "0xghi",
@@ -145,6 +165,25 @@ describe("SettlementIndexer", () => {
         indexedPlanets: 1
       }
     });
+  });
+
+  test("rebuild applies repeated debris updates in chain order", async () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return [debris, updatedDebris, clearedDebris, updatedDebris]; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    }, 100n);
+
+    await expect(indexer.rebuild()).resolves.toMatchObject({
+      indexedDebrisFields: 1,
+      indexedPlanets: 1
+    });
+    expect(indexer.debrisFieldsInSystem(2, 44)).toEqual([
+      expect.objectContaining({
+        planetId: planet.planetId,
+        resources: updatedDebris.resources
+      })
+    ]);
   });
 });
 
