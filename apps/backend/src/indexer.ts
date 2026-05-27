@@ -10,9 +10,11 @@ import {
   isSettledPlanetLog,
   type ChainReader,
   type DebrisFieldEvent,
+  type ManagedPlanet,
   type MoonChanceReportEvent,
   type RpcLog,
-  type SettledPlanetEvent
+  type SettledPlanetEvent,
+  type WalletPlanets
 } from "./evm";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -170,6 +172,20 @@ export class SettlementIndexer {
       homePlanetId: planet?.planetId ?? null,
       planet,
       contractKind: "game"
+    };
+  }
+
+  walletPlanets(wallet: `0x${string}`): WalletPlanets {
+    const settlement = this.walletSettlement(wallet);
+    const planets = this.rows<SettledPlanetEvent>(
+      "SELECT event_json FROM indexed_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
+      wallet
+    ).map((planet) => indexedManagedPlanet(planet, settlement.homePlanetId));
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      planets
     };
   }
 
@@ -471,6 +487,32 @@ function openIndexerDatabase(databasePath: string): Database {
 
 function parseEvent<T>(value: string): T {
   return JSON.parse(value) as T;
+}
+
+function indexedManagedPlanet(planet: SettledPlanetEvent, homePlanetId: string | null): ManagedPlanet {
+  return {
+    ...planet,
+    coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+    isHomePlanet: planet.planetId === homePlanetId,
+    fieldsUsed: 0,
+    fieldsCapacity: planet.fields,
+    keyLevels: {
+      metalMine: 0,
+      crystalMine: 0,
+      deuteriumSynthesizer: 0,
+      solarPlant: 0,
+      roboticsFactory: 0,
+      shipyard: 0,
+      researchLab: 0,
+      terraformer: 0
+    },
+    queues: {
+      building: null,
+      defense: null,
+      ship: null
+    },
+    moon: null
+  };
 }
 
 function indexedLogKey(log: IndexedRpcLog): string {
