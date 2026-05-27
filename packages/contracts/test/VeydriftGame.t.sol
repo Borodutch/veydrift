@@ -1564,11 +1564,12 @@ contract VeydriftGameTest is Test {
             0
         );
         assertEq(game.planet(originPlanetId).resources.metal, 2_000);
+        uint128 remainingDeuterium = game.planet(originPlanetId).resources.deuterium;
 
         vm.prank(player);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VeydriftGameStorage.InsufficientResources.selector, 2_000, 0, 9_976
+                VeydriftGameStorage.InsufficientResources.selector, 2_000, 0, remainingDeuterium
             )
         );
         game.launchFleetMission(
