@@ -1,10 +1,12 @@
 export type DeploymentMode = "local" | "test" | "staging" | "production";
 
 export type BackendConfig = {
+  alchemyWebhookSigningKey?: string;
   allianceContractAddress?: `0x${string}`;
   chainId: number;
   deploymentMode: DeploymentMode;
   gameContractAddress?: `0x${string}`;
+  indexDbPath: string;
   indexFromBlock: bigint;
   missionResolutionEnabled: boolean;
   missionResolverAddress?: `0x${string}`;
@@ -36,6 +38,7 @@ export type ConfigResult = {
 
 export type SafeConfigSummary = {
   allianceContractConfigured: boolean;
+  alchemyWebhookConfigured: boolean;
   chainId: number;
   deploymentMode: DeploymentMode;
   gameContractConfigured: boolean;
@@ -59,12 +62,14 @@ export type SafeConfigSummary = {
 
 const defaultChainId = 84532;
 const defaultDeploymentMode: DeploymentMode = "local";
+const defaultIndexDbPath = ".data/contract-state.sqlite";
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
 
 export function loadBackendConfig(env: Record<string, string | undefined> = process.env): ConfigResult {
   const problems: ConfigProblem[] = [];
   const deploymentMode = parseDeploymentMode(env.VEYDRIFT_DEPLOYMENT_MODE, problems);
+  const alchemyWebhookSigningKey = env.VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY;
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
@@ -133,10 +138,12 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 
   return {
     config: {
+      ...(alchemyWebhookSigningKey ? { alchemyWebhookSigningKey } : {}),
       ...(allianceContractAddress ? { allianceContractAddress } : {}),
       chainId,
       deploymentMode,
       ...(gameContractAddress ? { gameContractAddress } : {}),
+      indexDbPath: env.VEYDRIFT_INDEX_DB_PATH ?? defaultIndexDbPath,
       indexFromBlock,
       missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
@@ -156,6 +163,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
   return {
     allianceContractConfigured: Boolean(config.allianceContractAddress),
+    alchemyWebhookConfigured: Boolean(config.alchemyWebhookSigningKey),
     chainId: config.chainId,
     deploymentMode: config.deploymentMode,
     gameContractConfigured: Boolean(config.gameContractAddress),

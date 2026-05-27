@@ -7,6 +7,7 @@ const config: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
   gameContractAddress: "0x3333333333333333333333333333333333333333",
+  indexDbPath: ":memory:",
   indexFromBlock: 100n,
   missionResolutionEnabled: true,
   missionResolverAddress: "0x4444444444444444444444444444444444444444",
