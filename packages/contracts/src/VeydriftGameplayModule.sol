@@ -8,6 +8,7 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
+import {IVeydriftAttackRandomnessEngine} from "./interfaces/IVeydriftAttackRandomnessEngine.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftCounterplayAllianceSystem {
@@ -232,6 +233,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
+        if (missionType == FleetMissionType.Attack) {
+            randomnessRequestId = _requestAttackBattleRandomness(missionId);
+        }
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
@@ -359,6 +363,13 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
         emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
         _emitFleetMissionShips(missionId, ships);
+    }
+
+    function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
+        address randomnessEngine = _randomnessEngine;
+        if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
+        return IVeydriftAttackRandomnessEngine(randomnessEngine)
+            .requestRandomness(_attackBattlePurposeHash(missionId));
     }
 
     function _emitFleetMissionShips(uint256 missionId, MissionShips calldata ships) private {

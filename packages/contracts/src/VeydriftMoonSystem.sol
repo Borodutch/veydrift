@@ -100,7 +100,6 @@ contract VeydriftMoonSystem {
     error NoMoon(uint256 planetId);
     error NoPlanet();
     error NotMoonOwner();
-    error NotPlanetOwner();
     error SensorPhalanxOutOfRange(uint16 originSystem, uint16 targetSystem, uint256 range);
     error JumpGateMissing(uint256 planetId);
     error JumpGateNotReady(uint256 planetId, uint64 readyAt);
@@ -198,13 +197,14 @@ contract VeydriftMoonSystem {
         emit MoonChanceReporterUpdated(oldReporter, nextReporter);
     }
 
-    function createMoon(uint256 planetId) external returns (Moon memory createdMoon) {
-        VeydriftGameStorage.Planet memory planetRef = _requirePlanetOwner(planetId);
+    function createMoon(uint256 planetId) external onlyOwner returns (Moon memory createdMoon) {
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+        if (planetRef.owner == address(0)) revert NoPlanet();
         if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
 
         uint256 seed =
             uint256(keccak256(abi.encodePacked(MOON_SEED_DOMAIN, block.chainid, planetId)));
-        createdMoon = _createMoon(planetId, planetRef, msg.sender, seed);
+        createdMoon = _createMoon(planetId, planetRef, planetRef.owner, seed);
     }
 
     function requestMoonChanceFromBattle(
@@ -492,16 +492,6 @@ contract VeydriftMoonSystem {
                 chanceBps
             )
         );
-    }
-
-    function _requirePlanetOwner(uint256 planetId)
-        private
-        view
-        returns (VeydriftGameStorage.Planet memory planetRef)
-    {
-        planetRef = game.planet(planetId);
-        if (planetRef.owner == address(0)) revert NoPlanet();
-        if (planetRef.owner != msg.sender) revert NotPlanetOwner();
     }
 
     function _requireMoonOwner(uint256 planetId) private view {

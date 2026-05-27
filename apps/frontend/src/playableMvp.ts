@@ -782,7 +782,7 @@ export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatB
   const stats = shipBattleStatsByKey[ship.key];
   const notes = [
     "Mission fuel is distance and ship-count based; there is no separate per-ship fuel stat yet.",
-    "Battle resolution uses six Veydrift rounds with shields, hull explosion checks, tech scaling, and rapid-fire where cataloged.",
+    "Battle resolution uses six classic OGame-style rounds with shields, hull explosion checks, tech scaling, rapid-fire where cataloged, and post-battle defense repair.",
   ];
 
   if (!fleetMissionShipKeys.has(ship.key)) {
@@ -819,7 +819,7 @@ export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatB
 export function defenseCombatStats(defense: (typeof defenseCatalog)[number]): CombatStatBlock {
   const battlefieldDefense = defense.id <= 7;
   const notes = battlefieldDefense
-    ? ["Battle resolution uses six Veydrift rounds with shields, hull explosion checks, tech scaling, and rapid-fire where cataloged."]
+    ? ["Battle resolution uses six classic OGame-style rounds with shields, hull explosion checks, tech scaling, rapid-fire where cataloged, and post-battle defense repair."]
     : ["Missile attack and interception rules are separate from current fleet battle defense stats."];
 
   if (defense.key === "smallShieldDome" || defense.key === "largeShieldDome") {
