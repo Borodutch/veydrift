@@ -5,11 +5,24 @@ import {
   ActiveBuildingQueueDetail,
   BuildingLevelInfoButton,
   BuildingLevelInfoModal,
+  InfrastructureLoadErrorPanel,
   detailEffectRows,
 } from "../src/components/InfrastructurePage";
 import { buildingEffectMetrics, createInitialPlayableState } from "../src/playableMvp";
 
 describe("Infrastructure page display helpers", () => {
+  test("renders load errors without fake infrastructure values", () => {
+    const panel = InfrastructureLoadErrorPanel({
+      reason: "Infrastructure request failed with 503",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("Infrastructure state could not be loaded");
+    expect(text).toContain("Infrastructure request failed with 503");
+    expect(text).toContain("Levels, costs, production effects, storage caps, and upgrade values are unavailable");
+    expect(text).not.toMatch(/\bLevel 0\b|Upgrade cost|Production capacity|Ready for Level/);
+  });
+
   test("renders a compact level info button with the building label", () => {
     const button = BuildingLevelInfoButton({
       buildingLabel: "Metal Mine",

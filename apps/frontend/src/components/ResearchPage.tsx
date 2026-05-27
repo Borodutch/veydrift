@@ -52,6 +52,7 @@ interface ResearchPageProps {
   researchState: ChainResearchState | null;
   settledState: PlayableState;
   state: PlayableState;
+  useLocalStateFallback?: boolean | undefined;
 }
 
 export function ResearchPage({
@@ -64,13 +65,20 @@ export function ResearchPage({
   onResearch,
   researchState,
   settledState,
+  useLocalStateFallback = false,
 }: ResearchPageProps) {
   const [selectedKey, setSelectedKey] = useState<ResearchKey>("energy");
   const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedResearch = researchCatalog.find((research) => research.key === selectedKey)
     ?? researchCatalog[0]!;
-  const viewState = researchViewState(settledState, researchState);
-  const queue = researchQueueForDisplay(researchState, viewState);
+  const hideLiveValues = shouldHideResearchValues({
+    error,
+    loading,
+    researchState,
+    useLocalStateFallback,
+  });
+  const viewState = researchViewState(settledState, researchState, useLocalStateFallback);
+  const queue = hideLiveValues ? undefined : researchQueueForDisplay(researchState, viewState);
   const queueReady = queue?.readyAt ? queue.readyAt <= Date.now() : false;
 
   function handleSelectResearch(key: ResearchKey) {
@@ -121,6 +129,13 @@ export function ResearchPage({
         researchState={researchState}
       />
 
+      {hideLiveValues ? (
+        <ResearchLoadErrorPanel
+          loading={loading}
+          reason={error}
+        />
+      ) : (
+        <>
       {viewState.buildings.researchLab === 0 ? (
         <div className="rounded border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
           Research Lab 1 is required before any technology can be queued.
@@ -178,6 +193,45 @@ export function ResearchPage({
           />
         </div>
       </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function shouldHideResearchValues({
+  error,
+  loading,
+  researchState,
+  useLocalStateFallback,
+}: {
+  error: string | undefined;
+  loading: boolean;
+  researchState: ChainResearchState | null;
+  useLocalStateFallback: boolean;
+}): boolean {
+  if (useLocalStateFallback) return false;
+  return Boolean(error) || loading || !researchState;
+}
+
+export function ResearchLoadErrorPanel({
+  loading,
+  reason,
+}: {
+  loading: boolean;
+  reason: string | undefined;
+}) {
+  return (
+    <div className="rounded-lg border border-rose-300/20 bg-rose-300/5 px-4 py-4 text-sm text-rose-100">
+      <p className="font-semibold">
+        {loading ? "Research state is loading." : "Research state could not be loaded."}
+      </p>
+      {reason ? (
+        <p className="mt-1 text-rose-100/80">{reason}</p>
+      ) : null}
+      <p className="mt-3 text-xs text-rose-100/70">
+        Levels, costs, resources, queue state, and requirement-derived values are unavailable until live research state loads.
+      </p>
     </div>
   );
 }
@@ -495,15 +549,13 @@ function researchActionStatus({
   };
 }
 
-function researchViewState(state: PlayableState, researchState: ChainResearchState | null): PlayableState {
+function researchViewState(
+  state: PlayableState,
+  researchState: ChainResearchState | null,
+  useLocalStateFallback: boolean,
+): PlayableState {
   if (!researchState) {
-    return {
-      ...state,
-      buildings: { ...state.buildings, researchLab: 0 },
-      research: zeroResearchLevels(),
-      researchQueue: undefined,
-      resources: { metal: 0, crystal: 0, deuterium: 0 },
-    };
+    return useLocalStateFallback ? state : { ...state, researchQueue: undefined };
   }
 
   return {
@@ -516,10 +568,6 @@ function researchViewState(state: PlayableState, researchState: ChainResearchSta
     researchQueue: researchQueueForDisplay(researchState, state) ?? undefined,
     resources: toResources(researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
-}
-
-function zeroResearchLevels(): PlayableState["research"] {
-  return Object.fromEntries(researchCatalog.map((research) => [research.key, 0])) as PlayableState["research"];
 }
 
 function researchLevels(researchState: ChainResearchState): PlayableState["research"] {

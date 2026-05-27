@@ -116,7 +116,10 @@ export type ApiSystemResponse = {
 };
 
 export function planetsFromSystemResponse(payload: ApiSystemResponse): Planet[] {
-  return payload.planets.map((planet) => planetFromApi(planet));
+  return payload.planets.flatMap((planet) => {
+    const parsed = planetFromApi(planet);
+    return parsed ? [parsed] : [];
+  });
 }
 
 export function planetImageForType(type: PlanetType): string {
@@ -168,7 +171,7 @@ export function mergePlanetAtCoordinates(planets: Planet[], planet: Planet | und
 }
 
 export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Planet {
-  return planetFromApi({
+  const parsed = planetFromApi({
     key: `${planet.galaxy}:${planet.system}:${planet.position}`,
     galaxy: planet.galaxy,
     system: planet.system,
@@ -184,6 +187,12 @@ export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Pl
       owner: planet.owner,
     },
   });
+
+  if (!parsed) {
+    throw new Error("Settlement planet identity is missing required live fields.");
+  }
+
+  return parsed;
 }
 
 export function mergePlanetWithSettlement(planet: Planet, settlement: SettlementPlanetIdentity): Planet {
@@ -211,14 +220,26 @@ export function mergePlanetWithSettlement(planet: Planet, settlement: Settlement
   };
 }
 
-function planetFromApi(planet: ApiPlanet): Planet {
+function planetFromApi(planet: ApiPlanet): Planet | null {
+  const fields = finiteApiNumber(planet.fields);
+  const temperature = finiteApiNumber(planet.temperature);
+  const metalMultiplierBps = finiteApiNumber(planet.metalMultiplierBps);
+  const crystalMultiplierBps = finiteApiNumber(planet.crystalMultiplierBps);
+  const deuteriumMultiplierBps = finiteApiNumber(planet.deuteriumMultiplierBps);
+
+  if (
+    fields === undefined
+    || temperature === undefined
+    || metalMultiplierBps === undefined
+    || crystalMultiplierBps === undefined
+    || deuteriumMultiplierBps === undefined
+  ) {
+    return null;
+  }
+
   const type = planet.archetype
-    ?? (planet.temperature === undefined
-      ? pickPlanetType(planet.position, planet.galaxy * 10000 + planet.system * 100 + planet.position)
-      : planetTypeFromTemperature(planet.temperature));
+    ?? planetTypeFromTemperature(temperature);
   const occupiedBy = planet.occupiedBy ?? null;
-  const temperature = planet.temperature ?? 0;
-  const fields = planet.fields ?? 180;
 
   return {
     id: planet.key ?? `${planet.galaxy}-${planet.system}-${planet.position}`,
@@ -234,12 +255,21 @@ function planetFromApi(planet: ApiPlanet): Planet {
     occupiedBy,
     debrisField: debrisFieldFromApi(planet.debrisField),
     moonChance: moonChanceFromApi(planet.moonChance),
-    resources: resourcesFromMultipliers(planet),
+    resources: resourcesFromMultipliers({
+      metalMultiplierBps,
+      crystalMultiplierBps,
+      deuteriumMultiplierBps,
+    }),
     temperature: { min: temperature - 20, max: temperature + 20 },
     diameter: Math.max(5_000, fields * 72),
     fields,
     hasMoon: false,
   };
+}
+
+function finiteApiNumber(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  return value;
 }
 
 function debrisFieldFromApi(debrisField: ApiPlanet["debrisField"]): DebrisField | null {
@@ -261,11 +291,15 @@ function moonChanceFromApi(moonChance: ApiPlanet["moonChance"]): MoonChanceRepor
   return moonChance;
 }
 
-function resourcesFromMultipliers(planet: ApiPlanet): Resources {
+function resourcesFromMultipliers(planet: {
+  metalMultiplierBps: number;
+  crystalMultiplierBps: number;
+  deuteriumMultiplierBps: number;
+}): Resources {
   return {
-    metal: Math.round((planet.metalMultiplierBps ?? 10_000) / 50),
-    crystal: Math.round((planet.crystalMultiplierBps ?? 10_000) / 50),
-    deuterium: Math.round((planet.deuteriumMultiplierBps ?? 10_000) / 50),
+    metal: Math.round(planet.metalMultiplierBps / 50),
+    crystal: Math.round(planet.crystalMultiplierBps / 50),
+    deuterium: Math.round(planet.deuteriumMultiplierBps / 50),
     energy: 0,
   };
 }

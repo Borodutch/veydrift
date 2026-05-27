@@ -2033,6 +2033,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
+          loadError={isWalletConnected ? infrastructureError : undefined}
           now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}
@@ -2093,6 +2094,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           researchState={researchState}
           settledState={settledState}
           state={state}
+          useLocalStateFallback={!isWalletConnected}
         />
       );
     }

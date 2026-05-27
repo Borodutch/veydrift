@@ -84,6 +84,9 @@ describe("planet identity", () => {
           system: 407,
           position: 15,
           fields: 214,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
           temperature: -100,
           archetype: "metal-planetoid",
         },
@@ -120,6 +123,9 @@ describe("planet identity", () => {
           system: 407,
           position: 15,
           fields: 214,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
           temperature: -100,
           archetype: "metal-planetoid",
         },
@@ -147,9 +153,14 @@ describe("planet identity", () => {
       planets: [
         {
           key: "6:407:15",
+          fields: 214,
           galaxy: 6,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
           system: 407,
           position: 15,
+          temperature: -100,
           debrisField: {
             metal: "27000",
             crystal: "9000",
@@ -171,9 +182,14 @@ describe("planet identity", () => {
       planets: [
         {
           key: "6:407:15",
+          fields: 214,
           galaxy: 6,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
           system: 407,
           position: 15,
+          temperature: -100,
           moonChance: {
             battleId: "42",
             targetPlanetId: "2",

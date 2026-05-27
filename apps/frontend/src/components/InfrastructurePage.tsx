@@ -59,6 +59,7 @@ interface InfrastructurePageProps {
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
+  loadError?: string | undefined;
   onFinishBuilding?: (() => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   state: PlayableState;
@@ -72,6 +73,7 @@ export function InfrastructurePage({
   actionUnavailableReason,
   chainCosts,
   isBuildingReadyToFinish,
+  loadError,
   now = Date.now(),
   onFinishBuilding,
   planetProductionProfile,
@@ -91,6 +93,22 @@ export function InfrastructurePage({
         detailPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
       }, 0);
     }
+  }
+
+  if (loadError) {
+    return (
+      <div className="grid gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-white">Infrastructure</h2>
+            <p className="text-xs text-slate-400">
+              Building levels and production are hidden until live infrastructure state loads.
+            </p>
+          </div>
+        </div>
+        <InfrastructureLoadErrorPanel reason={loadError} />
+      </div>
+    );
   }
 
   return (
@@ -160,6 +178,20 @@ export function InfrastructurePage({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
+  return (
+    <div className="rounded-lg border border-rose-300/20 bg-rose-300/5 px-4 py-4 text-sm text-rose-100">
+      <p className="font-semibold">Infrastructure state could not be loaded.</p>
+      <p className="mt-1 text-rose-100/80">
+        {reason}
+      </p>
+      <p className="mt-3 text-xs text-rose-100/70">
+        Levels, costs, production effects, storage caps, and upgrade values are unavailable until the live state request succeeds.
+      </p>
     </div>
   );
 }

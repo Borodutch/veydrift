@@ -18,7 +18,8 @@ import {
   formatGalaxyOccupancySource,
   formatGalaxyOccupancySummary,
   galaxyMissionFuelCost,
-  galaxyMissionTravelSeconds
+  galaxyMissionTravelSeconds,
+  planetsForFailedGalaxyLoad
 } from "../src/components/GalaxyView";
 import {
   planetRecordStatusLabel,
@@ -97,6 +98,9 @@ describe("tester universe display data", () => {
           fields: 211,
           galaxy: 2,
           key: "2:44:8",
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
           occupiedBy: {
             owner: "0x2222222222222222222222222222222222222222",
             planetId: "7",
@@ -124,14 +128,13 @@ describe("tester universe display data", () => {
       formatGalaxyOccupancySummary(0),
       formatGalaxyOccupancySummary(3),
       formatGalaxyOccupancySource("api", false),
-      formatGalaxyOccupancySource("fallback", false),
+      formatGalaxyOccupancySource("error", false),
       formatGalaxyOccupancySource("api", true),
     ].filter((label): label is string => Boolean(label));
 
     expect(labels).toEqual([
       "No occupants",
       "3 occupied",
-      "Preview system",
     ]);
     expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
   });
@@ -146,6 +149,9 @@ describe("tester universe display data", () => {
           fields: 211,
           galaxy: 2,
           key: "2:44:8",
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
           occupiedBy: {
             owner: "0x2222222222222222222222222222222222222222",
             planetId: "7",
@@ -205,6 +211,30 @@ describe("tester universe display data", () => {
     expect(formatGalaxyHeatLabel({ min: -80, max: 0 })).toBe("Frozen Ice");
   });
 
+  test("failed galaxy system loads do not generate preview planets", () => {
+    expect(planetsForFailedGalaxyLoad()).toEqual([]);
+  });
+
+  test("API planets with missing live fields are skipped instead of using fake defaults", () => {
+    const planets = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          galaxy: 2,
+          system: 44,
+          position: 8,
+          occupiedBy: {
+            owner: "0x2222222222222222222222222222222222222222",
+            planetId: "7",
+          },
+        },
+      ],
+    });
+
+    expect(planets).toEqual([]);
+  });
+
   test("galaxy mission preview shows slots, fuel timing, and blocked reasons", () => {
     const preview = estimateGalaxyMissionPreview({
       homeCoords: { galaxy: 1, system: 10, position: 5 },
@@ -258,9 +288,14 @@ describe("tester universe display data", () => {
       system: 44,
       planets: [
         {
+          fields: 211,
           galaxy: 2,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
           system: 44,
           position: 8,
+          temperature: -8,
           occupiedBy: {
             owner: "0x3333333333333333333333333333333333333333",
             planetId: "9",
@@ -280,9 +315,14 @@ describe("tester universe display data", () => {
       system: 44,
       planets: [
         {
+          fields: 211,
           galaxy: 2,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
           system: 44,
           position: 9,
+          temperature: -8,
           occupiedBy: {
             owner: "0x1111111111111111111111111111111111111111",
             planetId: "10",
