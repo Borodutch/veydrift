@@ -25,6 +25,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     uint256 private constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
     bytes32 private constant COMBAT_STREAM_DOMAIN =
         keccak256("veydrift.classic-combat-random-stream.v1");
+    uint32 private constant EXACT_RAPIDFIRE_SHOT_LIMIT = 64;
+    uint8 private constant MAX_RAPIDFIRE_CHAIN = 64;
 
     struct BattleStats {
         uint256 units;
@@ -699,15 +701,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         );
         if (shots == 0 || rapidfire <= 1) return shots;
 
-        // Classic rapidfire only adds follow-up shots after this target type was selected.
-        // Use the battle random word as a deterministic stream and aggregate the expected
-        // geometric continuation count so large onchain battles stay gas-bounded.
-        uint256 extra = shots * (uint256(rapidfire) - 1);
-        uint256 variance = _combatStream(seed, round, side, firingUnit, targetUnit, 1) % rapidfire;
-        if (variance != 0 && extra != 0) {
-            extra -= extra / uint256(rapidfire);
-        }
-        return shots + extra;
+        return
+            shots
+                + _rapidfireExtraShots(shots, rapidfire, seed, round, side, firingUnit, targetUnit);
     }
 
     function _distributedTargetShots(
@@ -726,7 +722,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (
             _combatStream(seed, round, side, firingUnit, targetUnit, 0) % targetTotal
                 < weightedShots % targetTotal
-        ) assigned += 1;
+        ) {
+            assigned += 1;
+        }
     }
 
     function _combatStream(
@@ -735,7 +733,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 side,
         uint8 firingUnit,
         uint8 targetUnit,
-        uint8 stream
+        uint256 stream
     ) private pure returns (uint256) {
         return uint256(
             keccak256(
@@ -829,7 +827,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 targeted = shots < count ? shots : count;
         uint256 shotsPerTarget = (shots + targeted - 1) / targeted;
         uint256 damage = attack * shotsPerTarget;
-        if (damage <= shield || damage <= shield / 100) return 0;
+        if (attack <= shield / 100 || damage <= shield) return 0;
 
         uint256 hullDamage = damage - shield;
         // targeted is capped by count, which is already uint32.
@@ -839,16 +837,70 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 damageBps = (hullDamage * BPS) / hull;
         if (damageBps <= 3_000) return 0;
 
-        uint256 scaled = targeted * damageBps;
-        // scaled / BPS is bounded by targeted, which is capped by uint32 count.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint32 lost = uint32(scaled / BPS);
-        if (uint256(keccak256(abi.encode(seed, round, side, unit, shots))) % BPS < scaled % BPS) {
-            lost += 1;
-        }
+        uint256 sampled = _sampleChance(targeted, damageBps, seed, round, side, unit, 0, shots);
         // targeted is capped by count, which is already uint32.
         // forge-lint: disable-next-line(unsafe-typecast)
-        return lost > targeted ? uint32(targeted) : lost;
+        return sampled > targeted ? uint32(targeted) : uint32(sampled);
+    }
+
+    function _rapidfireExtraShots(
+        uint256 selectedShots,
+        uint8 rapidfire,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit,
+        uint8 targetUnit
+    ) private pure returns (uint256 extraShots) {
+        if (selectedShots == 0 || rapidfire <= 1) return 0;
+        if (selectedShots <= EXACT_RAPIDFIRE_SHOT_LIMIT) {
+            for (uint256 i = 0; i < selectedShots;) {
+                for (uint8 chain = 0; chain < MAX_RAPIDFIRE_CHAIN;) {
+                    uint256 lane = 10_000 + uint256(i) * 100 + chain;
+                    if (
+                        _combatStream(seed, round, side, firingUnit, targetUnit, lane) % rapidfire
+                            == 0
+                    ) {
+                        break;
+                    }
+                    extraShots += 1;
+                    unchecked {
+                        ++chain;
+                    }
+                }
+                unchecked {
+                    ++i;
+                }
+            }
+            return extraShots;
+        }
+
+        uint256 extraTrials = selectedShots * rapidfire;
+        uint256 continueBps = (uint256(rapidfire - 1) * BPS) / rapidfire;
+        return
+            _sampleChance(
+                extraTrials, continueBps, seed, round, side, firingUnit, targetUnit, 20_000
+            );
+    }
+
+    function _sampleChance(
+        uint256 trials,
+        uint256 chanceBps,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit,
+        uint8 targetUnit,
+        uint256 lane
+    ) private pure returns (uint256 sampled) {
+        if (trials == 0 || chanceBps == 0) return 0;
+        if (chanceBps >= BPS) return trials;
+
+        uint256 scaled = trials * chanceBps;
+        sampled = scaled / BPS;
+        if (_combatStream(seed, round, side, unit, targetUnit, lane) % BPS < scaled % BPS) {
+            sampled += 1;
+        }
     }
 
     function _missionShipGroupCount(MissionShips storage ships)
@@ -1192,7 +1244,20 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 randomWord = _consumeAttackBattleRandomness(
             mission.randomnessRequestId, _attackBattlePurposeHash(missionId)
         );
-        return randomWord;
+        return uint256(
+            keccak256(
+                abi.encode(
+                    ATTACK_BATTLE_DOMAIN,
+                    block.chainid,
+                    missionId,
+                    mission.randomnessRequestId,
+                    mission.owner,
+                    mission.targetPlanetId,
+                    mission.arrivalAt,
+                    randomWord
+                )
+            )
+        );
     }
 
     function _consumeAttackBattleRandomness(uint256 requestId, bytes32 purposeHash)

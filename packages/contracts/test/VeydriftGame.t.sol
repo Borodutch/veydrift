@@ -3076,6 +3076,15 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 1);
     }
 
+    function testAttackBattleExpandsOneRandomWordIntoRapidfireStream() public {
+        uint32 firstRemaining =
+            _resolveCruiserRocketFixture(address(0xA101), address(0xD101), 1, 100, 8, 101);
+        uint32 secondRemaining =
+            _resolveCruiserRocketFixture(address(0xA202), address(0xD202), 1, 101, 8, 202);
+
+        assertNotEq(firstRemaining, secondRemaining);
+    }
+
     function testAttackBattleIgnoresCallerRandomnessRequestIdAndBlocksPendingOracle() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
@@ -3116,7 +3125,20 @@ contract VeydriftGameTest is Test {
         uint256 randomWord = 42;
         vm.prank(fulfiller);
         randomness.fulfillRandomness(actualRequestId, randomWord);
-        uint256 expectedSeed = randomWord;
+        uint256 expectedSeed = uint256(
+            keccak256(
+                abi.encode(
+                    game.ATTACK_BATTLE_DOMAIN(),
+                    block.chainid,
+                    missionId,
+                    actualRequestId,
+                    player,
+                    targetPlanetId,
+                    arrivalAt,
+                    randomWord
+                )
+            )
+        );
         vm.expectEmit(true, true, true, true, address(game));
         emit AttackBattleResolved(
             missionId,
@@ -3905,6 +3927,45 @@ contract VeydriftGameTest is Test {
         targetPlanetId = game.startPlanet{value: 0.05 ether}();
         _setPlanetCoordinates(originPlanetId, 1, 100, 8);
         _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
+    }
+
+    function _resolveCruiserRocketFixture(
+        address attacker,
+        address defender,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint256 randomWord
+    ) internal returns (uint32 remainingRocketLaunchers) {
+        vm.deal(attacker, 1 ether);
+        vm.deal(defender, 1 ether);
+        vm.prank(attacker);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(defender);
+        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, galaxy, system, position);
+        _setPlanetCoordinates(targetPlanetId, galaxy, system, position + 1);
+        _setShipCount(originPlanetId, Ship.Cruiser, 1);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 50);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.cruiser = 1;
+        vm.prank(attacker);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, randomWord);
+        game.resolveFleetMission(missionId);
+        return game.defenseCount(targetPlanetId, Defense.RocketLauncher);
     }
 
     function _seedMissileAttackPlanets()
