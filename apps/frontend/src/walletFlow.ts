@@ -442,7 +442,7 @@ const GAME_SELECTORS = {
   finishResourceWithdrawal: "0xde0f208c",
   joinAttackMission: "0x28260eb6",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
-  launchFleetMission: "0x28247df8",
+  launchFleetMission: "0x60eac16f",
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
@@ -555,6 +555,7 @@ export function encodeLaunchFleetMissionCall({
   missionType,
   ships,
   cargo,
+  speedPercent = 100,
   randomnessRequestId = 0,
 }: {
   originPlanetId: bigint | number | string;
@@ -562,6 +563,7 @@ export function encodeLaunchFleetMissionCall({
   missionType: number;
   ships: MissionShips;
   cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  speedPercent?: number | undefined;
   randomnessRequestId?: bigint | number | string | undefined;
 }): string {
   return encodeGameCall(GAME_SELECTORS.launchFleetMission, [
@@ -585,6 +587,7 @@ export function encodeLaunchFleetMissionCall({
     cargo?.metal ?? 0,
     cargo?.crystal ?? 0,
     cargo?.deuterium ?? 0,
+    speedPercent,
     randomnessRequestId,
   ]);
 }

@@ -781,7 +781,7 @@ const fleetMissionShipKeys = new Set<ShipKey>([
 export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatBlock {
   const stats = shipBattleStatsByKey[ship.key];
   const notes = [
-    "Mission fuel is distance and ship-count based; there is no separate per-ship fuel stat yet.",
+    "Mission fuel uses OGame-style per-ship fuel consumption, distance, and selected mission speed.",
     "Battle resolution uses six classic OGame-style rounds with unit-weighted target selection, shields, hull explosion checks, tech scaling, rapid-fire where cataloged, and post-battle defense repair.",
   ];
 

@@ -132,49 +132,24 @@ contract VeydriftGame is VeydriftResourceReserves {
         _settleResources(planetId);
     }
 
-    function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity) external {
+    function startDefenseProduction(uint256, Defense, uint32) external {
         _touchPlayer(msg.sender);
-        _requirePlanetOwner(planetId);
-        if (quantity == 0) revert InvalidQuantity();
-        if (defenseQueues[planetId].active) revert QueueActive();
-
-        _requireDefenseDependencies(planetId, defense);
-        _requireDefenseCapacity(planetId, defense, quantity);
-        _settleResources(planetId);
-
-        Resources memory unitCost = defenseCost(defense);
-        Resources memory totalCost = _multiply(unitCost, quantity);
-        _spend(planetId, totalCost);
-
-        uint64 readyAt = uint64(block.timestamp + _defenseDuration(planetId, unitCost, quantity));
-        defenseQueues[planetId] = DefenseQueue({
-            active: true, defense: defense, quantity: quantity, readyAt: readyAt, cost: totalCost
-        });
-
-        emit DefenseQueued(
-            planetId,
-            defense,
-            quantity,
-            readyAt,
-            totalCost.metal,
-            totalCost.crystal,
-            totalCost.deuterium
-        );
+        _delegateToColonizationModule();
     }
 
     function finishDefenseProduction(uint256) external {
         _touchPlayer(msg.sender);
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function startShipProduction(uint256, Ship, uint32) external {
         _touchPlayer(msg.sender);
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function finishShipProduction(uint256) external {
         _touchPlayer(msg.sender);
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function startResearch(uint256, Technology) external {
@@ -198,7 +173,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function setSpaceDockSystem(address) external {
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function setAllianceSystem(address nextAllianceSystem) external onlyOwner {
@@ -268,6 +243,19 @@ contract VeydriftGame is VeydriftResourceReserves {
         FleetMissionType,
         MissionShips calldata,
         Resources calldata,
+        uint256
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToPlayModule();
+    }
+
+    function launchFleetMission(
+        uint256,
+        uint256,
+        FleetMissionType,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
         uint256
     ) external returns (uint256) {
         _touchPlayer(msg.sender);
@@ -759,66 +747,6 @@ contract VeydriftGame is VeydriftResourceReserves {
             QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
-    }
-
-    function _defenseDuration(uint256 planetId, Resources memory unitCost, uint32 quantity)
-        private
-        view
-        returns (uint256)
-    {
-        return VeydriftFormulas.unitDuration(
-            _buildingLevels[planetId][Building.Shipyard],
-            _buildingLevels[planetId][Building.NaniteFactory],
-            unitCost.metal,
-            unitCost.crystal,
-            unitCost.deuterium,
-            quantity,
-            QUEUE_UNIVERSE_SPEED,
-            MIN_QUEUE_SECONDS
-        );
-    }
-
-    function _requireDefenseDependencies(uint256 planetId, Defense defense) private view {
-        address player = _planets[planetId].owner;
-        VeydriftDependencies.requireDefense(
-            defense,
-            _buildingLevels[planetId][Building.Shipyard],
-            _buildingLevels[planetId][Building.MissileSilo],
-            _technologyLevels[player][Technology.Energy],
-            _technologyLevels[player][Technology.Laser],
-            _technologyLevels[player][Technology.Ion],
-            _technologyLevels[player][Technology.Weapons],
-            _technologyLevels[player][Technology.Shielding],
-            _technologyLevels[player][Technology.ImpulseDrive],
-            _technologyLevels[player][Technology.Plasma]
-        );
-    }
-
-    function _requireDefenseCapacity(uint256 planetId, Defense defense, uint32 quantity)
-        private
-        view
-    {
-        if (VeydriftCatalog.isShieldDome(defense)) {
-            if (quantity != 1 || _defenseCounts[planetId][defense] != 0) {
-                revert DefenseLimitReached(defense);
-            }
-        }
-
-        uint8 slotsPerUnit = VeydriftCatalog.missileSlots(defense);
-        if (slotsPerUnit == 0) return;
-
-        uint32 usedSlots = _missileSiloSlotsUsed(planetId);
-        uint32 requestedSlots = uint32(slotsPerUnit) * quantity;
-        uint32 capacity =
-            VeydriftCatalog.missileSiloCapacity(_buildingLevels[planetId][Building.MissileSilo]);
-        if (usedSlots + requestedSlots > capacity) {
-            revert MissileSiloCapacityExceeded(usedSlots + requestedSlots, capacity);
-        }
-    }
-
-    function _missileSiloSlotsUsed(uint256 planetId) private view returns (uint32) {
-        return _defenseCounts[planetId][Defense.AntiBallisticMissile]
-            + (_defenseCounts[planetId][Defense.InterplanetaryMissile] * 2);
     }
 
     function _usedFields(uint256 planetId) private view returns (uint256 used) {
