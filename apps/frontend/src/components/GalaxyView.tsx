@@ -1,3 +1,4 @@
+import { Fragment } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
@@ -70,9 +71,13 @@ export type GalaxyMissionPreview = {
 
 export type AttackProtectionStatus = {
   allowed: boolean;
-  blockedReason: "none" | "bashing_limit" | "score_protection";
+  blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
   blockedReasonLabel: string | null;
   targetPlanetId: string;
+  relation?: "peer" | "stronger" | "weaker";
+  defenderHonorStatus?: "neutral" | "honorable" | "bandit";
+  plunderBps?: number;
+  defenderInactive?: boolean;
 };
 
 export type GalaxyActionState =
@@ -606,6 +611,7 @@ function GalaxySlot({
     : null;
   const moonChanceLabel = formatMoonChanceLabel(planet.moonChance);
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
+  const attackRuleLabels = formatAttackRuleLabels(attackProtection);
 
   return (
     <div
@@ -667,6 +673,12 @@ function GalaxySlot({
                 <span className="text-amber-200">{attackBlockLabel}</span>
               </>
             ) : null}
+            {attackRuleLabels.map((label) => (
+              <Fragment key={label}>
+                <span className="text-slate-700">/</span>
+                <span className="text-cyan-200">{label}</span>
+              </Fragment>
+            ))}
             {debrisLabel ? (
               <>
                 <span className="text-slate-700">/</span>
@@ -759,7 +771,22 @@ export function formatAttackBlockReason(status: AttackProtectionStatus | undefin
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit";
   if (status.blockedReason === "score_protection") return "Attack blocked by score protection";
+  if (status.blockedReason === "same_alliance") return "Attack blocked by alliance rules";
   return "Attack blocked";
+}
+
+export function formatAttackRuleLabels(status: AttackProtectionStatus | undefined): string[] {
+  if (!status) return [];
+  const labels: string[] = [];
+  if (status.relation === "stronger") labels.push("Stronger");
+  if (status.relation === "weaker") labels.push("Weaker");
+  if (status.defenderHonorStatus === "honorable") labels.push("Honorable");
+  if (status.defenderHonorStatus === "bandit") labels.push("Bandit");
+  if (status.defenderInactive) labels.push("Inactive");
+  if (status.plunderBps && status.plunderBps !== 5000) {
+    labels.push(`${Math.floor(status.plunderBps / 100)}% plunder`);
+  }
+  return labels;
 }
 
 export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string | null {

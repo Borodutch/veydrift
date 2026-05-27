@@ -46,6 +46,37 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         );
     }
 
+    function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity) external {
+        _requirePlanetOwner(planetId);
+        if (quantity == 0) revert InvalidQuantity();
+        if (defenseQueues[planetId].active) revert QueueActive();
+
+        _requireDefenseDependencies(planetId, defense);
+        _requireDefenseCapacity(planetId, defense, quantity);
+        _settleResources(planetId);
+
+        Resources memory unitCost = _defenseCost(defense);
+        Resources memory totalCost = _multiply(unitCost, quantity);
+        _spend(planetId, totalCost);
+
+        uint64 readyAt = (uint256(_currentTimestamp())
+                + _defenseDuration(planetId, unitCost, quantity))
+        .toUint64();
+        defenseQueues[planetId] = DefenseQueue({
+            active: true, defense: defense, quantity: quantity, readyAt: readyAt, cost: totalCost
+        });
+
+        emit DefenseQueued(
+            planetId,
+            defense,
+            quantity,
+            readyAt,
+            totalCost.metal,
+            totalCost.crystal,
+            totalCost.deuterium
+        );
+    }
+
     function finishShipProduction(uint256 planetId) external {
         _requirePlanetOwner(planetId);
         _requireNoPendingMissionResolutionForPlanet(planetId);
@@ -351,6 +382,71 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     function _shipCost(Ship ship) private pure returns (Resources memory) {
         (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.shipCost(ship);
         return Resources(metal, crystal, deuterium);
+    }
+
+    function _defenseCost(Defense defense) private pure returns (Resources memory) {
+        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.defenseCost(defense);
+        return Resources(metal, crystal, deuterium);
+    }
+
+    function _defenseDuration(uint256 planetId, Resources memory unitCost, uint32 quantity)
+        private
+        view
+        returns (uint256)
+    {
+        return VeydriftFormulas.unitDuration(
+            _buildingLevels[planetId][Building.Shipyard],
+            _buildingLevels[planetId][Building.NaniteFactory],
+            unitCost.metal,
+            unitCost.crystal,
+            unitCost.deuterium,
+            quantity,
+            QUEUE_UNIVERSE_SPEED,
+            MIN_QUEUE_SECONDS
+        );
+    }
+
+    function _requireDefenseDependencies(uint256 planetId, Defense defense) private view {
+        address player = _planets[planetId].owner;
+        VeydriftDependencies.requireDefense(
+            defense,
+            _buildingLevels[planetId][Building.Shipyard],
+            _buildingLevels[planetId][Building.MissileSilo],
+            _technologyLevels[player][Technology.Energy],
+            _technologyLevels[player][Technology.Laser],
+            _technologyLevels[player][Technology.Ion],
+            _technologyLevels[player][Technology.Weapons],
+            _technologyLevels[player][Technology.Shielding],
+            _technologyLevels[player][Technology.ImpulseDrive],
+            _technologyLevels[player][Technology.Plasma]
+        );
+    }
+
+    function _requireDefenseCapacity(uint256 planetId, Defense defense, uint32 quantity)
+        private
+        view
+    {
+        if (VeydriftCatalog.isShieldDome(defense)) {
+            if (quantity != 1 || _defenseCounts[planetId][defense] != 0) {
+                revert DefenseLimitReached(defense);
+            }
+        }
+
+        uint8 slotsPerUnit = VeydriftCatalog.missileSlots(defense);
+        if (slotsPerUnit == 0) return;
+
+        uint32 usedSlots = _missileSiloSlotsUsed(planetId);
+        uint32 requestedSlots = uint32(slotsPerUnit) * quantity;
+        uint32 capacity =
+            VeydriftCatalog.missileSiloCapacity(_buildingLevels[planetId][Building.MissileSilo]);
+        if (usedSlots + requestedSlots > capacity) {
+            revert MissileSiloCapacityExceeded(usedSlots + requestedSlots, capacity);
+        }
+    }
+
+    function _missileSiloSlotsUsed(uint256 planetId) private view returns (uint32) {
+        return _defenseCounts[planetId][Defense.AntiBallisticMissile]
+            + (_defenseCounts[planetId][Defense.InterplanetaryMissile] * 2);
     }
 
     function _multiply(Resources memory resources, uint32 quantity)

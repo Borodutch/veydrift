@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
+import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
@@ -86,6 +87,9 @@ contract VeydriftGameTest is Test {
     bytes32 internal constant NANITE_FACTORY_1 = "NANITE_FACTORY_1";
     bytes32 internal constant COMPUTER_10 = "COMPUTER_10";
     bytes32 internal constant ENERGY_12 = "ENERGY_12";
+    uint8 internal constant ATTACK_RELATION_WEAKER_FLAG = 2;
+    uint8 internal constant ATTACK_BANDIT_FLAG = 8;
+    uint8 internal constant ATTACK_INACTIVE_FLAG = 16;
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
@@ -957,6 +961,31 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 20);
     }
 
+    function testInterplanetaryMissileAttackUsesScoreProtectionButDoesNotCountBashing() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 200_000);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 15_000);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 8);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.AttackScoreProtection.selector);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 1
+        );
+
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 300_000);
+        for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW + 1; i++) {
+            vm.prank(player);
+            game.launchInterplanetaryMissileAttack(
+                originPlanetId, targetPlanetId, Defense.LightLaser, 1
+            );
+        }
+
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 1);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 3);
+    }
+
     function testInterplanetaryMissileAttackAllowsPartialInterceptionWithoutNegativeDefense()
         public
     {
@@ -1119,26 +1148,20 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 1);
     }
 
-    function testInterplanetaryMissileAttackRecordsBashingWindow() public {
+    function testInterplanetaryMissileAttackDoesNotRecordBashingWindow() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
         _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 7);
         _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 10);
 
-        for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW; i++) {
+        for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW + 1; i++) {
             vm.prank(player);
             game.launchInterplanetaryMissileAttack(
                 originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
             );
         }
 
-        vm.prank(player);
-        vm.expectRevert(VeydriftGameStorage.AttackBashingLimitReached.selector);
-        game.launchInterplanetaryMissileAttack(
-            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
-        );
-
-        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 1);
-        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 4);
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 3);
     }
 
     function testRiftDepositRequiresContractGates() public {
@@ -1345,8 +1368,8 @@ contract VeydriftGameTest is Test {
         game.resolveFleetMission(attackMissionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(attackMissionId);
-        assertEq(attackCargo.metal, 2_500);
-        assertEq(game.planet(targetPlanetId).resources.metal, 3_500);
+        assertEq(attackCargo.metal, 4_500);
+        assertEq(game.planet(targetPlanetId).resources.metal, 1_500);
 
         (, uint64 saveArrivalAt, uint64 saveReturnAt,) = _fleetMission(saveMissionId);
         uint64 currentTestTime = attackArrivalAt;
@@ -1442,6 +1465,95 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    function testAttackProtectionDetailsUseClassicScoreTiersInactivityAndHonorPlunder() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 200_000);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 15_000);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        (VeydriftGameStorage.AttackBlockReason reason, uint8 flags, uint16 plunderBps) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
+        assertEq(flags & ATTACK_RELATION_WEAKER_FLAG, ATTACK_RELATION_WEAKER_FLAG);
+        assertEq(flags & ATTACK_BANDIT_FLAG, 0);
+        assertEq(plunderBps, 5_000);
+        assertEq(flags & ATTACK_INACTIVE_FLAG, 0);
+
+        _setPlayerLastActiveAt(defender, 1);
+        (reason, flags, plunderBps) = _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+        assertEq(flags & ATTACK_INACTIVE_FLAG, ATTACK_INACTIVE_FLAG);
+
+        _setHonorPoints(defender, -500);
+        (reason, flags, plunderBps) = _attackProtectionStatus(player, targetPlanetId);
+        assertEq(flags & ATTACK_BANDIT_FLAG, ATTACK_BANDIT_FLAG);
+        assertEq(plunderBps, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            123
+        );
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
+    function testBashingLimitBlocksSeventhAttackUnlessDefenderIsInactive() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 10);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 8);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW; i++) {
+            vm.prank(player);
+            game.launchFleetMission(
+                originPlanetId,
+                targetPlanetId,
+                VeydriftGameStorage.FleetMissionType.Attack,
+                ships,
+                VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                i
+            );
+        }
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.AttackBashingLimitReached.selector);
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            77
+        );
+
+        _setPlayerLastActiveAt(defender, 1);
+        vm.prank(player);
+        uint256 allowedMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            78
+        );
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(allowedMissionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
     function testAttackRejectsSameAllianceTargetPlanet() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
         uint256 allianceId = _createAlliance(player);
@@ -1455,7 +1567,7 @@ contract VeydriftGameTest is Test {
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
 
         vm.prank(player);
-        vm.expectRevert(VeydriftGameStorage.AttackScoreProtection.selector);
+        vm.expectRevert(VeydriftGameStorage.SameAllianceAttack.selector);
         game.launchFleetMission(
             originPlanetId,
             targetPlanetId,
@@ -1465,10 +1577,9 @@ contract VeydriftGameTest is Test {
             0
         );
 
-        assertEq(
-            uint8(game.attackProtectionStatus(player, targetPlanetId)),
-            uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection)
-        );
+        (VeydriftGameStorage.AttackBlockReason reason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.SameAlliance));
     }
 
     function testWarDiplomacyBypassesAttackBashingLimit() public {
@@ -1496,10 +1607,9 @@ contract VeydriftGameTest is Test {
             );
         }
 
-        assertEq(
-            uint8(game.attackProtectionStatus(player, targetPlanetId)),
-            uint8(VeydriftGameStorage.AttackBlockReason.None)
-        );
+        (VeydriftGameStorage.AttackBlockReason reason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.None));
         assertEq(game.activeFleetMissionCount(player), 7);
     }
 
@@ -2056,7 +2166,7 @@ contract VeydriftGameTest is Test {
         assertGt(raidedCargo.metal, 0);
     }
 
-    function testAttackBattleAttackerWinUsesProtectedAndCargoLimitedLoot() public {
+    function testAttackBattleAttackerWinUsesClassicPlunderAndCargoLimitedLoot() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
@@ -2084,15 +2194,15 @@ contract VeydriftGameTest is Test {
         VeydriftGameStorage.Resources memory cargo;
         (status,,, cargo) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(cargo.metal, 4_500);
-        assertEq(cargo.crystal, 500);
+        assertEq(cargo.metal, 5_000);
+        assertEq(cargo.crystal, 0);
         assertEq(cargo.deuterium, 0);
-        assertEq(game.planet(targetPlanetId).resources.metal, 5_500);
-        assertEq(game.planet(targetPlanetId).resources.crystal, 3_500);
+        assertEq(game.planet(targetPlanetId).resources.metal, 5_000);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 4_000);
         assertEq(game.planet(targetPlanetId).resources.deuterium, 3_000);
     }
 
-    function testAttackBattleProtectedResourcesAreNotLooted() public {
+    function testAttackBattleSmallBalancesRemainLootableByPlunderRate() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
@@ -2116,10 +2226,10 @@ contract VeydriftGameTest is Test {
         game.resolveFleetMission(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
-        assertEq(cargo.metal, 0);
-        assertEq(cargo.crystal, 0);
-        assertEq(cargo.deuterium, 0);
-        assertEq(game.planet(targetPlanetId).resources.metal, 900);
+        assertEq(cargo.metal, 675);
+        assertEq(cargo.crystal, 675);
+        assertEq(cargo.deuterium, 675);
+        assertEq(game.planet(targetPlanetId).resources.metal, 225);
     }
 
     function testRaidProtectionReadEntrypointsExposeProtectedRaidableAndMaxLoot() public {
@@ -2129,14 +2239,14 @@ contract VeydriftGameTest is Test {
         _setResources(planetId, 20_000, 20_000, 20_000);
 
         VeydriftGameStorage.Resources memory protected = game.protectedResources(planetId);
-        assertEq(protected.metal, 2_000);
-        assertEq(protected.crystal, 1_000);
-        assertEq(protected.deuterium, 1_000);
+        assertEq(protected.metal, 0);
+        assertEq(protected.crystal, 0);
+        assertEq(protected.deuterium, 0);
 
         VeydriftGameStorage.Resources memory raidable = game.raidableResources(planetId);
-        assertEq(raidable.metal, 18_000);
-        assertEq(raidable.crystal, 19_000);
-        assertEq(raidable.deuterium, 19_000);
+        assertEq(raidable.metal, 20_000);
+        assertEq(raidable.crystal, 20_000);
+        assertEq(raidable.deuterium, 20_000);
 
         VeydriftGameStorage.Resources memory maxLoot = game.maxRaidLoot(planetId, 5_000);
         assertEq(maxLoot.metal, 5_000);
@@ -2479,22 +2589,22 @@ contract VeydriftGameTest is Test {
         ) = _fleetMission(joinedMissionId);
         assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
         assertEq(uint8(joinedStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(attackCargo.metal, 2_250);
-        assertEq(attackCargo.crystal, 750);
-        assertEq(attackCargo.deuterium, 500);
-        assertEq(joinedCargo.metal, 2_250);
-        assertEq(joinedCargo.crystal, 750);
-        assertEq(joinedCargo.deuterium, 500);
+        assertEq(attackCargo.metal, 3_750);
+        assertEq(attackCargo.crystal, 1_250);
+        assertEq(attackCargo.deuterium, 0);
+        assertEq(joinedCargo.metal, 3_750);
+        assertEq(joinedCargo.crystal, 1_250);
+        assertEq(joinedCargo.deuterium, 0);
 
         vm.warp(joinedReturnAt);
         game.completeFleetMissionReturn(joinedMissionId);
         assertEq(game.shipCount(allyPlanetId, Ship.SmallCargo), 1);
-        assertEq(game.planet(allyPlanetId).resources.metal, 12_250);
+        assertEq(game.planet(allyPlanetId).resources.metal, 13_750);
 
         vm.warp(attackReturnAt);
         game.completeFleetMissionReturn(attackMissionId);
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
-        assertEq(game.planet(originPlanetId).resources.metal, 12_250);
+        assertEq(game.planet(originPlanetId).resources.metal, 13_750);
     }
 
     function testAcsAttackRejectsLateJoinMismatchedTargetAndDirectAbuse() public {
@@ -2830,8 +2940,8 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.BattleOutcome.AttackerWin,
             0,
             expectedSeed,
-            4_500,
-            500,
+            5_000,
+            0,
             0
         );
         game.resolveFleetMission(missionId);
@@ -3631,6 +3741,33 @@ contract VeydriftGameTest is Test {
         vm.store(address(game), slot, bytes32(uint256(level)));
     }
 
+    function _setPlayerLastActiveAt(address account, uint64 lastActiveAt) internal {
+        bytes32 slot = keccak256(abi.encode(account, uint256(34)));
+        vm.store(address(game), slot, bytes32(uint256(lastActiveAt)));
+    }
+
+    function _setHonorPoints(address account, int256 points) internal {
+        bytes32 slot = keccak256(abi.encode(account, uint256(35)));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        vm.store(address(game), slot, bytes32(uint256(points)));
+    }
+
+    function _attackProtectionStatus(address account, uint256 targetPlanetId)
+        internal
+        view
+        returns (VeydriftGameStorage.AttackBlockReason reason, uint8 flags, uint16 plunderBps)
+    {
+        (bool ok, bytes memory data) = address(game)
+            .staticcall(
+                abi.encodeWithSelector(
+                    game.attackProtectionStatus.selector, account, targetPlanetId
+                )
+            );
+        assertTrue(ok);
+        (reason, flags, plunderBps) =
+            abi.decode(data, (VeydriftGameStorage.AttackBlockReason, uint8, uint16));
+    }
+
     function _setShipCount(uint256 planetId, Ship ship, uint32 count) internal {
         bytes32 outerSlot = keccak256(abi.encode(planetId, uint256(22)));
         bytes32 slot = keccak256(abi.encode(uint256(uint8(ship)), outerSlot));
@@ -3763,11 +3900,13 @@ contract VeydriftGameTest is Test {
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
+        VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         return new VeydriftGame(
             owner,
             address(gameplayModule),
             address(planetManagementModule),
+            address(attackProtectionModule),
             address(colonizationModule)
         );
     }
