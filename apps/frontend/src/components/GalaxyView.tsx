@@ -14,7 +14,6 @@ import {
 import type { MissionShips } from "../galaxyActions";
 import {
   formatPlanetType,
-  generateSystem,
   GALAXY_COUNT,
   SYSTEM_COUNT,
   POSITION_COUNT,
@@ -120,8 +119,10 @@ export function GalaxyView({
   const [planets, setPlanets] = useState<Planet[]>([]);
   const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | undefined>();
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [missionSpeedPercent, setMissionSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
-  const [source, setSource] = useState<"api" | "fallback" | "loading">("loading");
+  const [source, setSource] = useState<GalaxySystemSource>("loading");
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
     : undefined;
@@ -132,6 +133,7 @@ export function GalaxyView({
   useEffect(() => {
     const abortController = new AbortController();
     setLoading(true);
+    setLoadError(undefined);
     setSource("loading");
 
     fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`, {
@@ -149,8 +151,9 @@ export function GalaxyView({
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
-          setPlanets(withHomePlanet(generateSystem(galaxy, system), homePlanetOverride));
-          setSource("fallback");
+          setPlanets(planetsForFailedGalaxyLoad());
+          setLoadError(systemLoadErrorLabel(error));
+          setSource("error");
         }
       })
       .finally(() => {
@@ -158,7 +161,7 @@ export function GalaxyView({
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, galaxy, homeCoordsInSystem?.position, homePlanetOverride?.fields, homePlanetOverride?.image, system]);
+  }, [apiBaseUrl, galaxy, homeCoordsInSystem?.position, homePlanetOverride?.fields, homePlanetOverride?.image, reloadNonce, system]);
 
   useEffect(() => {
     const occupiedTargets = planets
@@ -304,25 +307,31 @@ export function GalaxyView({
       <div className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-2 sm:p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-1 pb-2">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <span>{planets.length} planet slots</span>
-            <span className="text-slate-700">/</span>
-            <span>{emptyCount} empty</span>
-            <span className="text-slate-700">/</span>
-            <span>{occupiedSummary}</span>
-            {debrisCount > 0 ? (
+            {loadError ? (
+              <span>System unavailable</span>
+            ) : (
               <>
+                <span>{planets.length} planet slots</span>
                 <span className="text-slate-700">/</span>
-                <span>{debrisCount} debris</span>
-              </>
-            ) : null}
-            {moonChanceCount > 0 ? (
-              <>
+                <span>{emptyCount} empty</span>
                 <span className="text-slate-700">/</span>
-                <span>{moonChanceCount} moon chance</span>
+                <span>{occupiedSummary}</span>
+                {debrisCount > 0 ? (
+                  <>
+                    <span className="text-slate-700">/</span>
+                    <span>{debrisCount} debris</span>
+                  </>
+                ) : null}
+                {moonChanceCount > 0 ? (
+                  <>
+                    <span className="text-slate-700">/</span>
+                    <span>{moonChanceCount} moon chance</span>
+                  </>
+                ) : null}
+                <span className="text-slate-700">/</span>
+                <span>{PUBLIC_INTEL_SUMMARY_LABEL}</span>
               </>
-            ) : null}
-            <span className="text-slate-700">/</span>
-            <span>{PUBLIC_INTEL_SUMMARY_LABEL}</span>
+            )}
           </div>
           {occupancySource ? (
             <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
@@ -349,7 +358,22 @@ export function GalaxyView({
             </div>
           )}
 
+          {!loading && loadError ? (
+            <div className="rounded border border-rose-300/20 bg-rose-300/5 px-3 py-4 text-sm text-rose-100">
+              <p className="font-semibold">Galaxy system could not be loaded.</p>
+              <p className="mt-1 text-rose-100/80">{loadError}</p>
+              <button
+                className="mt-3 h-9 rounded border border-rose-200/30 bg-rose-200/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-200/20"
+                onClick={() => setReloadNonce((value) => value + 1)}
+                type="button"
+              >
+                Retry system load
+              </button>
+            </div>
+          ) : null}
+
           {!loading &&
+            !loadError &&
             positions.map((pos) => {
               const planet = planetByPosition.get(pos);
               const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
@@ -445,13 +469,22 @@ export function formatGalaxyOccupancySummary(occupiedCount: number): string {
   return occupiedCount > 0 ? `${occupiedCount} occupied` : "No occupants";
 }
 
+export type GalaxySystemSource = "api" | "loading" | "error";
+
 export function formatGalaxyOccupancySource(
-  source: "api" | "fallback" | "loading",
+  source: GalaxySystemSource,
   hasHomePlanet: boolean
 ): string | undefined {
   if (source === "loading") return "Loading";
-  if (hasHomePlanet || source === "api") return undefined;
-  return "Preview system";
+  return undefined;
+}
+
+export function planetsForFailedGalaxyLoad(): Planet[] {
+  return [];
+}
+
+export function systemLoadErrorLabel(error: unknown): string {
+  return error instanceof Error ? error.message : "The universe API request failed.";
 }
 
 export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): string {
