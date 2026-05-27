@@ -14,14 +14,22 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _gameplayModule;
     address private immutable _planetManagementModule;
+    address private immutable _colonizationModule;
 
-    constructor(address admin, address gameplayModule, address planetManagementModule)
-        VeydriftResourceReserves(admin)
-    {
-        if (gameplayModule == address(0)) revert UnsupportedGameplayModule();
+    constructor(
+        address admin,
+        address gameplayModule,
+        address planetManagementModule,
+        address colonizationModule
+    ) VeydriftResourceReserves(admin) {
+        if (gameplayModule == address(0)) {
+            revert UnsupportedGameplayModule();
+        }
         if (planetManagementModule == address(0)) revert UnsupportedGameplayModule();
+        if (colonizationModule == address(0)) revert UnsupportedGameplayModule();
         _gameplayModule = gameplayModule;
         _planetManagementModule = planetManagementModule;
+        _colonizationModule = colonizationModule;
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -225,11 +233,11 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function createColonyAtNextSlot(uint256, uint256) external returns (uint256) {
-        _delegateToPlanetManagementModule();
+        _delegateToColonizationModule();
     }
 
     function createColony(uint256, uint16, uint16, uint8) external returns (uint256) {
-        _delegateToPlanetManagementModule();
+        _delegateToColonizationModule();
     }
 
     function renamePlanet(uint256, string calldata) external {
@@ -262,7 +270,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlayModule();
     }
 
-    function resolveFleetMission(uint256) external {
+    function resolveFleetMission(uint256 missionId) external {
+        if (_fleetMissions[missionId].missionType == FleetMissionType.Colonize) {
+            _delegateToColonizationModule();
+        }
         _delegateToPlayModule();
     }
 
@@ -890,6 +901,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToPlanetManagementModule() private {
         (bool ok, bytes memory result) = _planetManagementModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToColonizationModule() private {
+        (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

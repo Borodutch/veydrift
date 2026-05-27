@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -90,7 +91,13 @@ contract VeydriftMoonSystemTest is Test {
         VeydriftCombatModule combatModule = new VeydriftCombatModule();
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
-        game = new VeydriftGame(admin, address(gameplayModule), address(planetManagementModule));
+        VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
+        game = new VeydriftGame(
+            admin,
+            address(gameplayModule),
+            address(planetManagementModule),
+            address(colonizationModule)
+        );
         moons = new VeydriftMoonSystem(address(game), address(randomness));
         metalToken = new MoonMockResourceToken();
         crystalToken = new MoonMockResourceToken();
