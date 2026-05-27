@@ -23,6 +23,8 @@ interface IVeydriftCombatMoonSystem {
 /// @notice Delegatecall target for public-state fleet attack battle resolution.
 contract VeydriftCombatModule is VeydriftResourceReserves {
     uint256 private constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
+    bytes32 private constant COMBAT_STREAM_DOMAIN =
+        keccak256("veydrift.classic-combat-random-stream.v1");
 
     struct BattleStats {
         uint256 units;
@@ -184,10 +186,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             if (attacker.units == 0 || defender.units == 0) break;
 
             MissionShips memory attackerRoundShips = mission.ships;
-            settlement.attackerLosses = _add(
-                settlement.attackerLosses,
-                _applyAttackerGroupLosses(missionId, mission, settlement.seed, round)
-            );
+            Resources memory attackerRoundLosses =
+                _applyAttackerGroupLosses(missionId, mission, settlement.seed, round);
+            settlement.attackerLosses = _add(settlement.attackerLosses, attackerRoundLosses);
             DefenderLosses memory defenderRoundLosses = _applyDefenderGroupLosses(
                 missionId,
                 mission.targetPlanetId,
@@ -200,6 +201,20 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 _add(settlement.defenderLosses, defenderRoundLosses.resources);
             defenderDefenseDestroyed += defenderRoundLosses.defenseDestroyed;
             settlement.rounds = round;
+
+            BattleStats memory attackerAfter = _attackerGroupBattleStats(missionId, mission);
+            BattleStats memory defenderAfter =
+                _defenderBattleStats(missionId, mission.targetPlanetId);
+            emit CombatRoundResolved(
+                missionId,
+                round,
+                attackerAfter.units,
+                defenderAfter.units,
+                attackerRoundLosses.metal,
+                attackerRoundLosses.crystal,
+                defenderRoundLosses.resources.metal,
+                defenderRoundLosses.resources.crystal
+            );
 
             unchecked {
                 ++round;
@@ -382,9 +397,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             Ship targetShip = Ship(i);
             uint32 targetCount = _missionShipQuantity(targets, targetShip);
             if (targetCount != 0) {
-                uint256 shots = _distributedTargetShots(
-                    uint256(firingCount)
-                        * VeydriftCatalog.shipRapidfireAgainstShip(firingShip, targetShip),
+                uint256 shots = _shipTargetShots(
+                    firingCount,
+                    VeydriftCatalog.shipRapidfireAgainstShip(firingShip, targetShip),
                     targetCount,
                     targetTotal,
                     seed,
@@ -463,9 +478,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             Ship ship = Ship(i);
             uint32 count = _shipCounts[planetId][ship];
             if (count != 0) {
-                uint256 shots = _distributedTargetShots(
-                    uint256(firingCount)
-                        * VeydriftCatalog.shipRapidfireAgainstShip(firingShip, ship),
+                uint256 shots = _shipTargetShots(
+                    firingCount,
+                    VeydriftCatalog.shipRapidfireAgainstShip(firingShip, ship),
                     count,
                     targetTotal,
                     seed,
@@ -491,9 +506,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             Defense defense = Defense(i);
             uint32 count = _defenseCounts[planetId][defense];
             if (count != 0) {
-                uint256 shots = _distributedTargetShots(
-                    uint256(firingCount)
-                        * VeydriftCatalog.shipRapidfireAgainstDefense(firingShip, defense),
+                uint256 shots = _shipTargetShots(
+                    firingCount,
+                    VeydriftCatalog.shipRapidfireAgainstDefense(firingShip, defense),
                     count,
                     targetTotal,
                     seed,
@@ -524,9 +539,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     Ship targetShip = Ship(shipId);
                     uint32 count = _missionShipQuantity(counterplay.ships, targetShip);
                     if (count != 0) {
-                        uint256 shots = _distributedTargetShots(
-                            uint256(firingCount)
-                                * VeydriftCatalog.shipRapidfireAgainstShip(firingShip, targetShip),
+                        uint256 shots = _shipTargetShots(
+                            firingCount,
+                            VeydriftCatalog.shipRapidfireAgainstShip(firingShip, targetShip),
                             count,
                             targetTotal,
                             seed,
@@ -668,6 +683,33 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
+    function _shipTargetShots(
+        uint32 firingCount,
+        uint8 rapidfire,
+        uint32 targetCount,
+        uint256 targetTotal,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit,
+        uint8 targetUnit
+    ) private pure returns (uint256 shots) {
+        shots = _distributedTargetShots(
+            firingCount, targetCount, targetTotal, seed, round, side, firingUnit, targetUnit
+        );
+        if (shots == 0 || rapidfire <= 1) return shots;
+
+        // Classic rapidfire only adds follow-up shots after this target type was selected.
+        // Use the battle random word as a deterministic stream and aggregate the expected
+        // geometric continuation count so large onchain battles stay gas-bounded.
+        uint256 extra = shots * (uint256(rapidfire) - 1);
+        uint256 variance = _combatStream(seed, round, side, firingUnit, targetUnit, 1) % rapidfire;
+        if (variance != 0 && extra != 0) {
+            extra -= extra / uint256(rapidfire);
+        }
+        return shots + extra;
+    }
+
     function _distributedTargetShots(
         uint256 shots,
         uint32 targetCount,
@@ -682,9 +724,24 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 weightedShots = shots * targetCount;
         assigned = weightedShots / targetTotal;
         if (
-            uint256(keccak256(abi.encode(seed, round, side, firingUnit, targetUnit))) % targetTotal
+            _combatStream(seed, round, side, firingUnit, targetUnit, 0) % targetTotal
                 < weightedShots % targetTotal
         ) assigned += 1;
+    }
+
+    function _combatStream(
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit,
+        uint8 targetUnit,
+        uint8 stream
+    ) private pure returns (uint256) {
+        return uint256(
+            keccak256(
+                abi.encode(COMBAT_STREAM_DOMAIN, seed, round, side, firingUnit, targetUnit, stream)
+            )
+        );
     }
 
     function _deterministicPlanetShipLossCount(
