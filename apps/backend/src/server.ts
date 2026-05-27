@@ -725,7 +725,7 @@ async function highscoreEntriesForOwners(
 }
 
 async function ensurePlanetIndex(indexer: SettlementIndexer): Promise<void> {
-  if (indexer.snapshot().indexedPlanets === 0) {
+  if (indexer.snapshot().indexedPlanets === 0 || indexer.hasIncompletePlanets()) {
     await indexer.rebuildPlanets();
   }
 }

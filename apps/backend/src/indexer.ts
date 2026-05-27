@@ -189,6 +189,10 @@ export class SettlementIndexer {
     };
   }
 
+  hasIncompletePlanets(): boolean {
+    return this.settledPlanets().some(isIncompletePlanetSnapshot);
+  }
+
   applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
     this.upsertPlanet(event);
     this.touch();
@@ -275,15 +279,18 @@ export class SettlementIndexer {
   }
 
   private async rebuildUncached(): Promise<IndexerSnapshot> {
-    const events = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    const settledPlanetEvents = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    const currentPlanets = this.chainReader.listCurrentPlanets
+      ? await this.chainReader.listCurrentPlanets()
+      : settledPlanetEvents;
     const debrisEvents = await this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest");
     const moonChanceEvents = await this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest");
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();
       this.db.query("DELETE FROM indexed_moon_chance_reports").run();
-      for (const event of events) {
-        this.upsertPlanet(event);
+      for (const planet of currentPlanets) {
+        this.upsertPlanet(planet);
       }
       for (const event of debrisEvents) {
         this.upsertDebris(event);
@@ -291,7 +298,7 @@ export class SettlementIndexer {
       for (const event of moonChanceEvents) {
         this.upsertMoonChanceReport(event);
       }
-      const latestBlock = latestEventBlock([...events, ...debrisEvents, ...moonChanceEvents]);
+      const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents]);
       this.touch();
       this.recordSuccessfulReconciliation(latestBlock);
     });
@@ -513,6 +520,13 @@ function indexedManagedPlanet(planet: SettledPlanetEvent, homePlanetId: string |
     },
     moon: null
   };
+}
+
+function isIncompletePlanetSnapshot(planet: SettledPlanetEvent): boolean {
+  return planet.lastSettledAt === "0"
+    && planet.resources.metal === "0"
+    && planet.resources.crystal === "0"
+    && planet.resources.deuterium === "0";
 }
 
 function indexedLogKey(log: IndexedRpcLog): string {

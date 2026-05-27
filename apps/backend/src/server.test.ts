@@ -1802,6 +1802,58 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("heals incomplete event-only planet rows before wallet settlement responses", async () => {
+    const chainReader = new MockChainReader();
+    const currentPlanetReader = chainReader as MockChainReader & {
+      listCurrentPlanets: () => Promise<SettledPlanetEvent[]>;
+    };
+    let currentPlanetReads = 0;
+    chainReader.getWalletSettlement = async () => {
+      throw new Error("wallet settlement should use the healed index");
+    };
+    currentPlanetReader.listCurrentPlanets = async () => {
+      currentPlanetReads += 1;
+      return [{
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      }];
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("wallet settlement stale-row healing should use current planet snapshots");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyLog({
+      blockNumber: "0x7c",
+      transactionHash: "0xabc",
+      logIndex: "0x0",
+      topics: [
+        planetStartedTopic,
+        `0x${player.slice(2).padStart(64, "0")}`,
+        `0x${(7n).toString(16).padStart(64, "0")}`
+      ],
+      data: abiWords(2n, 44n, 9n, 211n, 1n)
+    });
+    expect(indexer.hasIncompletePlanets()).toBe(true);
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(currentPlanetReads).toBe(1);
+    expect(body.planet).toMatchObject({
+      lastSettledAt: planet.lastSettledAt,
+      resources: planet.resources
+    });
+    expect(indexer.hasIncompletePlanets()).toBe(false);
+  });
+
   test("serves indexed planet detail without live chain reads when warm", async () => {
     const chainReader = new MockChainReader();
     chainReader.getPlanet = async () => {

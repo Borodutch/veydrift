@@ -132,6 +132,35 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("full rebuild stores current planet storage instead of event-only zero resources", async () => {
+    const eventOnlyPlanet: SettledPlanetEvent = {
+      ...planet,
+      lastSettledAt: "0",
+      resources: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0"
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [eventOnlyPlanet]; }
+    }, 100n);
+
+    expect(indexer.hasIncompletePlanets()).toBe(false);
+    await expect(indexer.rebuild()).resolves.toMatchObject({
+      indexedPlanets: 1,
+      lastReconciledBlock: "123"
+    });
+    expect(indexer.hasIncompletePlanets()).toBe(false);
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      lastSettledAt: planet.lastSettledAt,
+      resources: planet.resources
+    });
+  });
+
   test("applies duplicate webhook logs only once", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -159,6 +188,7 @@ describe("SettlementIndexer", () => {
         latestIndexedBlock: "124"
       }
     });
+    expect(indexer.hasIncompletePlanets()).toBe(true);
     expect(indexer.applyLog(log)).toMatchObject({
       applied: false,
       duplicate: true,
