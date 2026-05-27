@@ -168,7 +168,12 @@ function ResourcePip({
           <span className="sm:hidden">{formatCompact(value)}</span>
           <span className="hidden sm:inline">{format(value)}</span>
         </span>
-        {wholeDelta > 0 && <span className="hidden text-[10px] font-semibold leading-none text-lime-300 sm:inline">+{format(wholeDelta)}</span>}
+        {wholeDelta > 0 && (
+          <span className="text-[10px] font-semibold leading-none text-lime-300">
+            <span className="sm:hidden">(+{formatCompact(wholeDelta)})</span>
+            <span className="hidden sm:inline">+{format(wholeDelta)}</span>
+          </span>
+        )}
         {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
         {pct >= 90 && (
           <span className="hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>

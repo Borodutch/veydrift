@@ -31,6 +31,15 @@ describe("TopBar", () => {
     expect(text).toContain("Energy");
     expect(text).toContain("Collect");
   });
+
+  test("shows compact nonzero collectable deltas next to mobile resources", () => {
+    const topBar = renderTopBar();
+    const text = visibleText(topBar).replace(/\s+/g, "");
+
+    expect(text).toContain("(+10)");
+    expect(text).toContain("(+5)");
+    expect(text).not.toContain("(+0)");
+  });
 });
 
 function renderTopBar(): ComponentChildren {
