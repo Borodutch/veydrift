@@ -1274,16 +1274,34 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         _setPlanetCoordinates(originPlanetId, 2, 44, 8);
         _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
         _setShipCount(originPlanetId, Ship.ColonyShip, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
 
         vm.prank(player);
         uint256 missionId = game.createColony(originPlanetId, 2, 44, 9);
+        uint256 expectedDistance = 1_005;
+        (, uint256 colonyFuelConsumption, uint256 colonySpeed) =
+            VeydriftCatalog.shipMovementStats(Ship.ColonyShip, 0, 4, 0);
+        uint256 expectedFuelCost =
+            VeydriftAntiRaidPrimitives.missionFuelCost(colonyFuelConsumption, expectedDistance);
+        uint256 expectedTravelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
+            expectedDistance,
+            colonySpeed,
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            game.FLEET_UNIVERSE_SPEED()
+        );
 
         (VeydriftGameStorage.FleetMissionStatus status, uint64 arrivalAt,,) =
             _fleetMission(missionId);
+        (,,,,, uint64 departureAt,, uint64 returnAt, uint128 fuelCost,,) =
+            game.fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(fuelCost, expectedFuelCost);
+        assertEq(arrivalAt - departureAt, expectedTravelSeconds);
+        assertEq(returnAt - arrivalAt, expectedTravelSeconds);
         assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 0);
+        assertEq(game.planet(originPlanetId).resources.deuterium, 10_000 - expectedFuelCost);
         assertEq(game.planetCountOf(player), 1);
 
         vm.warp(arrivalAt);
