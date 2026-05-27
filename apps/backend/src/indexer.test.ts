@@ -188,6 +188,45 @@ describe("SettlementIndexer", () => {
     ]);
   });
 
+  test("rebuild stores current planet resources instead of settlement-log zero placeholders", async () => {
+    const currentPlanet: SettledPlanetEvent = {
+      ...planet,
+      transactionHash: "0x",
+      blockNumber: "0",
+      lastSettledAt: "1770000500",
+      resources: {
+        metal: "9100",
+        crystal: "8200",
+        deuterium: "7300"
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [currentPlanet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() {
+        return [{
+          ...planet,
+          lastSettledAt: "0",
+          resources: {
+            metal: "0",
+            crystal: "0",
+            deuterium: "0"
+          }
+        }];
+      }
+    }, 100n);
+
+    await indexer.rebuild();
+
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      transactionHash: planet.transactionHash,
+      blockNumber: planet.blockNumber,
+      lastSettledAt: currentPlanet.lastSettledAt,
+      resources: currentPlanet.resources
+    });
+  });
+
   test("records reconciliation failures for health/debug visibility", async () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

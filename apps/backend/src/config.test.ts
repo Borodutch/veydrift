@@ -20,6 +20,15 @@ describe("backend config", () => {
     });
   });
 
+  test("derives Base Sepolia websocket URL from an Alchemy HTTPS RPC URL", () => {
+    expect(resolveWsRpcUrl({
+      VEYDRIFT_RPC_URL: "https://base-sepolia.g.alchemy.com/v2/secret-key"
+    })).toEqual({
+      wsRpcSource: "alchemy-url",
+      wsRpcUrl: "wss://base-sepolia.g.alchemy.com/v2/secret-key"
+    });
+  });
+
   test("keeps HTTP RPC required while websocket RPC remains optional fallback config", () => {
     const result = loadBackendConfig({
       ALCHEMY_BASE_SEPOLIA_API_KEY: "secret-key",

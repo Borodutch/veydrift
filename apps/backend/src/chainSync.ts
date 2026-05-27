@@ -76,7 +76,7 @@ export class ChainSyncService {
 
   constructor(
     private readonly config: BackendConfig,
-    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog">> | undefined,
+    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog" | "rebuildPlanets">> | undefined,
     private readonly options: {
       reconnectBaseMs?: number;
       WebSocketCtor?: WebSocketConstructor;
@@ -302,6 +302,13 @@ export class ChainSyncService {
       } catch (error) {
         this.lastError = error instanceof Error ? error.message : "Failed to index moon chance log.";
       }
+    }
+
+    const removed = "removed" in result && result.removed === true;
+    if (!removed && this.indexer?.rebuildPlanets) {
+      void this.indexer.rebuildPlanets().catch((error) => {
+        this.lastError = error instanceof Error ? error.message : "Failed to refresh indexed planet state.";
+      });
     }
 
     this.notify({
