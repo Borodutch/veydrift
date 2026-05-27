@@ -224,10 +224,13 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             ships: ships,
             randomnessRequestId: randomnessRequestId
         });
+        _trackPhalanxMission(missionId, _fleetMissions[missionId]);
+        _trackMissionResolution(missionId, _fleetMissions[missionId]);
         if (missionType == FleetMissionType.Attack) {
             _recordAttack(msg.sender, targetPlanetId);
         } else if (counterplayMission) {
             _fleetCounterplayMissions[hostileMissionId].push(missionId);
+            _trackCounterplayMissionResolution(hostileMissionId, _fleetMissions[missionId]);
         }
 
         emit FleetMissionLaunched(
@@ -351,7 +354,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             ships: ships,
             randomnessRequestId: attackMissionId
         });
+        _trackPhalanxMission(missionId, _fleetMissions[missionId]);
         _fleetCounterplayMissions[attackMissionId].push(missionId);
+        _trackCounterplayMissionResolution(attackMissionId, _fleetMissions[missionId]);
 
         emit AttackMissionJoined(
             attackMissionId, missionId, msg.sender, originPlanetId, attack.targetPlanetId
@@ -422,6 +427,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = uint64(_currentTimestamp() + elapsed);
+        _untrackMissionResolution(missionId, mission);
+        if (_isCounterplayMissionType(mission.missionType)) {
+            _untrackCounterplayMissionResolution(mission.randomnessRequestId, mission);
+        }
 
         emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, recallCost);
         emit FleetMissionReturnExposed(
@@ -455,11 +464,18 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             mission.status = FleetMissionStatus.Resolved;
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
+            _untrackPhalanxMission(missionId, mission);
         } else if (
             mission.missionType == FleetMissionType.Attack
                 || mission.missionType == FleetMissionType.Harvest
         ) {
             _delegateToCombatModule();
+            if (mission.status != FleetMissionStatus.Outbound) {
+                _untrackMissionResolution(missionId, mission);
+            }
+            if (mission.status == FleetMissionStatus.Resolved) {
+                _untrackPhalanxMission(missionId, mission);
+            }
         } else {
             if (_fleetMissions[mission.randomnessRequestId].status == FleetMissionStatus.Outbound) {
                 return;
@@ -705,6 +721,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             }
         }
         revert UnsupportedGameplayModule();
+    }
+
+    function _isCounterplayMissionType(FleetMissionType missionType) private pure returns (bool) {
+        return missionType == FleetMissionType.AcsAttack
+            || missionType == FleetMissionType.AcsDefend
+            || missionType == FleetMissionType.Intercept;
     }
 
     function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)

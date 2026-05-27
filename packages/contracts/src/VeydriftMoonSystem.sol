@@ -19,7 +19,10 @@ interface IVeydriftMoonGame {
         VeydriftGameStorage.MissionShips calldata ships
     ) external;
     function technologyLevel(address player, Technology technology) external view returns (uint16);
-    function nextFleetId() external view returns (uint256);
+    function phalanxMissionIds(uint16 galaxy, uint16 system, uint256 maxResults)
+        external
+        view
+        returns (uint256[] memory);
     function fleetMission(uint256 missionId)
         external
         view
@@ -541,13 +544,17 @@ contract VeydriftMoonSystem {
         if (maxResults == 0) revert InvalidQuantity();
         _requireScanRange(moonPlanetId, galaxy, system);
 
-        uint256 fleetLimit = game.nextFleetId();
-        PhalanxScanResult[] memory buffer = new PhalanxScanResult[](maxResults);
+        uint256[] memory missionIds = game.phalanxMissionIds(galaxy, system, maxResults);
+        PhalanxScanResult[] memory buffer = new PhalanxScanResult[](missionIds.length);
         uint256 count;
-        for (uint256 missionId = 1; missionId < fleetLimit && count < maxResults; missionId++) {
+        for (uint256 index = 0; index < missionIds.length;) {
+            uint256 missionId = missionIds[index];
             PhalanxScanResult memory scan = _phalanxScanResult(missionId);
             if (_isPhalanxVisible(scan.status) && _missionTouchesSystem(scan, galaxy, system)) {
                 buffer[count++] = scan;
+            }
+            unchecked {
+                ++index;
             }
         }
 

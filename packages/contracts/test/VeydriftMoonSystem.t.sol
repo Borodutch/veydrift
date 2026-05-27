@@ -115,6 +115,10 @@ contract VeydriftMoonSystemTest is Test {
         vm.prank(admin);
         game.setMoonSystem(address(moons));
         vm.prank(admin);
+        game.setRandomnessEngine(address(randomness));
+        vm.prank(admin);
+        randomness.setRequesterAuthorization(address(game), true);
+        vm.prank(admin);
         randomness.setRequesterAuthorization(address(moons), true);
         moons.setMoonChanceReporter(reporter);
         vm.deal(player, 1 ether);
@@ -506,26 +510,31 @@ contract VeydriftMoonSystemTest is Test {
         vm.prank(player);
         moons.scanSystem(planetId, planet.galaxy, nearSystem);
 
-        uint256 targetPlanetId = 200;
-        _setPlanetLocation(targetPlanetId, address(0xCAFE), planet.galaxy, nearSystem, 8);
-        _storeFleetMission(
-            1,
-            VeydriftGameStorage.FleetMissionStatus.Outbound,
-            VeydriftGameStorage.FleetMissionType.Attack,
-            address(0xCAFE),
+        address attacker = address(0xCAFE);
+        vm.deal(attacker, 1 ether);
+        vm.prank(attacker);
+        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetLocation(targetPlanetId, attacker, planet.galaxy, nearSystem, 8);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 1);
+        _fundPlanet(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(attacker);
+        uint256 missionId = game.launchFleetMission(
             targetPlanetId,
             planetId,
-            uint64(block.timestamp),
-            uint64(block.timestamp + 30 minutes),
-            uint64(block.timestamp + 60 minutes)
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
         );
-        _setNextFleetId(2);
 
         vm.prank(player);
         VeydriftMoonSystem.PhalanxScanResult[] memory scans =
             moons.scanSystemMissions(planetId, planet.galaxy, nearSystem, 10);
         assertEq(scans.length, 1);
-        assertEq(scans[0].missionId, 1);
+        assertEq(scans[0].missionId, missionId);
         assertEq(uint8(scans[0].status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
         assertEq(uint8(scans[0].missionType), uint8(VeydriftGameStorage.FleetMissionType.Attack));
         assertEq(scans[0].originPlanetId, targetPlanetId);

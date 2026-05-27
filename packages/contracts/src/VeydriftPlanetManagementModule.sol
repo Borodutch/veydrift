@@ -118,6 +118,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             _coordinateKey(planetRef.galaxy, planetRef.system, planetRef.position)
         ] = false;
         planetCountOf[msg.sender] -= 1;
+        _unregisterOwnedPlanet(msg.sender, planetId);
     }
 
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
@@ -224,6 +225,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             _add(_planets[mission.originPlanetId].resources, mission.cargo);
         _creditMissionShips(mission.originPlanetId, mission.ships);
         mission.status = FleetMissionStatus.Returned;
+        _untrackPhalanxMission(missionId, mission);
         activeFleetMissionCount[mission.owner] -= 1;
         emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
     }
@@ -289,6 +291,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         colonyPlanetId = nextPlanetId++;
         occupiedCoordinates[coordinates] = true;
         planetCountOf[msg.sender] += 1;
+        _registerOwnedPlanet(msg.sender, colonyPlanetId);
 
         bytes32 seed = _planetSeed(galaxy, system, position);
         uint16 fields = uint16(160 + (uint256(seed) % 80));
@@ -468,7 +471,9 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         uint16[50] memory linkedLabLevels;
         uint16 linkedCount = 0;
 
-        for (uint256 candidatePlanetId = 1; candidatePlanetId < nextPlanetId;) {
+        uint256[] storage planetIds = _ownedPlanetIds[player];
+        for (uint256 planetIndex = 0; planetIndex < planetIds.length;) {
+            uint256 candidatePlanetId = planetIds[planetIndex];
             if (candidatePlanetId != planetId && _planets[candidatePlanetId].owner == player) {
                 uint16 labLevel = _buildingLevels[candidatePlanetId][Building.ResearchLab];
                 if (labLevel >= requiredLabLevel) {
@@ -479,7 +484,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             }
 
             unchecked {
-                ++candidatePlanetId;
+                ++planetIndex;
             }
         }
 

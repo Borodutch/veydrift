@@ -243,7 +243,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             missionType := calldataload(0x44)
         }
         if (missionType == uint8(FleetMissionType.Colonize)) {
-            _delegateToColonizationModule();
+            return _launchColonizeMission();
         }
         _delegateToPlayModule();
     }
@@ -263,7 +263,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             missionType := calldataload(0x44)
         }
         if (missionType == uint8(FleetMissionType.Colonize)) {
-            _delegateToColonizationModule();
+            return _launchColonizeMission();
         }
         _delegateToPlayModule();
     }
@@ -567,6 +567,7 @@ contract VeydriftGame is VeydriftResourceReserves {
 
         homePlanetOf[player] = planetId;
         planetCountOf[player] = 1;
+        _registerOwnedPlanet(player, planetId);
         _planets[planetId] = Planet({
             owner: player,
             galaxy: galaxy,
@@ -675,15 +676,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _settleResources(uint256 planetId) private {
-        for (uint256 missionId = 1; missionId < nextFleetId; missionId++) {
-            FleetMission storage mission = _fleetMissions[missionId];
-            if (
-                _isPendingResolutionMission(mission)
-                    && (mission.originPlanetId == planetId || mission.targetPlanetId == planetId)
-            ) {
-                revert FleetMissionNotResolved(mission.arrivalAt);
-            }
-        }
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         uint64 currentTime = uint64(block.timestamp);
         BuildingConstruction memory construction = buildingConstructions[planetId];
         if (construction.active && currentTime >= construction.readyAt) {
@@ -881,6 +874,18 @@ contract VeydriftGame is VeydriftResourceReserves {
         assembly ("memory-safe") {
             return(add(result, 32), mload(result))
         }
+    }
+
+    function _launchColonizeMission() private returns (uint256 missionId) {
+        (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        missionId = abi.decode(result, (uint256));
+        _trackPhalanxMission(missionId, _fleetMissions[missionId]);
+        _trackMissionResolution(missionId, _fleetMissions[missionId]);
     }
 
     function _delegateToColonizationModule() private {
