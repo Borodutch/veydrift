@@ -1501,12 +1501,13 @@ export class VeydriftGameReader implements ChainReader {
     const planetScores = await Promise.all(
       ownedPlanets.map(async (planet) => {
         const planetId = BigInt(planet.planetId);
-        const [buildings, defenses, ships] = await Promise.all([
+        const [buildings, defenses, ships, moonBuildings] = await Promise.all([
           this.readBuildingRows(planetId),
           this.readDefenseRows(planetId),
-          this.readShipRows(planetId)
+          this.readShipRows(planetId),
+          this.readMoonBuildingHighscoreRows(planetId, wallet)
         ]);
-        return { buildings, defenses, ships };
+        return { buildings, moonBuildings, defenses, ships };
       })
     );
     const technologies = await this.readTechnologyRows(wallet);
@@ -1601,6 +1602,8 @@ export class VeydriftGameReader implements ChainReader {
       }));
     }
 
+    const moonBuildingsByPlanet = await this.readMoonBuildingHighscoreRowsForPlanets(planetIds);
+
     return owners.map((owner) => {
       const ownerKey = owner.toLowerCase();
       const planets = planetsByOwner.get(ownerKey) ?? [];
@@ -1610,7 +1613,9 @@ export class VeydriftGameReader implements ChainReader {
         planetCount: planets.length,
         planets: planets.flatMap((planet) => {
           const score = planetScores.get(planet.planetId);
-          return score ? [score] : [];
+          return score
+            ? [{ ...score, moonBuildings: moonBuildingsByPlanet.get(planet.planetId) ?? [] }]
+            : [];
         }),
         technologies: technologiesByOwner.get(ownerKey) ?? []
       });
@@ -2003,6 +2008,63 @@ export class VeydriftGameReader implements ChainReader {
         };
       })
     );
+  }
+
+  private async readMoonBuildingHighscoreRows(
+    planetId: bigint,
+    wallet: Address
+  ): Promise<Array<{ id: number; level: number }>> {
+    if (!this.moonContractAddress) return [];
+
+    try {
+      const moon = await this.readMoon(planetId);
+      if (!moon.exists || moon.owner.toLowerCase() !== wallet.toLowerCase()) return [];
+      const rows = await this.readMoonBuildingRows(planetId);
+      return rows.map(({ id, level }) => ({ id, level }));
+    } catch (error) {
+      if (isRpcRevert(error)) return [];
+      throw error;
+    }
+  }
+
+  private async readMoonBuildingHighscoreRowsForPlanets(
+    planetIds: string[]
+  ): Promise<Map<string, Array<{ id: number; level: number }>>> {
+    const rows = new Map<string, Array<{ id: number; level: number }>>();
+    if (!this.moonContractAddress || planetIds.length === 0) return rows;
+
+    try {
+      const moonResults = await this.batchCallContract(
+        this.moonContractAddress,
+        planetIds.map((planetId) => ({
+          selector: "0xce028855",
+          args: [encodeUint(BigInt(planetId))]
+        }))
+      );
+      const planetsWithMoons = planetIds.filter((_, index) => (
+        decodeBoolWord(wordAt(splitWords(moonResults[index] ?? "0x"), 0))
+      ));
+      const levelResults = await this.batchCallContract(
+        this.moonContractAddress,
+        planetsWithMoons.flatMap((planetId) => moonBuildingCatalog.map((building) => ({
+          selector: "0x4e6a984f",
+          args: [encodeUint(BigInt(planetId)), encodeUint(BigInt(building.id))]
+        })))
+      );
+
+      let cursor = 0;
+      for (const planetId of planetsWithMoons) {
+        rows.set(planetId, moonBuildingCatalog.map((building) => ({
+          id: building.id,
+          level: Number(decodeUintWord(wordAt(splitWords(levelResults[cursor++] ?? "0x"), 0)))
+        })));
+      }
+    } catch (error) {
+      if (isRpcRevert(error)) return new Map();
+      throw error;
+    }
+
+    return rows;
   }
 
   private async readTechnologyRows(wallet: Address): Promise<ResearchState["technologies"]> {

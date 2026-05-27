@@ -366,7 +366,15 @@ export type ChainAllianceState = {
 
 export type AllianceRole = "none" | "member" | "officer" | "owner";
 
-export type HighscoreCategory = "total" | "economy" | "research" | "fleet" | "defense";
+export type HighscoreCategory =
+  | "total"
+  | "economy"
+  | "research"
+  | "researchLevels"
+  | "military"
+  | "fleet"
+  | "fleetCount"
+  | "defense";
 
 export type HighscoreEntry = {
   rank: number;
@@ -393,6 +401,8 @@ export type HighscoreResponse = {
   formula: {
     pointsDivisor: string;
     summary: string;
+    target?: string;
+    excludedCategories?: string[];
   };
   rankings: Record<HighscoreCategory, HighscoreEntry[]>;
 };

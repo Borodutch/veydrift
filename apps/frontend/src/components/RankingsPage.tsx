@@ -2,20 +2,32 @@ import { useEffect, useState } from "preact/hooks";
 import { RotateCw } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import type { Coordinates } from "../types";
-import { fetchHighscores, shortAddress, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
+import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 
 type RankingsPageProps = {
   apiBaseUrl: string | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 };
 
-export const rankingsColumnLabels = ["Rank", "Commander", "Planets", "Score"] as const;
+const categories: Array<{ key: HighscoreCategory; label: string }> = [
+  { key: "total", label: "Total" },
+  { key: "economy", label: "Economy" },
+  { key: "research", label: "Research" },
+  { key: "researchLevels", label: "Research levels" },
+  { key: "military", label: "Military" },
+  { key: "fleet", label: "Fleet value" },
+  { key: "fleetCount", label: "Ships" },
+  { key: "defense", label: "Defense" },
+];
+
+export const rankingsColumnLabels = ["Rank", "Commander", "Planets", "Score", "Total"] as const;
 
 export function primaryRankingEntries(data: HighscoreResponse | null): HighscoreEntry[] {
   return data?.rankings.total ?? [];
 }
 
 export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) {
+  const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -43,7 +55,7 @@ export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) 
     load();
   }, [apiBaseUrl]);
 
-  const entries = primaryRankingEntries(data);
+  const entries = data?.rankings[active] ?? [];
 
   return (
     <section className="space-y-4">
@@ -71,7 +83,25 @@ export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) 
         </div>
       ) : null}
 
-      <RankingsTable entries={entries} loading={loading} onSelectPlanet={onSelectPlanet} />
+      <div className="flex flex-wrap gap-2">
+        {categories.map((category) => (
+          <button
+            aria-pressed={active === category.key}
+            className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+              active === category.key
+                ? "border-cyan-300/60 bg-cyan-300/10 text-cyan-100"
+                : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
+            }`}
+            key={category.key}
+            onClick={() => setActive(category.key)}
+            type="button"
+          >
+            {category.label}
+          </button>
+        ))}
+      </div>
+
+      <RankingsTable active={active} entries={entries} loading={loading} onSelectPlanet={onSelectPlanet} />
 
       {data ? (
         <p className="text-xs leading-5 text-slate-500">
@@ -83,19 +113,21 @@ export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) 
 }
 
 export function RankingsTable({
+  active = "total",
   entries,
   loading,
   onSelectPlanet,
 }: {
+  active?: HighscoreCategory;
   entries: HighscoreEntry[];
   loading: boolean;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   return (
     <div className="overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
-      <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px]">
+      <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px_120px]">
         {rankingsColumnLabels.map((label) => (
-          <span className={label === "Rank" || label === "Commander" ? undefined : "text-right"} key={label}>
+          <span className={`${label === "Total" ? "hidden sm:block " : ""}${label === "Rank" || label === "Commander" ? "" : "text-right"}`} key={label}>
             {label}
           </span>
         ))}
@@ -106,7 +138,7 @@ export function RankingsTable({
         <RankingsMessage label="No settled commanders indexed yet" />
       ) : (
         entries.map((entry) => (
-          <RankingRow entry={entry} key={entry.wallet} onSelectPlanet={onSelectPlanet} />
+          <RankingRow active={active} entry={entry} key={`${active}-${entry.wallet}`} onSelectPlanet={onSelectPlanet} />
         ))
       )}
     </div>
@@ -114,9 +146,11 @@ export function RankingsTable({
 }
 
 function RankingRow({
+  active,
   entry,
   onSelectPlanet,
 }: {
+  active: HighscoreCategory;
   entry: HighscoreEntry;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
@@ -129,7 +163,7 @@ function RankingRow({
   };
 
   return (
-    <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] items-center border-b border-white/5 px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px]">
+    <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] items-center border-b border-white/5 px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px_120px]">
       <span className="font-mono text-slate-400">#{entry.rank}</span>
       <span className="flex min-w-0 items-center gap-2">
         {homePlanet ? (
@@ -163,7 +197,8 @@ function RankingRow({
         </button>
       </span>
       <span className="text-right font-mono text-slate-300">{entry.planetCount}</span>
-      <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score.total)}</span>
+      <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
+      <span className="hidden text-right font-mono text-slate-400 sm:block">{formatScore(entry.score.total)}</span>
     </div>
   );
 }
