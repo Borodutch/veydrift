@@ -325,10 +325,10 @@ describe("tester universe display data", () => {
     expect(enemyActions.map((action) => action.label)).toEqual([
       "Attack",
       "Harvest",
-      "ACS Defend",
-      "Intercept",
       "Missile",
     ]);
+    expect(enemyActions.map((action) => action.kind)).not.toContain("acsDefend");
+    expect(enemyActions.map((action) => action.kind)).not.toContain("intercept");
     expect(enemyActions.find((action) => action.kind === "attack")?.enabled).toBe(true);
     expect(enemyActions.find((action) => action.kind === "missileAttack")).toMatchObject({
       enabled: true,

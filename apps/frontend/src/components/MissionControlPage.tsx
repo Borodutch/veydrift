@@ -108,7 +108,7 @@ export function MissionControlPage({
 
       {activeCount === 0 ? (
         <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
-          No visible missions for this wallet. Launch transport, deploy, attack, ACS, intercept, or harvest missions from Galaxy when the target action is contract-supported.
+          No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy when the target action is contract-supported.
         </div>
       ) : null}
 
