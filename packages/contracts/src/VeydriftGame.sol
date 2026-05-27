@@ -156,15 +156,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function finishDefenseProduction(uint256) external {
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function startShipProduction(uint256, Ship, uint32) external {
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function finishShipProduction(uint256) external {
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function startResearch(uint256, Technology) external {
@@ -186,7 +186,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function setSpaceDockSystem(address) external {
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function setAllianceSystem(address nextAllianceSystem) external onlyOwner {

@@ -2,10 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
-import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {IVeydriftAttackRandomnessEngine} from "./interfaces/IVeydriftAttackRandomnessEngine.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -29,6 +29,8 @@ interface IVeydriftAttackProtectionAllianceSystem {
 
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
+    using SafeCast for uint256;
+
     address private immutable _combatModule;
 
     constructor(address combatModule) VeydriftResourceReserves(address(0)) {
@@ -46,64 +48,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             defender,
             _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId))
         );
-    }
-
-    function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
-        _requirePlanetOwner(planetId);
-        _requireNoPendingMissionResolutionForPlanet(planetId);
-        _validateShipProduction(planetId, ship, quantity);
-        _settleResources(planetId);
-
-        Resources memory unitCost = _shipCost(ship);
-        Resources memory totalCost = _multiply(unitCost, quantity);
-        _spend(planetId, totalCost);
-
-        uint64 readyAt;
-        unchecked {
-            readyAt = uint64(_currentTimestamp() + _shipDuration(planetId, unitCost, quantity));
-        }
-        shipQueues[planetId] = ShipQueue({
-            active: true, ship: ship, quantity: quantity, readyAt: readyAt, cost: totalCost
-        });
-        emit ShipQueued(
-            planetId,
-            ship,
-            quantity,
-            readyAt,
-            totalCost.metal,
-            totalCost.crystal,
-            totalCost.deuterium
-        );
-    }
-
-    function finishShipProduction(uint256 planetId) external {
-        _requirePlanetOwner(planetId);
-        _requireNoPendingMissionResolutionForPlanet(planetId);
-        ShipQueue memory queue = shipQueues[planetId];
-        if (!queue.active) revert QueueInactive();
-        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
-
-        delete shipQueues[planetId];
-        uint32 total = _shipCounts[planetId][queue.ship] + queue.quantity;
-        _shipCounts[planetId][queue.ship] = total;
-        emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
-    }
-
-    function finishDefenseProduction(uint256 planetId) external {
-        _requirePlanetOwner(planetId);
-        _requireNoPendingMissionResolutionForPlanet(planetId);
-        DefenseQueue memory queue = defenseQueues[planetId];
-        if (!queue.active) revert QueueInactive();
-        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
-
-        delete defenseQueues[planetId];
-        uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
-        _defenseCounts[planetId][queue.defense] = total;
-        emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
-    }
-
-    function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
-        _spaceDockSystem = nextSpaceDockSystem;
     }
 
     function launchFleetMission(
@@ -166,9 +110,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint16 speedPercent,
         uint256 randomnessRequestId
     ) private returns (uint256 missionId) {
-        if (!VeydriftAntiRaidPrimitives.isValidMissionSpeed(speedPercent)) {
-            revert InvalidQuantity();
-        }
         _requirePlanetOwner(originPlanetId);
         uint256 hostileMissionId;
         bool counterplayMission =
@@ -230,10 +171,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
             travelDistance, slowestSpeed, speedPercent, FLEET_UNIVERSE_SPEED
         );
-        uint64 arrivalAt;
-        unchecked {
-            arrivalAt = uint64(uint256(departureAt) + travelSeconds);
-        }
+        uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
         if (counterplayMission) {
             FleetMission storage hostile = _fleetMissions[hostileMissionId];
             if (arrivalAt > hostile.arrivalAt) {
@@ -277,10 +215,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _increaseInternalResources(cargo);
         _debitMissionShips(originPlanetId, ships);
 
-        uint64 returnAt;
-        unchecked {
-            returnAt = uint64(uint256(arrivalAt) + travelSeconds);
-        }
+        uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
         if (missionType == FleetMissionType.Attack) {
             randomnessRequestId = _requestAttackBattleRandomness(missionId);
@@ -372,10 +307,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
             FLEET_UNIVERSE_SPEED
         );
-        uint64 naturalArrivalAt;
-        unchecked {
-            naturalArrivalAt = uint64(uint256(departureAt) + travelSeconds);
-        }
+        uint64 naturalArrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
         if (naturalArrivalAt > attack.arrivalAt) revert FleetAlreadyArrived();
         uint256 cargoTotal =
             uint256(cargo.metal) + uint256(cargo.crystal) + uint256(cargo.deuterium);
@@ -395,10 +327,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _increaseInternalResources(cargo);
         _debitMissionShips(originPlanetId, ships);
 
-        uint64 returnAt;
-        unchecked {
-            returnAt = uint64(uint256(attack.arrivalAt) + travelSeconds);
-        }
+        uint64 returnAt = (uint256(attack.arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
@@ -551,28 +480,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _delegateToCombatModule();
     }
 
-    function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
-        _requirePlanetOwner(planetId);
-        if (quantity == 0) revert InvalidQuantity();
-        if (shipQueues[planetId].active) revert QueueActive();
-        address player = _planets[planetId].owner;
-        VeydriftDependencies.requireShip(
-            ship,
-            _buildingLevels[planetId][Building.Shipyard],
-            _technologyLevels[player][Technology.CombustionDrive],
-            _technologyLevels[player][Technology.ImpulseDrive],
-            _technologyLevels[player][Technology.HyperspaceDrive],
-            _technologyLevels[player][Technology.Hyperspace],
-            _technologyLevels[player][Technology.Graviton],
-            _technologyLevels[player][Technology.Energy],
-            _technologyLevels[player][Technology.Laser],
-            _technologyLevels[player][Technology.Ion],
-            _technologyLevels[player][Technology.Shielding],
-            _technologyLevels[player][Technology.Armor],
-            _technologyLevels[player][Technology.Plasma]
-        );
-    }
-
     function _requirePlanetOwner(uint256 planetId) private view {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
@@ -638,45 +545,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;
         _decreaseInternalResources(cost);
-    }
-
-    function _shipDuration(uint256 planetId, Resources memory unitCost, uint32 quantity)
-        private
-        view
-        returns (uint256)
-    {
-        return VeydriftFormulas.unitDuration(
-            _buildingLevels[planetId][Building.Shipyard],
-            _buildingLevels[planetId][Building.NaniteFactory],
-            unitCost.metal,
-            unitCost.crystal,
-            unitCost.deuterium,
-            quantity,
-            QUEUE_UNIVERSE_SPEED,
-            MIN_QUEUE_SECONDS
-        );
-    }
-
-    function _shipCost(Ship ship) private pure returns (Resources memory) {
-        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.shipCost(ship);
-        return Resources(metal, crystal, deuterium);
-    }
-
-    function _defenseCost(Defense defense) private pure returns (Resources memory) {
-        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.defenseCost(defense);
-        return Resources(metal, crystal, deuterium);
-    }
-
-    function _multiply(Resources memory resources, uint32 quantity)
-        private
-        pure
-        returns (Resources memory)
-    {
-        return Resources({
-            metal: _toUint128(uint256(resources.metal) * quantity),
-            crystal: _toUint128(uint256(resources.crystal) * quantity),
-            deuterium: _toUint128(uint256(resources.deuterium) * quantity)
-        });
     }
 
     function _cappedResourceIncrease(
