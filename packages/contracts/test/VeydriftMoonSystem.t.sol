@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
-import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
@@ -91,7 +91,8 @@ contract VeydriftMoonSystemTest is Test {
         randomness = new RandomnessEngine(admin, fulfiller);
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
-        VeydriftCombatModule combatModule = new VeydriftCombatModule();
+        VeydriftCombatModule combatModule =
+            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
