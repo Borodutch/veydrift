@@ -174,6 +174,24 @@ contract VeydriftCombatReferenceParityTest is Test {
         _assertReferenceParity(fixture, 101);
     }
 
+    function testReferenceParityCoversRapidfireRetargetMixedDefenders() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Cruiser)] = 1;
+        fixture.defenderShips[uint8(Ship.LightFighter)] = 10;
+        fixture.defenderDefenses[uint8(Defense.RocketLauncher)] = 50;
+
+        _assertReferenceParity(fixture, 404);
+    }
+
+    function testReferenceParityCoversRapidfireRetargetCounterplayPool() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battlecruiser)] = 10;
+        fixture.defenderShips[uint8(Ship.HeavyFighter)] = 100;
+        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
+
+        _assertReferenceParity(fixture, 32);
+    }
+
     function testReferenceParityCoversLargeRapidfireApproximation() public {
         VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
         fixture.attackerShips[uint8(Ship.Cruiser)] = 200;
