@@ -52,6 +52,8 @@ export type ChainSyncSnapshot = {
   latestWebsocketBlock: string | null;
   latestSyncedBlock: string | null;
   reconnectAttempts: number;
+  reorgDetectedAt: string | null;
+  subscribedAddresses: string[];
   subscribedToHeads: boolean;
   subscribedToLogs: boolean;
   wsEnabled: boolean;
@@ -79,6 +81,7 @@ export class ChainSyncService {
   private listeners = new Set<ChainSyncListener>();
   private nextRequestId = 1;
   private reconnectAttempts = 0;
+  private reorgDetectedAt: string | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private requestKinds = new Map<number, "logs" | "newHeads">();
   private socket: SocketLike | null = null;
@@ -107,6 +110,8 @@ export class ChainSyncService {
       latestWebsocketBlock: this.latestWebsocketBlock,
       latestSyncedBlock: this.latestSyncedBlock,
       reconnectAttempts: this.reconnectAttempts,
+      reorgDetectedAt: this.reorgDetectedAt,
+      subscribedAddresses: this.subscribedAddresses(),
       subscribedToHeads: [...this.subscriptionKinds.values()].includes("newHeads"),
       subscribedToLogs: [...this.subscriptionKinds.values()].includes("logs"),
       wsEnabled: Boolean(this.config.wsRpcUrl)
@@ -218,7 +223,11 @@ export class ChainSyncService {
     if (kind === "logs") {
       const addresses = [
         this.config.gameContractAddress,
-        this.config.moonContractAddress
+        this.config.moonContractAddress,
+        this.config.allianceContractAddress,
+        this.config.resourceTokenAddresses.metal,
+        this.config.resourceTokenAddresses.crystal,
+        this.config.resourceTokenAddresses.deuterium
       ].filter((address): address is `0x${string}` => Boolean(address));
       this.socket?.send(JSON.stringify({
         id,
@@ -306,6 +315,11 @@ export class ChainSyncService {
     this.latestWebsocketBlock = maxBlockString(this.latestWebsocketBlock, block);
     this.latestSyncedBlock = block.toString();
 
+    const removed = "removed" in result && result.removed === true;
+    if (removed) {
+      this.reorgDetectedAt = new Date().toISOString();
+    }
+
     if (this.indexer?.applyLog) {
       try {
         const applied = this.indexer.applyLog(result);
@@ -337,8 +351,11 @@ export class ChainSyncService {
       }
     }
 
-    const removed = "removed" in result && result.removed === true;
-    if (!removed && this.indexer?.rebuildPlanets) {
+    if (removed && this.indexer?.rebuildPlanets) {
+      void this.indexer.rebuildPlanets().catch((error) => {
+        this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed planet state after removed log.";
+      });
+    } else if (!removed && this.indexer?.rebuildPlanets) {
       void this.indexer.rebuildPlanets().catch((error) => {
         this.lastError = error instanceof Error ? error.message : "Failed to refresh indexed planet state.";
       });
@@ -370,6 +387,17 @@ export class ChainSyncService {
     void reconcile.call(this.indexer, reason).catch((error: unknown) => {
       this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed state.";
     });
+  }
+
+  private subscribedAddresses(): string[] {
+    return [
+      this.config.gameContractAddress,
+      this.config.moonContractAddress,
+      this.config.allianceContractAddress,
+      this.config.resourceTokenAddresses.metal,
+      this.config.resourceTokenAddresses.crystal,
+      this.config.resourceTokenAddresses.deuterium
+    ].filter((address): address is `0x${string}` => Boolean(address));
   }
 }
 

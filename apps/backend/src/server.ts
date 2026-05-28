@@ -925,16 +925,12 @@ function indexedPlayerQueues(
 
 function indexedFleetVisibility(
   wallet: `0x${string}`,
-  settlement: ReturnType<SettlementIndexer["walletSettlement"]>
+  _settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  _planet: SettledPlanetEvent | null,
+  _unavailableReason: string,
+  indexer: SettlementIndexer
 ): FleetMissionVisibility {
-  return {
-    wallet,
-    homePlanetId: settlement.homePlanetId,
-    incoming: [],
-    outgoing: [],
-    returning: [],
-    joinableAttacks: []
-  };
+  return indexer.fleetMissionVisibility(wallet);
 }
 
 function indexedInfrastructureState(
@@ -968,18 +964,11 @@ function indexedInfrastructureState(
 function indexedMoonState(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
-  _planet: SettledPlanetEvent | null,
-  unavailableReason: string
+  planet: SettledPlanetEvent | null,
+  _unavailableReason: string,
+  indexer: SettlementIndexer
 ): MoonState {
-  return {
-    wallet,
-    homePlanetId: settlement.homePlanetId,
-    moonAvailable: false,
-    unavailableReason,
-    moon: null,
-    buildings: [],
-    queue: null
-  };
+  return indexer.moonState(wallet, planet?.planetId ?? settlement.homePlanetId);
 }
 
 function indexedShipyardState(
@@ -1056,20 +1045,11 @@ function indexedResearchState(
 function indexedRiftState(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
-  _planet: SettledPlanetEvent | null,
-  unavailableReason: string
+  planet: SettledPlanetEvent | null,
+  _unavailableReason: string,
+  indexer: SettlementIndexer
 ): RiftState {
-  return {
-    wallet,
-    homePlanetId: settlement.homePlanetId,
-    riftAvailable: false,
-    unlocked: false,
-    unavailableReason,
-    withdrawalDelaySeconds: "2592000",
-    requirements: [],
-    resources: [],
-    pendingWithdrawals: []
-  };
+  return indexer.riftState(wallet, planet?.planetId ?? settlement.homePlanetId);
 }
 
 function verifyAlchemyWebhookSignature(
