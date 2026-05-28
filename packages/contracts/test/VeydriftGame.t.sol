@@ -2766,6 +2766,69 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(originPlanetId).resources.metal, 13_750);
     }
 
+    function testAcsAttackMultipleParticipantsSplitLootOnceInMissionOrder() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        address firstAlly = address(0xA771);
+        address secondAlly = address(0xA772);
+        vm.deal(firstAlly, 1 ether);
+        vm.deal(secondAlly, 1 ether);
+        vm.prank(firstAlly);
+        uint256 firstAllyPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(secondAlly);
+        uint256 secondAllyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 9, 499, 15);
+        _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
+        _setPlanetCoordinates(firstAllyPlanetId, 1, 1, 2);
+        _setPlanetCoordinates(secondAllyPlanetId, 1, 1, 3);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(firstAllyPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(secondAllyPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(firstAllyPlanetId, 10_000, 10_000, 10_000);
+        _setResources(secondAllyPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 30_000, 0, 10_000);
+
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            905
+        );
+        vm.prank(firstAlly);
+        uint256 firstJoinedMissionId = game.joinAttackMission(
+            firstAllyPlanetId,
+            attackMissionId,
+            targetPlanetId,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+        vm.prank(secondAlly);
+        uint256 secondJoinedMissionId = game.joinAttackMission(
+            secondAllyPlanetId,
+            attackMissionId,
+            targetPlanetId,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 905);
+        game.resolveFleetMission(attackMissionId);
+
+        (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(attackMissionId);
+        (,,, VeydriftGameStorage.Resources memory firstCargo) = _fleetMission(firstJoinedMissionId);
+        (,,, VeydriftGameStorage.Resources memory secondCargo) =
+            _fleetMission(secondJoinedMissionId);
+        assertEq(attackCargo.metal, 5_000);
+        assertEq(firstCargo.metal, 5_000);
+        assertEq(secondCargo.metal, 5_000);
+        assertEq(game.planet(targetPlanetId).resources.metal, 15_000);
+    }
+
     function testAcsAttackRejectsLateJoinMismatchedTargetAndDirectAbuse() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         address ally = address(0xA77A);
@@ -2921,9 +2984,12 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(attackMissionId, 903);
+        uint256 gasBefore = gasleft();
         game.resolveFleetMission(attackMissionId);
+        uint256 gasUsed = gasBefore - gasleft();
 
         assertLt(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 100);
+        assertLt(gasUsed, 25_000_000);
     }
 
     function testAcsAttackDefenderFireDoesNotDuplicateAcrossJoinedAttackGroups() public {
@@ -3379,6 +3445,20 @@ contract VeydriftGameTest is Test {
             game.debrisField(targetPlanetId);
         assertEq(remainingDebrisMetal, 30_000);
         assertEq(remainingDebrisCrystal, 5_000);
+    }
+
+    function testFuzzMoonChanceIsBoundedByDebrisEconomics(
+        uint128 metalDebris,
+        uint128 crystalDebris
+    ) public view {
+        uint256 debris = uint256(metalDebris) + crystalDebris;
+        uint256 debrisUnits = debris / moons.MOON_CHANCE_DEBRIS_UNIT();
+        uint256 expected = debrisUnits * 100;
+        if (expected > moons.MAX_MOON_CHANCE_BPS()) expected = moons.MAX_MOON_CHANCE_BPS();
+
+        uint16 chanceBps = moons.moonChanceBps(metalDebris, crystalDebris);
+        assertEq(chanceBps, expected);
+        assertLe(chanceBps, moons.MAX_MOON_CHANCE_BPS());
     }
 
     function testQualifyingAttackCreatesMoonChanceAndFinalizesAfterRandomness() public {

@@ -37,6 +37,9 @@ Galaxy UI work can preview the same rules the contracts enforce.
   protected storage and then capped by both loot percentage and committed cargo capacity.
 - Defender recovery: wreck-field and defense-repair basis points are contract constants so combat,
   Space Dock, and report/indexer work share one recovery model.
+- Inactive raiding: inactive defenders intentionally bypass score protection and bashing caps.
+  This is allowed farming behavior, but it still pays normal mission costs and remains bounded by
+  loot caps, cargo capacity, combat debris, moon-chance caps, and Space Dock recovery percentages.
 
 ## Follow-Up Ticket Coordination
 
