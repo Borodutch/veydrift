@@ -231,6 +231,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
+        if (!requestsLiveState(url)) {
+          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "player queues", indexedPlayerQueues);
+          if (indexed) return indexed;
+        }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "player queues", new Error("backend_not_configured"), indexedPlayerQueues)
@@ -250,6 +254,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
+        if (!requestsLiveState(url)) {
+          const indexed = await indexedWarmResponse(indexer, wallet, undefined, "fleet visibility", indexedFleetVisibility);
+          if (indexed) return indexed;
+        }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, undefined, "fleet visibility", new Error("backend_not_configured"), indexedFleetVisibility)
@@ -270,6 +278,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
+        if (!requestsLiveState(url)) {
+          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "infrastructure", indexedInfrastructureState);
+          if (indexed) return indexed;
+        }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "infrastructure", new Error("backend_not_configured"), indexedInfrastructureState)
@@ -290,6 +302,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
+        if (!requestsLiveState(url)) {
+          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "moon", indexedMoonState);
+          if (indexed) return indexed;
+        }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "moon", new Error("backend_not_configured"), indexedMoonState)
@@ -739,6 +755,50 @@ type IndexedDegradedBody<T extends object> = T & {
   stale: true;
 };
 
+type IndexedWarmBody<T extends object> = T & {
+  detail: string;
+  indexer: ReturnType<SettlementIndexer["snapshot"]>;
+  liveReadSkippedAt: string;
+  source: "contract-state-indexer";
+  stale: true;
+};
+
+async function indexedWarmResponse<T extends object>(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`,
+  selectedPlanetId: bigint | undefined,
+  surface: string,
+  build: (
+    wallet: `0x${string}`,
+    settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+    planet: SettledPlanetEvent | null,
+    detail: string
+  ) => T
+): Promise<Response | null> {
+  if (!indexer) return null;
+
+  await ensurePlanetIndex(indexer);
+  const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
+  if (!settlement?.planet) return null;
+
+  const detail = `${surface} loaded from DB-indexed contract state before live RPC.`;
+  const body: IndexedWarmBody<T> = {
+    ...build(wallet, settlement.settlement, settlement.planet, detail),
+    detail,
+    indexer: indexer.snapshot(),
+    liveReadSkippedAt: new Date().toISOString(),
+    source: "contract-state-indexer",
+    stale: true
+  };
+
+  return Response.json(body, {
+    headers: {
+      ...corsHeaders,
+      "x-veydrift-index-state": "warm"
+    }
+  });
+}
+
 async function indexedDegradedResponse<T extends object>(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`,
@@ -805,6 +865,11 @@ function indexedWalletSettlement(
 function isDegradableReadError(error: unknown): boolean {
   return error instanceof Error
     && (error.message === "backend_not_configured" || isRpcTransportError(error));
+}
+
+function requestsLiveState(url: URL): boolean {
+  const source = url.searchParams.get("source") ?? url.searchParams.get("stateSource");
+  return source === "live" || url.searchParams.get("live") === "1";
 }
 
 function selectedPlanetIdOrUndefined(url: URL): bigint | undefined {

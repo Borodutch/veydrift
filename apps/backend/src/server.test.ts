@@ -1077,7 +1077,7 @@ describe("Veydrift backend", () => {
   test("answers infrastructure state from a mocked chain reader", async () => {
     const handler = createRequestHandler({ chainReader: new MockChainReader(), config: configuredTestConfig });
     const response = await handler(
-      new Request(`http://localhost/wallet/${player}/infrastructure`)
+      new Request(`http://localhost/wallet/${player}/infrastructure?source=live`)
     );
     const body = await response.json();
 
@@ -1182,7 +1182,7 @@ describe("Veydrift backend", () => {
 
   test("answers moon state from a mocked chain reader", async () => {
     const handler = createRequestHandler({ chainReader: new MockChainReader(), config: configuredTestConfig });
-    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const response = await handler(new Request(`http://localhost/wallet/${player}/moon?source=live`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -1787,6 +1787,151 @@ describe("Veydrift backend", () => {
       }
     });
     expect(response.status).toBe(200);
+  });
+
+  test("serves indexed player queues without live chain reads when warm", async () => {
+    const chainReader = new MockChainReader();
+    let liveReadCalled = false;
+    chainReader.getPlayerQueues = async () => {
+      liveReadCalled = true;
+      throw new Error("player queues should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm queues index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/queues`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("warm");
+    expect(liveReadCalled).toBe(false);
+    expect(body).toMatchObject({
+      wallet: player,
+      homePlanetId: planet.planetId,
+      building: null,
+      defense: null,
+      ship: null,
+      research: null,
+      stale: true,
+      source: "contract-state-indexer",
+      detail: "player queues loaded from DB-indexed contract state before live RPC."
+    });
+    expect(typeof body.liveReadSkippedAt).toBe("string");
+  });
+
+  test("serves indexed infrastructure resources without live chain reads when warm", async () => {
+    const chainReader = new MockChainReader();
+    let liveReadCalled = false;
+    chainReader.getInfrastructureState = async () => {
+      liveReadCalled = true;
+      throw new Error("infrastructure should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm infrastructure index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("warm");
+    expect(liveReadCalled).toBe(false);
+    expect(body).toMatchObject({
+      wallet: player,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: false,
+      unavailableReason: "infrastructure loaded from DB-indexed contract state before live RPC.",
+      resources: {
+        metal: "5000",
+        crystal: "4900",
+        deuterium: "4800"
+      },
+      buildings: [],
+      queue: null,
+      stale: true,
+      source: "contract-state-indexer",
+      detail: "infrastructure loaded from DB-indexed contract state before live RPC."
+    });
+    expect(typeof body.liveReadSkippedAt).toBe("string");
+  });
+
+  test("allows explicit live wallet reads to bypass indexed warm state", async () => {
+    const baseReader = new MockChainReader();
+    const chainReader = new MockChainReader();
+    let queuesLiveReadCalled = false;
+    let infrastructureLiveReadCalled = false;
+    chainReader.getPlayerQueues = async (wallet: Address, planetId?: bigint) => {
+      queuesLiveReadCalled = true;
+      expect(planetId).toBeUndefined();
+      return baseReader.getPlayerQueues(wallet);
+    };
+    chainReader.getInfrastructureState = async (wallet: Address, planetId?: bigint) => {
+      infrastructureLiveReadCalled = true;
+      expect(planetId).toBeUndefined();
+      return baseReader.getInfrastructureState(wallet);
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("explicit live reads should not rebuild the warm index");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const queuesResponse = await handler(new Request(`http://localhost/wallet/${player}/queues?source=live`));
+    const queuesBody = await queuesResponse.json();
+    const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure?source=live`));
+    const infrastructureBody = await infrastructureResponse.json();
+
+    expect(queuesResponse.status).toBe(200);
+    expect(queuesResponse.headers.get("x-veydrift-index-state")).toBeNull();
+    expect(queuesLiveReadCalled).toBe(true);
+    expect(queuesBody.building).toMatchObject({
+      active: true,
+      kind: "building"
+    });
+    expect(infrastructureResponse.status).toBe(200);
+    expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBeNull();
+    expect(infrastructureLiveReadCalled).toBe(true);
+    expect(infrastructureBody).toMatchObject({
+      infrastructureAvailable: true,
+      resources: {
+        metal: "5000"
+      }
+    });
   });
 
   test("serves indexed planet detail without live chain reads when warm", async () => {

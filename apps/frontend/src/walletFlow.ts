@@ -1972,20 +1972,24 @@ export async function fetchWalletPlanets(apiUrl: string, wallet: string): Promis
   return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, "planets", "Planets");
 }
 
-export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId?: string): Promise<PlayerQueuesResponse> {
-  return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withPlanetId("queues", planetId), "Queues");
+type WalletReadOptions = {
+  source?: "indexed" | "live";
+};
+
+export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
+  return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withWalletReadOptions("queues", planetId, options), "Queues");
 }
 
-export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string): Promise<FleetMissionVisibilityResponse> {
-  return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, "fleet-visibility", "Fleet visibility");
+export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<FleetMissionVisibilityResponse> {
+  return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, withWalletReadOptions("fleet-visibility", undefined, options), "Fleet visibility");
 }
 
-export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainInfrastructureState> {
-  return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, withPlanetId("infrastructure", planetId), "Infrastructure");
+export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
+  return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, withWalletReadOptions("infrastructure", planetId, options), "Infrastructure");
 }
 
-export async function fetchMoonState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainMoonState> {
-  return fetchWalletJson<ChainMoonState>(apiUrl, wallet, withPlanetId("moon", planetId), "Moon");
+export async function fetchMoonState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainMoonState> {
+  return fetchWalletJson<ChainMoonState>(apiUrl, wallet, withWalletReadOptions("moon", planetId, options), "Moon");
 }
 
 export async function fetchShipyardState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainShipyardState> {
@@ -2097,6 +2101,19 @@ async function fetchWalletJson<T>(
 
 function withPlanetId(path: string, planetId: string | undefined): string {
   return planetId && isContractPlanetId(planetId) ? `${path}?planetId=${encodeURIComponent(planetId)}` : path;
+}
+
+function withWalletReadOptions(path: string, planetId: string | undefined, options: WalletReadOptions): string {
+  const params = new URLSearchParams();
+  if (planetId && isContractPlanetId(planetId)) {
+    params.set("planetId", planetId);
+  }
+  if (options.source === "live") {
+    params.set("source", "live");
+  }
+
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 function isContractPlanetId(planetId: string): boolean {

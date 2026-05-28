@@ -760,8 +760,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         async () => {
           const [settlement, queues, infrastructure] = await Promise.all([
             fetchWalletSettlement(apiBaseUrl, account),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
 
           return { settlement, queues, infrastructure };
@@ -814,7 +814,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         async () => {
           const [settlement, infrastructure] = await Promise.all([
             fetchWalletSettlement(apiBaseUrl, account),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
 
           return { settlement, infrastructure };
