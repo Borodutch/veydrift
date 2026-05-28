@@ -20,6 +20,9 @@ const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
+const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
+const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -520,6 +523,62 @@ describe("SettlementIndexer", () => {
         })
       ]),
       pendingWithdrawals: []
+    });
+  });
+
+  test("indexes fleet mission visibility from mission event logs", () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xfleet",
+      logIndex: "0x0",
+      topics: [
+        fleetMissionLaunchedTopic,
+        topic(44n),
+        addressTopic(attacker),
+        topic(3n)
+      ],
+      data: abiWords(99n, 7n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xfleet",
+      logIndex: "0x1",
+      topics: [
+        fleetMissionCargoTopic,
+        topic(44n)
+      ],
+      data: abiWords(100n, 50n, 0n, 20n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xfleet",
+      logIndex: "0x2",
+      topics: [
+        fleetMissionShipsTopic,
+        topic(44n)
+      ],
+      data: abiWords(1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    const visibility = indexer.fleetMissionVisibility(player);
+    expect(visibility.outgoing).toEqual([]);
+    expect(visibility.incoming[0]).toMatchObject({
+      missionId: "44",
+      missionType: "Attack",
+      owner: attacker,
+      originPlanetId: "99",
+      targetPlanetId: "7",
+      ships: {
+        smallCargo: "1",
+        lightFighter: "2"
+      }
     });
   });
 

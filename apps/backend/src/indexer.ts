@@ -2,6 +2,7 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+  decodeCompleteFleetMissionLogs,
   decodeDebrisFieldLog,
   decodeIndexedQueueCompletedLog,
   decodeIndexedQueueStartedLog,
@@ -11,6 +12,7 @@ import {
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
   isDebrisFieldLog,
+  isFleetMissionLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
   isMoonCreatedLog,
@@ -21,6 +23,8 @@ import {
   type ChainReader,
   type DebrisFieldEvent,
   type DefenseState,
+  type FleetMissionVisibility,
+  type FleetMissionSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
   type IndexedMoonCreatedEvent,
@@ -269,6 +273,41 @@ export class SettlementIndexer {
     };
   }
 
+  fleetMissionVisibility(wallet: `0x${string}`): FleetMissionVisibility {
+    const settlement = this.walletSettlement(wallet);
+    const walletLower = wallet.toLowerCase();
+    const ownedPlanetIds = new Set(
+      this.settledPlanets()
+        .filter((planet) => planet.owner.toLowerCase() === walletLower)
+        .map((planet) => planet.planetId)
+    );
+    const summaries = this.indexedFleetMissionSummaries();
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      incoming: summaries.filter((mission) =>
+        mission.owner.toLowerCase() !== walletLower
+          && ownedPlanetIds.has(mission.targetPlanetId)
+          && ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && mission.status === "Outbound"
+      ),
+      outgoing: summaries.filter((mission) =>
+        mission.owner.toLowerCase() === walletLower && mission.status === "Outbound"
+      ),
+      returning: summaries.filter((mission) =>
+        mission.owner.toLowerCase() === walletLower
+          && (mission.status === "Returning" || mission.status === "Recalled")
+      ),
+      joinableAttacks: summaries.filter((mission) =>
+        mission.owner.toLowerCase() !== walletLower
+          && !ownedPlanetIds.has(mission.targetPlanetId)
+          && mission.missionType === "Attack"
+          && mission.status === "Outbound"
+      )
+    };
+  }
+
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
     return Array.from({ length: buildingCount }, (_, id) => ({
       id,
@@ -470,6 +509,10 @@ export class SettlementIndexer {
     }
     if (isRiftResourceLog(log)) {
       this.applyRiftResourceEvent(decodeRiftResourceLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isFleetMissionLog(log)) {
+      this.touch();
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isMoonChanceReportLog(log)) {
@@ -1010,6 +1053,19 @@ export class SettlementIndexer {
       WHERE owner = lower(?) AND planet_id = ?
       ORDER BY CAST(unlocks_at AS INTEGER) ASC
     `).all(wallet, planetId) as PendingWithdrawalRow[];
+  }
+
+  private indexedFleetMissionSummaries(): FleetMissionSummary[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+    const logs = rows
+      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
+      .filter(isFleetMissionLog);
+    return decodeCompleteFleetMissionLogs(logs);
   }
 
   private count(table:

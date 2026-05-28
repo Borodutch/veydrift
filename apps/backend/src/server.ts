@@ -910,16 +910,12 @@ function indexedPlayerQueues(
 
 function indexedFleetVisibility(
   wallet: `0x${string}`,
-  settlement: ReturnType<SettlementIndexer["walletSettlement"]>
+  _settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  _planet: SettledPlanetEvent | null,
+  _unavailableReason: string,
+  indexer: SettlementIndexer
 ): FleetMissionVisibility {
-  return {
-    wallet,
-    homePlanetId: settlement.homePlanetId,
-    incoming: [],
-    outgoing: [],
-    returning: [],
-    joinableAttacks: []
-  };
+  return indexer.fleetMissionVisibility(wallet);
 }
 
 function indexedInfrastructureState(
