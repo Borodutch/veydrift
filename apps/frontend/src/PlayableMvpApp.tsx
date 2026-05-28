@@ -1785,23 +1785,26 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
 
-  const handleJumpGate = useCallback((destinationPlanetId: string, ships: Partial<MissionShips>) => {
+  const handleJumpGate = useCallback((destinationPlanetId: string, ships?: Partial<MissionShips>) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
       setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
       return;
     }
 
-    const manifest = {
+    const manifest = ships ? {
       ...emptyMissionShips(),
       ...ships,
-    };
+    } : undefined;
+    const transferShips = manifest && Object.values(manifest).some((quantity) => quantity > 0)
+      ? manifest
+      : undefined;
     void runMoonTransaction("Jump Gate transfer", () => sendJumpGateJumpTransaction(
       provider,
       account,
       moonContract,
       moonState.homePlanetId ?? "",
       destinationPlanetId,
-      manifest,
+      transferShips,
     ));
   }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
 
