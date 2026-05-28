@@ -5,6 +5,7 @@ import type { Resources } from "../playableMvp";
 import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
 import { formatCost } from "../buildingDetails";
+import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
 
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
@@ -13,7 +14,7 @@ interface MoonPageProps {
   loading?: boolean | undefined;
   moonState?: ChainMoonState | null | undefined;
   onFinishBuilding?: (() => void) | undefined;
-  onJumpGate?: ((destinationPlanetId: string, ships: Partial<MissionShips>) => void) | undefined;
+  onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
 }
@@ -143,6 +144,9 @@ function MoonSystemsPanel({
   const [jumpSmallCargo, setJumpSmallCargo] = useState("");
   const [jumpLargeCargo, setJumpLargeCargo] = useState("");
   const pending = action?.status === "pending";
+  const jumpDestinationReady = isPositiveIntegerInput(jumpDestination);
+  const jumpShips = parseMoonJumpShips(jumpSmallCargo, jumpLargeCargo);
+  const jumpCargoValid = jumpShips !== null;
 
   return (
     <div className="grid gap-4">
@@ -225,11 +229,8 @@ function MoonSystemsPanel({
             <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpLargeCargo(event.currentTarget.value)} placeholder="Large" value={jumpLargeCargo} />
             <button
               className="h-9 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!canTransact || pending || !onJumpGate || !jumpDestination}
-              onClick={() => onJumpGate?.(jumpDestination, {
-                smallCargo: parsePositiveInteger(jumpSmallCargo),
-                largeCargo: parsePositiveInteger(jumpLargeCargo),
-              })}
+              disabled={!canTransact || pending || !onJumpGate || !jumpDestinationReady || !jumpCargoValid}
+              onClick={() => jumpCargoValid ? onJumpGate?.(jumpDestination.trim(), jumpShips) : undefined}
               type="button"
             >
               Jump
@@ -303,9 +304,4 @@ function queueReady(value: string | null | undefined): boolean {
   if (!value || value === "0") return true;
   const timestamp = Number(value);
   return Number.isFinite(timestamp) && timestamp * 1_000 <= Date.now();
-}
-
-function parsePositiveInteger(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
