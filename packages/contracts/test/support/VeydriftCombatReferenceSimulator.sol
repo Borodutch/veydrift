@@ -19,6 +19,7 @@ library VeydriftCombatReferenceSimulator {
     uint256 private constant TARGET_LANE_STRIDE = 32;
     uint256 private constant TARGET_LANE_PLANET_SHIP = 0;
     uint256 private constant TARGET_LANE_DEFENSE = 64;
+    uint256 private constant TARGET_LANE_COUNTERPLAY_SHIP = 128;
     uint256 private constant TARGET_LANE_ATTACKER_SHIP = 4_096;
 
     struct CombatTech {
@@ -30,17 +31,24 @@ library VeydriftCombatReferenceSimulator {
     struct BattleInput {
         uint256 seed;
         uint32[16] attackerShips;
+        uint32[16] joinedAttackerShips;
         uint32[16] defenderShips;
+        uint32[16] counterplayShips;
         uint32[8] defenderDefenses;
+        bool counterplayIntercept;
         CombatTech attackerTech;
+        CombatTech joinedAttackerTech;
         CombatTech defenderTech;
+        CombatTech counterplayTech;
     }
 
     struct BattleResult {
         VeydriftGameStorage.BattleOutcome outcome;
         uint8 rounds;
         uint32[16] attackerShips;
+        uint32[16] joinedAttackerShips;
         uint32[16] defenderShips;
+        uint32[16] counterplayShips;
         uint32[8] defenderDefenses;
         VeydriftGameStorage.Resources attackerLosses;
         VeydriftGameStorage.Resources defenderLosses;
@@ -49,19 +57,21 @@ library VeydriftCombatReferenceSimulator {
 
     function run(BattleInput memory input) internal pure returns (BattleResult memory result) {
         result.attackerShips = _copyShips(input.attackerShips);
+        result.joinedAttackerShips = _copyShips(input.joinedAttackerShips);
         result.defenderShips = _copyShips(input.defenderShips);
+        result.counterplayShips = _copyShips(input.counterplayShips);
         result.defenderDefenses = _copyDefenses(input.defenderDefenses);
 
         uint32[8] memory destroyedDefenses;
         for (uint8 round = 1; round <= BATTLE_MAX_ROUNDS;) {
-            if (_attackerUnitTotal(result.attackerShips) == 0 || _defenderUnitTotal(result) == 0) {
+            if (_attackerUnitTotal(result) == 0 || _defenderUnitTotal(result) == 0) {
                 break;
             }
 
             uint32[16] memory attackerRoundShips = _copyShips(result.attackerShips);
-            VeydriftGameStorage.Resources memory attackerRoundLosses = _applyAttackerLosses(
-                result, input.defenderTech, input.attackerTech, input.seed, round
-            );
+            uint32[16] memory joinedAttackerRoundShips = _copyShips(result.joinedAttackerShips);
+            VeydriftGameStorage.Resources memory attackerRoundLosses =
+                _applyAttackerGroupLosses(result, input, round);
             result.attackerLosses = _add(result.attackerLosses, attackerRoundLosses);
 
             VeydriftGameStorage.Resources memory defenderRoundLosses = _applyDefenderLosses(
@@ -71,6 +81,17 @@ library VeydriftCombatReferenceSimulator {
                 input.defenderTech,
                 input.seed,
                 round
+            );
+            defenderRoundLosses = _add(
+                defenderRoundLosses,
+                _applyDefenderLosses(
+                    result,
+                    joinedAttackerRoundShips,
+                    input.joinedAttackerTech,
+                    input.defenderTech,
+                    input.seed,
+                    round
+                )
             );
             result.defenderLosses = _add(result.defenderLosses, defenderRoundLosses);
             _trackDestroyedDefenses(
@@ -83,7 +104,7 @@ library VeydriftCombatReferenceSimulator {
             }
         }
 
-        uint256 finalAttackers = _attackerUnitTotal(result.attackerShips);
+        uint256 finalAttackers = _attackerUnitTotal(result);
         uint256 finalDefenders = _defenderUnitTotal(result);
         _repairDestroyedDefenses(result.defenderDefenses, destroyedDefenses);
         if (finalAttackers != 0 && finalDefenders == 0) {
@@ -96,14 +117,53 @@ library VeydriftCombatReferenceSimulator {
         result.debris = _battleDebris(result.attackerLosses, result.defenderLosses);
     }
 
+    function _applyAttackerGroupLosses(
+        BattleResult memory result,
+        BattleInput memory input,
+        uint8 round
+    ) private pure returns (VeydriftGameStorage.Resources memory losses) {
+        uint256 targetTotal = _attackerUnitTotal(result);
+        losses = _add(
+            losses,
+            _applyAttackerLosses(
+                result.attackerShips,
+                result,
+                input.defenderTech,
+                input.counterplayTech,
+                input.attackerTech,
+                targetTotal,
+                0,
+                input.seed,
+                round
+            )
+        );
+        losses = _add(
+            losses,
+            _applyAttackerLosses(
+                result.joinedAttackerShips,
+                result,
+                input.defenderTech,
+                input.counterplayTech,
+                input.joinedAttackerTech,
+                targetTotal,
+                1,
+                input.seed,
+                round
+            )
+        );
+    }
+
     function _applyAttackerLosses(
+        uint32[16] memory targets,
         BattleResult memory result,
         CombatTech memory firingTech,
+        CombatTech memory counterplayTech,
         CombatTech memory targetTech,
+        uint256 targetTotal,
+        uint256 targetGroup,
         uint256 seed,
         uint8 round
     ) private pure returns (VeydriftGameStorage.Resources memory losses) {
-        uint256 targetTotal = _attackerUnitTotal(result.attackerShips);
         if (targetTotal == 0) return losses;
 
         for (uint8 i = 0; i < 16;) {
@@ -112,11 +172,12 @@ library VeydriftCombatReferenceSimulator {
                 losses = _add(
                     losses,
                     _fireShipAtAttackers(
-                        result.attackerShips,
+                        targets,
                         targetTotal,
+                        targetGroup,
                         Ship(i),
                         count,
-                        firingTech,
+                        counterplayTech,
                         targetTech,
                         seed,
                         round,
@@ -135,8 +196,9 @@ library VeydriftCombatReferenceSimulator {
                 losses = _add(
                     losses,
                     _fireDefenseAtAttackers(
-                        result.attackerShips,
+                        targets,
                         targetTotal,
+                        targetGroup,
                         Defense(i),
                         count,
                         firingTech,
@@ -152,11 +214,36 @@ library VeydriftCombatReferenceSimulator {
                 ++i;
             }
         }
+        for (uint8 i = 0; i < 16;) {
+            uint32 count = result.counterplayShips[i];
+            if (count != 0) {
+                losses = _add(
+                    losses,
+                    _fireShipAtAttackers(
+                        targets,
+                        targetTotal,
+                        targetGroup,
+                        Ship(i),
+                        count,
+                        firingTech,
+                        targetTech,
+                        seed,
+                        round,
+                        3,
+                        i
+                    )
+                );
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function _fireShipAtAttackers(
         uint32[16] memory targets,
         uint256 targetTotal,
+        uint256 targetGroup,
         Ship firingShip,
         uint32 firingCount,
         CombatTech memory firingTech,
@@ -172,7 +259,7 @@ library VeydriftCombatReferenceSimulator {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             uint32 targetCount = targets[i];
             if (targetCount != 0) {
-                uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, 0, i);
+                uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, targetGroup, i);
                 uint256 shots = _shipTargetShots(
                     firingCount,
                     VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(i)),
@@ -201,6 +288,7 @@ library VeydriftCombatReferenceSimulator {
     function _fireDefenseAtAttackers(
         uint32[16] memory targets,
         uint256 targetTotal,
+        uint256 targetGroup,
         Defense firingDefense,
         uint32 firingCount,
         CombatTech memory firingTech,
@@ -216,7 +304,7 @@ library VeydriftCombatReferenceSimulator {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             uint32 targetCount = targets[i];
             if (targetCount != 0) {
-                uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, 0, i);
+                uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, targetGroup, i);
                 uint256 shots = _distributedTargetShots(
                     firingCount, targetCount, targetTotal, seed, round, side, unit, targetLane
                 );
@@ -321,6 +409,33 @@ library VeydriftCombatReferenceSimulator {
                 );
                 if (lost != 0) {
                     result.defenderDefenses[i] = count - lost;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        for (uint8 i = 0; i < 16;) {
+            uint32 count = result.counterplayShips[i];
+            if (count != 0) {
+                uint256 targetLane = _targetLane(TARGET_LANE_COUNTERPLAY_SHIP, 0, i);
+                uint256 shots = _shipTargetShots(
+                    firingCount,
+                    VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(i)),
+                    count,
+                    targetTotal,
+                    seed,
+                    round,
+                    side,
+                    unit,
+                    targetLane
+                );
+                uint32 lost = _shipLossCount(
+                    Ship(i), count, shots, attack, targetTech, seed, round, side, targetLane
+                );
+                if (lost != 0) {
+                    result.counterplayShips[i] = count - lost;
+                    losses = _add(losses, _multiply(_shipCost(Ship(i)), lost));
                 }
             }
             unchecked {
@@ -568,7 +683,11 @@ library VeydriftCombatReferenceSimulator {
         return (((uint256(attackerLoss) + defenderLoss) * COMBAT_DEBRIS_BPS) / BPS).toUint128();
     }
 
-    function _attackerUnitTotal(uint32[16] memory ships) private pure returns (uint256 total) {
+    function _attackerUnitTotal(BattleResult memory result) private pure returns (uint256 total) {
+        total = _shipUnitTotal(result.attackerShips) + _shipUnitTotal(result.joinedAttackerShips);
+    }
+
+    function _shipUnitTotal(uint32[16] memory ships) private pure returns (uint256 total) {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             total += ships[i];
             unchecked {
@@ -580,6 +699,12 @@ library VeydriftCombatReferenceSimulator {
     function _defenderUnitTotal(BattleResult memory result) private pure returns (uint256 total) {
         for (uint8 i = 0; i < 16;) {
             total += result.defenderShips[i];
+            unchecked {
+                ++i;
+            }
+        }
+        for (uint8 i = 0; i < 16;) {
+            total += result.counterplayShips[i];
             unchecked {
                 ++i;
             }

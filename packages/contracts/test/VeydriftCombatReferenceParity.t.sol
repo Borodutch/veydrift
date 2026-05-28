@@ -60,8 +60,10 @@ contract VeydriftCombatReferenceParityTest is Test {
     address private admin = address(0xA11CE);
     address private player = address(0xB0B);
     address private defender = address(0xDEF);
+    address private ally = address(0xA77A);
     address private fulfiller = address(0xF111);
     VeydriftGame private game;
+    VeydriftAllianceSystem private allianceSystem;
     RandomnessEngine private randomness;
     CombatReferenceResourceToken private metalToken;
     CombatReferenceResourceToken private crystalToken;
@@ -79,10 +81,18 @@ contract VeydriftCombatReferenceParityTest is Test {
         bool debrisFound;
     }
 
+    struct LaunchedBattle {
+        uint256 originPlanetId;
+        uint256 targetPlanetId;
+        uint256 joinedOriginPlanetId;
+        uint256 missionId;
+        uint256 joinedMissionId;
+        uint256 counterplayMissionId;
+    }
+
     function setUp() public {
         game = _newGame(admin);
-        VeydriftAllianceSystem allianceSystem =
-            new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        allianceSystem = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         randomness = new RandomnessEngine(admin, fulfiller);
         VeydriftMoonSystem moons = new VeydriftMoonSystem(address(game), address(randomness));
         metalToken = new CombatReferenceResourceToken();
@@ -108,6 +118,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         randomness.setRequesterAuthorization(address(moons), true);
         vm.deal(player, 1 ether);
         vm.deal(defender, 1 ether);
+        vm.deal(ally, 1 ether);
     }
 
     function testReferenceParityDefenderWinCargoAgainstRocketLaunchers() public {
@@ -163,17 +174,59 @@ contract VeydriftCombatReferenceParityTest is Test {
         _assertReferenceParity(fixture, 101);
     }
 
+    function testReferenceParityCoversLargeRapidfireApproximation() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Cruiser)] = 200;
+        fixture.defenderDefenses[uint8(Defense.RocketLauncher)] = 5_000;
+
+        _assertReferenceParity(fixture, 102);
+    }
+
+    function testReferenceParityCoversDebrisMoonThresholdCase() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Destroyer)] = 600;
+        fixture.defenderShips[uint8(Ship.LightFighter)] = 1_500;
+
+        VeydriftCombatReferenceSimulator.BattleResult memory expected =
+            _assertReferenceParity(fixture, 103);
+        assertGe(expected.debris.metal + expected.debris.crystal, 100_000, "moon threshold debris");
+    }
+
+    function testReferenceParityCoversAcsAttackJoinedFleet() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battleship)] = 1_000;
+        fixture.joinedAttackerShips[uint8(Ship.Battleship)] = 1_000;
+        fixture.defenderDefenses[uint8(Defense.RocketLauncher)] = 500;
+
+        _assertReferenceParity(fixture, 104);
+    }
+
+    function testReferenceParityCoversAcsDefendCounterplay() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.SmallCargo)] = 1;
+        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
+
+        _assertReferenceParity(fixture, 105);
+    }
+
+    function testReferenceParityCoversInterceptCounterplay() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.SmallCargo)] = 1;
+        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
+        fixture.counterplayIntercept = true;
+
+        _assertReferenceParity(fixture, 106);
+    }
+
     function _assertReferenceParity(
         VeydriftCombatReferenceSimulator.BattleInput memory fixture,
         uint256 randomWord
-    ) private {
-        (uint256 originPlanetId, uint256 targetPlanetId, uint256 missionId) =
-            _launchFixtureAttack(fixture);
-        ActualBattle memory actual = _resolveAndReadActualBattle(missionId, randomWord);
+    ) private returns (VeydriftCombatReferenceSimulator.BattleResult memory expected) {
+        LaunchedBattle memory launched = _launchFixtureAttack(fixture);
+        ActualBattle memory actual = _resolveAndReadActualBattle(launched.missionId, randomWord);
 
         fixture.seed = actual.seed;
-        VeydriftCombatReferenceSimulator.BattleResult memory expected =
-            VeydriftCombatReferenceSimulator.run(fixture);
+        expected = VeydriftCombatReferenceSimulator.run(fixture);
 
         assertEq(uint8(actual.outcome), uint8(expected.outcome), "outcome");
         assertEq(actual.rounds, expected.rounds, "rounds");
@@ -181,37 +234,71 @@ contract VeydriftCombatReferenceParityTest is Test {
         _assertResourcesEq(actual.defenderLosses, expected.defenderLosses, "defender losses");
         _assertResourcesEq(actual.debris, expected.debris, "debris event");
 
-        _finishAttackReturnIfNeeded(missionId);
-        _assertPlanetShipsEq(originPlanetId, expected.attackerShips, "attacker survivors");
-        _assertPlanetShipsEq(targetPlanetId, expected.defenderShips, "defender ships");
-        _assertPlanetDefensesEq(targetPlanetId, expected.defenderDefenses, "defender defenses");
+        _finishMissionReturnIfNeeded(launched.missionId);
+        _finishMissionReturnIfNeeded(launched.joinedMissionId);
+        _finishMissionReturnIfNeeded(launched.counterplayMissionId);
+        _assertPlanetShipsEq(launched.originPlanetId, expected.attackerShips, "attacker survivors");
+        if (launched.joinedMissionId != 0) {
+            _assertPlanetShipsEq(
+                launched.joinedOriginPlanetId, expected.joinedAttackerShips, "joined survivors"
+            );
+        }
+        _assertPlanetShipsEq(
+            launched.targetPlanetId,
+            _addShips(expected.defenderShips, expected.counterplayShips),
+            "defender ships"
+        );
+        _assertPlanetDefensesEq(
+            launched.targetPlanetId, expected.defenderDefenses, "defender defenses"
+        );
 
-        (uint128 debrisMetal, uint128 debrisCrystal) = game.debrisField(targetPlanetId);
+        (uint128 debrisMetal, uint128 debrisCrystal) = game.debrisField(launched.targetPlanetId);
         assertEq(debrisMetal, expected.debris.metal, "stored debris metal");
         assertEq(debrisCrystal, expected.debris.crystal, "stored debris crystal");
     }
 
     function _launchFixtureAttack(VeydriftCombatReferenceSimulator.BattleInput memory fixture)
         private
-        returns (uint256 originPlanetId, uint256 targetPlanetId, uint256 missionId)
+        returns (LaunchedBattle memory launched)
     {
+        bool hasJoinedAttack = _shipTotal(fixture.joinedAttackerShips) != 0;
         vm.prank(player);
-        originPlanetId = game.startPlanet{value: 0.05 ether}();
+        launched.originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
-        targetPlanetId = game.startPlanet{value: 0.05 ether}();
-        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
-        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
+        launched.targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        if (hasJoinedAttack) {
+            vm.prank(ally);
+            launched.joinedOriginPlanetId = game.startPlanet{value: 0.05 ether}();
+            _setPlanetCoordinates(launched.joinedOriginPlanetId, 1, 1, 2);
+            _setCombatTech(ally, fixture.joinedAttackerTech);
+            _setResources(launched.joinedOriginPlanetId, 100_000_000, 100_000_000, 100_000_000);
+        }
+        if (hasJoinedAttack) {
+            _setPlanetCoordinates(launched.originPlanetId, 1, 1, 15);
+            _setPlanetCoordinates(launched.targetPlanetId, 1, 1, 1);
+        } else {
+            _setPlanetCoordinates(launched.originPlanetId, 1, 100, 8);
+            _setPlanetCoordinates(launched.targetPlanetId, 1, 100, 9);
+        }
         _setCombatTech(player, fixture.attackerTech);
         _setCombatTech(defender, fixture.defenderTech);
-        _setResources(originPlanetId, 100_000_000, 100_000_000, 100_000_000);
-        _setResources(targetPlanetId, 100_000_000, 100_000_000, 100_000_000);
+        vm.warp(8 days);
+        _setPlayerLastActiveAt(defender, 1);
+        _setResources(launched.originPlanetId, 100_000_000, 100_000_000, 100_000_000);
+        _setResources(launched.targetPlanetId, 100_000_000, 100_000_000, 100_000_000);
 
         for (uint8 i = 0; i < 16;) {
             if (fixture.attackerShips[i] != 0) {
-                _setShipCount(originPlanetId, Ship(i), fixture.attackerShips[i]);
+                _setShipCount(launched.originPlanetId, Ship(i), fixture.attackerShips[i]);
             }
-            if (fixture.defenderShips[i] != 0) {
-                _setShipCount(targetPlanetId, Ship(i), fixture.defenderShips[i]);
+            if (fixture.joinedAttackerShips[i] != 0) {
+                _setShipCount(
+                    launched.joinedOriginPlanetId, Ship(i), fixture.joinedAttackerShips[i]
+                );
+            }
+            uint32 defenderTotal = fixture.defenderShips[i] + fixture.counterplayShips[i];
+            if (defenderTotal != 0) {
+                _setShipCount(launched.targetPlanetId, Ship(i), defenderTotal);
             }
             unchecked {
                 ++i;
@@ -219,7 +306,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         }
         for (uint8 i = 0; i < 8;) {
             if (fixture.defenderDefenses[i] != 0) {
-                _setDefenseCount(targetPlanetId, Defense(i), fixture.defenderDefenses[i]);
+                _setDefenseCount(launched.targetPlanetId, Defense(i), fixture.defenderDefenses[i]);
             }
             unchecked {
                 ++i;
@@ -227,14 +314,38 @@ contract VeydriftCombatReferenceParityTest is Test {
         }
 
         vm.prank(player);
-        missionId = game.launchFleetMission(
-            originPlanetId,
-            targetPlanetId,
+        launched.missionId = game.launchFleetMission(
+            launched.originPlanetId,
+            launched.targetPlanetId,
             VeydriftGameStorage.FleetMissionType.Attack,
             _missionShips(fixture.attackerShips),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             0
         );
+        if (_shipTotal(fixture.joinedAttackerShips) != 0) {
+            vm.prank(ally);
+            launched.joinedMissionId = game.joinAttackMission(
+                launched.joinedOriginPlanetId,
+                launched.missionId,
+                launched.targetPlanetId,
+                _missionShips(fixture.joinedAttackerShips),
+                VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+            );
+        }
+        if (_shipTotal(fixture.counterplayShips) != 0) {
+            _createAlliance(defender);
+            vm.prank(defender);
+            launched.counterplayMissionId = game.launchFleetMission(
+                launched.targetPlanetId,
+                launched.missionId,
+                fixture.counterplayIntercept
+                    ? VeydriftGameStorage.FleetMissionType.Intercept
+                    : VeydriftGameStorage.FleetMissionType.AcsDefend,
+                _missionShips(fixture.counterplayShips),
+                VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                0
+            );
+        }
     }
 
     function _resolveAndReadActualBattle(uint256 missionId, uint256 randomWord)
@@ -292,12 +403,35 @@ contract VeydriftCombatReferenceParityTest is Test {
         assertTrue(actual.debrisFound, "debris event");
     }
 
-    function _finishAttackReturnIfNeeded(uint256 missionId) private {
+    function _finishMissionReturnIfNeeded(uint256 missionId) private {
+        if (missionId == 0) return;
         (VeydriftGameStorage.FleetMissionStatus status,, uint64 returnAt,) =
             _fleetMission(missionId);
         if (status == VeydriftGameStorage.FleetMissionStatus.Returning) {
             vm.warp(returnAt);
             game.completeFleetMissionReturn(missionId);
+        }
+    }
+
+    function _shipTotal(uint32[16] memory ships) private pure returns (uint256 total) {
+        for (uint8 i = 0; i < 16;) {
+            total += ships[i];
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _addShips(uint32[16] memory left, uint32[16] memory right)
+        private
+        pure
+        returns (uint32[16] memory ships)
+    {
+        for (uint8 i = 0; i < 16;) {
+            ships[i] = left[i] + right[i];
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -372,6 +506,11 @@ contract VeydriftCombatReferenceParityTest is Test {
         assertEq(actual.deuterium, expected.deuterium, label);
     }
 
+    function _createAlliance(address leader) private returns (uint256 allianceId) {
+        vm.prank(leader);
+        allianceId = allianceSystem.createAlliance("DEF", "Defenders", "ipfs://defenders");
+    }
+
     function _fleetMission(uint256 missionId)
         private
         view
@@ -395,6 +534,11 @@ contract VeydriftCombatReferenceParityTest is Test {
         bytes32 outerSlot = keccak256(abi.encode(account, uint256(20)));
         bytes32 slot = keccak256(abi.encode(uint256(uint8(technology)), outerSlot));
         vm.store(address(game), slot, bytes32(uint256(level)));
+    }
+
+    function _setPlayerLastActiveAt(address account, uint64 lastActiveAt) private {
+        bytes32 slot = keccak256(abi.encode(account, uint256(34)));
+        vm.store(address(game), slot, bytes32(uint256(lastActiveAt)));
     }
 
     function _setShipCount(uint256 planetId, Ship ship, uint32 count) private {
