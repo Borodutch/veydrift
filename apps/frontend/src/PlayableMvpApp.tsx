@@ -312,13 +312,7 @@ export async function loadWalletPlanetSyncSnapshot(
   account: string,
   activePlanetId: string | undefined,
 ): Promise<WalletPlanetSyncSnapshot> {
-  const settlementResultPromise = settlePromise(fetchWalletSettlement(apiBaseUrl, account));
-  const [planetsResult, queuesResult, visibilityResult] = await Promise.allSettled([
-    fetchWalletPlanets(apiBaseUrl, account),
-    fetchWalletQueues(apiBaseUrl, account, activePlanetId),
-    fetchFleetMissionVisibility(apiBaseUrl, account),
-  ]);
-
+  const planetsResult = await settlePromise(fetchWalletPlanets(apiBaseUrl, account));
   const indexedSettlement = settlementFromIndexedPlanets(
     account,
     planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
@@ -328,12 +322,17 @@ export async function loadWalletPlanetSyncSnapshot(
       account,
       indexedSettlement,
       planetsResult,
-      queuesResult,
-      visibilityResult,
+      { status: "fulfilled", value: emptyPlayerQueues(account, indexedSettlement.homePlanetId) },
+      { status: "fulfilled", value: emptyFleetVisibility(account, indexedSettlement.homePlanetId) },
     );
   }
 
-  const settlementResult = await settlementResultPromise;
+  const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
+    fetchWalletSettlement(apiBaseUrl, account),
+    fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+    fetchFleetMissionVisibility(apiBaseUrl, account),
+  ]);
+
   const settlement = settlementResult.status === "fulfilled"
     ? settlementResult.value
     : undefined;
