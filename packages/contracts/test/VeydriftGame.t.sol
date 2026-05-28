@@ -2495,6 +2495,51 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(targetPlanetId, Ship.Battleship), 1);
     }
 
+    function testFleetCounterplayLossesCreateDefenderDebris() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.Deathstar, 1);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 1);
+        _setResources(originPlanetId, 10_000_000, 10_000_000, 10_000_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.deathstar = 1;
+        vm.prank(player);
+        uint256 hostileMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            802
+        );
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.lightFighter = 1;
+        vm.prank(defender);
+        uint256 counterplayMissionId = game.launchFleetMission(
+            targetPlanetId,
+            hostileMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(hostileMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(hostileMissionId, 802);
+        game.resolveFleetMission(hostileMissionId);
+
+        (uint128 debrisMetal, uint128 debrisCrystal) = game.debrisField(targetPlanetId);
+        assertEq(debrisMetal, 900);
+        assertEq(debrisCrystal, 300);
+        (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
+            _fleetMission(counterplayMissionId);
+        assertEq(uint8(counterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+    }
+
     function testAllianceDepotSuppliesAcsDefenseHoldingFuel() public {
         address defender = address(0xDEF);
         address ally = address(0xA17C);
@@ -3033,6 +3078,59 @@ contract VeydriftGameTest is Test {
 
         assertGt(_attackBattleRoundsFromRecordedLogs(attackMissionId), 1);
 
+        (VeydriftGameStorage.FleetMissionStatus attackStatus,,,) = _fleetMission(attackMissionId);
+        (VeydriftGameStorage.FleetMissionStatus joinedStatus,,,) = _fleetMission(joinedMissionId);
+        assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(uint8(joinedStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+    }
+
+    function testAttackBattleJoinedShipKilledInRoundStillFiresFromRoundStartSnapshot() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        address ally = address(0xACED);
+        vm.deal(ally, 1 ether);
+        vm.prank(ally);
+        uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 9, 499, 15);
+        _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
+        _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(allyPlanetId, Ship.Deathstar, 1);
+        _setDefenseCount(targetPlanetId, Defense.PlasmaTurret, 1_400);
+        _setTechnologyLevel(player, Technology.Graviton, 270);
+        _setTechnologyLevel(ally, Technology.Graviton, 270);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(allyPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory primaryShips;
+        primaryShips.smallCargo = 1;
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            primaryShips,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            905
+        );
+
+        VeydriftGameStorage.MissionShips memory joinedShips;
+        joinedShips.deathstar = 1;
+        vm.prank(ally);
+        uint256 joinedMissionId = game.joinAttackMission(
+            allyPlanetId,
+            attackMissionId,
+            targetPlanetId,
+            joinedShips,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 905);
+        game.resolveFleetMission(attackMissionId);
+
+        assertLt(game.defenseCount(targetPlanetId, Defense.PlasmaTurret), 1_400);
         (VeydriftGameStorage.FleetMissionStatus attackStatus,,,) = _fleetMission(attackMissionId);
         (VeydriftGameStorage.FleetMissionStatus joinedStatus,,,) = _fleetMission(joinedMissionId);
         assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
