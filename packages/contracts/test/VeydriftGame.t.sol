@@ -112,6 +112,13 @@ contract VeydriftGameTest is Test {
         bytes32 coordinateKey,
         bytes32 planetSeed
     );
+    event PlanetSettled(
+        uint256 indexed planetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium,
+        uint64 settledAt
+    );
     event PlanetRenamed(address indexed player, uint256 indexed planetId, string name);
     event PlanetAbandoned(
         address indexed player,
@@ -812,8 +819,11 @@ contract VeydriftGameTest is Test {
 
         VeydriftGameStorage.Resources memory beforeResources = game.previewResources(planetId);
         vm.warp(block.timestamp + 1 hours);
+        uint64 settledAt = uint64(block.timestamp);
 
         vm.prank(player);
+        vm.expectEmit(true, false, false, true, address(game));
+        emit PlanetSettled(planetId, 398, 455, 0, settledAt);
         game.collectResources(planetId);
 
         VeydriftGameStorage.Resources memory afterResources = game.previewResources(planetId);
