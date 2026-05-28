@@ -3,20 +3,32 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   decodeDebrisFieldLog,
+  decodeIndexedQueueCompletedLog,
+  decodeIndexedQueueStartedLog,
   decodeMoonChanceReportLog,
   decodePlanetSettledLog,
   decodeSettledPlanetLog,
   isDebrisFieldLog,
+  isIndexedQueueCompletedLog,
+  isIndexedQueueStartedLog,
   isMoonChanceReportLog,
   isPlanetSettledLog,
   isSettledPlanetLog,
   type ChainReader,
   type DebrisFieldEvent,
+  type DefenseState,
+  type IndexedQueueCompletedEvent,
+  type IndexedQueueStartedEvent,
+  type InfrastructureState,
   type ManagedPlanet,
   type MoonChanceReportEvent,
   type PlanetSettledEvent,
+  type PlayerQueues,
+  type QueueState,
+  type ResearchState,
   type RpcLog,
   type SettledPlanetEvent,
+  type ShipyardState,
   type WalletPlanets
 } from "./evm";
 
@@ -53,6 +65,21 @@ type MetadataRow = {
 
 type EventRow = {
   event_json: string;
+};
+
+type QueueRow = {
+  cost_json: string;
+  item_id: number;
+  kind: string;
+  quantity: number | null;
+  ready_at: string;
+  started_at: string | null;
+  target_level: number | null;
+};
+
+type LevelRow = {
+  id: number;
+  value: number;
 };
 
 export type IndexedRpcLog = RpcLog & {
@@ -183,13 +210,85 @@ export class SettlementIndexer {
     const planets = this.rows<SettledPlanetEvent>(
       "SELECT event_json FROM indexed_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
-    ).map((planet) => indexedManagedPlanet(planet, settlement.homePlanetId));
+    ).map((planet) => indexedManagedPlanet(
+      planet,
+      settlement.homePlanetId,
+      this.infrastructureRows(planet.planetId),
+      {
+        building: this.planetQueue(planet.planetId, "building"),
+        defense: this.planetQueue(planet.planetId, "defense"),
+        ship: this.planetQueue(planet.planetId, "ship")
+      }
+    ));
 
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
       planets
     };
+  }
+
+  playerQueues(wallet: `0x${string}`, planetId: string | null): PlayerQueues {
+    return {
+      wallet,
+      homePlanetId: planetId,
+      building: planetId ? this.planetQueue(planetId, "building") : null,
+      defense: planetId ? this.planetQueue(planetId, "defense") : null,
+      ship: planetId ? this.planetQueue(planetId, "ship") : null,
+      research: this.researchQueue(wallet)
+    };
+  }
+
+  infrastructureRows(planetId: string): InfrastructureState["buildings"] {
+    return Array.from({ length: buildingCount }, (_, id) => ({
+      id,
+      level: this.indexedLevel("indexed_building_levels", "building_id", planetId, id),
+      cost: zeroResources()
+    }));
+  }
+
+  shipRows(planetId: string): ShipyardState["ships"] {
+    return supportedShipIds.map((id) => ({
+      id,
+      count: this.indexedLevel("indexed_ship_counts", "ship_id", planetId, id),
+      cost: zeroResources()
+    }));
+  }
+
+  defenseRows(planetId: string): DefenseState["defenses"] {
+    return Array.from({ length: defenseCount }, (_, id) => ({
+      id,
+      count: this.indexedLevel("indexed_defense_counts", "defense_id", planetId, id),
+      cost: zeroResources()
+    }));
+  }
+
+  technologyLevels(wallet: `0x${string}`): Record<string, number> {
+    const rows = this.db.query(`
+      SELECT technology_id AS id, level AS value
+      FROM indexed_research_levels
+      WHERE owner = lower(?)
+      ORDER BY technology_id ASC
+    `).all(wallet) as LevelRow[];
+
+    return Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
+  }
+
+  technologyRows(wallet: `0x${string}`): ResearchState["technologies"] {
+    const levels = this.technologyLevels(wallet);
+    return supportedTechnologyIds.map((id) => ({
+      id,
+      level: levels[String(id)] ?? 0,
+      cost: zeroResources()
+    }));
+  }
+
+  planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
+    return this.queueState(`${kind}:${planetId}`);
+  }
+
+  researchQueue(wallet: `0x${string}`): QueueState | null {
+    return this.queueState(`research:${wallet.toLowerCase()}`);
   }
 
   applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
@@ -245,6 +344,14 @@ export class SettlementIndexer {
     }
     if (isDebrisFieldLog(log)) {
       this.applyDebrisEvent(decodeDebrisFieldLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isIndexedQueueStartedLog(log)) {
+      this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isIndexedQueueCompletedLog(log)) {
+      this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isMoonChanceReportLog(log)) {
@@ -375,6 +482,47 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_event_logs_block_idx
         ON indexed_event_logs (block_number);
+      CREATE TABLE IF NOT EXISTS indexed_planet_queues (
+        queue_key TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        planet_id TEXT,
+        owner TEXT,
+        item_id INTEGER NOT NULL,
+        target_level INTEGER,
+        quantity INTEGER,
+        ready_at TEXT NOT NULL,
+        started_at TEXT,
+        cost_json TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_planet_queues_planet_idx
+        ON indexed_planet_queues (planet_id, kind);
+      CREATE INDEX IF NOT EXISTS indexed_planet_queues_owner_idx
+        ON indexed_planet_queues (owner, kind);
+      CREATE TABLE IF NOT EXISTS indexed_building_levels (
+        planet_id TEXT NOT NULL,
+        building_id INTEGER NOT NULL,
+        level INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, building_id)
+      );
+      CREATE TABLE IF NOT EXISTS indexed_defense_counts (
+        planet_id TEXT NOT NULL,
+        defense_id INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, defense_id)
+      );
+      CREATE TABLE IF NOT EXISTS indexed_ship_counts (
+        planet_id TEXT NOT NULL,
+        ship_id INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, ship_id)
+      );
+      CREATE TABLE IF NOT EXISTS indexed_research_levels (
+        owner TEXT NOT NULL,
+        technology_id INTEGER NOT NULL,
+        level INTEGER NOT NULL,
+        PRIMARY KEY (owner, technology_id)
+      );
     `);
   }
 
@@ -447,6 +595,125 @@ export class SettlementIndexer {
     );
   }
 
+  private applyQueueStartedEvent(event: IndexedQueueStartedEvent): void {
+    this.upsertQueue(event);
+    if (event.planetId) {
+      this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
+    }
+    this.touch();
+  }
+
+  private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
+    this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
+    if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
+      this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+    } else if (event.queueKind === "defense" && event.planetId && event.total !== undefined) {
+      this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
+    } else if (event.queueKind === "ship" && event.planetId && event.total !== undefined) {
+      this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", event.planetId, event.itemId, event.total);
+    } else if (event.queueKind === "research" && event.owner && event.level !== undefined) {
+      this.db.query(`
+        INSERT INTO indexed_research_levels (owner, technology_id, level)
+        VALUES (lower(?), ?, ?)
+        ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
+      `).run(event.owner, event.itemId, event.level);
+    }
+    this.touch();
+  }
+
+  private upsertQueue(event: IndexedQueueStartedEvent): void {
+    this.db.query(`
+      INSERT INTO indexed_planet_queues (
+        queue_key, kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at, cost_json, event_json
+      )
+      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(queue_key) DO UPDATE SET
+        kind = excluded.kind,
+        planet_id = excluded.planet_id,
+        owner = excluded.owner,
+        item_id = excluded.item_id,
+        target_level = excluded.target_level,
+        quantity = excluded.quantity,
+        ready_at = excluded.ready_at,
+        started_at = excluded.started_at,
+        cost_json = excluded.cost_json,
+        event_json = excluded.event_json
+    `).run(
+      queueKey(event),
+      event.queueKind,
+      event.planetId ?? null,
+      event.owner ?? null,
+      event.itemId,
+      event.targetLevel ?? null,
+      event.quantity ?? null,
+      event.readyAt,
+      null,
+      JSON.stringify(event.cost),
+      JSON.stringify(event)
+    );
+  }
+
+  private subtractPlanetResources(
+    planetId: string,
+    cost: IndexedQueueStartedEvent["cost"],
+    transactionHash: string,
+    blockNumber: string
+  ): void {
+    const row = this.db.query("SELECT event_json FROM indexed_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
+    if (!row) return;
+
+    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
+    this.upsertPlanet({
+      ...planet,
+      transactionHash,
+      blockNumber,
+      resources: subtractResources(planet.resources, cost)
+    });
+  }
+
+  private queueState(queueKeyValue: string): QueueState | null {
+    const row = this.db.query(`
+      SELECT kind, item_id, target_level, quantity, ready_at, started_at, cost_json
+      FROM indexed_planet_queues
+      WHERE queue_key = ?
+    `).get(queueKeyValue) as QueueRow | null;
+    if (!row) return null;
+
+    const queue: QueueState = {
+      active: true,
+      kind: row.kind,
+      itemId: row.item_id,
+      readyAt: row.ready_at,
+      startedAt: row.started_at,
+      cost: parseEvent<QueueState["cost"]>(row.cost_json)
+    };
+    if (row.target_level !== null) {
+      queue.targetLevel = row.target_level;
+    }
+    if (row.quantity !== null) {
+      queue.quantity = row.quantity;
+    }
+    return queue;
+  }
+
+  private indexedLevel(table: "indexed_building_levels" | "indexed_defense_counts" | "indexed_ship_counts", idColumn: string, planetId: string, itemId: number): number {
+    const valueColumn = table === "indexed_building_levels" ? "level" : "count";
+    const row = this.db.query(`
+      SELECT ${valueColumn} AS value
+      FROM ${table}
+      WHERE planet_id = ? AND ${idColumn} = ?
+    `).get(planetId, itemId) as { value: number } | null;
+    return row?.value ?? 0;
+  }
+
+  private upsertIndexedLevel(table: "indexed_building_levels" | "indexed_defense_counts" | "indexed_ship_counts", idColumn: string, valueColumn: string, planetId: string, itemId: number, value: number): void {
+    this.db.query(`
+      INSERT INTO ${table} (planet_id, ${idColumn}, ${valueColumn})
+      VALUES (?, ?, ?)
+      ON CONFLICT(planet_id, ${idColumn}) DO UPDATE SET ${valueColumn} = excluded.${valueColumn}
+    `).run(planetId, itemId, value);
+  }
+
   private touch(): void {
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
@@ -511,6 +778,14 @@ function moonChanceReportKey(event: MoonChanceReportEvent): string {
   return event.outcomeId ? `outcome:${event.outcomeId}` : `battle:${event.battleId}:${event.targetPlanetId}`;
 }
 
+function queueKey(event: Pick<IndexedQueueStartedEvent | IndexedQueueCompletedEvent, "queueKind" | "planetId" | "owner">): string {
+  if (event.queueKind === "research") {
+    return `research:${event.owner?.toLowerCase() ?? ""}`;
+  }
+
+  return `${event.queueKind}:${event.planetId ?? ""}`;
+}
+
 function openIndexerDatabase(databasePath: string): Database {
   if (databasePath !== ":memory:") {
     mkdirSync(dirname(databasePath), { recursive: true });
@@ -540,31 +815,64 @@ function mergeCurrentPlanetSnapshots(
   });
 }
 
-function indexedManagedPlanet(planet: SettledPlanetEvent, homePlanetId: string | null): ManagedPlanet {
+function indexedManagedPlanet(
+  planet: SettledPlanetEvent,
+  homePlanetId: string | null,
+  buildings: InfrastructureState["buildings"] = [],
+  queues: Pick<ManagedPlanet["queues"], "building" | "defense" | "ship"> = {
+    building: null,
+    defense: null,
+    ship: null
+  }
+): ManagedPlanet {
+  const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
+
   return {
     ...planet,
     coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
     isHomePlanet: planet.planetId === homePlanetId,
-    fieldsUsed: 0,
+    fieldsUsed: buildings.filter((building) => building.level > 0).length,
     fieldsCapacity: planet.fields,
     keyLevels: {
-      metalMine: 0,
-      crystalMine: 0,
-      deuteriumSynthesizer: 0,
-      solarPlant: 0,
-      roboticsFactory: 0,
-      shipyard: 0,
-      researchLab: 0,
-      terraformer: 0
+      metalMine: level(0),
+      crystalMine: level(1),
+      deuteriumSynthesizer: level(2),
+      solarPlant: level(3),
+      roboticsFactory: level(4),
+      shipyard: level(5),
+      researchLab: level(6),
+      terraformer: level(12)
     },
-    queues: {
-      building: null,
-      defense: null,
-      ship: null
-    },
+    queues,
     moon: null
   };
 }
+
+function zeroResources() {
+  return {
+    metal: "0",
+    crystal: "0",
+    deuterium: "0"
+  };
+}
+
+function subtractResources(left: QueueState["cost"], right: QueueState["cost"]): QueueState["cost"] {
+  return {
+    metal: subtractResource(left.metal, right.metal),
+    crystal: subtractResource(left.crystal, right.crystal),
+    deuterium: subtractResource(left.deuterium, right.deuterium)
+  };
+}
+
+function subtractResource(left: string, right: string): string {
+  const result = BigInt(left) - BigInt(right);
+  return result > 0n ? result.toString() : "0";
+}
+
+const buildingCount = 16;
+const defenseCount = 10;
+const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
 function indexedLogKey(log: IndexedRpcLog): string {
   return `${log.transactionHash.toLowerCase()}:${log.logIndex ?? fallbackLogIndex(log)}`;

@@ -14,6 +14,7 @@ import {
   encodeUintCall,
   ensureBaseSepoliaNetwork,
   fetchAllianceState,
+  fetchFleetMissionVisibility,
   fetchHighscores,
   fetchInfrastructureState,
   fetchMoonState,
@@ -1159,9 +1160,13 @@ describe("walletFlow", () => {
 
     try {
       await fetchWalletQueues("https://api.example.test///", account);
+      await fetchWalletQueues("https://api.example.test///", account, "7", { source: "live" });
       await fetchInfrastructureState("https://api.example.test", account);
+      await fetchInfrastructureState("https://api.example.test", account, undefined, { source: "live" });
       await fetchMoonState("https://api.example.test", account, "7");
+      await fetchMoonState("https://api.example.test", account, "7", { source: "live" });
       await fetchMoonState("https://api.example.test", account, "8:37:9");
+      await fetchFleetMissionVisibility("https://api.example.test", account, { source: "live" });
       await fetchShipyardState("https://api.example.test", account, "4");
       await fetchShipyardState("https://api.example.test", account, "8:37:9");
     } finally {
@@ -1177,7 +1182,21 @@ describe("walletFlow", () => {
         },
       },
       {
+        url: `https://api.example.test/wallet/${account}/queues?planetId=7&source=live`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
+      {
         url: `https://api.example.test/wallet/${account}/infrastructure`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/infrastructure?source=live`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1191,7 +1210,21 @@ describe("walletFlow", () => {
         },
       },
       {
+        url: `https://api.example.test/wallet/${account}/moon?planetId=7&source=live`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
+      {
         url: `https://api.example.test/wallet/${account}/moon`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/fleet-visibility?source=live`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },

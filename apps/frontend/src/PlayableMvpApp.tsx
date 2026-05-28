@@ -312,13 +312,7 @@ export async function loadWalletPlanetSyncSnapshot(
   account: string,
   activePlanetId: string | undefined,
 ): Promise<WalletPlanetSyncSnapshot> {
-  const settlementResultPromise = settlePromise(fetchWalletSettlement(apiBaseUrl, account));
-  const [planetsResult, queuesResult, visibilityResult] = await Promise.allSettled([
-    fetchWalletPlanets(apiBaseUrl, account),
-    fetchWalletQueues(apiBaseUrl, account, activePlanetId),
-    fetchFleetMissionVisibility(apiBaseUrl, account),
-  ]);
-
+  const planetsResult = await settlePromise(fetchWalletPlanets(apiBaseUrl, account));
   const indexedSettlement = settlementFromIndexedPlanets(
     account,
     planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
@@ -328,12 +322,17 @@ export async function loadWalletPlanetSyncSnapshot(
       account,
       indexedSettlement,
       planetsResult,
-      queuesResult,
-      visibilityResult,
+      { status: "fulfilled", value: emptyPlayerQueues(account, indexedSettlement.homePlanetId) },
+      { status: "fulfilled", value: emptyFleetVisibility(account, indexedSettlement.homePlanetId) },
     );
   }
 
-  const settlementResult = await settlementResultPromise;
+  const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
+    fetchWalletSettlement(apiBaseUrl, account),
+    fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+    fetchFleetMissionVisibility(apiBaseUrl, account),
+  ]);
+
   const settlement = settlementResult.status === "fulfilled"
     ? settlementResult.value
     : undefined;
@@ -761,8 +760,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         async () => {
           const [settlement, queues, infrastructure] = await Promise.all([
             fetchWalletSettlement(apiBaseUrl, account),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
 
           return { settlement, queues, infrastructure };
@@ -815,7 +814,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         async () => {
           const [settlement, infrastructure] = await Promise.all([
             fetchWalletSettlement(apiBaseUrl, account),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
 
           return { settlement, infrastructure };

@@ -68,7 +68,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("hydrates indexed planet state even when the settlement read fails", async () => {
+  test("hydrates indexed planet state before requesting live settlement state", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
     const requestedPaths: string[] = [];
@@ -78,7 +78,7 @@ describe("Playable MVP app display helpers", () => {
       requestedPaths.push(`${url.pathname}${url.search}`);
 
       if (url.pathname.endsWith("/settlement")) {
-        return Promise.resolve(Response.json({ error: "wallet eth_call failed" }, { status: 503 }));
+        throw new Error("indexed state should hydrate before live settlement reads");
       }
 
       if (url.pathname.endsWith("/planets")) {
@@ -86,28 +86,6 @@ describe("Playable MVP app display helpers", () => {
           wallet,
           homePlanetId: "7",
           planets: [indexedPlanet(wallet)],
-        }));
-      }
-
-      if (url.pathname.endsWith("/queues")) {
-        return Promise.resolve(Response.json({
-          wallet,
-          homePlanetId: "7",
-          building: null,
-          defense: null,
-          ship: null,
-          research: null,
-        }));
-      }
-
-      if (url.pathname.endsWith("/fleet-visibility")) {
-        return Promise.resolve(Response.json({
-          wallet,
-          homePlanetId: "7",
-          incoming: [],
-          outgoing: [],
-          returning: [],
-          joinableAttacks: [],
         }));
       }
 
@@ -131,21 +109,23 @@ describe("Playable MVP app display helpers", () => {
         },
       });
       expect(snapshot.planetsResponse.planets).toHaveLength(1);
-      expect(requestedPaths).toContain(`/wallet/${wallet}/settlement`);
       expect(requestedPaths).toContain(`/wallet/${wallet}/planets`);
-      expect(requestedPaths).toContain(`/wallet/${wallet}/queues`);
-      expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility`);
+      expect(requestedPaths).not.toContain(`/wallet/${wallet}/settlement`);
+      expect(requestedPaths).not.toContain(`/wallet/${wallet}/queues`);
+      expect(requestedPaths).not.toContain(`/wallet/${wallet}/fleet-visibility`);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test("does not wait for a pending settlement read before showing indexed planet state", async () => {
+  test("does not start a pending settlement read before showing indexed planet state", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
+    const requestedPaths: string[] = [];
 
     globalThis.fetch = ((input: RequestInfo | URL) => {
       const url = new URL(String(input));
+      requestedPaths.push(`${url.pathname}${url.search}`);
 
       if (url.pathname.endsWith("/settlement")) {
         return new Promise<Response>(() => undefined);
@@ -156,6 +136,47 @@ describe("Playable MVP app display helpers", () => {
           wallet,
           homePlanetId: "7",
           planets: [indexedPlanet(wallet)],
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
+
+      expect(snapshot.settlement.homePlanetId).toBe("7");
+      expect(snapshot.settlement.planet?.resources.metal).toBe("5000");
+      expect(snapshot.planetsResponse.planets).toHaveLength(1);
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("falls back to live settlement state when indexed planets are empty", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const requestedPaths: string[] = [];
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      requestedPaths.push(`${url.pathname}${url.search}`);
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: null,
+          planets: [],
+        }));
+      }
+
+      if (url.pathname.endsWith("/settlement")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          hasFirstPlanet: true,
+          homePlanetId: "7",
+          planet: indexedPlanet(wallet),
         }));
       }
 
@@ -189,7 +210,10 @@ describe("Playable MVP app display helpers", () => {
 
       expect(snapshot.settlement.homePlanetId).toBe("7");
       expect(snapshot.settlement.planet?.resources.metal).toBe("5000");
-      expect(snapshot.planetsResponse.planets).toHaveLength(1);
+      expect(requestedPaths[0]).toBe(`/wallet/${wallet}/planets`);
+      expect(requestedPaths).toContain(`/wallet/${wallet}/settlement`);
+      expect(requestedPaths).toContain(`/wallet/${wallet}/queues`);
+      expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility`);
     } finally {
       globalThis.fetch = originalFetch;
     }

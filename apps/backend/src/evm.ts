@@ -89,6 +89,33 @@ export type PlayerQueues = {
   research: QueueState | null;
 };
 
+export type IndexedQueueStartedEvent = {
+  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued";
+  transactionHash: string;
+  blockNumber: string;
+  queueKind: "building" | "defense" | "ship" | "research";
+  planetId?: string;
+  owner?: Address;
+  itemId: number;
+  targetLevel?: number;
+  quantity?: number;
+  readyAt: string;
+  cost: Resources;
+};
+
+export type IndexedQueueCompletedEvent = {
+  eventName: "BuildingCompleted" | "DefenseCompleted" | "ShipCompleted" | "ResearchCompleted";
+  transactionHash: string;
+  blockNumber: string;
+  queueKind: "building" | "defense" | "ship" | "research";
+  planetId?: string;
+  owner?: Address;
+  itemId: number;
+  level?: number;
+  quantity?: number;
+  total?: number;
+};
+
 export type FleetMissionVisibility = {
   wallet: Address;
   homePlanetId: string | null;
@@ -2649,6 +2676,13 @@ const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
+const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
+const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
+const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
+const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
+const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
+const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
+const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
@@ -2769,6 +2803,22 @@ export function isDebrisFieldLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === debrisFieldUpdatedTopic;
 }
 
+export function isIndexedQueueStartedLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === buildingStartedTopic
+    || topic === defenseQueuedTopic
+    || topic === shipQueuedTopic
+    || topic === researchQueuedTopic;
+}
+
+export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === buildingCompletedTopic
+    || topic === defenseCompletedTopic
+    || topic === shipCompletedTopic
+    || topic === researchCompletedTopic;
+}
+
 export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
   const eventName = topicAt(log.topics, 0) === planetStartedTopic ? "PlanetStarted" : "ColonyCreated";
   const player = decodeAddressWord(topicAt(log.topics, 1));
@@ -2810,6 +2860,116 @@ export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
     resources: decodeResources(words.slice(0, 3)),
     lastSettledAt: decodeUintWord(wordAt(words, 3)).toString()
+  };
+}
+
+export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEvent {
+  const topic = topicAt(log.topics, 0);
+  const words = splitWords(log.data);
+  const base = {
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    readyAt: decodeUintWord(wordAt(words, 1)).toString(),
+    cost: decodeResources(words.slice(2, 5))
+  };
+
+  if (topic === researchQueuedTopic) {
+    return {
+      ...base,
+      eventName: "ResearchQueued",
+      queueKind: "research",
+      owner: decodeAddressWord(topicAt(log.topics, 1)),
+      itemId: Number(decodeUint(topicAt(log.topics, 2))),
+      targetLevel: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
+  const planetId = decodeUint(topicAt(log.topics, 1)).toString();
+  const itemId = Number(decodeUint(topicAt(log.topics, 2)));
+  if (topic === buildingStartedTopic) {
+    return {
+      ...base,
+      eventName: "BuildingStarted",
+      queueKind: "building",
+      planetId,
+      itemId,
+      targetLevel: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
+  if (topic === defenseQueuedTopic) {
+    return {
+      ...base,
+      eventName: "DefenseQueued",
+      queueKind: "defense",
+      planetId,
+      itemId,
+      quantity: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
+  return {
+    ...base,
+    eventName: "ShipQueued",
+    queueKind: "ship",
+    planetId,
+    itemId,
+    quantity: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
+export function decodeIndexedQueueCompletedLog(log: RpcLog): IndexedQueueCompletedEvent {
+  const topic = topicAt(log.topics, 0);
+  const words = splitWords(log.data);
+  const base = {
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString()
+  };
+
+  if (topic === researchCompletedTopic) {
+    return {
+      ...base,
+      eventName: "ResearchCompleted",
+      queueKind: "research",
+      owner: decodeAddressWord(topicAt(log.topics, 1)),
+      itemId: Number(decodeUint(topicAt(log.topics, 2))),
+      level: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
+  const planetId = decodeUint(topicAt(log.topics, 1)).toString();
+  const itemId = Number(decodeUint(topicAt(log.topics, 2)));
+  if (topic === buildingCompletedTopic) {
+    return {
+      ...base,
+      eventName: "BuildingCompleted",
+      queueKind: "building",
+      planetId,
+      itemId,
+      level: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
+  if (topic === defenseCompletedTopic) {
+    return {
+      ...base,
+      eventName: "DefenseCompleted",
+      queueKind: "defense",
+      planetId,
+      itemId,
+      quantity: Number(decodeUintWord(wordAt(words, 0))),
+      total: Number(decodeUintWord(wordAt(words, 1)))
+    };
+  }
+
+  return {
+    ...base,
+    eventName: "ShipCompleted",
+    queueKind: "ship",
+    planetId,
+    itemId,
+    quantity: Number(decodeUintWord(wordAt(words, 0))),
+    total: Number(decodeUintWord(wordAt(words, 1)))
   };
 }
 
