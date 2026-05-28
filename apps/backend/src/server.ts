@@ -878,7 +878,6 @@ function indexedMoonState(
     moonAvailable: false,
     unavailableReason,
     moon: null,
-    sensorPhalanxRange: null,
     buildings: [],
     queue: null
   };

@@ -225,10 +225,9 @@ export type ChainMoonState = {
     createdAt: string;
     jumpGateReadyAt: string;
   } | null;
-  sensorPhalanxRange: string | null;
   buildings: Array<{
     id: number;
-    key: "lunarBase" | "sensorPhalanx" | "jumpGate";
+    key: "lunarBase" | "jumpGate";
     label: string;
     level: number;
     cost: OnChainResources;
@@ -470,7 +469,6 @@ const MOON_SELECTORS = {
   finishMoonBuildingUpgrade: "0x713b9e66",
   jumpGateJump: "0x36aaf8f8",
   jumpGateJumpShips: "0x3095d992",
-  scanSystem: "0xfc1e78b1",
   startMoonBuildingUpgrade: "0x715e1b1a"
 } as const;
 const ALLIANCE_SELECTORS = {
@@ -1354,26 +1352,6 @@ export async function sendFinishMoonBuildingUpgradeTransaction(
         from: account,
         to: contractAddress,
         data: encodeGameCall(MOON_SELECTORS.finishMoonBuildingUpgrade, [planetId])
-      }
-    ]
-  });
-}
-
-export async function sendMoonScanTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  moonPlanetId: string,
-  galaxy: number,
-  system: number
-): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(MOON_SELECTORS.scanSystem, [moonPlanetId, galaxy, system])
       }
     ]
   });
