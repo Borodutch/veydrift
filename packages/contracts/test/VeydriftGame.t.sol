@@ -88,6 +88,9 @@ contract VeydriftGameTest is Test {
     bytes32 internal constant NANITE_FACTORY_1 = "NANITE_FACTORY_1";
     bytes32 internal constant COMPUTER_10 = "COMPUTER_10";
     bytes32 internal constant ENERGY_12 = "ENERGY_12";
+    bytes32 internal constant TEST_ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
+    bytes32 internal constant TEST_COMBAT_STREAM_DOMAIN =
+        keccak256("veydrift.classic-combat-random-stream.v1");
     uint8 internal constant ATTACK_RELATION_WEAKER_FLAG = 2;
     uint8 internal constant ATTACK_BANDIT_FLAG = 8;
     uint8 internal constant ATTACK_INACTIVE_FLAG = 16;
@@ -3291,12 +3294,66 @@ contract VeydriftGameTest is Test {
     }
 
     function testAttackBattleExpandsOneRandomWordIntoRapidfireStream() public {
-        uint32 firstRemaining =
+        uint32 remaining =
             _resolveCruiserRocketFixture(address(0xA101), address(0xD101), 1, 100, 8, 101);
-        uint32 secondRemaining =
-            _resolveCruiserRocketFixture(address(0xA202), address(0xD202), 1, 101, 8, 202);
 
-        assertNotEq(firstRemaining, secondRemaining);
+        assertLt(remaining, 49);
+    }
+
+    function testAttackBattleRapidfireBonusShotsRetargetMixedDefenders() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Cruiser, 1);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 10);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 50);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.cruiser = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 404);
+        game.resolveFleetMission(missionId);
+
+        assertLt(game.shipCount(targetPlanetId, Ship.LightFighter), 10);
+        assertLt(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 50);
+    }
+
+    function testAttackBattleRapidfireRetargetsIntoAcsDefenderShips() public {
+        bool observed;
+        for (uint256 randomWord = 1; randomWord <= 128 && !observed;) {
+            uint256 snapshot = vm.snapshotState();
+            observed = _attackRapidfireRetargetsIntoAcsDefenderShips(randomWord);
+            assertTrue(vm.revertToState(snapshot));
+            unchecked {
+                ++randomWord;
+            }
+        }
+
+        assertTrue(observed);
+    }
+
+    function testFleetCounterplayRapidfireRetargetsAcrossAttackerPool() public {
+        bool observed;
+        for (uint256 randomWord = 1; randomWord <= 512 && !observed;) {
+            uint256 snapshot = vm.snapshotState();
+            observed = _counterplayRapidfireRetargetsAcrossAttackerPool(randomWord);
+            assertTrue(vm.revertToState(snapshot));
+            unchecked {
+                ++randomWord;
+            }
+        }
+
+        assertTrue(observed);
     }
 
     function testAttackBattleIgnoresCallerRandomnessRequestIdAndBlocksPendingOracle() public {
@@ -4211,6 +4268,169 @@ contract VeydriftGameTest is Test {
         _fulfillAttackBattleRandomness(missionId, randomWord);
         game.resolveFleetMission(missionId);
         return game.defenseCount(targetPlanetId, Defense.RocketLauncher);
+    }
+
+    function _attackRapidfireRetargetsIntoAcsDefenderShips(uint256 randomWord)
+        internal
+        returns (bool)
+    {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.Battlecruiser, 10);
+        _setShipCount(targetPlanetId, Ship.HeavyFighter, 100);
+        _setShipCount(targetPlanetId, Ship.Battleship, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.battlecruiser = 10;
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            randomWord
+        );
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(defender);
+        uint256 counterplayMissionId = game.launchFleetMission(
+            targetPlanetId,
+            attackMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        uint256 seed = _battleSeedForTest(attackMissionId, player, targetPlanetId, randomWord);
+        uint256 baseShotsToCounterplay = _distributedTargetShotsForTest(
+            10, 1, 101, seed, 1, 4, uint8(Ship.Battlecruiser), 24 + uint8(Ship.Battleship)
+        );
+        if (baseShotsToCounterplay != 0) return false;
+
+        (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, randomWord);
+        game.resolveFleetMission(attackMissionId);
+
+        (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
+            _fleetMission(counterplayMissionId);
+        return counterStatus == VeydriftGameStorage.FleetMissionStatus.Resolved;
+    }
+
+    function _counterplayRapidfireRetargetsAcrossAttackerPool(uint256 randomWord)
+        internal
+        returns (bool)
+    {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(originPlanetId, Ship.LightFighter, 40);
+        _setShipCount(targetPlanetId, Ship.Cruiser, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        attackers.lightFighter = 40;
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            randomWord
+        );
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.cruiser = 1;
+        vm.prank(defender);
+        game.launchFleetMission(
+            targetPlanetId,
+            attackMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        uint256 seed = _battleSeedForTest(attackMissionId, player, targetPlanetId, randomWord);
+        uint256 baseShotsToSmallCargo = _distributedTargetShotsForTest(
+            1, 1, 41, seed, 1, 3, uint8(Ship.Cruiser), uint8(Ship.SmallCargo)
+        );
+        if (baseShotsToSmallCargo != 0) return false;
+
+        (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, randomWord);
+        game.resolveFleetMission(attackMissionId);
+
+        (VeydriftGameStorage.FleetMissionStatus attackStatus,, uint64 returnAt,) =
+            _fleetMission(attackMissionId);
+        if (attackStatus == VeydriftGameStorage.FleetMissionStatus.Returning) {
+            vm.warp(returnAt);
+            game.completeFleetMissionReturn(attackMissionId);
+        }
+        return game.shipCount(originPlanetId, Ship.SmallCargo) == 0;
+    }
+
+    function _battleSeedForTest(
+        uint256 missionId,
+        address owner,
+        uint256 targetPlanetId,
+        uint256 randomWord
+    ) internal view returns (uint256) {
+        (,,,,,, uint64 arrivalAt,,,, uint256 requestId) = game.fleetMission(missionId);
+        return uint256(
+            keccak256(
+                abi.encode(
+                    TEST_ATTACK_BATTLE_DOMAIN,
+                    block.chainid,
+                    missionId,
+                    requestId,
+                    owner,
+                    targetPlanetId,
+                    arrivalAt,
+                    randomWord
+                )
+            )
+        );
+    }
+
+    function _distributedTargetShotsForTest(
+        uint256 shots,
+        uint32 targetCount,
+        uint256 targetTotal,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit,
+        uint256 targetUnit
+    ) internal pure returns (uint256 assigned) {
+        uint256 weightedShots = shots * targetCount;
+        assigned = weightedShots / targetTotal;
+        if (
+            uint256(
+                        keccak256(
+                            abi.encode(
+                                TEST_COMBAT_STREAM_DOMAIN,
+                                seed,
+                                round,
+                                side,
+                                firingUnit,
+                                targetUnit,
+                                0
+                            )
+                        )
+                    ) % targetTotal < weightedShots % targetTotal
+        ) {
+            assigned += 1;
+        }
     }
 
     function _seedMissileAttackPlanets()
