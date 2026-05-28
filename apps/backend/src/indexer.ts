@@ -76,10 +76,26 @@ type EventRow = {
 };
 
 type QueueRow = {
+  crystal_cost: string;
+  deuterium_cost: string;
+  item_id: number;
+  metal_cost: string;
+  queue_kind: string;
+  quantity: number | null;
+  ready_at: string;
+  started_at: string | null;
+  target_level: number | null;
+};
+
+type LegacyQueueRow = {
   cost_json: string;
+  event_json: string;
   item_id: number;
   kind: string;
+  owner: string | null;
+  planet_id: string | null;
   quantity: number | null;
+  queue_key: string;
   ready_at: string;
   started_at: string | null;
   target_level: number | null;
@@ -88,6 +104,12 @@ type QueueRow = {
 type LevelRow = {
   id: number;
   value: number;
+};
+
+type ResourceColumns = {
+  metal: string;
+  crystal: string;
+  deuterium: string;
 };
 
 export type IndexedRpcLog = RpcLog & {
@@ -139,7 +161,7 @@ export class SettlementIndexer {
 
   settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
     return this.rows<SettledPlanetEvent>(
-      "SELECT event_json FROM indexed_planets WHERE galaxy = ? AND system = ? ORDER BY position ASC",
+      "SELECT event_json FROM contract_planets WHERE galaxy = ? AND system_number = ? ORDER BY position ASC",
       galaxy,
       system
     );
@@ -148,9 +170,9 @@ export class SettlementIndexer {
   debrisFieldsInSystem(galaxy: number, system: number): IndexedDebrisFieldEvent[] {
     const rows = this.db.query(`
       SELECT debris.event_json
-      FROM indexed_debris_fields debris
-      INNER JOIN indexed_planets planet ON planet.planet_id = debris.planet_id
-      WHERE planet.galaxy = ? AND planet.system = ?
+      FROM contract_debris_fields debris
+      INNER JOIN contract_planets planet ON planet.planet_id = debris.planet_id
+      WHERE planet.galaxy = ? AND planet.system_number = ?
       ORDER BY planet.position ASC
     `).all(galaxy, system) as EventRow[];
 
@@ -165,9 +187,9 @@ export class SettlementIndexer {
   moonChanceReportsInSystem(galaxy: number, system: number): IndexedMoonChanceReportEvent[] {
     const rows = this.db.query(`
       SELECT report.event_json
-      FROM indexed_moon_chance_reports report
-      INNER JOIN indexed_planets planet ON planet.planet_id = report.target_planet_id
-      WHERE planet.galaxy = ? AND planet.system = ?
+      FROM contract_moon_chance_reports report
+      INNER JOIN contract_planets planet ON planet.planet_id = report.target_planet_id
+      WHERE planet.galaxy = ? AND planet.system_number = ?
       ORDER BY planet.position ASC, report.block_number ASC
     `).all(galaxy, system) as EventRow[];
 
@@ -180,7 +202,7 @@ export class SettlementIndexer {
   }
 
   settledPlanets(): SettledPlanetEvent[] {
-    return this.rows<SettledPlanetEvent>("SELECT event_json FROM indexed_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
+    return this.rows<SettledPlanetEvent>("SELECT event_json FROM contract_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
   }
 
   settledPlanetsByOwner(): Map<string, SettledPlanetEvent[]> {
@@ -193,13 +215,13 @@ export class SettlementIndexer {
   }
 
   planet(planetId: string): SettledPlanetEvent | null {
-    const row = this.db.query("SELECT event_json FROM indexed_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
     return row ? parseEvent<SettledPlanetEvent>(row.event_json) : null;
   }
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
     const planets = this.rows<SettledPlanetEvent>(
-      "SELECT event_json FROM indexed_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
+      "SELECT event_json FROM contract_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
     );
     const planet = planets.find((item) => item.eventName === "PlanetStarted") ?? planets[0] ?? null;
@@ -216,7 +238,7 @@ export class SettlementIndexer {
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
     const planets = this.rows<SettledPlanetEvent>(
-      "SELECT event_json FROM indexed_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
+      "SELECT event_json FROM contract_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
     ).map((planet) => indexedManagedPlanet(
       planet,
@@ -248,21 +270,21 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    return deriveBuildingRows((id) => this.indexedLevel("indexed_building_levels", "building_id", planetId, id));
+    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
   }
 
   shipRows(planetId: string): ShipyardState["ships"] {
-    return deriveShipRows((id) => this.indexedLevel("indexed_ship_counts", "ship_id", planetId, id));
+    return deriveShipRows((id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id));
   }
 
   defenseRows(planetId: string): DefenseState["defenses"] {
-    return deriveDefenseRows((id) => this.indexedLevel("indexed_defense_counts", "defense_id", planetId, id));
+    return deriveDefenseRows((id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id));
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
     const rows = this.db.query(`
       SELECT technology_id AS id, level AS value
-      FROM indexed_research_levels
+      FROM contract_technology_levels
       WHERE owner = lower(?)
       ORDER BY technology_id ASC
     `).all(wallet) as LevelRow[];
@@ -428,6 +450,11 @@ export class SettlementIndexer {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();
       this.db.query("DELETE FROM indexed_moon_chance_reports").run();
+      this.db.query("DELETE FROM contract_players").run();
+      this.db.query("DELETE FROM contract_planets").run();
+      this.db.query("DELETE FROM contract_planet_resources").run();
+      this.db.query("DELETE FROM contract_debris_fields").run();
+      this.db.query("DELETE FROM contract_moon_chance_reports").run();
       for (const event of planetEvents) {
         this.upsertPlanet(event);
       }
@@ -451,6 +478,9 @@ export class SettlementIndexer {
       : await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
+      this.db.query("DELETE FROM contract_players").run();
+      this.db.query("DELETE FROM contract_planets").run();
+      this.db.query("DELETE FROM contract_planet_resources").run();
       for (const event of events) {
         this.upsertPlanet(event);
       }
@@ -543,7 +573,275 @@ export class SettlementIndexer {
         level INTEGER NOT NULL,
         PRIMARY KEY (owner, technology_id)
       );
+
+      CREATE TABLE IF NOT EXISTS contract_players (
+        wallet TEXT PRIMARY KEY,
+        home_planet_id TEXT,
+        planet_count INTEGER NOT NULL DEFAULT 0,
+        active_fleet_mission_count INTEGER NOT NULL DEFAULT 0,
+        event_json TEXT,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS contract_planets (
+        planet_id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        name TEXT,
+        galaxy INTEGER NOT NULL,
+        system_number INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        fields INTEGER NOT NULL,
+        temperature INTEGER NOT NULL,
+        metal_multiplier_bps INTEGER NOT NULL,
+        crystal_multiplier_bps INTEGER NOT NULL,
+        deuterium_multiplier_bps INTEGER NOT NULL,
+        last_settled_at TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_planets_owner_idx ON contract_planets (owner);
+      CREATE INDEX IF NOT EXISTS contract_planets_coordinates_idx
+        ON contract_planets (galaxy, system_number, position);
+      CREATE TABLE IF NOT EXISTS contract_planet_resources (
+        planet_id TEXT PRIMARY KEY,
+        metal TEXT NOT NULL,
+        crystal TEXT NOT NULL,
+        deuterium TEXT NOT NULL,
+        last_settled_at TEXT NOT NULL,
+        transaction_hash TEXT NOT NULL,
+        block_number TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS contract_building_levels (
+        planet_id TEXT NOT NULL,
+        building_id INTEGER NOT NULL,
+        level INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, building_id)
+      );
+      CREATE TABLE IF NOT EXISTS contract_production_queues (
+        queue_key TEXT PRIMARY KEY,
+        queue_kind TEXT NOT NULL,
+        planet_id TEXT,
+        owner TEXT,
+        item_id INTEGER NOT NULL,
+        target_level INTEGER,
+        quantity INTEGER,
+        ready_at TEXT NOT NULL,
+        started_at TEXT,
+        metal_cost TEXT NOT NULL,
+        crystal_cost TEXT NOT NULL,
+        deuterium_cost TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_production_queues_planet_idx
+        ON contract_production_queues (planet_id, queue_kind);
+      CREATE INDEX IF NOT EXISTS contract_production_queues_owner_idx
+        ON contract_production_queues (owner, queue_kind);
+      CREATE VIEW IF NOT EXISTS contract_building_queues AS
+        SELECT * FROM contract_production_queues WHERE queue_kind = 'building';
+      CREATE VIEW IF NOT EXISTS contract_defense_queues AS
+        SELECT * FROM contract_production_queues WHERE queue_kind = 'defense';
+      CREATE VIEW IF NOT EXISTS contract_shipyard_queues AS
+        SELECT * FROM contract_production_queues WHERE queue_kind = 'ship';
+      CREATE VIEW IF NOT EXISTS contract_research_queues AS
+        SELECT * FROM contract_production_queues WHERE queue_kind = 'research';
+      CREATE TABLE IF NOT EXISTS contract_technology_levels (
+        owner TEXT NOT NULL,
+        technology_id INTEGER NOT NULL,
+        level INTEGER NOT NULL,
+        PRIMARY KEY (owner, technology_id)
+      );
+      CREATE TABLE IF NOT EXISTS contract_ship_counts (
+        planet_id TEXT NOT NULL,
+        ship_id INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, ship_id)
+      );
+      CREATE TABLE IF NOT EXISTS contract_defense_counts (
+        planet_id TEXT NOT NULL,
+        defense_id INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, defense_id)
+      );
+      CREATE TABLE IF NOT EXISTS contract_moons (
+        planet_id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        exists_flag INTEGER NOT NULL,
+        fields INTEGER,
+        diameter_km INTEGER,
+        created_at TEXT,
+        jump_gate_ready_at TEXT,
+        event_json TEXT
+      );
+      CREATE TABLE IF NOT EXISTS contract_moon_building_levels (
+        planet_id TEXT NOT NULL,
+        moon_building_id INTEGER NOT NULL,
+        level INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, moon_building_id)
+      );
+      CREATE TABLE IF NOT EXISTS contract_moon_building_queues (
+        planet_id TEXT PRIMARY KEY,
+        moon_building_id INTEGER NOT NULL,
+        target_level INTEGER NOT NULL,
+        ready_at TEXT NOT NULL,
+        metal_cost TEXT NOT NULL,
+        crystal_cost TEXT NOT NULL,
+        deuterium_cost TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS contract_moon_chance_reports (
+        report_key TEXT PRIMARY KEY,
+        target_planet_id TEXT NOT NULL,
+        battle_id TEXT NOT NULL,
+        outcome_id TEXT,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_moon_chance_reports_target_idx
+        ON contract_moon_chance_reports (target_planet_id);
+      CREATE TABLE IF NOT EXISTS contract_debris_fields (
+        planet_id TEXT PRIMARY KEY,
+        metal TEXT NOT NULL,
+        crystal TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS contract_fleet_missions (
+        mission_id TEXT PRIMARY KEY,
+        status_id INTEGER NOT NULL,
+        mission_type_id INTEGER NOT NULL,
+        owner TEXT NOT NULL,
+        origin_planet_id TEXT NOT NULL,
+        target_planet_id TEXT NOT NULL,
+        departure_at TEXT NOT NULL,
+        arrival_at TEXT NOT NULL,
+        return_at TEXT NOT NULL,
+        fuel_cost TEXT NOT NULL,
+        metal_cargo TEXT NOT NULL,
+        crystal_cargo TEXT NOT NULL,
+        deuterium_cargo TEXT NOT NULL,
+        ships_json TEXT NOT NULL,
+        randomness_request_id TEXT,
+        event_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_owner_idx
+        ON contract_fleet_missions (owner, status_id);
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_target_idx
+        ON contract_fleet_missions (target_planet_id, status_id);
+      CREATE TABLE IF NOT EXISTS contract_rift_withdrawals (
+        owner TEXT NOT NULL,
+        resource_id INTEGER NOT NULL,
+        active INTEGER NOT NULL,
+        planet_id TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        unlocks_at TEXT NOT NULL,
+        event_json TEXT,
+        PRIMARY KEY (owner, resource_id)
+      );
+      CREATE TABLE IF NOT EXISTS contract_alliances (
+        alliance_id TEXT PRIMARY KEY,
+        active INTEGER NOT NULL,
+        tag TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        member_count INTEGER NOT NULL,
+        event_json TEXT
+      );
+      CREATE TABLE IF NOT EXISTS contract_alliance_members (
+        alliance_id TEXT NOT NULL,
+        wallet TEXT NOT NULL,
+        role_id INTEGER NOT NULL,
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY (alliance_id, wallet)
+      );
+      CREATE TABLE IF NOT EXISTS contract_alliance_diplomacy (
+        alliance_id TEXT NOT NULL,
+        other_alliance_id TEXT NOT NULL,
+        status_id INTEGER NOT NULL,
+        updated_at TEXT,
+        PRIMARY KEY (alliance_id, other_alliance_id)
+      );
+      CREATE TABLE IF NOT EXISTS contract_highscore_inputs (
+        wallet TEXT PRIMARY KEY,
+        home_planet_id TEXT,
+        buildings_json TEXT NOT NULL DEFAULT '[]',
+        defenses_json TEXT NOT NULL DEFAULT '[]',
+        ships_json TEXT NOT NULL DEFAULT '[]',
+        technologies_json TEXT NOT NULL DEFAULT '[]',
+        moon_buildings_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL
+      );
     `);
+    this.backfillCanonicalTables();
+  }
+
+  private backfillCanonicalTables(): void {
+    const now = new Date().toISOString();
+    const planets = this.rows<SettledPlanetEvent>("SELECT event_json FROM indexed_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
+    for (const planet of planets) {
+      this.upsertPlanet(planet);
+    }
+
+    const debrisRows = this.rows<DebrisFieldEvent>("SELECT event_json FROM indexed_debris_fields ORDER BY CAST(planet_id AS INTEGER) ASC");
+    for (const debris of debrisRows) {
+      this.upsertDebris(debris);
+    }
+
+    const moonReportRows = this.rows<MoonChanceReportEvent>("SELECT event_json FROM indexed_moon_chance_reports ORDER BY block_number ASC");
+    for (const report of moonReportRows) {
+      this.upsertMoonChanceReport(report);
+    }
+
+    this.db.query(`
+      INSERT OR IGNORE INTO contract_building_levels (planet_id, building_id, level)
+      SELECT planet_id, building_id, level FROM indexed_building_levels
+    `).run();
+    this.db.query(`
+      INSERT OR IGNORE INTO contract_defense_counts (planet_id, defense_id, count)
+      SELECT planet_id, defense_id, count FROM indexed_defense_counts
+    `).run();
+    this.db.query(`
+      INSERT OR IGNORE INTO contract_ship_counts (planet_id, ship_id, count)
+      SELECT planet_id, ship_id, count FROM indexed_ship_counts
+    `).run();
+    this.db.query(`
+      INSERT OR IGNORE INTO contract_technology_levels (owner, technology_id, level)
+      SELECT owner, technology_id, level FROM indexed_research_levels
+    `).run();
+
+    const queueRows = this.db.query(`
+      SELECT queue_key, kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at, cost_json, event_json
+      FROM indexed_planet_queues
+    `).all() as LegacyQueueRow[];
+    for (const queue of queueRows) {
+      const cost = parseEvent<ResourceColumns>(queue.cost_json);
+      this.db.query(`
+        INSERT OR IGNORE INTO contract_production_queues (
+          queue_key, queue_kind, planet_id, owner, item_id, target_level, quantity,
+          ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, event_json
+        )
+        VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        queue.queue_key,
+        queue.kind,
+        queue.planet_id,
+        queue.owner,
+        queue.item_id,
+        queue.target_level,
+        queue.quantity,
+        queue.ready_at,
+        queue.started_at,
+        cost.metal,
+        cost.crystal,
+        cost.deuterium,
+        queue.event_json
+      );
+    }
+
+    this.db.query(`
+      INSERT OR IGNORE INTO contract_highscore_inputs (wallet, home_planet_id, updated_at)
+      SELECT wallet, home_planet_id, ?
+      FROM contract_players
+    `).run(now);
   }
 
   private upsertPlanet(event: SettledPlanetEvent): void {
@@ -564,10 +862,89 @@ export class SettlementIndexer {
       event.position,
       JSON.stringify(event)
     );
+    this.db.query(`
+      INSERT INTO contract_players (wallet, home_planet_id, planet_count, event_json, updated_at)
+      VALUES (lower(?), ?, 1, ?, ?)
+      ON CONFLICT(wallet) DO UPDATE SET
+        home_planet_id = COALESCE(contract_players.home_planet_id, excluded.home_planet_id),
+        planet_count = (
+          SELECT COUNT(*)
+          FROM contract_planets
+          WHERE owner = lower(?)
+        ) + CASE
+          WHEN EXISTS (SELECT 1 FROM contract_planets WHERE planet_id = ?) THEN 0
+          ELSE 1
+        END,
+        event_json = excluded.event_json,
+        updated_at = excluded.updated_at
+    `).run(
+      event.owner,
+      event.planetId,
+      JSON.stringify(event),
+      new Date().toISOString(),
+      event.owner,
+      event.planetId
+    );
+    this.db.query(`
+      INSERT INTO contract_planets (
+        planet_id, owner, name, galaxy, system_number, position, fields, temperature,
+        metal_multiplier_bps, crystal_multiplier_bps, deuterium_multiplier_bps,
+        last_settled_at, event_json
+      )
+      VALUES (?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(planet_id) DO UPDATE SET
+        owner = excluded.owner,
+        name = excluded.name,
+        galaxy = excluded.galaxy,
+        system_number = excluded.system_number,
+        position = excluded.position,
+        fields = excluded.fields,
+        temperature = excluded.temperature,
+        metal_multiplier_bps = excluded.metal_multiplier_bps,
+        crystal_multiplier_bps = excluded.crystal_multiplier_bps,
+        deuterium_multiplier_bps = excluded.deuterium_multiplier_bps,
+        last_settled_at = excluded.last_settled_at,
+        event_json = excluded.event_json
+    `).run(
+      event.planetId,
+      event.owner,
+      event.name,
+      event.galaxy,
+      event.system,
+      event.position,
+      event.fields,
+      event.temperature,
+      event.metalMultiplierBps,
+      event.crystalMultiplierBps,
+      event.deuteriumMultiplierBps,
+      event.lastSettledAt,
+      JSON.stringify(event)
+    );
+    this.db.query(`
+      INSERT INTO contract_planet_resources (
+        planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(planet_id) DO UPDATE SET
+        metal = excluded.metal,
+        crystal = excluded.crystal,
+        deuterium = excluded.deuterium,
+        last_settled_at = excluded.last_settled_at,
+        transaction_hash = excluded.transaction_hash,
+        block_number = excluded.block_number
+    `).run(
+      event.planetId,
+      event.resources.metal,
+      event.resources.crystal,
+      event.resources.deuterium,
+      event.lastSettledAt,
+      event.transactionHash,
+      event.blockNumber
+    );
   }
 
   private updatePlanetResources(event: PlanetSettledEvent): void {
-    const row = this.db.query("SELECT event_json FROM indexed_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
     if (!row) return;
 
     const planet = parseEvent<SettledPlanetEvent>(row.event_json);
@@ -583,6 +960,7 @@ export class SettlementIndexer {
   private upsertDebris(event: DebrisFieldEvent): void {
     if (event.resources.metal === "0" && event.resources.crystal === "0") {
       this.db.query("DELETE FROM indexed_debris_fields WHERE planet_id = ?").run(event.planetId);
+      this.db.query("DELETE FROM contract_debris_fields WHERE planet_id = ?").run(event.planetId);
       return;
     }
 
@@ -593,11 +971,37 @@ export class SettlementIndexer {
         block_number = excluded.block_number,
         event_json = excluded.event_json
     `).run(event.planetId, event.blockNumber, JSON.stringify(event));
+    this.db.query(`
+      INSERT INTO contract_debris_fields (planet_id, metal, crystal, block_number, event_json)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(planet_id) DO UPDATE SET
+        metal = excluded.metal,
+        crystal = excluded.crystal,
+        block_number = excluded.block_number,
+        event_json = excluded.event_json
+    `).run(event.planetId, event.resources.metal, event.resources.crystal, event.blockNumber, JSON.stringify(event));
   }
 
   private upsertMoonChanceReport(event: MoonChanceReportEvent): void {
     this.db.query(`
       INSERT INTO indexed_moon_chance_reports (report_key, target_planet_id, battle_id, outcome_id, block_number, event_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(report_key) DO UPDATE SET
+        target_planet_id = excluded.target_planet_id,
+        battle_id = excluded.battle_id,
+        outcome_id = excluded.outcome_id,
+        block_number = excluded.block_number,
+        event_json = excluded.event_json
+    `).run(
+      moonChanceReportKey(event),
+      event.targetPlanetId,
+      event.battleId,
+      event.outcomeId ?? null,
+      event.blockNumber,
+      JSON.stringify(event)
+    );
+    this.db.query(`
+      INSERT INTO contract_moon_chance_reports (report_key, target_planet_id, battle_id, outcome_id, block_number, event_json)
       VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(report_key) DO UPDATE SET
         target_planet_id = excluded.target_planet_id,
@@ -625,15 +1029,24 @@ export class SettlementIndexer {
 
   private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
     this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
+    this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
     if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
       this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.upsertIndexedLevel("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "defense" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
+      this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
     } else if (event.queueKind === "ship" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", event.planetId, event.itemId, event.total);
+      this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", event.planetId, event.itemId, event.total);
     } else if (event.queueKind === "research" && event.owner && event.level !== undefined) {
       this.db.query(`
         INSERT INTO indexed_research_levels (owner, technology_id, level)
+        VALUES (lower(?), ?, ?)
+        ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
+      `).run(event.owner, event.itemId, event.level);
+      this.db.query(`
+        INSERT INTO contract_technology_levels (owner, technology_id, level)
         VALUES (lower(?), ?, ?)
         ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
       `).run(event.owner, event.itemId, event.level);
@@ -671,6 +1084,40 @@ export class SettlementIndexer {
       JSON.stringify(event.cost),
       JSON.stringify(event)
     );
+    this.db.query(`
+      INSERT INTO contract_production_queues (
+        queue_key, queue_kind, planet_id, owner, item_id, target_level, quantity,
+        ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, event_json
+      )
+      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(queue_key) DO UPDATE SET
+        queue_kind = excluded.queue_kind,
+        planet_id = excluded.planet_id,
+        owner = excluded.owner,
+        item_id = excluded.item_id,
+        target_level = excluded.target_level,
+        quantity = excluded.quantity,
+        ready_at = excluded.ready_at,
+        started_at = excluded.started_at,
+        metal_cost = excluded.metal_cost,
+        crystal_cost = excluded.crystal_cost,
+        deuterium_cost = excluded.deuterium_cost,
+        event_json = excluded.event_json
+    `).run(
+      queueKey(event),
+      event.queueKind,
+      event.planetId ?? null,
+      event.owner ?? null,
+      event.itemId,
+      event.targetLevel ?? null,
+      event.quantity ?? null,
+      event.readyAt,
+      null,
+      event.cost.metal,
+      event.cost.crystal,
+      event.cost.deuterium,
+      JSON.stringify(event)
+    );
   }
 
   private subtractPlanetResources(
@@ -679,7 +1126,7 @@ export class SettlementIndexer {
     transactionHash: string,
     blockNumber: string
   ): void {
-    const row = this.db.query("SELECT event_json FROM indexed_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
     if (!row) return;
 
     const planet = parseEvent<SettledPlanetEvent>(row.event_json);
@@ -693,19 +1140,23 @@ export class SettlementIndexer {
 
   private queueState(queueKeyValue: string): QueueState | null {
     const row = this.db.query(`
-      SELECT kind, item_id, target_level, quantity, ready_at, started_at, cost_json
-      FROM indexed_planet_queues
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost
+      FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKeyValue) as QueueRow | null;
     if (!row) return null;
 
     const queue: QueueState = {
       active: true,
-      kind: row.kind,
+      kind: row.queue_kind,
       itemId: row.item_id,
       readyAt: row.ready_at,
       startedAt: row.started_at,
-      cost: parseEvent<QueueState["cost"]>(row.cost_json)
+      cost: {
+        metal: row.metal_cost,
+        crystal: row.crystal_cost,
+        deuterium: row.deuterium_cost
+      }
     };
     if (row.target_level !== null) {
       queue.targetLevel = row.target_level;
@@ -716,8 +1167,13 @@ export class SettlementIndexer {
     return queue;
   }
 
-  private indexedLevel(table: "indexed_building_levels" | "indexed_defense_counts" | "indexed_ship_counts", idColumn: string, planetId: string, itemId: number): number {
-    const valueColumn = table === "indexed_building_levels" ? "level" : "count";
+  private indexedLevel(
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_ship_counts",
+    idColumn: string,
+    planetId: string,
+    itemId: number
+  ): number {
+    const valueColumn = table.endsWith("building_levels") ? "level" : "count";
     const row = this.db.query(`
       SELECT ${valueColumn} AS value
       FROM ${table}
@@ -726,7 +1182,14 @@ export class SettlementIndexer {
     return row?.value ?? 0;
   }
 
-  private upsertIndexedLevel(table: "indexed_building_levels" | "indexed_defense_counts" | "indexed_ship_counts", idColumn: string, valueColumn: string, planetId: string, itemId: number, value: number): void {
+  private upsertIndexedLevel(
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_ship_counts",
+    idColumn: string,
+    valueColumn: string,
+    planetId: string,
+    itemId: number,
+    value: number
+  ): void {
     this.db.query(`
       INSERT INTO ${table} (planet_id, ${idColumn}, ${valueColumn})
       VALUES (?, ?, ?)
@@ -880,7 +1343,6 @@ function subtractResource(left: string, right: string): string {
   const result = BigInt(left) - BigInt(right);
   return result > 0n ? result.toString() : "0";
 }
-
 
 function indexedLogKey(log: IndexedRpcLog): string {
   return `${log.transactionHash.toLowerCase()}:${log.logIndex ?? fallbackLogIndex(log)}`;
