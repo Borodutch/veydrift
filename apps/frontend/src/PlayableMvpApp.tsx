@@ -38,6 +38,7 @@ import {
   storageCaps,
   type BuildingKey,
   type DefenseKey,
+  type EnergyBalance,
   type PlanetProductionProfile,
   type PlayableState,
   type ResearchKey,
@@ -169,6 +170,25 @@ export function displayHomeCoordinates(
   if (!coordinates) return fallbackCoordinates;
 
   return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
+}
+
+export function topBarEnergyFor({
+  infrastructureChainState,
+  infrastructureError,
+  isWalletConnected,
+  settledState,
+}: {
+  infrastructureChainState: ChainInfrastructureState | null;
+  infrastructureError?: string | undefined;
+  isWalletConnected: boolean;
+  settledState: PlayableState;
+}): EnergyBalance | undefined {
+  if (!isWalletConnected || !infrastructureChainState || infrastructureError) {
+    return undefined;
+  }
+
+  return energyBalanceFromChain(infrastructureChainState.energyBalance)
+    ?? energyBalance(settledState.buildings, settledState.research.energy);
 }
 
 function resourceAmountIsZero(value: string): boolean {
@@ -939,19 +959,17 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   ]);
   const infrastructureActionNotice = infrastructureActionNoticeFor(buildingAction);
   const topBarEnergy = useMemo(() => {
-    if (!isWalletConnected || !infrastructureChainState || infrastructureLoading || infrastructureError) {
-      return undefined;
-    }
-
-    return energyBalanceFromChain(infrastructureChainState.energyBalance)
-      ?? energyBalance(settledState.buildings, settledState.research.energy);
+    return topBarEnergyFor({
+      infrastructureChainState,
+      infrastructureError,
+      isWalletConnected,
+      settledState,
+    });
   }, [
     infrastructureChainState,
     infrastructureError,
-    infrastructureLoading,
     isWalletConnected,
-    settledState.buildings,
-    settledState.research.energy,
+    settledState,
   ]);
 
   useEffect(() => {
