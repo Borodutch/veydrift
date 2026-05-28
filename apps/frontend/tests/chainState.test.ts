@@ -5,6 +5,7 @@ import {
   emptyContractState,
   infrastructurePlayableState,
 } from "../src/chainState";
+import { buildingUpgradeStatus } from "../src/buildingDetails";
 import type { ChainInfrastructureState } from "../src/walletFlow";
 
 const infrastructureState: ChainInfrastructureState = {
@@ -72,5 +73,33 @@ describe("contract state adapters", () => {
       required: 100,
       scaleBps: 6000,
     });
+  });
+
+  test("indexed infrastructure levels do not turn zero placeholder costs into no-cost upgrades", () => {
+    const indexedState: ChainInfrastructureState = {
+      ...infrastructureState,
+      source: "contract-state-indexer",
+      stale: true,
+      energyBalance: null,
+      productionPerHour: null,
+      storageCaps: null,
+      buildings: [
+        { id: 0, level: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 3, level: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+    };
+
+    const state = infrastructurePlayableState(indexedState, 1_000);
+    const costs = buildingCosts(indexedState);
+    const status = buildingUpgradeStatus(state, "metalMine", {
+      chainCost: costs.metalMine,
+    });
+
+    expect(state.buildings.metalMine).toBe(1);
+    expect(state.buildings.solarPlant).toBe(1);
+    expect(costs.metalMine).toBeUndefined();
+    expect(status.targetLevel).toBe(2);
+    expect(status.cost).toEqual({ metal: 90, crystal: 22, deuterium: 0 });
+    expect(status.reason).not.toContain("No resource cost");
   });
 });

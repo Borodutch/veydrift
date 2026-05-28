@@ -194,6 +194,8 @@ export type ChainDefenseState = {
 export type ChainInfrastructureState = {
   wallet: string;
   homePlanetId: string | null;
+  source?: "contract-state-indexer" | string;
+  stale?: boolean;
   infrastructureAvailable?: boolean;
   unavailableReason?: string;
   resources: OnChainResources | null;

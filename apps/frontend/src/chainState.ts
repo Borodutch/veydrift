@@ -82,7 +82,7 @@ export function buildingCosts(infrastructureState: ChainInfrastructureState | nu
   return Object.fromEntries(
     buildingCatalog.flatMap((building) => {
       const row = infrastructureState.buildings.find((item) => item.id === buildingContractIds[building.key]);
-      const cost = toResources(row?.cost);
+      const cost = usableBuildingCost(row?.cost, infrastructureState);
       return cost ? [[building.key, cost]] : [];
     }),
   ) as Partial<Record<BuildingKey, Resources>>;
@@ -180,4 +180,26 @@ function toResources(resources: ChainInfrastructureState["resources"] | ChainInf
     crystal: Number(resources.crystal),
     deuterium: Number(resources.deuterium),
   };
+}
+
+function usableBuildingCost(
+  resources: ChainInfrastructureState["buildings"][number]["cost"] | null | undefined,
+  infrastructureState: ChainInfrastructureState,
+): Resources | undefined {
+  const cost = toResources(resources);
+  if (!cost) return undefined;
+
+  if (isIndexedInfrastructureState(infrastructureState) && isZeroResources(cost)) {
+    return undefined;
+  }
+
+  return cost;
+}
+
+function isIndexedInfrastructureState(infrastructureState: ChainInfrastructureState): boolean {
+  return infrastructureState.source === "contract-state-indexer" || infrastructureState.stale === true;
+}
+
+function isZeroResources(resources: Resources): boolean {
+  return resources.metal === 0 && resources.crystal === 0 && resources.deuterium === 0;
 }
