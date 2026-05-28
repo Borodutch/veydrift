@@ -2495,6 +2495,51 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(targetPlanetId, Ship.Battleship), 1);
     }
 
+    function testFleetCounterplayLossesCreateDefenderDebris() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _createAlliance(defender);
+        _setShipCount(originPlanetId, Ship.Deathstar, 1);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 1);
+        _setResources(originPlanetId, 10_000_000, 10_000_000, 10_000_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.deathstar = 1;
+        vm.prank(player);
+        uint256 hostileMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            802
+        );
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.lightFighter = 1;
+        vm.prank(defender);
+        uint256 counterplayMissionId = game.launchFleetMission(
+            targetPlanetId,
+            hostileMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(hostileMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(hostileMissionId, 802);
+        game.resolveFleetMission(hostileMissionId);
+
+        (uint128 debrisMetal, uint128 debrisCrystal) = game.debrisField(targetPlanetId);
+        assertEq(debrisMetal, 900);
+        assertEq(debrisCrystal, 300);
+        (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
+            _fleetMission(counterplayMissionId);
+        assertEq(uint8(counterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+    }
+
     function testAllianceDepotSuppliesAcsDefenseHoldingFuel() public {
         address defender = address(0xDEF);
         address ally = address(0xA17C);

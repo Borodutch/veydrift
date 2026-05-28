@@ -736,14 +736,15 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     {
         _applyPlanetShipLosses(planetId, losses.planetShips);
         _applyDefenseLosses(planetId, losses.defenseDestroyed);
+        applied.resources = losses.resources;
         for (uint256 i = 0; i < losses.counterplay.length;) {
             FleetMission storage counterplay = _fleetMissions[losses.counterplay[i].missionId];
             _applyMissionShipLosses(counterplay.ships, losses.counterplay[i].ships);
+            applied.resources = _add(applied.resources, losses.counterplay[i].resources);
             unchecked {
                 ++i;
             }
         }
-        applied.resources = losses.resources;
         applied.defenseDestroyed = losses.defenseDestroyed;
     }
 
