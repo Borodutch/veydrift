@@ -22,7 +22,7 @@ enum Building {
 
 enum MoonBuilding {
     LunarBase,
-    SensorPhalanx,
+    ReservedMoonBuilding1,
     JumpGate
 }
 

@@ -55,22 +55,6 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         return _lockedWithdrawalResources;
     }
 
-    function phalanxMissionIds(uint16 galaxy, uint16 system, uint256 maxResults)
-        external
-        view
-        returns (uint256[] memory results)
-    {
-        uint256[] storage missionIds = _phalanxMissionIdsBySystem[_systemKey(galaxy, system)];
-        uint256 count = _min(maxResults, missionIds.length);
-        results = new uint256[](count);
-        for (uint256 index = 0; index < count;) {
-            results[index] = missionIds[index];
-            unchecked {
-                ++index;
-            }
-        }
-    }
-
     function resourceReserveBalance(Resource resource) public view returns (uint256) {
         IERC20ReserveToken token = _requireReserveResource(resource);
         return token.balanceOf(address(this));
@@ -231,20 +215,6 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
             if (targetOwner != address(0) && targetOwner != mission.owner) {
                 _removeResolutionMissionForPlayer(targetOwner, missionId);
             }
-        }
-    }
-
-    function _trackPhalanxMission(uint256 missionId, FleetMission storage mission) internal {
-        _addPhalanxMissionForPlanet(mission.originPlanetId, missionId);
-        if (_planets[mission.targetPlanetId].owner != address(0)) {
-            _addPhalanxMissionForPlanet(mission.targetPlanetId, missionId);
-        }
-    }
-
-    function _untrackPhalanxMission(uint256 missionId, FleetMission storage mission) internal {
-        _removePhalanxMissionForPlanet(mission.originPlanetId, missionId);
-        if (_planets[mission.targetPlanetId].owner != address(0)) {
-            _removePhalanxMissionForPlanet(mission.targetPlanetId, missionId);
         }
     }
 
@@ -421,36 +391,5 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
                 ++index;
             }
         }
-    }
-
-    function _addPhalanxMissionForPlanet(uint256 planetId, uint256 missionId) private {
-        Planet storage planetRef = _planets[planetId];
-        bytes32 systemKey = _systemKey(planetRef.galaxy, planetRef.system);
-        if (_phalanxMissionIndexBySystem[systemKey][missionId] != 0) return;
-        _phalanxMissionIdsBySystem[systemKey].push(missionId);
-        _phalanxMissionIndexBySystem[systemKey][missionId] =
-        _phalanxMissionIdsBySystem[systemKey].length;
-    }
-
-    function _removePhalanxMissionForPlanet(uint256 planetId, uint256 missionId) private {
-        Planet storage planetRef = _planets[planetId];
-        bytes32 systemKey = _systemKey(planetRef.galaxy, planetRef.system);
-        uint256 indexPlusOne = _phalanxMissionIndexBySystem[systemKey][missionId];
-        if (indexPlusOne == 0) return;
-
-        uint256[] storage missionIds = _phalanxMissionIdsBySystem[systemKey];
-        uint256 index = indexPlusOne - 1;
-        uint256 lastIndex = missionIds.length - 1;
-        if (index != lastIndex) {
-            uint256 movedMissionId = missionIds[lastIndex];
-            missionIds[index] = movedMissionId;
-            _phalanxMissionIndexBySystem[systemKey][movedMissionId] = indexPlusOne;
-        }
-        missionIds.pop();
-        delete _phalanxMissionIndexBySystem[systemKey][missionId];
-    }
-
-    function _systemKey(uint16 galaxy, uint16 system) private pure returns (bytes32) {
-        return keccak256(abi.encode(galaxy, system));
     }
 }

@@ -40,7 +40,7 @@ wreck fields, repair recovery, missiles, and moon/debris public reports.
   public contract/indexer data, not as scan results.
 - Catalog docs may keep espionage-named entries only as historical notes or
   reserved legacy IDs.
-- Any future "sensor", "recon", "scanner", or "phalanx" feature must be
+- Any future long-range reconnaissance feature must be
   explicitly public-state unless a new product decision replaces this one.
 
 ## Implementation Consequence
