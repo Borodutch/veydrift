@@ -884,7 +884,6 @@ contract VeydriftGame is VeydriftResourceReserves {
             }
         }
         missionId = abi.decode(result, (uint256));
-        _trackPhalanxMission(missionId, _fleetMissions[missionId]);
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
     }
 

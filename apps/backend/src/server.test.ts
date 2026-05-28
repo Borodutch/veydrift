@@ -265,7 +265,6 @@ class MockChainReader implements ChainReader {
         createdAt: "1770000100",
         jumpGateReadyAt: "1770007200"
       },
-      sensorPhalanxRange: "3",
       buildings: [
         {
           id: 0,
@@ -276,17 +275,6 @@ class MockChainReader implements ChainReader {
             metal: "40000",
             crystal: "80000",
             deuterium: "40000"
-          }
-        },
-        {
-          id: 1,
-          key: "sensorPhalanx",
-          label: "Sensor Phalanx",
-          level: 2,
-          cost: {
-            metal: "80000",
-            crystal: "160000",
-            deuterium: "80000"
           }
         },
         {
@@ -304,13 +292,13 @@ class MockChainReader implements ChainReader {
       queue: {
         active: true,
         kind: "moon-building",
-        itemId: 1,
-        targetLevel: 3,
+        itemId: 2,
+        targetLevel: 2,
         readyAt: "1770000900",
         cost: {
-          metal: "80000",
-          crystal: "160000",
-          deuterium: "80000"
+          metal: "4000000",
+          crystal: "8000000",
+          deuterium: "4000000"
         }
       }
     };
@@ -1206,23 +1194,15 @@ describe("Veydrift backend", () => {
       diameterKm: 7120,
       jumpGateReadyAt: "1770007200"
     });
-    expect(body.sensorPhalanxRange).toBe("3");
-    expect(body.buildings).toContainEqual({
-      id: 1,
-      key: "sensorPhalanx",
-      label: "Sensor Phalanx",
-      level: 2,
-      cost: {
-        metal: "80000",
-        crystal: "160000",
-        deuterium: "80000"
-      }
-    });
+    expect(body.buildings.map((building: { key: string }) => building.key)).toEqual([
+      "lunarBase",
+      "jumpGate"
+    ]);
     expect(body.queue).toMatchObject({
       active: true,
       kind: "moon-building",
-      itemId: 1,
-      targetLevel: 3
+      itemId: 2,
+      targetLevel: 2
     });
   });
 

@@ -18,7 +18,7 @@ Implemented in this task:
 - Small and Large Shield Dome one-per-planet caps are exposed through catalog helpers.
 
 Out of scope for the current first-planet MVP:
-- Moon systems: Lunar Base, Sensor Phalanx, and Jump Gate need moon ownership, moon fields, phalanx scan behavior, and jump cooldown/state.
+- Moon systems: Lunar Base and Jump Gate need moon ownership, moon fields, and jump cooldown/state.
 - Space Dock / repair dock behavior needs combat debris/repair accounting.
 - Lifeforms, classes, officers, and marketplace/event bonuses are outside base catalog parity.
 
@@ -43,7 +43,6 @@ Out of scope for the current first-planet MVP:
 | Missile Silo | implemented catalog/rules | Dependency now Shipyard 1; missile capacity helpers added. |
 | Interdimensional Rift Stabilizer | custom | Veydrift-only building; not in the base catalog. |
 | Lunar Base | out of scope | Moon-only system follow-up required. |
-| Sensor Phalanx | out of scope | Moon-only system follow-up required. |
 | Jump Gate | out of scope | Moon-only system follow-up required. |
 
 ## Ships

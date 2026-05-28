@@ -102,7 +102,6 @@ import {
   sendLaunchFleetMissionTransaction,
   sendFinishMoonBuildingUpgradeTransaction,
   sendJumpGateJumpTransaction,
-  sendMoonScanTransaction,
   sendRecallFleetMissionTransaction,
   sendResolveFleetMissionTransaction,
   sendDepositResourceTransaction,
@@ -1786,22 +1785,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
 
-  const handleMoonScan = useCallback((galaxy: number, system: number) => {
-    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
-      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
-      return;
-    }
-
-    void runMoonTransaction(`Scan ${galaxy}:${system}`, () => sendMoonScanTransaction(
-      provider,
-      account,
-      moonContract,
-      moonState.homePlanetId ?? "",
-      galaxy,
-      system,
-    ));
-  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
-
   const handleJumpGate = useCallback((destinationPlanetId: string, ships: Partial<MissionShips>) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
       setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
@@ -2055,7 +2038,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onFinishBuilding={handleFinishMoonBuilding}
           onJumpGate={handleJumpGate}
           onRefresh={refreshInfrastructureState}
-          onScan={handleMoonScan}
           onStartBuilding={handleStartMoonBuilding}
         />
       );

@@ -40,7 +40,6 @@ import {
   sendLaunchFleetMissionTransaction,
   sendFinishMoonBuildingUpgradeTransaction,
   sendJumpGateJumpTransaction,
-  sendMoonScanTransaction,
   sendRecallFleetMissionTransaction,
   sendResolveFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
@@ -879,7 +878,7 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("submits moon building, scan, and Jump Gate transactions", async () => {
+  test("submits moon building and Jump Gate transactions", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
@@ -904,9 +903,8 @@ describe("walletFlow", () => {
 
     await expect(sendStartMoonBuildingUpgradeTransaction(provider, account, contract, "7", 1)).resolves.toBe("0xmoon1");
     await expect(sendFinishMoonBuildingUpgradeTransaction(provider, account, contract, "7")).resolves.toBe("0xmoon2");
-    await expect(sendMoonScanTransaction(provider, account, contract, "7", 2, 44)).resolves.toBe("0xmoon3");
-    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9")).resolves.toBe("0xmoon4");
-    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9", ships)).resolves.toBe("0xmoon5");
+    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9")).resolves.toBe("0xmoon3");
+    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9", ships)).resolves.toBe("0xmoon4");
 
     expect(requests).toEqual([
       {
@@ -926,16 +924,6 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0x713b9e66", [7])
-          }
-        ]
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0xfc1e78b1", [7, 2, 44])
           }
         ]
       },

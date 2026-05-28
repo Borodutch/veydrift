@@ -1,4 +1,4 @@
-import { Moon, Orbit, RadioTower } from "lucide-preact";
+import { Moon, Orbit } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
@@ -15,7 +15,6 @@ interface MoonPageProps {
   onFinishBuilding?: (() => void) | undefined;
   onJumpGate?: ((destinationPlanetId: string, ships: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
-  onScan?: ((galaxy: number, system: number) => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
 }
 
@@ -28,7 +27,6 @@ export function MoonPage({
   onFinishBuilding,
   onJumpGate,
   onRefresh,
-  onScan,
   onStartBuilding,
 }: MoonPageProps) {
   const moon = moonState?.moon;
@@ -66,7 +64,6 @@ export function MoonPage({
           moonState={moonState}
           onFinishBuilding={onFinishBuilding}
           onJumpGate={onJumpGate}
-          onScan={onScan}
           onStartBuilding={onStartBuilding}
         />
       ) : (
@@ -87,7 +84,7 @@ function NoMoonGuidance({ reason }: { reason?: string | undefined }) {
           <h3 className="text-base font-semibold text-white">No moon in orbit</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
             Moons form after major battles when debris gathers around a planet. Until one appears here,
-            Lunar Base, Sensor Phalanx, and Jump Gate construction stay unavailable.
+            Lunar Base and Jump Gate construction stay unavailable.
           </p>
           {reason ? <p className="mt-2 text-xs text-slate-500">{reason}</p> : null}
         </div>
@@ -132,7 +129,6 @@ function MoonSystemsPanel({
   moonState,
   onFinishBuilding,
   onJumpGate,
-  onScan,
   onStartBuilding,
 }: {
   action?: MoonPageProps["action"];
@@ -141,11 +137,8 @@ function MoonSystemsPanel({
   moonState?: ChainMoonState | null | undefined;
   onFinishBuilding?: MoonPageProps["onFinishBuilding"];
   onJumpGate?: MoonPageProps["onJumpGate"];
-  onScan?: MoonPageProps["onScan"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
 }) {
-  const [scanGalaxy, setScanGalaxy] = useState("1");
-  const [scanSystem, setScanSystem] = useState("");
   const [jumpDestination, setJumpDestination] = useState("");
   const [jumpSmallCargo, setJumpSmallCargo] = useState("");
   const [jumpLargeCargo, setJumpLargeCargo] = useState("");
@@ -154,10 +147,9 @@ function MoonSystemsPanel({
   return (
     <div className="grid gap-4">
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-3">
           <MoonMetric icon={Moon} label="Diameter" value={moon.diameterKm.toLocaleString() + " km"} />
           <MoonMetric icon={Orbit} label="Fields" value={moon.fields.toLocaleString()} />
-          <MoonMetric icon={RadioTower} label="Phalanx" value={(moonState?.sensorPhalanxRange ?? "0") + " systems"} />
           <MoonMetric icon={Orbit} label="Jump Gate" value={formatMoonReadyAt(moon.jumpGateReadyAt)} />
         </div>
       </section>
@@ -167,7 +159,7 @@ function MoonSystemsPanel({
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-white">Moon Structures</h3>
             <p className="text-xs text-slate-400">
-              Lunar Base expands fields. Sensor Phalanx and Jump Gate support fleet operations.
+              Lunar Base expands fields. Jump Gate supports fleet relocation.
             </p>
           </div>
           <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-[11px] text-slate-400">
@@ -175,7 +167,7 @@ function MoonSystemsPanel({
           </span>
         </div>
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {moonState?.buildings.map((building) => (
             <div className="rounded border border-white/10 bg-black/15 p-3" key={building.key}>
               <div className="flex items-center justify-between gap-2">
@@ -225,23 +217,7 @@ function MoonSystemsPanel({
       </section>
 
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div>
-            <h3 className="text-sm font-semibold text-white">Sensor Phalanx</h3>
-            <div className="mt-3 grid grid-cols-[5rem_1fr_auto] gap-2">
-              <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setScanGalaxy(event.currentTarget.value)} value={scanGalaxy} />
-              <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setScanSystem(event.currentTarget.value)} placeholder="System" value={scanSystem} />
-              <button
-                className="h-9 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!canTransact || pending || !onScan}
-                onClick={() => onScan?.(Number(scanGalaxy), Number(scanSystem))}
-                type="button"
-              >
-                Scan
-              </button>
-            </div>
-          </div>
-
+        <div className="grid gap-3">
           <div>
             <h3 className="text-sm font-semibold text-white">Jump Gate</h3>
             <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
@@ -309,7 +285,6 @@ function resourcesFromChain(resources: ChainMoonState["buildings"][number]["cost
 function moonBuildingLabel(itemId: number | undefined): string {
   return [
     { id: 0, label: "Lunar Base" },
-    { id: 1, label: "Sensor Phalanx" },
     { id: 2, label: "Jump Gate" },
   ].find((building) => building.id === itemId)?.label ?? "Moon building";
 }
