@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
-import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -27,6 +26,11 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         keccak256("veydrift.classic-combat-random-stream.v1");
     uint32 private constant EXACT_RAPIDFIRE_SHOT_LIMIT = 64;
     uint8 private constant MAX_RAPIDFIRE_CHAIN = 64;
+    uint256 private constant TARGET_LANE_STRIDE = 32;
+    uint256 private constant TARGET_LANE_PLANET_SHIP = 0;
+    uint256 private constant TARGET_LANE_DEFENSE = 64;
+    uint256 private constant TARGET_LANE_COUNTERPLAY_SHIP = 128;
+    uint256 private constant TARGET_LANE_ATTACKER_SHIP = 4_096;
 
     struct BattleStats {
         uint256 units;
@@ -46,74 +50,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     }
 
     constructor() VeydriftResourceReserves(address(0)) {}
-
-    function launchInterplanetaryMissileAttack(
-        uint256 originPlanetId,
-        uint256 targetPlanetId,
-        Defense primaryTarget,
-        uint32 quantity
-    ) external {
-        Planet storage origin = _planets[originPlanetId];
-        if (origin.owner == address(0)) revert NoPlanet();
-        if (origin.owner != msg.sender) revert NotPlanetOwner();
-        if (originPlanetId == targetPlanetId) revert SamePlanet();
-        Planet storage target = _planets[targetPlanetId];
-        if (target.owner == address(0)) revert NoPlanet();
-        if (target.owner == msg.sender) revert SelfAttack();
-        (AttackBlockReason reason,) = _attackProtectionPreview(msg.sender, targetPlanetId);
-        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
-        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
-        _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
-        if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
-
-        uint256 range = _interplanetaryMissileRange(msg.sender);
-        if (
-            origin.galaxy != target.galaxy
-                || _systemDistanceForMissiles(origin.system, target.system) > range
-        ) {
-            revert InterplanetaryMissileOutOfRange(origin.system, target.system, range);
-        }
-
-        uint32 available = _defenseCounts[originPlanetId][Defense.InterplanetaryMissile];
-        if (quantity == 0 || available < quantity) revert InvalidQuantity();
-        _defenseCounts[originPlanetId][Defense.InterplanetaryMissile] = available - quantity;
-
-        uint32 antiBallistic = _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile];
-        uint32 intercepted = antiBallistic < quantity ? antiBallistic : quantity;
-        _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile] = antiBallistic - intercepted;
-
-        uint32 hits = quantity - intercepted;
-        uint32 targetDefense = _defenseCounts[targetPlanetId][primaryTarget];
-        uint32 destroyedPrimary = targetDefense < hits ? targetDefense : hits;
-        _defenseCounts[targetPlanetId][primaryTarget] = targetDefense - destroyedPrimary;
-
-        emit InterplanetaryMissileAttack(
-            msg.sender,
-            originPlanetId,
-            targetPlanetId,
-            primaryTarget,
-            quantity,
-            intercepted,
-            hits,
-            destroyedPrimary
-        );
-    }
-
-    function _interplanetaryMissileRange(address attacker) private view returns (uint256) {
-        uint16 impulseDrive = _technologyLevels[attacker][Technology.ImpulseDrive];
-        if (impulseDrive == 0) return 0;
-        return uint256(impulseDrive) * 5 - 1;
-    }
-
-    function _systemDistanceForMissiles(uint16 originSystem, uint16 targetSystem)
-        private
-        pure
-        returns (uint256)
-    {
-        return originSystem > targetSystem
-            ? uint256(originSystem - targetSystem)
-            : uint256(targetSystem - originSystem);
-    }
 
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
@@ -309,6 +245,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         address attackerOwner,
         uint256 hostileMissionId,
         uint256 targetPlanetId,
+        uint256 targetTotal,
+        uint256 targetGroup,
         uint256 seed,
         uint8 round
     ) private returns (Resources memory losses) {
@@ -321,7 +259,17 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 losses = _add(
                     losses,
                     _fireShipAtAttackers(
-                        ships, attackerOwner, ship, count, weapons, seed, round, 1, i
+                        ships,
+                        attackerOwner,
+                        targetTotal,
+                        targetGroup,
+                        ship,
+                        count,
+                        weapons,
+                        seed,
+                        round,
+                        1,
+                        i
                     )
                 );
             }
@@ -336,7 +284,17 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 losses = _add(
                     losses,
                     _fireDefenseAtAttackers(
-                        ships, attackerOwner, defense, count, weapons, seed, round, 2, i
+                        ships,
+                        attackerOwner,
+                        targetTotal,
+                        targetGroup,
+                        defense,
+                        count,
+                        weapons,
+                        seed,
+                        round,
+                        2,
+                        i
                     )
                 );
             }
@@ -359,6 +317,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                             _fireShipAtAttackers(
                                 ships,
                                 attackerOwner,
+                                targetTotal,
+                                targetGroup,
                                 ship,
                                 count,
                                 allyWeapons,
@@ -380,9 +340,54 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
+    function _applyAttackerGroupLosses(
+        uint256 attackMissionId,
+        FleetMission storage mission,
+        uint256 seed,
+        uint8 round
+    ) private returns (Resources memory losses) {
+        uint256 targetTotal = _attackerGroupBattleStats(attackMissionId, mission).units;
+        losses = _applyAttackerLosses(
+            mission.ships,
+            mission.owner,
+            attackMissionId,
+            mission.targetPlanetId,
+            targetTotal,
+            0,
+            seed,
+            round
+        );
+
+        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
+        for (uint256 i = 0; i < linkedMissionIds.length;) {
+            uint256 joinedMissionId = linkedMissionIds[i];
+            FleetMission storage joined = _fleetMissions[joinedMissionId];
+            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
+                losses = _add(
+                    losses,
+                    _applyAttackerLosses(
+                        joined.ships,
+                        joined.owner,
+                        attackMissionId,
+                        mission.targetPlanetId,
+                        targetTotal,
+                        i + 1,
+                        seed,
+                        round
+                    )
+                );
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function _fireShipAtAttackers(
         MissionShips storage targets,
         address targetOwner,
+        uint256 targetTotal,
+        uint256 targetGroup,
         Ship firingShip,
         uint32 firingCount,
         uint16 firingWeapons,
@@ -391,7 +396,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 side,
         uint8 unit
     ) private returns (Resources memory losses) {
-        uint256 targetTotal = _missionShipGroupCount(targets);
         if (targetTotal == 0) return losses;
 
         uint256 attack = _combatScaled(VeydriftCatalog.shipBattleAttack(firingShip), firingWeapons);
@@ -399,6 +403,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             Ship targetShip = Ship(i);
             uint32 targetCount = _missionShipQuantity(targets, targetShip);
             if (targetCount != 0) {
+                uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, targetGroup, i);
                 uint256 shots = _shipTargetShots(
                     firingCount,
                     VeydriftCatalog.shipRapidfireAgainstShip(firingShip, targetShip),
@@ -408,10 +413,18 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     round,
                     side,
                     unit,
-                    i
+                    targetLane
                 );
                 uint32 lost = _deterministicShipLossCount(
-                    targetShip, targetCount, shots, attack, targetOwner, seed, round, side, i
+                    targetShip,
+                    targetCount,
+                    shots,
+                    attack,
+                    targetOwner,
+                    seed,
+                    round,
+                    side,
+                    targetLane
                 );
                 if (lost != 0) {
                     _setMissionShipQuantity(targets, targetShip, targetCount - lost);
@@ -427,6 +440,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     function _fireDefenseAtAttackers(
         MissionShips storage targets,
         address targetOwner,
+        uint256 targetTotal,
+        uint256 targetGroup,
         Defense firingDefense,
         uint32 firingCount,
         uint16 firingWeapons,
@@ -435,7 +450,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 side,
         uint8 unit
     ) private returns (Resources memory losses) {
-        uint256 targetTotal = _missionShipGroupCount(targets);
         if (targetTotal == 0) return losses;
 
         uint256 attack =
@@ -444,11 +458,20 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             Ship targetShip = Ship(i);
             uint32 targetCount = _missionShipQuantity(targets, targetShip);
             if (targetCount != 0) {
+                uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, targetGroup, i);
                 uint256 shots = _distributedTargetShots(
-                    firingCount, targetCount, targetTotal, seed, round, side, unit, i
+                    firingCount, targetCount, targetTotal, seed, round, side, unit, targetLane
                 );
                 uint32 lost = _deterministicShipLossCount(
-                    targetShip, targetCount, shots, attack, targetOwner, seed, round, side, i
+                    targetShip,
+                    targetCount,
+                    shots,
+                    attack,
+                    targetOwner,
+                    seed,
+                    round,
+                    side,
+                    targetLane
                 );
                 if (lost != 0) {
                     _setMissionShipQuantity(targets, targetShip, targetCount - lost);
@@ -480,6 +503,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             Ship ship = Ship(i);
             uint32 count = _shipCounts[planetId][ship];
             if (count != 0) {
+                uint256 targetLane = _targetLane(TARGET_LANE_PLANET_SHIP, 0, i);
                 uint256 shots = _shipTargetShots(
                     firingCount,
                     VeydriftCatalog.shipRapidfireAgainstShip(firingShip, ship),
@@ -489,10 +513,10 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     round,
                     side,
                     unit,
-                    i
+                    targetLane
                 );
                 uint32 lost = _deterministicPlanetShipLossCount(
-                    planetId, ship, count, shots, attack, seed, round, side, i
+                    planetId, ship, count, shots, attack, seed, round, side, targetLane
                 );
                 if (lost != 0) {
                     _shipCounts[planetId][ship] = count - lost;
@@ -508,6 +532,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             Defense defense = Defense(i);
             uint32 count = _defenseCounts[planetId][defense];
             if (count != 0) {
+                uint256 targetLane = _targetLane(TARGET_LANE_DEFENSE, 0, i);
                 uint256 shots = _shipTargetShots(
                     firingCount,
                     VeydriftCatalog.shipRapidfireAgainstDefense(firingShip, defense),
@@ -517,10 +542,10 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     round,
                     side,
                     unit,
-                    i
+                    targetLane
                 );
                 uint32 lost = _deterministicDefenseLossCount(
-                    planetId, defense, count, shots, attack, seed, round, side, i
+                    planetId, defense, count, shots, attack, seed, round, side, targetLane
                 );
                 if (lost != 0) {
                     _defenseCounts[planetId][defense] = count - lost;
@@ -541,6 +566,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     Ship targetShip = Ship(shipId);
                     uint32 count = _missionShipQuantity(counterplay.ships, targetShip);
                     if (count != 0) {
+                        uint256 targetLane = _targetLane(TARGET_LANE_COUNTERPLAY_SHIP, i, shipId);
                         uint256 shots = _shipTargetShots(
                             firingCount,
                             VeydriftCatalog.shipRapidfireAgainstShip(firingShip, targetShip),
@@ -550,7 +576,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                             round,
                             side,
                             unit,
-                            shipId
+                            targetLane
                         );
                         uint32 lost = _deterministicShipLossCount(
                             targetShip,
@@ -561,7 +587,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                             seed,
                             round,
                             side,
-                            shipId
+                            targetLane
                         );
                         if (lost != 0) {
                             _setMissionShipQuantity(counterplay.ships, targetShip, count - lost);
@@ -573,39 +599,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                         ++shipId;
                     }
                 }
-            }
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    function _applyAttackerGroupLosses(
-        uint256 attackMissionId,
-        FleetMission storage mission,
-        uint256 seed,
-        uint8 round
-    ) private returns (Resources memory losses) {
-        losses = _applyAttackerLosses(
-            mission.ships, mission.owner, attackMissionId, mission.targetPlanetId, seed, round
-        );
-
-        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
-        for (uint256 i = 0; i < linkedMissionIds.length;) {
-            uint256 joinedMissionId = linkedMissionIds[i];
-            FleetMission storage joined = _fleetMissions[joinedMissionId];
-            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
-                losses = _add(
-                    losses,
-                    _applyAttackerLosses(
-                        joined.ships,
-                        joined.owner,
-                        attackMissionId,
-                        mission.targetPlanetId,
-                        seed,
-                        round
-                    )
-                );
             }
             unchecked {
                 ++i;
@@ -694,7 +687,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 round,
         uint8 side,
         uint8 firingUnit,
-        uint8 targetUnit
+        uint256 targetUnit
     ) private pure returns (uint256 shots) {
         shots = _distributedTargetShots(
             firingCount, targetCount, targetTotal, seed, round, side, firingUnit, targetUnit
@@ -714,7 +707,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 round,
         uint8 side,
         uint8 firingUnit,
-        uint8 targetUnit
+        uint256 targetUnit
     ) private pure returns (uint256 assigned) {
         if (shots == 0 || targetCount == 0 || targetTotal == 0) return 0;
         uint256 weightedShots = shots * targetCount;
@@ -731,8 +724,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 seed,
         uint8 round,
         uint8 side,
-        uint8 firingUnit,
-        uint8 targetUnit,
+        uint256 firingUnit,
+        uint256 targetUnit,
         uint256 stream
     ) private pure returns (uint256) {
         return uint256(
@@ -751,7 +744,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 seed,
         uint8 round,
         uint8 side,
-        uint8 unit
+        uint256 unit
     ) private view returns (uint32) {
         address owner = _planets[planetId].owner;
         return
@@ -767,7 +760,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 seed,
         uint8 round,
         uint8 side,
-        uint8 unit
+        uint256 unit
     ) private view returns (uint32) {
         uint16 shielding = _technologyLevels[owner][Technology.Shielding];
         uint16 armor = _technologyLevels[owner][Technology.Armor];
@@ -793,7 +786,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 seed,
         uint8 round,
         uint8 side,
-        uint8 unit
+        uint256 unit
     ) private view returns (uint32) {
         address owner = _planets[planetId].owner;
         uint16 shielding = _technologyLevels[owner][Technology.Shielding];
@@ -820,7 +813,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 seed,
         uint8 round,
         uint8 side,
-        uint8 unit
+        uint256 unit
     ) private pure returns (uint32) {
         if (count == 0 || shots == 0 || attack == 0 || hull == 0) return 0;
 
@@ -850,7 +843,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 round,
         uint8 side,
         uint8 firingUnit,
-        uint8 targetUnit
+        uint256 targetUnit
     ) private pure returns (uint256 extraShots) {
         if (selectedShots == 0 || rapidfire <= 1) return 0;
         if (selectedShots <= EXACT_RAPIDFIRE_SHOT_LIMIT) {
@@ -889,8 +882,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 seed,
         uint8 round,
         uint8 side,
-        uint8 unit,
-        uint8 targetUnit,
+        uint256 unit,
+        uint256 targetUnit,
         uint256 lane
     ) private pure returns (uint256 sampled) {
         if (trials == 0 || chanceBps == 0) return 0;
@@ -901,6 +894,10 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (_combatStream(seed, round, side, unit, targetUnit, lane) % BPS < scaled % BPS) {
             sampled += 1;
         }
+    }
+
+    function _targetLane(uint256 base, uint256 group, uint8 unit) private pure returns (uint256) {
+        return base + group * TARGET_LANE_STRIDE + unit;
     }
 
     function _missionShipGroupCount(MissionShips storage ships)

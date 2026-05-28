@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -2925,6 +2926,53 @@ contract VeydriftGameTest is Test {
         assertLt(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 100);
     }
 
+    function testAcsAttackDefenderFireDoesNotDuplicateAcrossJoinedAttackGroups() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        address ally = address(0xA77B);
+        vm.deal(ally, 1 ether);
+        vm.prank(ally);
+        uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 9, 499, 15);
+        _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
+        _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(allyPlanetId, Ship.SmallCargo, 1);
+        _setDefenseCount(targetPlanetId, Defense.PlasmaTurret, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(allyPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            904
+        );
+        vm.prank(ally);
+        uint256 joinedMissionId = game.joinAttackMission(
+            allyPlanetId,
+            attackMissionId,
+            targetPlanetId,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 904);
+        vm.recordLogs();
+        game.resolveFleetMission(attackMissionId);
+
+        assertGt(_attackBattleRoundsFromRecordedLogs(attackMissionId), 1);
+
+        (VeydriftGameStorage.FleetMissionStatus attackStatus,,,) = _fleetMission(attackMissionId);
+        (VeydriftGameStorage.FleetMissionStatus joinedStatus,,,) = _fleetMission(joinedMissionId);
+        assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(uint8(joinedStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+    }
+
     function testAttackBattleDefenderWinDestroysAttackerFleet() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
@@ -4180,6 +4228,33 @@ contract VeydriftGameTest is Test {
         )
     {
         (status,,,,,, arrivalAt, returnAt,, cargo,) = game.fleetMission(missionId);
+    }
+
+    function _attackBattleRoundsFromRecordedLogs(uint256 missionId)
+        internal
+        view
+        returns (uint8 rounds)
+    {
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 battleResolvedTopic = keccak256(
+            "AttackBattleResolved(uint256,address,uint256,uint8,uint8,uint256,uint128,uint128,uint128)"
+        );
+        for (uint256 i = 0; i < entries.length;) {
+            if (
+                entries[i].topics.length != 0 && entries[i].topics[0] == battleResolvedTopic
+                    && uint256(entries[i].topics[1]) == missionId
+            ) {
+                (, rounds,,,,) = abi.decode(
+                    entries[i].data,
+                    (VeydriftGameStorage.BattleOutcome, uint8, uint256, uint128, uint128, uint128)
+                );
+                return rounds;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        revert("AttackBattleResolved not recorded");
     }
 
     function _fulfillAttackBattleRandomness(uint256 missionId, uint256 randomWord) internal {
