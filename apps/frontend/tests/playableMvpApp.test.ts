@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { infrastructureActionNoticeFor, topBarEnergyFor } from "../src/PlayableMvpApp";
+import { infrastructureActionNoticeFor, loadWalletPlanetSyncSnapshot, topBarEnergyFor } from "../src/PlayableMvpApp";
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { ChainInfrastructureState } from "../src/walletFlow";
 
@@ -67,6 +67,133 @@ describe("Playable MVP app display helpers", () => {
       settledState,
     })).toBeUndefined();
   });
+
+  test("hydrates indexed planet state even when the settlement read fails", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const requestedPaths: string[] = [];
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      requestedPaths.push(`${url.pathname}${url.search}`);
+
+      if (url.pathname.endsWith("/settlement")) {
+        return Promise.resolve(Response.json({ error: "wallet eth_call failed" }, { status: 503 }));
+      }
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          planets: [indexedPlanet(wallet)],
+        }));
+      }
+
+      if (url.pathname.endsWith("/queues")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          building: null,
+          defense: null,
+          ship: null,
+          research: null,
+        }));
+      }
+
+      if (url.pathname.endsWith("/fleet-visibility")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          incoming: [],
+          outgoing: [],
+          returning: [],
+          joinableAttacks: [],
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
+
+      expect(snapshot.settlement).toMatchObject({
+        wallet,
+        hasFirstPlanet: true,
+        homePlanetId: "7",
+        planet: {
+          planetId: "7",
+          resources: {
+            metal: "5000",
+            crystal: "4900",
+            deuterium: "4800",
+          },
+        },
+      });
+      expect(snapshot.planetsResponse.planets).toHaveLength(1);
+      expect(requestedPaths).toContain(`/wallet/${wallet}/settlement`);
+      expect(requestedPaths).toContain(`/wallet/${wallet}/planets`);
+      expect(requestedPaths).toContain(`/wallet/${wallet}/queues`);
+      expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("does not wait for a pending settlement read before showing indexed planet state", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+
+      if (url.pathname.endsWith("/settlement")) {
+        return new Promise<Response>(() => undefined);
+      }
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          planets: [indexedPlanet(wallet)],
+        }));
+      }
+
+      if (url.pathname.endsWith("/queues")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          building: null,
+          defense: null,
+          ship: null,
+          research: null,
+        }));
+      }
+
+      if (url.pathname.endsWith("/fleet-visibility")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          incoming: [],
+          outgoing: [],
+          returning: [],
+          joinableAttacks: [],
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
+
+      expect(snapshot.settlement.homePlanetId).toBe("7");
+      expect(snapshot.settlement.planet?.resources.metal).toBe("5000");
+      expect(snapshot.planetsResponse.planets).toHaveLength(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 function infrastructureState({
@@ -82,5 +209,47 @@ function infrastructureState({
     storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
     buildings: [],
     queue: null,
+  };
+}
+
+function indexedPlanet(wallet: string) {
+  return {
+    planetId: "7",
+    owner: wallet,
+    name: null,
+    galaxy: 2,
+    system: 44,
+    position: 9,
+    fields: 211,
+    temperature: -8,
+    metalMultiplierBps: 10_000,
+    crystalMultiplierBps: 10_000,
+    deuteriumMultiplierBps: 10_000,
+    lastSettledAt: "1770000000",
+    resources: {
+      metal: "5000",
+      crystal: "4900",
+      deuterium: "4800",
+    },
+    coordinates: "2:44:9",
+    fieldsUsed: 3,
+    fieldsCapacity: 211,
+    isHomePlanet: true,
+    keyLevels: {
+      metalMine: 1,
+      crystalMine: 1,
+      deuteriumSynthesizer: 0,
+      solarPlant: 1,
+      roboticsFactory: 0,
+      shipyard: 0,
+      researchLab: 0,
+      terraformer: 0,
+    },
+    moon: null,
+    queues: {
+      building: null,
+      defense: null,
+      ship: null,
+    },
   };
 }

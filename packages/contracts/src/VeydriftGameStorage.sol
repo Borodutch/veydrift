@@ -355,7 +355,11 @@ abstract contract VeydriftGameStorage {
         bytes32 planetSeed
     );
     event PlanetSettled(
-        uint256 indexed planetId, uint128 metal, uint128 crystal, uint128 deuterium
+        uint256 indexed planetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium,
+        uint64 settledAt
     );
     event BuildingStarted(
         uint256 indexed planetId,

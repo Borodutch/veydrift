@@ -7,6 +7,7 @@ import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
+const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -165,6 +166,46 @@ describe("SettlementIndexer", () => {
       snapshot: {
         indexedEventLogs: 1,
         indexedPlanets: 1
+      }
+    });
+  });
+
+  test("applies collect resource settlement logs to indexed wallet state", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    expect(indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xcollect",
+      logIndex: "0x0",
+      topics: [
+        planetSettledTopic,
+        `0x${(7n).toString(16).padStart(64, "0")}`
+      ],
+      data: abiWords(6000n, 5900n, 5800n, 1770000600n)
+    })).toMatchObject({
+      applied: true,
+      duplicate: false,
+      snapshot: {
+        indexedEventLogs: 1,
+        indexedPlanets: 1,
+        latestIndexedBlock: "128"
+      }
+    });
+
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      planetId: planet.planetId,
+      transactionHash: "0xcollect",
+      blockNumber: "128",
+      lastSettledAt: "1770000600",
+      resources: {
+        metal: "6000",
+        crystal: "5900",
+        deuterium: "5800"
       }
     });
   });
