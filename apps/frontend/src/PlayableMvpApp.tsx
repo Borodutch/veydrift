@@ -287,18 +287,52 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
   };
 }
 
-async function loadWalletPlanetSyncSnapshot(
+export async function loadWalletPlanetSyncSnapshot(
   apiBaseUrl: string,
   account: string,
   activePlanetId: string | undefined,
 ): Promise<WalletPlanetSyncSnapshot> {
-  const settlement = await fetchWalletSettlement(apiBaseUrl, account);
+  const settlementResultPromise = settlePromise(fetchWalletSettlement(apiBaseUrl, account));
   const [planetsResult, queuesResult, visibilityResult] = await Promise.allSettled([
     fetchWalletPlanets(apiBaseUrl, account),
     fetchWalletQueues(apiBaseUrl, account, activePlanetId),
     fetchFleetMissionVisibility(apiBaseUrl, account),
   ]);
 
+  const indexedSettlement = settlementFromIndexedPlanets(
+    account,
+    planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
+  );
+  if (indexedSettlement) {
+    return walletPlanetSyncSnapshotFromResults(
+      account,
+      indexedSettlement,
+      planetsResult,
+      queuesResult,
+      visibilityResult,
+    );
+  }
+
+  const settlementResult = await settlementResultPromise;
+  const settlement = settlementResult.status === "fulfilled"
+    ? settlementResult.value
+    : undefined;
+  if (!settlement) {
+    throw settlementResult.status === "rejected"
+      ? settlementResult.reason
+      : new Error("Settlement state could not be loaded.");
+  }
+
+  return walletPlanetSyncSnapshotFromResults(account, settlement, planetsResult, queuesResult, visibilityResult);
+}
+
+function walletPlanetSyncSnapshotFromResults(
+  account: string,
+  settlement: WalletSettlementResponse,
+  planetsResult: PromiseSettledResult<Awaited<ReturnType<typeof fetchWalletPlanets>>>,
+  queuesResult: PromiseSettledResult<PlayerQueuesResponse>,
+  visibilityResult: PromiseSettledResult<FleetMissionVisibilityResponse>,
+): WalletPlanetSyncSnapshot {
   const planetsResponse = planetsResult.status === "fulfilled"
     ? planetsResult.value
     : {
@@ -318,6 +352,29 @@ async function loadWalletPlanetSyncSnapshot(
     planetsResponse,
     queues,
     settlement,
+  };
+}
+
+function settlePromise<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return promise.then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason) => ({ status: "rejected", reason }),
+  );
+}
+
+function settlementFromIndexedPlanets(
+  account: string,
+  planetsResponse: Awaited<ReturnType<typeof fetchWalletPlanets>> | undefined,
+): WalletSettlementResponse | undefined {
+  const selectedPlanet = planetsResponse?.planets.find((planet) => planet.planetId === planetsResponse.homePlanetId || planet.isHomePlanet)
+    ?? planetsResponse?.planets[0];
+  if (!selectedPlanet) return undefined;
+
+  return {
+    wallet: planetsResponse?.wallet ?? account,
+    hasFirstPlanet: true,
+    homePlanetId: planetsResponse?.homePlanetId ?? selectedPlanet.planetId,
+    planet: selectedPlanet,
   };
 }
 
