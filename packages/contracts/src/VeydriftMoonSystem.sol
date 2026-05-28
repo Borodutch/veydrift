@@ -19,26 +19,6 @@ interface IVeydriftMoonGame {
         VeydriftGameStorage.MissionShips calldata ships
     ) external;
     function technologyLevel(address player, Technology technology) external view returns (uint16);
-    function phalanxMissionIds(uint16 galaxy, uint16 system, uint256 maxResults)
-        external
-        view
-        returns (uint256[] memory);
-    function fleetMission(uint256 missionId)
-        external
-        view
-        returns (
-            VeydriftGameStorage.FleetMissionStatus status,
-            VeydriftGameStorage.FleetMissionType missionType,
-            address owner,
-            uint256 originPlanetId,
-            uint256 targetPlanetId,
-            uint64 departureAt,
-            uint64 arrivalAt,
-            uint64 returnAt,
-            uint128 fuelCost,
-            VeydriftGameStorage.Resources memory cargo,
-            uint256 randomnessRequestId
-        );
 }
 
 interface IVeydriftRandomnessEngine {
@@ -56,8 +36,6 @@ contract VeydriftMoonSystem {
     uint16 public constant MAX_LEVEL = 50;
     uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
     uint32 public constant MIN_QUEUE_SECONDS = 1;
-    uint16 public constant MAX_GALAXY = 9;
-    uint16 public constant MAX_SYSTEM = 499;
     bytes32 public constant MOON_SEED_DOMAIN = keccak256("veydrift.moon.v1");
     bytes32 public constant MOON_CHANCE_DOMAIN = keccak256("veydrift.moon-chance.v1");
     bytes32 public constant MOON_DESTRUCTION_DOMAIN = keccak256("veydrift.moon-destruction.v1");
@@ -120,18 +98,6 @@ contract VeydriftMoonSystem {
         uint64 finalizedAt;
     }
 
-    struct PhalanxScanResult {
-        uint256 missionId;
-        VeydriftGameStorage.FleetMissionStatus status;
-        VeydriftGameStorage.FleetMissionType missionType;
-        address owner;
-        uint256 originPlanetId;
-        uint256 targetPlanetId;
-        uint64 departureAt;
-        uint64 arrivalAt;
-        uint64 returnAt;
-    }
-
     IVeydriftMoonGame public immutable game;
     IVeydriftRandomnessEngine public immutable randomness;
     address public owner;
@@ -153,7 +119,6 @@ contract VeydriftMoonSystem {
     error ConstructionActive();
     error ConstructionInactive();
     error ConstructionNotReady(uint64 readyAt);
-    error InvalidCoordinates();
     error InvalidQuantity();
     error LevelTooHigh();
     error MissingDependency(bytes32 dependency);
@@ -162,7 +127,6 @@ contract VeydriftMoonSystem {
     error NoMoon(uint256 planetId);
     error NoPlanet();
     error NotMoonOwner();
-    error SensorPhalanxOutOfRange(uint16 originSystem, uint16 targetSystem, uint256 range);
     error JumpGateMissing(uint256 planetId);
     error JumpGateNotReady(uint256 planetId, uint64 readyAt);
     error MoonChanceAlreadyRecorded(uint256 battleId, uint256 targetPlanetId);
@@ -197,9 +161,6 @@ contract VeydriftMoonSystem {
     );
     event MoonBuildingCompleted(
         uint256 indexed planetId, MoonBuilding indexed building, uint16 level
-    );
-    event SensorPhalanxScanned(
-        uint256 indexed moonPlanetId, uint16 indexed galaxy, uint16 indexed system, uint256 range
     );
     event JumpGateJumped(
         address indexed player,
@@ -529,44 +490,6 @@ contract VeydriftMoonSystem {
         emit MoonBuildingCompleted(planetId, construction.building, construction.targetLevel);
     }
 
-    function scanSystem(uint256 moonPlanetId, uint16 galaxy, uint16 system) external {
-        uint256 range = _requireScanRange(moonPlanetId, galaxy, system);
-
-        emit SensorPhalanxScanned(moonPlanetId, galaxy, system, range);
-    }
-
-    function scanSystemMissions(
-        uint256 moonPlanetId,
-        uint16 galaxy,
-        uint16 system,
-        uint256 maxResults
-    ) external view returns (PhalanxScanResult[] memory results) {
-        if (maxResults == 0) revert InvalidQuantity();
-        _requireScanRange(moonPlanetId, galaxy, system);
-
-        uint256[] memory missionIds = game.phalanxMissionIds(galaxy, system, maxResults);
-        PhalanxScanResult[] memory buffer = new PhalanxScanResult[](missionIds.length);
-        uint256 count;
-        for (uint256 index = 0; index < missionIds.length;) {
-            uint256 missionId = missionIds[index];
-            PhalanxScanResult memory scan = _phalanxScanResult(missionId);
-            if (_isPhalanxVisible(scan.status) && _missionTouchesSystem(scan, galaxy, system)) {
-                buffer[count++] = scan;
-            }
-            unchecked {
-                ++index;
-            }
-        }
-
-        results = new PhalanxScanResult[](count);
-        for (uint256 i = 0; i < count;) {
-            results[i] = buffer[i];
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
     function jumpGateJump(uint256 originMoonPlanetId, uint256 destinationMoonPlanetId) external {
         _prepareJumpGateJump(originMoonPlanetId, destinationMoonPlanetId);
     }
@@ -716,77 +639,6 @@ contract VeydriftMoonSystem {
             building, _moonBuildingLevels[planetId][building]
         );
         return VeydriftGameStorage.Resources(metal, crystal, deuterium);
-    }
-
-    function sensorPhalanxRange(uint256 planetId) public view returns (uint256) {
-        uint256 level = _moonBuildingLevels[planetId][MoonBuilding.SensorPhalanx];
-        if (level == 0) return 0;
-        return (level * level) - 1;
-    }
-
-    function _requireScanRange(uint256 moonPlanetId, uint16 galaxy, uint16 system)
-        private
-        view
-        returns (uint256 range)
-    {
-        _requireMoonOwner(moonPlanetId);
-        VeydriftGameStorage.Planet memory origin = game.planet(moonPlanetId);
-        validateSystem(galaxy, system);
-        range = sensorPhalanxRange(moonPlanetId);
-        if (range == 0 || galaxy != origin.galaxy || _systemDistance(origin.system, system) > range)
-        {
-            revert SensorPhalanxOutOfRange(origin.system, system, range);
-        }
-    }
-
-    function _phalanxScanResult(uint256 missionId)
-        private
-        view
-        returns (PhalanxScanResult memory scan)
-    {
-        (
-            VeydriftGameStorage.FleetMissionStatus status,
-            VeydriftGameStorage.FleetMissionType missionType,
-            address owner_,
-            uint256 originPlanetId,
-            uint256 targetPlanetId,
-            uint64 departureAt,
-            uint64 arrivalAt,
-            uint64 returnAt,,,
-        ) = game.fleetMission(missionId);
-
-        return PhalanxScanResult({
-            missionId: missionId,
-            status: status,
-            missionType: missionType,
-            owner: owner_,
-            originPlanetId: originPlanetId,
-            targetPlanetId: targetPlanetId,
-            departureAt: departureAt,
-            arrivalAt: arrivalAt,
-            returnAt: returnAt
-        });
-    }
-
-    function _missionTouchesSystem(PhalanxScanResult memory scan, uint16 galaxy, uint16 system)
-        private
-        view
-        returns (bool)
-    {
-        VeydriftGameStorage.Planet memory origin = game.planet(scan.originPlanetId);
-        if (origin.galaxy == galaxy && origin.system == system) return true;
-        VeydriftGameStorage.Planet memory target = game.planet(scan.targetPlanetId);
-        return target.galaxy == galaxy && target.system == system;
-    }
-
-    function _isPhalanxVisible(VeydriftGameStorage.FleetMissionStatus status)
-        private
-        pure
-        returns (bool)
-    {
-        return status == VeydriftGameStorage.FleetMissionStatus.Outbound
-            || status == VeydriftGameStorage.FleetMissionStatus.Returning
-            || status == VeydriftGameStorage.FleetMissionStatus.Recalled;
     }
 
     function moonChanceBps(uint128 metalDebris, uint128 crystalDebris)
@@ -1049,16 +901,6 @@ contract VeydriftMoonSystem {
         }
         uint256 roundedDown = value / result;
         return result < roundedDown ? result : roundedDown;
-    }
-
-    function validateSystem(uint16 galaxy, uint16 system) private pure {
-        if (galaxy == 0 || galaxy > MAX_GALAXY || system == 0 || system > MAX_SYSTEM) {
-            revert InvalidCoordinates();
-        }
-    }
-
-    function _systemDistance(uint16 left, uint16 right) private pure returns (uint256) {
-        return left > right ? left - right : right - left;
     }
 
     function _currentTimestamp() private view returns (uint64) {
