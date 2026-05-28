@@ -14,7 +14,6 @@ library VeydriftCombatReferenceSimulator {
     uint16 private constant COMBAT_DEBRIS_BPS = 3_000;
     bytes32 private constant COMBAT_STREAM_DOMAIN =
         keccak256("veydrift.classic-combat-random-stream.v1");
-    uint32 private constant EXACT_RAPIDFIRE_SHOT_LIMIT = 64;
     uint8 private constant MAX_RAPIDFIRE_CHAIN = 64;
     uint256 private constant TARGET_LANE_STRIDE = 32;
     uint256 private constant TARGET_LANE_PLANET_SHIP = 0;
@@ -177,6 +176,7 @@ library VeydriftCombatReferenceSimulator {
                         targetGroup,
                         Ship(i),
                         count,
+                        _attackerExtraShots(result, Ship(i), count, targetTotal, seed, round, 1, i),
                         counterplayTech,
                         targetTech,
                         seed,
@@ -225,6 +225,7 @@ library VeydriftCombatReferenceSimulator {
                         targetGroup,
                         Ship(i),
                         count,
+                        _attackerExtraShots(result, Ship(i), count, targetTotal, seed, round, 3, i),
                         firingTech,
                         targetTech,
                         seed,
@@ -246,6 +247,7 @@ library VeydriftCombatReferenceSimulator {
         uint256 targetGroup,
         Ship firingShip,
         uint32 firingCount,
+        uint256 extraShots,
         CombatTech memory firingTech,
         CombatTech memory targetTech,
         uint256 seed,
@@ -260,16 +262,11 @@ library VeydriftCombatReferenceSimulator {
             uint32 targetCount = targets[i];
             if (targetCount != 0) {
                 uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, targetGroup, i);
-                uint256 shots = _shipTargetShots(
-                    firingCount,
-                    VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(i)),
-                    targetCount,
-                    targetTotal,
-                    seed,
-                    round,
-                    side,
-                    unit,
-                    targetLane
+                uint256 shots = _distributedTargetShots(
+                    firingCount, targetCount, targetTotal, seed, round, side, unit, targetLane
+                )
+                + _distributedTargetShots(
+                    extraShots, targetCount, targetTotal, seed, round, side, unit, targetLane
                 );
                 uint32 lost = _shipLossCount(
                     Ship(i), targetCount, shots, attack, targetTech, seed, round, side, targetLane
@@ -362,26 +359,82 @@ library VeydriftCombatReferenceSimulator {
 
         uint256 attack =
             _combatScaled(VeydriftCatalog.shipBattleAttack(firingShip), firingTech.weapons);
+        uint256 extraShots =
+            _defenderExtraShots(result, firingShip, firingCount, seed, round, side, unit);
+        losses = _add(
+            losses,
+            _fireAtDefenderShips(
+                result.defenderShips,
+                TARGET_LANE_PLANET_SHIP,
+                firingCount,
+                extraShots,
+                targetTotal,
+                attack,
+                targetTech,
+                seed,
+                round,
+                side,
+                unit
+            )
+        );
+        _fireAtDefenses(
+            result.defenderDefenses,
+            firingCount,
+            extraShots,
+            targetTotal,
+            attack,
+            targetTech,
+            seed,
+            round,
+            side,
+            unit
+        );
+        losses = _add(
+            losses,
+            _fireAtDefenderShips(
+                result.counterplayShips,
+                TARGET_LANE_COUNTERPLAY_SHIP,
+                firingCount,
+                extraShots,
+                targetTotal,
+                attack,
+                targetTech,
+                seed,
+                round,
+                side,
+                unit
+            )
+        );
+    }
+
+    function _fireAtDefenderShips(
+        uint32[16] memory targets,
+        uint256 laneBase,
+        uint32 firingCount,
+        uint256 extraShots,
+        uint256 targetTotal,
+        uint256 attack,
+        CombatTech memory targetTech,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private pure returns (VeydriftGameStorage.Resources memory losses) {
         for (uint8 i = 0; i < 16;) {
-            uint32 count = result.defenderShips[i];
+            uint32 count = targets[i];
             if (count != 0) {
-                uint256 targetLane = _targetLane(TARGET_LANE_PLANET_SHIP, 0, i);
-                uint256 shots = _shipTargetShots(
-                    firingCount,
-                    VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(i)),
-                    count,
-                    targetTotal,
-                    seed,
-                    round,
-                    side,
-                    unit,
-                    targetLane
+                uint256 targetLane = _targetLane(laneBase, 0, i);
+                uint256 shots = _distributedTargetShots(
+                    firingCount, count, targetTotal, seed, round, side, unit, targetLane
+                )
+                + _distributedTargetShots(
+                    extraShots, count, targetTotal, seed, round, side, unit, targetLane
                 );
                 uint32 lost = _shipLossCount(
                     Ship(i), count, shots, attack, targetTech, seed, round, side, targetLane
                 );
                 if (lost != 0) {
-                    result.defenderShips[i] = count - lost;
+                    targets[i] = count - lost;
                     losses = _add(losses, _multiply(_shipCost(Ship(i)), lost));
                 }
             }
@@ -389,53 +442,35 @@ library VeydriftCombatReferenceSimulator {
                 ++i;
             }
         }
+    }
+
+    function _fireAtDefenses(
+        uint32[8] memory targets,
+        uint32 firingCount,
+        uint256 extraShots,
+        uint256 targetTotal,
+        uint256 attack,
+        CombatTech memory targetTech,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private pure {
         for (uint8 i = 0; i < 8;) {
-            uint32 count = result.defenderDefenses[i];
+            uint32 count = targets[i];
             if (count != 0) {
                 uint256 targetLane = _targetLane(TARGET_LANE_DEFENSE, 0, i);
-                uint256 shots = _shipTargetShots(
-                    firingCount,
-                    VeydriftCatalog.shipRapidfireAgainstDefense(firingShip, Defense(i)),
-                    count,
-                    targetTotal,
-                    seed,
-                    round,
-                    side,
-                    unit,
-                    targetLane
+                uint256 shots = _distributedTargetShots(
+                    firingCount, count, targetTotal, seed, round, side, unit, targetLane
+                )
+                + _distributedTargetShots(
+                    extraShots, count, targetTotal, seed, round, side, unit, targetLane
                 );
                 uint32 lost = _defenseLossCount(
                     Defense(i), count, shots, attack, targetTech, seed, round, side, targetLane
                 );
                 if (lost != 0) {
-                    result.defenderDefenses[i] = count - lost;
-                }
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        for (uint8 i = 0; i < 16;) {
-            uint32 count = result.counterplayShips[i];
-            if (count != 0) {
-                uint256 targetLane = _targetLane(TARGET_LANE_COUNTERPLAY_SHIP, 0, i);
-                uint256 shots = _shipTargetShots(
-                    firingCount,
-                    VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(i)),
-                    count,
-                    targetTotal,
-                    seed,
-                    round,
-                    side,
-                    unit,
-                    targetLane
-                );
-                uint32 lost = _shipLossCount(
-                    Ship(i), count, shots, attack, targetTech, seed, round, side, targetLane
-                );
-                if (lost != 0) {
-                    result.counterplayShips[i] = count - lost;
-                    losses = _add(losses, _multiply(_shipCost(Ship(i)), lost));
+                    targets[i] = count - lost;
                 }
             }
             unchecked {
@@ -524,24 +559,182 @@ library VeydriftCombatReferenceSimulator {
         return sampled > targeted ? uint32(targeted) : uint32(sampled);
     }
 
-    function _shipTargetShots(
-        uint32 firingCount,
-        uint8 rapidfire,
-        uint32 targetCount,
+    function _attackerExtraShots(
+        BattleResult memory result,
+        Ship firingShip,
+        uint256 shots,
+        uint256 targetTotal,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit
+    ) private pure returns (uint256 extraShots) {
+        uint256 incoming = shots;
+        for (uint8 chain = 0; chain < MAX_RAPIDFIRE_CHAIN;) {
+            uint256 generated = _shipExtraShots(
+                result.attackerShips,
+                TARGET_LANE_ATTACKER_SHIP,
+                0,
+                firingShip,
+                incoming,
+                targetTotal,
+                seed,
+                round,
+                side,
+                firingUnit,
+                chain
+            )
+            + _shipExtraShots(
+                result.joinedAttackerShips,
+                TARGET_LANE_ATTACKER_SHIP,
+                1,
+                firingShip,
+                incoming,
+                targetTotal,
+                seed,
+                round,
+                side,
+                firingUnit,
+                chain
+            );
+            if (generated == 0) return extraShots;
+            extraShots += generated;
+            incoming = generated;
+            unchecked {
+                ++chain;
+            }
+        }
+    }
+
+    function _defenderExtraShots(
+        BattleResult memory result,
+        Ship firingShip,
+        uint256 shots,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit
+    ) private pure returns (uint256 extraShots) {
+        uint256 targetTotal = _defenderUnitTotal(result);
+        uint256 incoming = shots;
+        for (uint8 chain = 0; chain < MAX_RAPIDFIRE_CHAIN;) {
+            uint256 generated = _shipExtraShots(
+                result.defenderShips,
+                TARGET_LANE_PLANET_SHIP,
+                0,
+                firingShip,
+                incoming,
+                targetTotal,
+                seed,
+                round,
+                side,
+                firingUnit,
+                chain
+            );
+            for (uint8 i = 0; i < 8;) {
+                generated += _unitExtraShots(
+                    result.defenderDefenses[i],
+                    VeydriftCatalog.shipRapidfireAgainstDefense(firingShip, Defense(i)),
+                    incoming,
+                    targetTotal,
+                    seed,
+                    round,
+                    side,
+                    firingUnit,
+                    _targetLane(TARGET_LANE_DEFENSE, 0, i),
+                    chain
+                );
+                unchecked {
+                    ++i;
+                }
+            }
+            generated += _shipExtraShots(
+                result.counterplayShips,
+                TARGET_LANE_COUNTERPLAY_SHIP,
+                0,
+                firingShip,
+                incoming,
+                targetTotal,
+                seed,
+                round,
+                side,
+                firingUnit,
+                chain
+            );
+            if (generated == 0) return extraShots;
+            extraShots += generated;
+            incoming = generated;
+            unchecked {
+                ++chain;
+            }
+        }
+    }
+
+    function _shipExtraShots(
+        uint32[16] memory ships,
+        uint256 laneBase,
+        uint256 laneGroup,
+        Ship firingShip,
+        uint256 incoming,
         uint256 targetTotal,
         uint256 seed,
         uint8 round,
         uint8 side,
         uint8 firingUnit,
-        uint256 targetUnit
-    ) private pure returns (uint256 shots) {
-        shots = _distributedTargetShots(
-            firingCount, targetCount, targetTotal, seed, round, side, firingUnit, targetUnit
+        uint8 chain
+    ) private pure returns (uint256 generated) {
+        for (uint8 shipId = 0; shipId < 16;) {
+            generated += _unitExtraShots(
+                ships[shipId],
+                VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(shipId)),
+                incoming,
+                targetTotal,
+                seed,
+                round,
+                side,
+                firingUnit,
+                _targetLane(laneBase, laneGroup, shipId),
+                chain
+            );
+            unchecked {
+                ++shipId;
+            }
+        }
+    }
+
+    function _unitExtraShots(
+        uint32 count,
+        uint8 rapidfire,
+        uint256 incoming,
+        uint256 targetTotal,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit,
+        uint256 lane,
+        uint8 chain
+    ) private pure returns (uint256) {
+        if (count == 0 || rapidfire <= 1) return 0;
+        uint256 selected = _distributedTargetShots(
+            incoming,
+            count,
+            targetTotal,
+            seed,
+            round,
+            side,
+            firingUnit,
+            lane + (uint256(chain) + 1) * 8_192
         );
-        if (shots == 0 || rapidfire <= 1) return shots;
-        return
-            shots
-                + _rapidfireExtraShots(shots, rapidfire, seed, round, side, firingUnit, targetUnit);
+        return _sampleChance(
+            selected,
+            (uint256(rapidfire - 1) * BPS) / rapidfire,
+            seed,
+            round,
+            side,
+            firingUnit,
+            lane,
+            30_000 + chain
+        );
     }
 
     function _distributedTargetShots(
@@ -563,46 +756,6 @@ library VeydriftCombatReferenceSimulator {
         ) {
             assigned += 1;
         }
-    }
-
-    function _rapidfireExtraShots(
-        uint256 selectedShots,
-        uint8 rapidfire,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint8 firingUnit,
-        uint256 targetUnit
-    ) private pure returns (uint256 extraShots) {
-        if (selectedShots == 0 || rapidfire <= 1) return 0;
-        if (selectedShots <= EXACT_RAPIDFIRE_SHOT_LIMIT) {
-            for (uint256 i = 0; i < selectedShots;) {
-                for (uint8 chain = 0; chain < MAX_RAPIDFIRE_CHAIN;) {
-                    uint256 lane = 10_000 + i * 100 + chain;
-                    if (
-                        _combatStream(seed, round, side, firingUnit, targetUnit, lane) % rapidfire
-                            == 0
-                    ) {
-                        break;
-                    }
-                    extraShots += 1;
-                    unchecked {
-                        ++chain;
-                    }
-                }
-                unchecked {
-                    ++i;
-                }
-            }
-            return extraShots;
-        }
-
-        uint256 extraTrials = selectedShots * rapidfire;
-        uint256 continueBps = (uint256(rapidfire - 1) * BPS) / rapidfire;
-        return
-            _sampleChance(
-                extraTrials, continueBps, seed, round, side, firingUnit, targetUnit, 20_000
-            );
     }
 
     function _sampleChance(

@@ -6,7 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
-import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -4761,7 +4761,8 @@ contract VeydriftGameTest is Test {
     }
 
     function _newGame(address owner) internal returns (VeydriftGame) {
-        VeydriftCombatModule combatModule = new VeydriftCombatModule();
+        VeydriftCombatModule combatModule =
+            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();

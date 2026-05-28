@@ -5,7 +5,7 @@ import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
-import {VeydriftCombatModule} from "../src/VeydriftCombatModule.sol";
+import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -40,7 +40,8 @@ contract Deploy is ResourceTokenDeployment {
         require(admin == vm.addr(privateKey), "ADMIN_MUST_MATCH_BROADCASTER");
 
         vm.startBroadcast(privateKey);
-        VeydriftCombatModule combatModule = new VeydriftCombatModule();
+        VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(address(rapidfire));
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
