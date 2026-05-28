@@ -1818,7 +1818,7 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("x-veydrift-index-state")).toBe("warm");
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(liveReadCalled).toBe(false);
     expect(body).toMatchObject({
       wallet: player,
@@ -1875,7 +1875,7 @@ describe("Veydrift backend", () => {
     const infrastructureBody = await infrastructureResponse.json();
 
     expect(queuesResponse.status).toBe(200);
-    expect(queuesResponse.headers.get("x-veydrift-index-state")).toBe("warm");
+    expect(queuesResponse.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(queuesBody.building).toMatchObject({
       active: true,
       kind: "building",
@@ -1889,7 +1889,7 @@ describe("Veydrift backend", () => {
       }
     });
     expect(infrastructureResponse.status).toBe(200);
-    expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBe("warm");
+    expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(infrastructureBody).toMatchObject({
       resources: {
         metal: "4600",
@@ -1951,7 +1951,7 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("x-veydrift-index-state")).toBe("warm");
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(liveReadCalled).toBe(false);
     expect(body).toMatchObject({
       wallet: player,
@@ -1975,6 +1975,44 @@ describe("Veydrift backend", () => {
       detail: "infrastructure loaded from DB-indexed contract state before live RPC."
     });
     expect(typeof body.liveReadSkippedAt).toBe("string");
+  });
+
+  test("marks warm indexed responses healthy after canonical reconciliation", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("healthy indexed infrastructure should not call live RPC during hydration");
+    };
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("healthy");
+    expect(body).toMatchObject({
+      stale: false,
+      indexer: {
+        indexedState: "healthy",
+        safeToServeIndexedState: true,
+        staleReason: null
+      },
+      buildings: expect.arrayContaining([
+        expect.objectContaining({
+          id: 0,
+          level: 1
+        })
+      ]),
+      queue: {
+        kind: "building",
+        targetLevel: 2
+      }
+    });
   });
 
   test("allows explicit live wallet reads to bypass indexed warm state", async () => {

@@ -163,7 +163,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
           chainSync: chainSync?.snapshot() ?? null,
+          indexer: indexer?.snapshot() ?? null,
           problems: loaded.problems
+        },
+        {
+          headers: corsHeaders
+        }
+      );
+    }
+
+    if (request.method === "GET" && url.pathname === "/debug/indexer") {
+      return Response.json(
+        {
+          indexer: indexer?.snapshot() ?? null,
+          chainSync: chainSync?.snapshot() ?? null,
+          rpc: chainReader?.rpcMetrics?.() ?? null
         },
         {
           headers: corsHeaders
@@ -760,7 +774,7 @@ type IndexedWarmBody<T extends object> = T & {
   indexer: ReturnType<SettlementIndexer["snapshot"]>;
   liveReadSkippedAt: string;
   source: "contract-state-indexer";
-  stale: true;
+  stale: boolean;
 };
 
 async function indexedWarmResponse<T extends object>(
@@ -783,19 +797,20 @@ async function indexedWarmResponse<T extends object>(
   if (!settlement?.planet) return null;
 
   const detail = `${surface} loaded from DB-indexed contract state before live RPC.`;
+  const snapshot = indexer.snapshot();
   const body: IndexedWarmBody<T> = {
     ...build(wallet, settlement.settlement, settlement.planet, detail, indexer),
     detail,
-    indexer: indexer.snapshot(),
+    indexer: snapshot,
     liveReadSkippedAt: new Date().toISOString(),
     source: "contract-state-indexer",
-    stale: true
+    stale: !snapshot.safeToServeIndexedState
   };
 
   return Response.json(body, {
     headers: {
       ...corsHeaders,
-      "x-veydrift-index-state": "warm"
+      "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
     }
   });
 }

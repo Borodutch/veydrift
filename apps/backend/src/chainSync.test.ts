@@ -176,6 +176,57 @@ describe("ChainSyncService", () => {
     expect(MockWebSocket.instances).toHaveLength(2);
     service.stop();
   });
+
+  test("marks websocket head gaps stale and triggers reconciliation", async () => {
+    MockWebSocket.instances = [];
+    const staleReasons: string[] = [];
+    const reconcileReasons: string[] = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      markStale(reason: string) {
+        staleReasons.push(reason);
+      },
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "heads-sub",
+        result: { number: "0x7b" }
+      }
+    });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "heads-sub",
+        result: { number: "0x7f" }
+      }
+    });
+    await Promise.resolve();
+
+    expect(service.snapshot()).toMatchObject({
+      detectedGaps: 1,
+      lastGap: {
+        fromBlock: "124",
+        toBlock: "127"
+      },
+      latestWebsocketBlock: "127"
+    });
+    expect(staleReasons).toEqual(["websocket head gap 124-127"]);
+    expect(reconcileReasons).toEqual(["websocket head gap 124-127"]);
+    service.stop();
+  });
 });
 
 function abiWords(...values: bigint[]): string {
