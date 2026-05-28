@@ -14,13 +14,16 @@ import {
   readSettlementFundingState,
   readSettlementState,
   requestAccounts,
+  fetchWalletSettlement,
   sendSettlementTransaction,
   settlementContractConfigured,
   waitForReceipt,
   walletRequestErrorMessage,
   type Eip1193Provider,
+  type PlanetSummary,
   type SettlementFundingState,
-  type SettlementConfig
+  type SettlementConfig,
+  type WalletSettlementResponse
 } from "./walletFlow";
 
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
@@ -28,8 +31,8 @@ const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 
 type SettlementConfigState =
-  | { status: "loading"; config: SettlementConfig }
-  | { status: "ready"; config: SettlementConfig };
+  | { status: "loading"; apiUrl?: string; config: SettlementConfig }
+  | { status: "ready"; apiUrl?: string; config: SettlementConfig };
 
 type SettlementFunding =
   | { status: "idle" }
@@ -74,6 +77,7 @@ export function FirstPlanetSettlementApp() {
           : undefined;
         setSettlementConfigState({
           status: "ready",
+          apiUrl: runtimeConfig.apiUrl,
           config: address ? {
             address,
             ...(legacyAddress ? { legacyAddress } : {}),
@@ -141,7 +145,7 @@ export function FirstPlanetSettlementApp() {
     }
 
     void refreshWallet(provider, account);
-  }, [provider, settlementConfig.address, settlementConfigState.status]);
+  }, [provider, settlementConfig.address, settlementConfigState.apiUrl, settlementConfigState.status]);
 
   async function refreshWallet(injected = provider, preferredAccount?: string) {
     if (!injected) {
@@ -215,6 +219,27 @@ export function FirstPlanetSettlementApp() {
     setPlanet({
       kind: "checking"
     });
+
+    try {
+      const indexedSettlement = await readIndexedSettlementState(settlementConfigState.apiUrl, connectedAccount);
+      if (indexedSettlement) {
+        if (indexedSettlement.kind === "settled") {
+          setSettlementFunding({ status: "idle" });
+          setPlanet({
+            kind: "already-settled",
+            planet: indexedSettlement.planet
+          });
+        } else {
+          setPlanet({
+            kind: "not-settled"
+          });
+          await refreshSettlementFunding(injected, connectedAccount);
+        }
+        return;
+      }
+    } catch (error) {
+      console.error("Indexed settlement state read failed", error);
+    }
 
     try {
       const settlement = await readSettlementState(injected, connectedAccount, settlementConfig);
@@ -542,6 +567,56 @@ function formatEth(wei: bigint): string {
   if (fraction === 0n) return whole.toString();
 
   return `${whole.toString()}.${fraction.toString().padStart(18, "0").replace(/0+$/, "")}`;
+}
+
+type IndexedSettlementState =
+  | { kind: "settled"; planet: PlanetSummary }
+  | { kind: "not-settled" };
+
+async function readIndexedSettlementState(
+  apiUrl: string | undefined,
+  account: string,
+): Promise<IndexedSettlementState | undefined> {
+  if (!apiUrl) return undefined;
+
+  return indexedSettlementState(await fetchWalletSettlement(apiUrl, account));
+}
+
+export function indexedSettlementState(settlement: WalletSettlementResponse): IndexedSettlementState {
+  if (settlement.homePlanetId || settlement.hasFirstPlanet) {
+    return {
+      kind: "settled",
+      planet: planetSummaryFromIndexedSettlement(settlement),
+    };
+  }
+
+  return { kind: "not-settled" };
+}
+
+function planetSummaryFromIndexedSettlement(settlement: WalletSettlementResponse): PlanetSummary {
+  const planet = settlement.planet;
+  if (!planet) {
+    return {
+      label: settlement.homePlanetId ? `Planet #${settlement.homePlanetId}` : "First planet settled",
+      source: "chain",
+    };
+  }
+
+  const summary: PlanetSummary = {
+    label: planet.name ?? `Planet ${planet.galaxy}:${planet.system}:${planet.position}`,
+    coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+    fields: planet.fields.toString(),
+    rarity: "Genesis settlement",
+    resources: planet.resources,
+    source: "chain",
+    temperature: planet.temperature.toString(),
+  };
+  const settledAt = Number(planet.lastSettledAt);
+  if (Number.isFinite(settledAt) && settledAt > 0) {
+    summary.settledAt = new Date(settledAt * 1_000).toISOString();
+  }
+
+  return summary;
 }
 
 function StateMessage({
