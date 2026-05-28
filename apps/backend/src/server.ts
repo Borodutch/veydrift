@@ -772,7 +772,8 @@ async function indexedWarmResponse<T extends object>(
     wallet: `0x${string}`,
     settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
     planet: SettledPlanetEvent | null,
-    detail: string
+    detail: string,
+    indexer: SettlementIndexer
   ) => T
 ): Promise<Response | null> {
   if (!indexer) return null;
@@ -783,7 +784,7 @@ async function indexedWarmResponse<T extends object>(
 
   const detail = `${surface} loaded from DB-indexed contract state before live RPC.`;
   const body: IndexedWarmBody<T> = {
-    ...build(wallet, settlement.settlement, settlement.planet, detail),
+    ...build(wallet, settlement.settlement, settlement.planet, detail, indexer),
     detail,
     indexer: indexer.snapshot(),
     liveReadSkippedAt: new Date().toISOString(),
@@ -809,7 +810,8 @@ async function indexedDegradedResponse<T extends object>(
     wallet: `0x${string}`,
     settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
     planet: SettledPlanetEvent | null,
-    detail: string
+    detail: string,
+    indexer: SettlementIndexer
   ) => T
 ): Promise<Response | null> {
   if (!indexer || !isDegradableReadError(error)) return null;
@@ -820,7 +822,7 @@ async function indexedDegradedResponse<T extends object>(
 
   const detail = `${surface} live contract read failed; returning DB-indexed contract state.`;
   const body: IndexedDegradedBody<T> = {
-    ...build(wallet, settlement.settlement, settlement.planet, detail),
+    ...build(wallet, settlement.settlement, settlement.planet, detail, indexer),
     degraded: true,
     detail: error instanceof Error ? error.message : detail,
     indexer: indexer.snapshot(),
@@ -882,16 +884,12 @@ function selectedPlanetIdOrUndefined(url: URL): bigint | undefined {
 
 function indexedPlayerQueues(
   wallet: `0x${string}`,
-  settlement: ReturnType<SettlementIndexer["walletSettlement"]>
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  planet: SettledPlanetEvent | null,
+  _unavailableReason: string,
+  indexer: SettlementIndexer
 ): PlayerQueues {
-  return {
-    wallet,
-    homePlanetId: settlement.homePlanetId,
-    building: null,
-    defense: null,
-    ship: null,
-    research: null
-  };
+  return indexer.playerQueues(wallet, planet?.planetId ?? settlement.homePlanetId);
 }
 
 function indexedFleetVisibility(
@@ -912,12 +910,17 @@ function indexedInfrastructureState(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
   planet: SettledPlanetEvent | null,
-  unavailableReason: string
+  unavailableReason: string,
+  indexer: SettlementIndexer
 ): InfrastructureState {
+  const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+  const queue = planet ? indexer.planetQueue(planet.planetId, "building") : null;
+  const technologyLevels = indexer.technologyLevels(wallet);
+
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
-    infrastructureAvailable: false,
+    infrastructureAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
     productionPerHour: null,
@@ -925,9 +928,9 @@ function indexedInfrastructureState(
     storageCaps: null,
     protectedResources: null,
     raidableResources: null,
-    technologyLevels: {},
-    buildings: [],
-    queue: null
+    technologyLevels,
+    buildings,
+    queue
   };
 }
 
@@ -952,20 +955,24 @@ function indexedShipyardState(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
   planet: SettledPlanetEvent | null,
-  unavailableReason: string
+  unavailableReason: string,
+  indexer: SettlementIndexer
 ): ShipyardState {
+  const shipyardLevel = planet ? indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level ?? 0 : 0;
+  const naniteLevel = planet ? indexer.infrastructureRows(planet.planetId).find((building) => building.id === 11)?.level ?? 0 : 0;
+
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
-    productionAvailable: false,
+    productionAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
     fleetSlots: { active: 0, limit: 1 },
-    shipyardLevel: 0,
-    naniteLevel: 0,
-    technologyLevels: {},
-    ships: [],
-    queue: null
+    shipyardLevel,
+    naniteLevel,
+    technologyLevels: indexer.technologyLevels(wallet),
+    ships: planet ? indexer.shipRows(planet.planetId) : [],
+    queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null
   };
 }
 
@@ -973,19 +980,22 @@ function indexedDefenseState(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
   planet: SettledPlanetEvent | null,
-  unavailableReason: string
+  unavailableReason: string,
+  indexer: SettlementIndexer
 ): DefenseState {
+  const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
-    productionAvailable: false,
+    productionAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
-    shipyardLevel: 0,
-    missileSiloLevel: 0,
-    technologyLevels: {},
-    defenses: [],
-    queue: null
+    shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
+    missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
+    technologyLevels: indexer.technologyLevels(wallet),
+    defenses: planet ? indexer.defenseRows(planet.planetId) : [],
+    queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null
   };
 }
 
@@ -993,19 +1003,22 @@ function indexedResearchState(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
   planet: SettledPlanetEvent | null,
-  unavailableReason: string
+  unavailableReason: string,
+  indexer: SettlementIndexer
 ): ResearchState {
+  const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
-    researchAvailable: false,
+    researchAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
-    researchLabLevel: 0,
+    researchLabLevel: buildings.find((building) => building.id === 6)?.level ?? 0,
     researchNetworkLabLevels: [],
-    technologyLevels: {},
-    technologies: [],
-    queue: null
+    technologyLevels: indexer.technologyLevels(wallet),
+    technologies: indexer.technologyRows(wallet),
+    queue: indexer.researchQueue(wallet)
   };
 }
 
