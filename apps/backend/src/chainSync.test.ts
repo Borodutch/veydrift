@@ -176,6 +176,59 @@ describe("ChainSyncService", () => {
     expect(MockWebSocket.instances).toHaveLength(2);
     service.stop();
   });
+
+  test("subscribes to every configured contract address and exposes reorg health", () => {
+    MockWebSocket.instances = [];
+    const service = new ChainSyncService({
+      ...config,
+      allianceContractAddress: "0x4444444444444444444444444444444444444444",
+      moonContractAddress: "0x5555555555555555555555555555555555555555",
+      resourceTokenAddresses: {
+        metal: "0x6666666666666666666666666666666666666666",
+        crystal: "0x7777777777777777777777777777777777777777",
+        deuterium: "0x8888888888888888888888888888888888888888"
+      }
+    }, undefined, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    const logSubscribe = JSON.parse(socket?.sent[0] ?? "{}");
+    expect(logSubscribe.params[1].address).toEqual([
+      "0x3333333333333333333333333333333333333333",
+      "0x5555555555555555555555555555555555555555",
+      "0x4444444444444444444444444444444444444444",
+      "0x6666666666666666666666666666666666666666",
+      "0x7777777777777777777777777777777777777777",
+      "0x8888888888888888888888888888888888888888"
+    ]);
+    expect(service.snapshot().subscribedAddresses).toEqual(logSubscribe.params[1].address);
+
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x7c",
+          transactionHash: "0xabc",
+          removed: true,
+          topics: [
+            planetStartedTopic,
+            `0x${player.slice(2).padStart(64, "0")}`,
+            `0x${(7n).toString(16).padStart(64, "0")}`
+          ],
+          data: abiWords(2n, 44n, 9n, 211n, 1n)
+        }
+      }
+    });
+
+    expect(service.snapshot()).toMatchObject({
+      eventsReceived: 1,
+      reorgDetectedAt: expect.any(String)
+    });
+    service.stop();
+  });
 });
 
 function abiWords(...values: bigint[]): string {

@@ -90,10 +90,10 @@ export type PlayerQueues = {
 };
 
 export type IndexedQueueStartedEvent = {
-  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued";
+  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "MoonBuildingStarted";
   transactionHash: string;
   blockNumber: string;
-  queueKind: "building" | "defense" | "ship" | "research";
+  queueKind: "building" | "defense" | "ship" | "research" | "moon-building";
   planetId?: string;
   owner?: Address;
   itemId: number;
@@ -104,16 +104,41 @@ export type IndexedQueueStartedEvent = {
 };
 
 export type IndexedQueueCompletedEvent = {
-  eventName: "BuildingCompleted" | "DefenseCompleted" | "ShipCompleted" | "ResearchCompleted";
+  eventName: "BuildingCompleted" | "DefenseCompleted" | "ShipCompleted" | "ResearchCompleted" | "MoonBuildingCompleted";
   transactionHash: string;
   blockNumber: string;
-  queueKind: "building" | "defense" | "ship" | "research";
+  queueKind: "building" | "defense" | "ship" | "research" | "moon-building";
   planetId?: string;
   owner?: Address;
   itemId: number;
   level?: number;
   quantity?: number;
   total?: number;
+};
+
+export type IndexedMoonCreatedEvent = {
+  eventName: "MoonCreated";
+  transactionHash: string;
+  blockNumber: string;
+  owner: Address;
+  planetId: string;
+  galaxy: number;
+  system: number;
+  position: number;
+  fields: number;
+  diameterKm: number;
+  createdAt: string;
+};
+
+export type IndexedRiftResourceEvent = {
+  eventName: "MarketResourceDeposited" | "MarketResourceWithdrawalRequested" | "MarketResourceWithdrawalFinished";
+  transactionHash: string;
+  blockNumber: string;
+  owner: Address;
+  planetId: string;
+  resourceId: number;
+  amount: string;
+  unlocksAt?: string;
 };
 
 export type FleetMissionVisibility = {
@@ -2490,9 +2515,9 @@ export class VeydriftGameReader implements ChainReader {
   }
 }
 
-type MutableFleetMissionSummary = Partial<FleetMissionSummary> & { missionId: string };
+export type MutableFleetMissionSummary = Partial<FleetMissionSummary> & { missionId: string };
 
-function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleetMissionSummary> {
+export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleetMissionSummary> {
   const missions = new Map<string, MutableFleetMissionSummary>();
   for (const log of logs) {
     const topic = topicAt(log.topics, 0);
@@ -2627,6 +2652,10 @@ function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleetMission
   return missions;
 }
 
+export function decodeCompleteFleetMissionLogs(logs: RpcLog[]): FleetMissionSummary[] {
+  return [...decodeFleetMissionLogs(logs).values()].filter(isCompleteFleetMissionSummary);
+}
+
 function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mission is FleetMissionSummary {
   return Boolean(
     mission.status
@@ -2699,6 +2728,12 @@ const moonChanceSkippedExistingMoonTopic =
   "0x93793f9a66f3a0a4cea93b7eb92e142d7283b5b33f657e14277879f2f8e7ab4e";
 const moonDestructionRequestedTopic = "0x719ab77026e22a766a85f5c32e5294b20e76b8a0490812761ab98ab3a1739884";
 const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e9e011bd7eddc6c104221ed803";
+const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
+const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
+const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
+const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
 
 export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
@@ -2808,7 +2843,8 @@ export function isIndexedQueueStartedLog(log: RpcLog): boolean {
   return topic === buildingStartedTopic
     || topic === defenseQueuedTopic
     || topic === shipQueuedTopic
-    || topic === researchQueuedTopic;
+    || topic === researchQueuedTopic
+    || topic === moonBuildingStartedTopic;
 }
 
 export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
@@ -2816,7 +2852,31 @@ export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
   return topic === buildingCompletedTopic
     || topic === defenseCompletedTopic
     || topic === shipCompletedTopic
-    || topic === researchCompletedTopic;
+    || topic === researchCompletedTopic
+    || topic === moonBuildingCompletedTopic;
+}
+
+export function isMoonCreatedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === moonCreatedTopic;
+}
+
+export function isRiftResourceLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === marketResourceDepositedTopic
+    || topic === marketResourceWithdrawalRequestedTopic
+    || topic === marketResourceWithdrawalFinishedTopic;
+}
+
+export function isFleetMissionLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === fleetMissionLaunchedTopic
+    || topic === fleetMissionCargoTopic
+    || topic === fleetMissionShipsTopic
+    || topic === fleetMissionRecalledTopic
+    || topic === fleetMissionResolvedTopic
+    || topic === fleetMissionReturnExposedTopic
+    || topic === fleetMissionReturnedTopic
+    || topic === attackMissionJoinedTopic;
 }
 
 export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
@@ -2884,6 +2944,17 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
     };
   }
 
+  if (topic === moonBuildingStartedTopic) {
+    return {
+      ...base,
+      eventName: "MoonBuildingStarted",
+      queueKind: "moon-building",
+      planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+      itemId: Number(decodeUint(topicAt(log.topics, 2))),
+      targetLevel: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
   const planetId = decodeUint(topicAt(log.topics, 1)).toString();
   const itemId = Number(decodeUint(topicAt(log.topics, 2)));
   if (topic === buildingStartedTopic) {
@@ -2937,6 +3008,17 @@ export function decodeIndexedQueueCompletedLog(log: RpcLog): IndexedQueueComplet
     };
   }
 
+  if (topic === moonBuildingCompletedTopic) {
+    return {
+      ...base,
+      eventName: "MoonBuildingCompleted",
+      queueKind: "moon-building",
+      planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+      itemId: Number(decodeUint(topicAt(log.topics, 2))),
+      level: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
   const planetId = decodeUint(topicAt(log.topics, 1)).toString();
   const itemId = Number(decodeUint(topicAt(log.topics, 2)));
   if (topic === buildingCompletedTopic) {
@@ -2970,6 +3052,51 @@ export function decodeIndexedQueueCompletedLog(log: RpcLog): IndexedQueueComplet
     itemId,
     quantity: Number(decodeUintWord(wordAt(words, 0))),
     total: Number(decodeUintWord(wordAt(words, 1)))
+  };
+}
+
+export function decodeMoonCreatedLog(log: RpcLog): IndexedMoonCreatedEvent {
+  const words = splitWords(log.data);
+  return {
+    eventName: "MoonCreated",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    owner: decodeAddressWord(topicAt(log.topics, 1)),
+    planetId: decodeUint(topicAt(log.topics, 2)).toString(),
+    galaxy: Number(decodeUintWord(wordAt(words, 0))),
+    system: Number(decodeUintWord(wordAt(words, 1))),
+    position: Number(decodeUintWord(wordAt(words, 2))),
+    fields: Number(decodeUintWord(wordAt(words, 3))),
+    diameterKm: Number(decodeUintWord(wordAt(words, 4))),
+    createdAt: BigInt(log.blockNumber).toString()
+  };
+}
+
+export function decodeRiftResourceLog(log: RpcLog): IndexedRiftResourceEvent {
+  const topic = topicAt(log.topics, 0);
+  const words = splitWords(log.data);
+  const base = {
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    owner: decodeAddressWord(topicAt(log.topics, 1)),
+    planetId: decodeUint(topicAt(log.topics, 2)).toString(),
+    resourceId: Number(decodeUint(topicAt(log.topics, 3))),
+    amount: decodeUintWord(wordAt(words, 0)).toString()
+  };
+
+  if (topic === marketResourceWithdrawalRequestedTopic) {
+    return {
+      ...base,
+      eventName: "MarketResourceWithdrawalRequested",
+      unlocksAt: decodeUintWord(wordAt(words, 1)).toString()
+    };
+  }
+
+  return {
+    ...base,
+    eventName: topic === marketResourceDepositedTopic
+      ? "MarketResourceDeposited"
+      : "MarketResourceWithdrawalFinished"
   };
 }
 

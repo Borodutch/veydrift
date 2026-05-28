@@ -14,6 +14,12 @@ const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
+const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
+const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
+const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
+const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -362,6 +368,189 @@ describe("SettlementIndexer", () => {
     expect(indexer.technologyLevels(player)).toMatchObject({
       "4": 2
     });
+  });
+
+  test("indexes moon creation and moon building queues", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon",
+      logIndex: "0x0",
+      topics: [
+        moonCreatedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x88",
+      transactionHash: "0xmoonbuild",
+      logIndex: "0x0",
+      topics: [
+        moonBuildingStartedTopic,
+        topic(7n),
+        topic(2n)
+      ],
+      data: abiWords(1n, 1770001200n, 2_000_000n, 4_000_000n, 2_000_000n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      moon: {
+        exists: true,
+        planetId: planet.planetId,
+        owner: player,
+        fields: 12,
+        diameterKm: 8777
+      },
+      queue: {
+        kind: "moon-building",
+        itemId: 2,
+        targetLevel: 1,
+        readyAt: "1770001200"
+      }
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x89",
+      transactionHash: "0xmoonbuilddone",
+      logIndex: "0x0",
+      topics: [
+        moonBuildingCompletedTopic,
+        topic(7n),
+        topic(2n)
+      ],
+      data: abiWords(1n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      queue: null,
+      buildings: expect.arrayContaining([
+        expect.objectContaining({ id: 2, level: 1 })
+      ])
+    });
+  });
+
+  test("indexes rift deposits and withdrawal lifecycle", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x8a",
+      transactionHash: "0xriftbuild",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(15n)
+      ],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x8b",
+      transactionHash: "0xdeposit",
+      logIndex: "0x0",
+      topics: [
+        marketResourceDepositedTopic,
+        addressTopic(player),
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x8c",
+      transactionHash: "0xwithdraw",
+      logIndex: "0x0",
+      topics: [
+        marketResourceWithdrawalRequestedTopic,
+        addressTopic(player),
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(250n, 1770500000n)
+    });
+
+    expect(indexer.riftState(player, planet.planetId)).toMatchObject({
+      unlocked: true,
+      resources: expect.arrayContaining([
+        expect.objectContaining({
+          key: "metal",
+          inGameBalance: "750",
+          lockedBalance: "250"
+        })
+      ]),
+      pendingWithdrawals: [
+        expect.objectContaining({
+          amount: "250",
+          resource: "metal",
+          unlocksAt: "1770500000"
+        })
+      ]
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x8d",
+      transactionHash: "0xfinishwithdraw",
+      logIndex: "0x0",
+      topics: [
+        marketResourceWithdrawalFinishedTopic,
+        addressTopic(player),
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(250n)
+    });
+
+    expect(indexer.riftState(player, planet.planetId)).toMatchObject({
+      resources: expect.arrayContaining([
+        expect.objectContaining({
+          key: "metal",
+          inGameBalance: "750",
+          lockedBalance: "0"
+        })
+      ]),
+      pendingWithdrawals: []
+    });
+  });
+
+  test("removed duplicate log marks reorg health instead of being ignored", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const log = {
+      blockNumber: "0x7c",
+      transactionHash: "0xabc",
+      logIndex: "0x0",
+      topics: [
+        planetStartedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 211n, 1n)
+    };
+
+    indexer.applyLog(log);
+    expect(indexer.applyLog({ ...log, removed: true })).toMatchObject({
+      applied: false,
+      duplicate: false,
+      removed: true,
+      snapshot: {
+        indexedEventLogs: 2
+      }
+    });
+    expect(indexer.snapshot().reorgDetectedAt).toBeTruthy();
   });
 
   test("rebuild applies repeated debris updates in chain order", async () => {
