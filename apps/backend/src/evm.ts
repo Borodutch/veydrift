@@ -195,7 +195,6 @@ export type MoonState = {
     createdAt: string;
     jumpGateReadyAt: string;
   } | null;
-  sensorPhalanxRange: string | null;
   buildings: Array<{
     id: number;
     key: string;
@@ -1039,10 +1038,9 @@ export class VeydriftGameReader implements ChainReader {
         };
       }
 
-      const [buildings, queue, sensorPhalanxRange] = await Promise.all([
+      const [buildings, queue] = await Promise.all([
         this.readMoonBuildingRows(planetId),
-        this.readMoonQueue(planetId),
-        this.readMoonUintCall("0x6ec64128", [encodeUint(planetId)])
+        this.readMoonQueue(planetId)
       ]);
 
       return {
@@ -1050,7 +1048,6 @@ export class VeydriftGameReader implements ChainReader {
         homePlanetId: settlement.homePlanetId,
         moonAvailable: true,
         moon,
-        sensorPhalanxRange: sensorPhalanxRange.toString(),
         buildings,
         queue
       };
@@ -2637,7 +2634,6 @@ const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "reso
 ];
 const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "key" | "label">> = [
   { id: 0, key: "lunarBase", label: "Lunar Base" },
-  { id: 1, key: "sensorPhalanx", label: "Sensor Phalanx" },
   { id: 2, key: "jumpGate", label: "Jump Gate" }
 ];
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
@@ -2694,7 +2690,6 @@ function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailabl
     moonAvailable: false,
     unavailableReason,
     moon: null,
-    sensorPhalanxRange: null,
     buildings: moonBuildingCatalog.map((building) => ({
       ...building,
       level: 0,

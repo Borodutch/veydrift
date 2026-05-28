@@ -225,7 +225,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             _add(_planets[mission.originPlanetId].resources, mission.cargo);
         _creditMissionShips(mission.originPlanetId, mission.ships);
         mission.status = FleetMissionStatus.Returned;
-        _untrackPhalanxMission(missionId, mission);
         activeFleetMissionCount[mission.owner] -= 1;
         emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
     }

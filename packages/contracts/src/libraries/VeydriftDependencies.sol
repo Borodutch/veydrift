@@ -169,9 +169,6 @@ library VeydriftDependencies {
         uint16 lunarBaseLevel,
         uint16 hyperspaceLevel
     ) public pure {
-        if (building == MoonBuilding.SensorPhalanx && lunarBaseLevel < 1) {
-            revert MissingDependency("LUNAR_BASE_1");
-        }
         if (building == MoonBuilding.JumpGate && lunarBaseLevel < 1) {
             revert MissingDependency("LUNAR_BASE_1");
         }

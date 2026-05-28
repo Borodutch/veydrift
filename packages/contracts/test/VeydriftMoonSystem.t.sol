@@ -11,6 +11,7 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {MoonBuilding, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
 contract MoonMockResourceToken {
@@ -33,7 +34,6 @@ contract MoonMockResourceToken {
 
 contract VeydriftMoonSystemTest is Test {
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
-    bytes32 internal constant LUNAR_BASE_1_DEPENDENCY = "LUNAR_BASE_1";
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
@@ -326,7 +326,7 @@ contract VeydriftMoonSystemTest is Test {
         _buildMoon(planetId, MoonBuilding.LunarBase);
 
         vm.prank(player);
-        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.SensorPhalanx);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
         VeydriftMoonSystem.MoonBuildingConstruction memory construction =
             moons.activeMoonBuildingConstruction(planetId);
         assertTrue(construction.active);
@@ -395,7 +395,6 @@ contract VeydriftMoonSystemTest is Test {
         assertFalse(deathstarsDestroyed);
         assertFalse(moons.moon(planetId).exists);
         assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 0);
-        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.SensorPhalanx), 0);
         assertFalse(moons.activeMoonBuildingConstruction(planetId).active);
 
         (,, finalized,) = moons.moonDestructionRandomness(outcomeId);
@@ -484,69 +483,28 @@ contract VeydriftMoonSystemTest is Test {
         game.spendMoonResources(planetId, cost);
     }
 
-    function testSensorPhalanxRequiresLunarBaseAndScansRange() public {
+    function testReservedMoonBuildingSlotIsUnsupportedAndJumpGateStillWorks() public {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
-
-        vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftMoonSystem.MissingDependency.selector, LUNAR_BASE_1_DEPENDENCY
-            )
-        );
-        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.SensorPhalanx);
-
-        _fundPlanet(planetId, 1_000_000, 1_000_000, 1_000_000);
+        _fundPlanet(planetId, 3_000_000, 5_000_000, 3_000_000);
         _buildMoon(planetId, MoonBuilding.LunarBase);
-        _buildMoon(planetId, MoonBuilding.SensorPhalanx);
-        _buildMoon(planetId, MoonBuilding.SensorPhalanx);
-        assertEq(moons.sensorPhalanxRange(planetId), 3);
-
-        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
-        uint16 nearSystem = planet.system <= 497 ? planet.system + 2 : planet.system - 2;
-        uint16 farSystem = planet.system <= 495 ? planet.system + 4 : planet.system - 4;
 
         vm.prank(player);
-        moons.scanSystem(planetId, planet.galaxy, nearSystem);
-
-        address attacker = address(0xCAFE);
-        vm.deal(attacker, 1 ether);
-        vm.prank(attacker);
-        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
-        _setPlanetLocation(targetPlanetId, attacker, planet.galaxy, nearSystem, 8);
-        _setShipCount(targetPlanetId, Ship.SmallCargo, 1);
-        _fundPlanet(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
-
-        VeydriftGameStorage.MissionShips memory ships;
-        ships.smallCargo = 1;
-        vm.prank(attacker);
-        uint256 missionId = game.launchFleetMission(
-            targetPlanetId,
-            planetId,
-            VeydriftGameStorage.FleetMissionType.Attack,
-            ships,
-            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
-            0
-        );
+        vm.expectRevert(VeydriftCatalog.InvalidId.selector);
+        moons.moonBuildingUpgradeCost(planetId, MoonBuilding.ReservedMoonBuilding1);
 
         vm.prank(player);
-        VeydriftMoonSystem.PhalanxScanResult[] memory scans =
-            moons.scanSystemMissions(planetId, planet.galaxy, nearSystem, 10);
-        assertEq(scans.length, 1);
-        assertEq(scans[0].missionId, missionId);
-        assertEq(uint8(scans[0].status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
-        assertEq(uint8(scans[0].missionType), uint8(VeydriftGameStorage.FleetMissionType.Attack));
-        assertEq(scans[0].originPlanetId, targetPlanetId);
-        assertEq(scans[0].targetPlanetId, planetId);
+        vm.expectRevert(VeydriftCatalog.InvalidId.selector);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.ReservedMoonBuilding1);
 
+        _setTechnologyLevel(player, Technology.Hyperspace, 7);
         vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftMoonSystem.SensorPhalanxOutOfRange.selector, planet.system, farSystem, 3
-            )
-        );
-        moons.scanSystem(planetId, planet.galaxy, farSystem);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.JumpGate);
+        VeydriftMoonSystem.MoonBuildingConstruction memory construction =
+            moons.activeMoonBuildingConstruction(planetId);
+        assertTrue(construction.active);
+        assertEq(uint8(construction.building), uint8(MoonBuilding.JumpGate));
     }
 
     function testJumpGateRequiresOwnedReadyMoonGates() public {
