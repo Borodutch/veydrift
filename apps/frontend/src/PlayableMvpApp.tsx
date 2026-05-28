@@ -38,6 +38,7 @@ import {
   storageCaps,
   type BuildingKey,
   type DefenseKey,
+  type EnergyBalance,
   type PlanetProductionProfile,
   type PlayableState,
   type ResearchKey,
@@ -57,8 +58,10 @@ import {
   type ChainLoadStatus,
 } from "./overviewData";
 import {
+  waitForCollectedResourcesState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
+  type CollectedResourcesExpectation,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
@@ -169,6 +172,25 @@ export function displayHomeCoordinates(
   if (!coordinates) return fallbackCoordinates;
 
   return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
+}
+
+export function topBarEnergyFor({
+  infrastructureChainState,
+  infrastructureError,
+  isWalletConnected,
+  settledState,
+}: {
+  infrastructureChainState: ChainInfrastructureState | null;
+  infrastructureError?: string | undefined;
+  isWalletConnected: boolean;
+  settledState: PlayableState;
+}): EnergyBalance | undefined {
+  if (!isWalletConnected || !infrastructureChainState || infrastructureError) {
+    return undefined;
+  }
+
+  return energyBalanceFromChain(infrastructureChainState.energyBalance)
+    ?? energyBalance(settledState.buildings, settledState.research.energy);
 }
 
 function resourceAmountIsZero(value: string): boolean {
@@ -285,18 +307,52 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
   };
 }
 
-async function loadWalletPlanetSyncSnapshot(
+export async function loadWalletPlanetSyncSnapshot(
   apiBaseUrl: string,
   account: string,
   activePlanetId: string | undefined,
 ): Promise<WalletPlanetSyncSnapshot> {
-  const settlement = await fetchWalletSettlement(apiBaseUrl, account);
+  const settlementResultPromise = settlePromise(fetchWalletSettlement(apiBaseUrl, account));
   const [planetsResult, queuesResult, visibilityResult] = await Promise.allSettled([
     fetchWalletPlanets(apiBaseUrl, account),
     fetchWalletQueues(apiBaseUrl, account, activePlanetId),
     fetchFleetMissionVisibility(apiBaseUrl, account),
   ]);
 
+  const indexedSettlement = settlementFromIndexedPlanets(
+    account,
+    planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
+  );
+  if (indexedSettlement) {
+    return walletPlanetSyncSnapshotFromResults(
+      account,
+      indexedSettlement,
+      planetsResult,
+      queuesResult,
+      visibilityResult,
+    );
+  }
+
+  const settlementResult = await settlementResultPromise;
+  const settlement = settlementResult.status === "fulfilled"
+    ? settlementResult.value
+    : undefined;
+  if (!settlement) {
+    throw settlementResult.status === "rejected"
+      ? settlementResult.reason
+      : new Error("Settlement state could not be loaded.");
+  }
+
+  return walletPlanetSyncSnapshotFromResults(account, settlement, planetsResult, queuesResult, visibilityResult);
+}
+
+function walletPlanetSyncSnapshotFromResults(
+  account: string,
+  settlement: WalletSettlementResponse,
+  planetsResult: PromiseSettledResult<Awaited<ReturnType<typeof fetchWalletPlanets>>>,
+  queuesResult: PromiseSettledResult<PlayerQueuesResponse>,
+  visibilityResult: PromiseSettledResult<FleetMissionVisibilityResponse>,
+): WalletPlanetSyncSnapshot {
   const planetsResponse = planetsResult.status === "fulfilled"
     ? planetsResult.value
     : {
@@ -316,6 +372,29 @@ async function loadWalletPlanetSyncSnapshot(
     planetsResponse,
     queues,
     settlement,
+  };
+}
+
+function settlePromise<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return promise.then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason) => ({ status: "rejected", reason }),
+  );
+}
+
+function settlementFromIndexedPlanets(
+  account: string,
+  planetsResponse: Awaited<ReturnType<typeof fetchWalletPlanets>> | undefined,
+): WalletSettlementResponse | undefined {
+  const selectedPlanet = planetsResponse?.planets.find((planet) => planet.planetId === planetsResponse.homePlanetId || planet.isHomePlanet)
+    ?? planetsResponse?.planets[0];
+  if (!selectedPlanet) return undefined;
+
+  return {
+    wallet: planetsResponse?.wallet ?? account,
+    hasFirstPlanet: true,
+    homePlanetId: planetsResponse?.homePlanetId ?? selectedPlanet.planetId,
+    planet: selectedPlanet,
   };
 }
 
@@ -720,6 +799,46 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [account, activePlanetId, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
 
+  const refreshCollectedResourcesState = useCallback(async (expectation: CollectedResourcesExpectation) => {
+    if (!apiBaseUrl || !account) {
+      await refreshOnChainState();
+      await refreshInfrastructureState();
+      return;
+    }
+
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setInfrastructureLoading(true);
+    setInfrastructureError(undefined);
+
+    try {
+      const snapshot = await waitForCollectedResourcesState(
+        async () => {
+          const [settlement, infrastructure] = await Promise.all([
+            fetchWalletSettlement(apiBaseUrl, account),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
+          ]);
+
+          return { settlement, infrastructure };
+        },
+        expectation,
+      );
+
+      setOnChainSettlement(snapshot.settlement);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+      setInfrastructureChainState(snapshot.infrastructure);
+      setInfrastructureError(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load collected resource state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setInfrastructureError(message);
+      throw error;
+    } finally {
+      setInfrastructureLoading(false);
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
+
   useEffect(() => {
     if (homeCoords) {
       setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
@@ -939,19 +1058,17 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   ]);
   const infrastructureActionNotice = infrastructureActionNoticeFor(buildingAction);
   const topBarEnergy = useMemo(() => {
-    if (!isWalletConnected || !infrastructureChainState || infrastructureLoading || infrastructureError) {
-      return undefined;
-    }
-
-    return energyBalanceFromChain(infrastructureChainState.energyBalance)
-      ?? energyBalance(settledState.buildings, settledState.research.energy);
+    return topBarEnergyFor({
+      infrastructureChainState,
+      infrastructureError,
+      isWalletConnected,
+      settledState,
+    });
   }, [
     infrastructureChainState,
     infrastructureError,
-    infrastructureLoading,
     isWalletConnected,
-    settledState.buildings,
-    settledState.research.energy,
+    settledState,
   ]);
 
   useEffect(() => {
@@ -1131,7 +1248,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     refreshFinishedBuildingState,
   ]);
 
-  const runShipyardTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+  const runShipyardTransaction = useCallback(async (
+    label: string,
+    send: () => Promise<string>,
+    afterReceipt?: (() => Promise<void>) | undefined,
+  ) => {
     setShipyardAction({ status: "pending", label });
 
     try {
@@ -1140,10 +1261,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       if (provider) {
         await waitForReceipt(provider, txHash);
       }
+      if (afterReceipt) {
+        setShipyardAction({ status: "pending", label: `${label}: syncing indexed resources...` });
+        await afterReceipt();
+      } else {
+        refreshShipyardState();
+        void refreshOnChainState();
+        refreshInfrastructureState();
+      }
       setShipyardAction({ status: "success", label: `${label} confirmed.` });
-      refreshShipyardState();
-      void refreshOnChainState();
-      refreshInfrastructureState();
     } catch (error) {
       console.error(error);
       setShipyardAction({
@@ -1288,13 +1414,23 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return;
     }
 
+    const planetId = onChainSettlement.homePlanetId;
+    const previousLastSettledAt = onChainSettlement.planet?.lastSettledAt;
     void runShipyardTransaction("Resource collection", () => sendCollectResourcesTransaction(
       provider,
       account,
       gameContract,
-      onChainSettlement.homePlanetId ?? "0",
-    ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runShipyardTransaction]);
+      planetId,
+    ), () => refreshCollectedResourcesState({ planetId, previousLastSettledAt }));
+  }, [
+    account,
+    gameContract,
+    onChainSettlement?.homePlanetId,
+    onChainSettlement?.planet?.lastSettledAt,
+    provider,
+    refreshCollectedResourcesState,
+    runShipyardTransaction,
+  ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
     if (!provider || !account || !gameContract || !shipyardState?.homePlanetId) {

@@ -4,14 +4,17 @@ import { dirname } from "node:path";
 import {
   decodeDebrisFieldLog,
   decodeMoonChanceReportLog,
+  decodePlanetSettledLog,
   decodeSettledPlanetLog,
   isDebrisFieldLog,
   isMoonChanceReportLog,
+  isPlanetSettledLog,
   isSettledPlanetLog,
   type ChainReader,
   type DebrisFieldEvent,
   type ManagedPlanet,
   type MoonChanceReportEvent,
+  type PlanetSettledEvent,
   type RpcLog,
   type SettledPlanetEvent,
   type WalletPlanets
@@ -195,6 +198,12 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  applyPlanetSettledEvent(event: PlanetSettledEvent): IndexerSnapshot {
+    this.updatePlanetResources(event);
+    this.touch();
+    return this.snapshot();
+  }
+
   applyDebrisEvent(event: DebrisFieldEvent): IndexerSnapshot {
     this.upsertDebris(event);
     this.touch();
@@ -228,6 +237,10 @@ export class SettlementIndexer {
 
     if (isSettledPlanetLog(log)) {
       this.applyEvent(decodeSettledPlanetLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isPlanetSettledLog(log)) {
+      this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isDebrisFieldLog(log)) {
@@ -383,6 +396,20 @@ export class SettlementIndexer {
       event.position,
       JSON.stringify(event)
     );
+  }
+
+  private updatePlanetResources(event: PlanetSettledEvent): void {
+    const row = this.db.query("SELECT event_json FROM indexed_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
+    if (!row) return;
+
+    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
+    this.upsertPlanet({
+      ...planet,
+      transactionHash: event.transactionHash,
+      blockNumber: event.blockNumber,
+      lastSettledAt: event.lastSettledAt,
+      resources: event.resources
+    });
   }
 
   private upsertDebris(event: DebrisFieldEvent): void {
