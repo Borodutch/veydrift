@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { canonicalContractTables } from "./contractStateSchema";
 import type { Address, DebrisFieldEvent, InfrastructureState, MoonChanceReportEvent, PlayerQueues, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
@@ -134,6 +136,83 @@ describe("SettlementIndexer", () => {
           targetPlanetId: planet.planetId
         })
       ]);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("creates canonical mirror tables and preserves existing indexed state", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const indexer = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+
+      indexer.applyEvent(planet);
+      indexer.applyDebrisEvent(debris);
+      indexer.applyMoonChanceEvent(moonChance);
+
+      indexer.applyLog({
+        blockNumber: "0x81",
+        transactionHash: "0xbuild",
+        logIndex: "0x0",
+        topics: [
+          buildingStartedTopic,
+          topic(7n),
+          topic(5n)
+        ],
+        data: abiWords(1n, 1770000900n, 400n, 120n, 60n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x82",
+        transactionHash: "0xbuilddone",
+        logIndex: "0x0",
+        topics: [
+          buildingCompletedTopic,
+          topic(7n),
+          topic(5n)
+        ],
+        data: abiWords(1n)
+      });
+
+      const db = new Database(databasePath, { readonly: true });
+      try {
+        const schemaNames = new Set(
+          (db.query("SELECT name FROM sqlite_schema WHERE type IN ('table', 'view')").all() as Array<{ name: string }>)
+            .map((row) => row.name)
+        );
+        for (const table of canonicalContractTables) {
+          expect(schemaNames.has(table)).toBe(true);
+        }
+
+        expect(db.query("SELECT owner, galaxy, system_number, position FROM contract_planets WHERE planet_id = ?").get(planet.planetId)).toEqual({
+          owner: player.toLowerCase(),
+          galaxy: planet.galaxy,
+          system_number: planet.system,
+          position: planet.position
+        });
+        expect(db.query("SELECT metal, crystal, deuterium FROM contract_planet_resources WHERE planet_id = ?").get(planet.planetId)).toEqual({
+          metal: "4600",
+          crystal: "4780",
+          deuterium: "4740"
+        });
+        expect(db.query("SELECT level FROM contract_building_levels WHERE planet_id = ? AND building_id = ?").get(planet.planetId, 5)).toEqual({
+          level: 1
+        });
+        expect(db.query("SELECT metal, crystal FROM contract_debris_fields WHERE planet_id = ?").get(planet.planetId)).toEqual({
+          metal: debris.resources.metal,
+          crystal: debris.resources.crystal
+        });
+        expect(db.query("SELECT battle_id, outcome_id FROM contract_moon_chance_reports WHERE report_key = ?").get("outcome:5")).toEqual({
+          battle_id: moonChance.battleId,
+          outcome_id: moonChance.outcomeId
+        });
+      } finally {
+        db.close();
+      }
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }
