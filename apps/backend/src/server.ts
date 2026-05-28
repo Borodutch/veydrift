@@ -327,6 +327,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
+        if (!requestsLiveState(url)) {
+          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "shipyard", indexedShipyardState);
+          if (indexed) return indexed;
+        }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "shipyard", new Error("backend_not_configured"), indexedShipyardState)
@@ -347,6 +351,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
+        if (!requestsLiveState(url)) {
+          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "defenses", indexedDefenseState);
+          if (indexed) return indexed;
+        }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "defenses", new Error("backend_not_configured"), indexedDefenseState)
@@ -367,6 +375,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
+        if (!requestsLiveState(url)) {
+          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "research", indexedResearchState);
+          if (indexed) return indexed;
+        }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "research", new Error("backend_not_configured"), indexedResearchState)
@@ -402,6 +414,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
+        if (!requestsLiveState(url)) {
+          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "rift", indexedRiftState);
+          if (indexed) return indexed;
+        }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "rift", new Error("backend_not_configured"), indexedRiftState)
