@@ -64,6 +64,22 @@ contract VeydriftSpaceDockSystemTest is Test {
         assertFalse(VeydriftCatalog.shipRepairableInSpaceDock(Ship.SolarSatellite));
     }
 
+    function testFuzzSpaceDockRepairableShipsStayBelowDestroyedCount(uint16 level, uint32 destroyed)
+        public
+    {
+        level = uint16(1 + (uint256(level) % 30));
+        destroyed = uint32(38 + (uint256(destroyed) % (uint256(type(uint32).max) - 37)));
+        uint256 planetId = _startPlanetWithSpaceDock(level);
+
+        vm.prank(admin);
+        spaceDock.recordCombatWreckage(planetId, Ship.LightFighter, destroyed);
+
+        uint256 expected =
+            (uint256(destroyed) * VeydriftCatalog.spaceDockRepairBps(level)) / spaceDock.BPS();
+        assertEq(spaceDock.repairableShipCount(planetId, Ship.LightFighter), expected);
+        assertLt(expected, destroyed);
+    }
+
     function testCombatWreckageCanBeRepairedBeforeExpiry() public {
         uint256 planetId = _startPlanetWithSpaceDock(1);
 
