@@ -152,6 +152,8 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
     }
 
     function testDefenderRecoveryPrimitives() public pure {
+        assertEq(VeydriftAntiRaidPrimitives.WRECK_FIELD_RECOVERY_BPS, 3_000);
+        assertEq(VeydriftAntiRaidPrimitives.DEFENSE_REPAIR_BPS, 7_000);
         assertEq(VeydriftAntiRaidPrimitives.wreckFieldRecovery(10_000), 3_000);
         assertEq(VeydriftAntiRaidPrimitives.repairedDefenseCount(10), 7);
     }
