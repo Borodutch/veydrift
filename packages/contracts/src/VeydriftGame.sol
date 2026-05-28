@@ -692,6 +692,14 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _collectPlanetResources(uint256 planetId) private {
         _requirePlanetOwner(planetId);
         _settleResources(planetId);
+        Resources memory resources = _planets[planetId].resources;
+        emit PlanetSettled(
+            planetId,
+            resources.metal,
+            resources.crystal,
+            resources.deuterium,
+            _planets[planetId].lastSettledAt
+        );
     }
 
     function _settleResourcesUntil(uint256 planetId, uint64 settledAt) private {

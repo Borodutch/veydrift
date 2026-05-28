@@ -340,6 +340,15 @@ export type SettledPlanetEvent = PlanetState & {
   blockNumber: string;
 };
 
+export type PlanetSettledEvent = {
+  eventName: "PlanetSettled";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  lastSettledAt: string;
+  resources: Resources;
+};
+
 export type MoonChanceReportEvent = {
   eventName:
     | "MoonChanceRequested"
@@ -2638,6 +2647,7 @@ const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "ke
 ];
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
+const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
@@ -2751,6 +2761,10 @@ export function isSettledPlanetLog(log: RpcLog): boolean {
   return topic === planetStartedTopic || topic === colonyCreatedTopic;
 }
 
+export function isPlanetSettledLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === planetSettledTopic;
+}
+
 export function isDebrisFieldLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === debrisFieldUpdatedTopic;
 }
@@ -2783,6 +2797,19 @@ export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
       crystal: "0",
       deuterium: "0"
     }
+  };
+}
+
+export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "PlanetSettled",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    resources: decodeResources(words.slice(0, 3)),
+    lastSettledAt: decodeUintWord(wordAt(words, 3)).toString()
   };
 }
 
