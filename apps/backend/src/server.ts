@@ -22,6 +22,7 @@ import {
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
+import { deriveInfrastructureFields, deriveRiftRequirements, deriveRiftResources } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -434,17 +435,30 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/highscore$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireHighscoreReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
 
       try {
         assertAddress(wallet);
-        if (indexer) await ensurePlanetIndex(indexer);
-        const indexedPlanets = indexer?.settledPlanetsByOwner().get(wallet.toLowerCase()) ?? [];
+        if (indexer) {
+          await ensurePlanetIndex(indexer);
+          const indexedPlanets = indexer.settledPlanetsByOwner().get(wallet.toLowerCase()) ?? [];
+          return Response.json(
+            {
+              formula: highscoreFormula,
+              entry: indexer.highscoreForWallet(wallet, indexedPlanets.map((planet) => planet.planetId)),
+              source: "contract-state-indexer"
+            },
+            {
+              headers: corsHeaders
+            }
+          );
+        }
+
+        const ready = requireHighscoreReader(chainReader, loaded.problems);
+        if (ready instanceof Response) return ready;
         return Response.json(
           {
             formula: highscoreFormula,
-            entry: await ready.getHighscoreForWallet(wallet, indexedPlanets.map((planet) => planet.planetId))
+            entry: await ready.getHighscoreForWallet(wallet)
           },
           {
             headers: corsHeaders
@@ -456,23 +470,35 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/highscores") {
-      const ready = requireHighscoreReader(chainReader, loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 250);
-        if (indexer) await ensurePlanetIndex(indexer);
-        const planetsByOwner: Map<string, SettledPlanetEvent[]> = indexer?.settledPlanetsByOwner() ?? new Map();
-        const entries = ready.getHighscoresForWallets
-          ? await ready.getHighscoresForWallets(planetsByOwner)
-          : await highscoreEntriesForOwners(ready, planetsByOwner);
+        let planetsByOwner: Map<string, SettledPlanetEvent[]>;
+        let entries: HighscoreEntry[];
+        let source: "contract-state-indexer" | "live-chain-reader";
+
+        if (indexer) {
+          await ensurePlanetIndex(indexer);
+          planetsByOwner = indexer.settledPlanetsByOwner();
+          entries = indexer.highscoreEntriesForOwners(planetsByOwner);
+          source = "contract-state-indexer";
+        } else {
+          const ready = requireHighscoreReader(chainReader, loaded.problems);
+          if (ready instanceof Response) return ready;
+          planetsByOwner = new Map();
+          entries = ready.getHighscoresForWallets
+            ? await ready.getHighscoresForWallets(planetsByOwner)
+            : await highscoreEntriesForOwners(ready, planetsByOwner);
+          source = "live-chain-reader";
+        }
+
         const rankings = highscoreRankings(entries, limit, planetsByOwner);
 
         return Response.json(
           {
             generatedAt: new Date().toISOString(),
             formula: highscoreFormula,
-            rankings
+            rankings,
+            source
           },
           {
             headers: corsHeaders
@@ -916,6 +942,15 @@ function indexedInfrastructureState(
   const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
   const queue = planet ? indexer.planetQueue(planet.planetId, "building") : null;
   const technologyLevels = indexer.technologyLevels(wallet);
+  const derived = planet
+    ? deriveInfrastructureFields(planet, buildings, technologyLevels)
+    : {
+      productionPerHour: null,
+      energyBalance: null,
+      storageCaps: null,
+      protectedResources: null,
+      raidableResources: null
+    };
 
   return {
     wallet,
@@ -923,11 +958,7 @@ function indexedInfrastructureState(
     infrastructureAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
-    productionPerHour: null,
-    energyBalance: null,
-    storageCaps: null,
-    protectedResources: null,
-    raidableResources: null,
+    ...derived,
     technologyLevels,
     buildings,
     queue
@@ -1025,18 +1056,35 @@ function indexedResearchState(
 function indexedRiftState(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
-  _planet: SettledPlanetEvent | null,
-  unavailableReason: string
+  planet: SettledPlanetEvent | null,
+  _unavailableReason: string,
+  indexer: SettlementIndexer
 ): RiftState {
+  const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+  const buildingLevel = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
+  const technologyLevels = indexer.technologyLevels(wallet);
+  const riftLevel = planet ? buildingLevel(15) : 0;
+  const unlocked = riftLevel > 0;
+  const requirements = deriveRiftRequirements(
+    planet ? unlocked : null,
+    buildingLevel(4),
+    buildingLevel(6),
+    technologyLevels
+  );
+  const resources = deriveRiftResources(planet?.resources ?? null);
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
     riftAvailable: false,
-    unlocked: false,
-    unavailableReason,
+    unlocked,
+    unavailableReason: !planet
+      ? "Settle a home planet before using the Interdimensional Rift Stabilizer."
+      : !unlocked
+        ? "Build the Interdimensional Rift Stabilizer on this planet to unlock resource bridging."
+        : "Resource token balances and allowances require an explicit live Rift refresh.",
     withdrawalDelaySeconds: "2592000",
-    requirements: [],
-    resources: [],
+    requirements,
+    resources,
     pendingWithdrawals: []
   };
 }
