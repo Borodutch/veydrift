@@ -138,6 +138,9 @@ Moon chance:
 - `VeydriftMoonSystem.requestMoonChanceFromBattle(battleId, targetPlanetId, metalDebris, crystalDebris)` is the battle/debris integration hook. The configured moon-chance reporter should call it after a qualifying battle creates debris.
 - Moon chance follows the Veydrift debris rule: 1% per 100,000 metal+crystal debris, capped at 20%. Battles below 100,000 debris do not create a randomness request.
 - The moon system requests one seed from `RandomnessEngine` and stores a pending outcome. `finalizeMoonChance(outcomeId)` can be called by anyone after fulfillment; before fulfillment it reverts through `RandomnessEngine.PendingRandomness`.
+- The combat economy decision matrix in `docs/combat-economy-incentives-VEY-KANEO-217.md`
+  records the selected debris, defense repair, Space Dock, moon chance, loot,
+  bashing, fuel, and ACS holding incentives plus accepted testnet abuse risks.
 - Duplicate battle/target requests are rejected, and targets that already have a moon emit a skip event instead of creating a second moon. Successful outcomes derive moon fields and diameter from the fulfilled random word and battle context.
 
 Alliances:
