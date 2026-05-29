@@ -89,6 +89,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (length == 0 || length > 32) revert InvalidPlanetName();
 
         planetNames[planetId] = name;
+        emit PlanetRenamed(msg.sender, planetId, name);
     }
 
     function abandonPlanet(uint256 planetId) external {
