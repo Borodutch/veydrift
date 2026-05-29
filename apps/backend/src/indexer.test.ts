@@ -10,6 +10,7 @@ import { SettlementIndexer } from "./indexer";
 const player = "0x2222222222222222222222222222222222222222" as Address;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
+const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
@@ -301,6 +302,50 @@ describe("SettlementIndexer", () => {
         crystal: "5900",
         deuterium: "5800"
       }
+    });
+  });
+
+  test("applies planet rename logs to every indexed planet read model", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    expect(indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xrename",
+      logIndex: "0x0",
+      topics: [
+        planetRenamedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiString("New Eos")
+    })).toMatchObject({
+      applied: true,
+      duplicate: false,
+      snapshot: {
+        indexedEventLogs: 1,
+        indexedPlanets: 1,
+        latestIndexedBlock: "129"
+      }
+    });
+
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      planetId: planet.planetId,
+      name: "New Eos"
+    });
+    expect(indexer.walletPlanets(player).planets[0]).toMatchObject({
+      planetId: planet.planetId,
+      name: "New Eos"
+    });
+    expect(indexer.planet(planet.planetId)).toMatchObject({
+      name: "New Eos"
+    });
+    expect(indexer.settledPlanetsInSystem(planet.galaxy, planet.system)[0]).toMatchObject({
+      name: "New Eos"
     });
   });
 
@@ -889,6 +934,16 @@ describe("SettlementIndexer", () => {
 
 function abiWords(...values: bigint[]): string {
   return `0x${values.map((value) => value.toString(16).padStart(64, "0")).join("")}`;
+}
+
+function abiString(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  const data = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `0x${[
+    (32n).toString(16).padStart(64, "0"),
+    BigInt(bytes.length).toString(16).padStart(64, "0"),
+    data.padEnd(Math.ceil(data.length / 64) * 64, "0")
+  ].join("")}`;
 }
 
 function topic(value: bigint): string {
