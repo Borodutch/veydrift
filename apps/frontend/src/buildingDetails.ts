@@ -229,7 +229,7 @@ export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): Building
 export function formatBuildingRequirements(key: BuildingKey): string {
   const requirements = buildingRequirementsFor(key);
   return requirements.length > 0
-    ? requirements.map(formatBuildingRequirement).join(" / ")
+    ? requirements.map(formatBuildingRequirement).join(", ")
     : "None";
 }
 
@@ -286,7 +286,7 @@ export function formatCost(cost: Resources): string {
   return resourceEntries(cost)
     .filter(([, value]) => value > 0)
     .map(([resource, value]) => `${resourceLabels[resource]} ${formatNumber(value)}`)
-    .join(" / ") || "No resource cost";
+    .join(", ") || "No resource cost";
 }
 
 function formatMissingResources(resources: Resources, cost: Resources): string {

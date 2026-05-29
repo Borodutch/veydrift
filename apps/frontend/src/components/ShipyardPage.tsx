@@ -263,8 +263,8 @@ function ShipTile({
           <Stat label="Build time" value={durationSeconds === undefined ? "-" : formatDuration(durationSeconds)} />
         </dl>
 
-        <div className="mt-3 min-h-10 text-xs leading-5 text-slate-400">
-          {missing.length > 0 ? missing.join(" · ") : "Requirements met by on-chain state."}
+        <div className="mt-3 min-h-10 break-words text-xs leading-5 text-slate-400">
+          {missing.length > 0 ? missing.join(", ") : "Requirements met by on-chain state."}
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
