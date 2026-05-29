@@ -39,12 +39,21 @@ type JsonRpcResult = {
 
 export type ChainSyncSnapshot = {
   connected: boolean;
+  detectedGaps: number;
   eventsReceived: number;
+  lastGap: {
+    fromBlock: string;
+    toBlock: string;
+  } | null;
+  lastGapDetectedAt: string | null;
   lastConnectedAt: string | null;
   lastError: string | null;
   lastEventAt: string | null;
+  latestWebsocketBlock: string | null;
   latestSyncedBlock: string | null;
   reconnectAttempts: number;
+  reorgDetectedAt: string | null;
+  subscribedAddresses: string[];
   subscribedToHeads: boolean;
   subscribedToLogs: boolean;
   wsEnabled: boolean;
@@ -60,14 +69,19 @@ type ChainSyncListener = (event: ChainSyncEvent) => void;
 
 export class ChainSyncService {
   private connected = false;
+  private detectedGaps = 0;
   private eventsReceived = 0;
+  private lastGap: { fromBlock: string; toBlock: string } | null = null;
+  private lastGapDetectedAt: string | null = null;
   private lastConnectedAt: string | null = null;
   private lastError: string | null = null;
   private lastEventAt: string | null = null;
+  private latestWebsocketBlock: string | null = null;
   private latestSyncedBlock: string | null = null;
   private listeners = new Set<ChainSyncListener>();
   private nextRequestId = 1;
   private reconnectAttempts = 0;
+  private reorgDetectedAt: string | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private requestKinds = new Map<number, "logs" | "newHeads">();
   private socket: SocketLike | null = null;
@@ -76,7 +90,7 @@ export class ChainSyncService {
 
   constructor(
     private readonly config: BackendConfig,
-    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog" | "rebuildPlanets">> | undefined,
+    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog" | "markStale" | "rebuild" | "rebuildPlanets" | "reconcile">> | undefined,
     private readonly options: {
       reconnectBaseMs?: number;
       WebSocketCtor?: WebSocketConstructor;
@@ -86,12 +100,18 @@ export class ChainSyncService {
   snapshot(): ChainSyncSnapshot {
     return {
       connected: this.connected,
+      detectedGaps: this.detectedGaps,
       eventsReceived: this.eventsReceived,
+      lastGap: this.lastGap,
+      lastGapDetectedAt: this.lastGapDetectedAt,
       lastConnectedAt: this.lastConnectedAt,
       lastError: this.lastError,
       lastEventAt: this.lastEventAt,
+      latestWebsocketBlock: this.latestWebsocketBlock,
       latestSyncedBlock: this.latestSyncedBlock,
       reconnectAttempts: this.reconnectAttempts,
+      reorgDetectedAt: this.reorgDetectedAt,
+      subscribedAddresses: this.subscribedAddresses(),
       subscribedToHeads: [...this.subscriptionKinds.values()].includes("newHeads"),
       subscribedToLogs: [...this.subscriptionKinds.values()].includes("logs"),
       wsEnabled: Boolean(this.config.wsRpcUrl)
@@ -158,6 +178,7 @@ export class ChainSyncService {
   }
 
   private handleOpen(): void {
+    const reconnectingAfterProgress = this.latestWebsocketBlock !== null;
     this.connected = true;
     this.lastConnectedAt = new Date().toISOString();
     this.lastError = null;
@@ -165,6 +186,9 @@ export class ChainSyncService {
     this.subscriptionKinds.clear();
     this.subscribe("logs");
     this.subscribe("newHeads");
+    if (reconnectingAfterProgress) {
+      this.requestReconciliation("websocket reconnected");
+    }
     this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
   }
 
@@ -199,7 +223,11 @@ export class ChainSyncService {
     if (kind === "logs") {
       const addresses = [
         this.config.gameContractAddress,
-        this.config.moonContractAddress
+        this.config.moonContractAddress,
+        this.config.allianceContractAddress,
+        this.config.resourceTokenAddresses.metal,
+        this.config.resourceTokenAddresses.crystal,
+        this.config.resourceTokenAddresses.deuterium
       ].filter((address): address is `0x${string}` => Boolean(address));
       this.socket?.send(JSON.stringify({
         id,
@@ -266,7 +294,14 @@ export class ChainSyncService {
     if (!isRecord(result) || typeof result.number !== "string") {
       return;
     }
-    this.latestSyncedBlock = BigInt(result.number).toString();
+    const block = BigInt(result.number);
+    const previous = this.latestWebsocketBlock ? BigInt(this.latestWebsocketBlock) : null;
+    this.latestWebsocketBlock = block.toString();
+    this.latestSyncedBlock = block.toString();
+    if (previous !== null && block > previous + 1n) {
+      this.recordGap((previous + 1n).toString(), block.toString());
+      this.requestReconciliation(`websocket head gap ${previous + 1n}-${block}`);
+    }
   }
 
   private handleLog(result: unknown): void {
@@ -276,13 +311,25 @@ export class ChainSyncService {
 
     this.eventsReceived += 1;
     this.lastEventAt = new Date().toISOString();
-    this.latestSyncedBlock = BigInt(result.blockNumber).toString();
+    const block = BigInt(result.blockNumber);
+    this.latestWebsocketBlock = maxBlockString(this.latestWebsocketBlock, block);
+    this.latestSyncedBlock = block.toString();
+
+    const removed = "removed" in result && result.removed === true;
+    if (removed) {
+      this.reorgDetectedAt = new Date().toISOString();
+    }
 
     if (this.indexer?.applyLog) {
       try {
-        this.indexer.applyLog(result);
+        const applied = this.indexer.applyLog(result);
+        if (applied.removed) {
+          this.requestReconciliation("removed log/reorg");
+        }
       } catch (error) {
         this.lastError = error instanceof Error ? error.message : "Failed to index contract log.";
+        this.indexer?.markStale?.("websocket log decode/apply failure");
+        this.requestReconciliation("websocket log decode/apply failure");
       }
     } else if (isSettledPlanetLog(result)) {
       try {
@@ -304,8 +351,11 @@ export class ChainSyncService {
       }
     }
 
-    const removed = "removed" in result && result.removed === true;
-    if (!removed && this.indexer?.rebuildPlanets) {
+    if (removed && this.indexer?.rebuildPlanets) {
+      void this.indexer.rebuildPlanets().catch((error) => {
+        this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed planet state after removed log.";
+      });
+    } else if (!removed && this.indexer?.rebuildPlanets) {
       void this.indexer.rebuildPlanets().catch((error) => {
         this.lastError = error instanceof Error ? error.message : "Failed to refresh indexed planet state.";
       });
@@ -323,6 +373,32 @@ export class ChainSyncService {
       listener(event);
     }
   }
+
+  private recordGap(fromBlock: string, toBlock: string): void {
+    this.detectedGaps += 1;
+    this.lastGap = { fromBlock, toBlock };
+    this.lastGapDetectedAt = new Date().toISOString();
+  }
+
+  private requestReconciliation(reason: string): void {
+    const reconcile = this.indexer?.reconcile ?? this.indexer?.rebuild;
+    if (!reconcile) return;
+    this.indexer?.markStale?.(reason);
+    void reconcile.call(this.indexer, reason).catch((error: unknown) => {
+      this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed state.";
+    });
+  }
+
+  private subscribedAddresses(): string[] {
+    return [
+      this.config.gameContractAddress,
+      this.config.moonContractAddress,
+      this.config.allianceContractAddress,
+      this.config.resourceTokenAddresses.metal,
+      this.config.resourceTokenAddresses.crystal,
+      this.config.resourceTokenAddresses.deuterium
+    ].filter((address): address is `0x${string}` => Boolean(address));
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -336,4 +412,10 @@ function isRpcLog(value: unknown): value is RpcLog {
     && Array.isArray(value.topics)
     && value.topics.every((topic) => typeof topic === "string")
     && typeof value.data === "string";
+}
+
+function maxBlockString(current: string | null, next: bigint): string {
+  if (current === null) return next.toString();
+  const currentBlock = BigInt(current);
+  return next > currentBlock ? next.toString() : current;
 }
