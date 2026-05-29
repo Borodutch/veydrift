@@ -820,6 +820,7 @@ h4 {
   right: 18px;
   z-index: 4;
   display: inline-flex;
+  max-width: calc(100vw - 36px);
   min-height: 36px;
   align-items: center;
   justify-content: center;
@@ -1280,6 +1281,12 @@ h4 {
   .settlement-stage {
     padding: 12px;
     padding-top: 58px;
+  }
+
+  .settlement-support-link {
+    top: 12px;
+    right: 12px;
+    max-width: calc(100vw - 24px);
   }
 
   .settlement-shell {
