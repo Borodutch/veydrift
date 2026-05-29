@@ -967,10 +967,11 @@ function indexedInfrastructureState(
   indexer: SettlementIndexer
 ): InfrastructureState {
   const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+  const ships = planet ? indexer.shipRows(planet.planetId) : [];
   const queue = planet ? indexer.planetQueue(planet.planetId, "building") : null;
   const technologyLevels = indexer.technologyLevels(wallet);
   const derived = planet
-    ? deriveInfrastructureFields(planet, buildings, technologyLevels)
+    ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels)
     : {
       productionPerHour: null,
       energyBalance: null,

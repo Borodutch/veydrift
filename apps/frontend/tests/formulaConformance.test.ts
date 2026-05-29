@@ -18,6 +18,7 @@ import {
   researchRequirementsFor,
   shipCatalog,
   shipDurationEstimate,
+  solarSatelliteEnergy,
   storageCaps,
 } from "../src/playableMvp";
 
@@ -52,6 +53,13 @@ describe("canonical Veydrift formula conformance", () => {
       metal: 0,
       crystal: 0,
       deuterium: 0,
+    });
+    expect(solarSatelliteEnergy(80)).toBe(36);
+    expect(energyBalance({ ...buildings, solarPlant: 0 }, 0, 3, { ...profile, maxTemperature: 80 })).toEqual({
+      deuteriumConsumed: 0,
+      produced: 108,
+      required: 217,
+      scaleBps: 4_976,
     });
   });
 

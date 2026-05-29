@@ -58,7 +58,11 @@ describe("Playable MVP app display helpers", () => {
       buildings: {
         ...baseState.buildings,
         metalMine: 1,
-        solarPlant: 1,
+        solarPlant: 0,
+      },
+      ships: {
+        ...baseState.ships,
+        solarSatellite: 3,
       },
     };
 
@@ -69,13 +73,41 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       isWalletConnected: true,
+      planetProductionProfile: {
+        maxTemperature: 80,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+      },
       settledState,
     })).toEqual({
       deuteriumConsumed: 0,
-      produced: 22,
+      produced: 108,
       required: 11,
       scaleBps: 10000,
     });
+
+    expect(topBarEnergyFor({
+      infrastructureChainState: infrastructureState({
+        energyBalance: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isWalletConnected: true,
+      planetProductionProfile: {
+        maxTemperature: 80,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+      },
+      settledState: {
+        ...settledState,
+        ships: {
+          ...settledState.ships,
+          solarSatellite: 1,
+        },
+      },
+    })?.produced).toBe(36);
   });
 
   test("does not invent top bar energy when chain state is missing or errored", () => {

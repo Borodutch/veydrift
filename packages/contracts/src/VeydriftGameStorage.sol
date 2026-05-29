@@ -534,6 +534,7 @@ abstract contract VeydriftGameStorage {
     event CombatDebrisSignaled(
         uint256 indexed missionId, uint256 indexed targetPlanetId, uint128 metal, uint128 crystal
     );
+    event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
     event FleetMissionReturnExposed(
         uint256 indexed missionId,
         address indexed owner,

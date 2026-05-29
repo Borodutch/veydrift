@@ -30,13 +30,22 @@ library VeydriftFormulas {
         uint256 deuteriumLevel,
         uint256 solarLevel,
         uint256 fusionLevel,
+        uint256 solarSatelliteCount,
+        int16 maxTemperature,
         uint256 energyTechnologyLevel,
         uint16 metalMultiplierBps,
         uint16 crystalMultiplierBps,
         uint16 deuteriumMultiplierBps
     ) public pure returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) {
         (, uint256 requiredEnergy, uint256 energyScale) = energyBalance(
-            metalLevel, crystalLevel, deuteriumLevel, solarLevel, fusionLevel, energyTechnologyLevel
+            metalLevel,
+            crystalLevel,
+            deuteriumLevel,
+            solarLevel,
+            fusionLevel,
+            solarSatelliteCount,
+            maxTemperature,
+            energyTechnologyLevel
         );
 
         metalPerHour = _scaleByBps(_scaledLevelValue(30, metalLevel), metalMultiplierBps, BPS);
@@ -61,12 +70,15 @@ library VeydriftFormulas {
         uint256 deuteriumLevel,
         uint256 solarLevel,
         uint256 fusionLevel,
+        uint256 solarSatelliteCount,
+        int16 maxTemperature,
         uint256 energyTechnologyLevel
     ) public pure returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps) {
         requiredEnergy = _scaledLevelValue(10, metalLevel) + _scaledLevelValue(10, crystalLevel)
             + _scaledLevelValue(20, deuteriumLevel);
         producedEnergy = _scaledLevelValue(20, solarLevel)
-            + fusionReactorEnergyProduction(fusionLevel, energyTechnologyLevel);
+            + fusionReactorEnergyProduction(fusionLevel, energyTechnologyLevel)
+            + solarSatelliteEnergy(maxTemperature) * solarSatelliteCount;
         // Veydrift shortage factor: full production when energy is sufficient,
         // otherwise floor(produced / required) in basis points. Settlement uses
         // the building state for each elapsed segment, so later power upgrades do
@@ -86,6 +98,13 @@ library VeydriftFormulas {
 
     function fusionReactorDeuteriumConsumption(uint256 fusionLevel) public pure returns (uint256) {
         return _scaledLevelValueCeil(10, fusionLevel);
+    }
+
+    function solarSatelliteEnergy(int16 maxTemperature) public pure returns (uint256) {
+        int256 raw = (int256(maxTemperature) + 140) / 6;
+        if (raw < 1) return 1;
+        if (raw > 65) return 65;
+        return raw.toUint256();
     }
 
     function storageCaps(uint256 metalStorage, uint256 crystalStorage, uint256 deuteriumTank)

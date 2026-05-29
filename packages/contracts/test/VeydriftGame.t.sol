@@ -692,6 +692,53 @@ contract VeydriftGameTest is Test {
         assertEq(VeydriftFormulas.buildingDuration(2, 1, 10_000, 5_000, 1, 1), 3_600);
     }
 
+    function testSolarSatellitesIncreasePlanetEnergy() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        VeydriftGameStorage.FirstPlanet memory planet = game.firstPlanetOf(player);
+        uint256 perSatelliteEnergy = VeydriftFormulas.solarSatelliteEnergy(planet.temperature);
+
+        _setShipCount(planetId, Ship.SolarSatellite, 3);
+
+        (uint256 producedEnergy, uint256 requiredEnergy, uint256 scaleBps) =
+            game.energyBalance(planetId);
+        assertEq(producedEnergy, perSatelliteEnergy * 3);
+        assertEq(requiredEnergy, 0);
+        assertEq(scaleBps, 10_000);
+    }
+
+    function testDestroyedSolarSatellitesReducePlanetEnergy() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setShipCount(targetPlanetId, Ship.SolarSatellite, 100);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        (uint256 energyBefore,,) = game.energyBalance(targetPlanetId);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            901
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 901);
+        game.resolveFleetMission(missionId);
+
+        uint32 satellitesAfter = game.shipCount(targetPlanetId, Ship.SolarSatellite);
+        (uint256 energyAfter,,) = game.energyBalance(targetPlanetId);
+        assertLt(satellitesAfter, 100);
+        assertLt(energyAfter, energyBefore);
+    }
+
     function testBuildingUpgradeSpendsInternalResources() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
