@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, DebrisFieldEvent, MoonChanceReportEvent, SettledPlanetEvent } from "./evm";
+import type { Address, DebrisFieldEvent, InfrastructureState, MoonChanceReportEvent, PlayerQueues, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
@@ -16,6 +16,15 @@ const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
+const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
+const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
+const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
+const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
+const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
+const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -443,6 +452,245 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("indexes moon creation and moon building queues", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon",
+      logIndex: "0x0",
+      topics: [
+        moonCreatedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x88",
+      transactionHash: "0xmoonbuild",
+      logIndex: "0x0",
+      topics: [
+        moonBuildingStartedTopic,
+        topic(7n),
+        topic(2n)
+      ],
+      data: abiWords(1n, 1770001200n, 2_000_000n, 4_000_000n, 2_000_000n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      moon: {
+        exists: true,
+        planetId: planet.planetId,
+        owner: player,
+        fields: 12,
+        diameterKm: 8777
+      },
+      queue: {
+        kind: "moon-building",
+        itemId: 2,
+        targetLevel: 1,
+        readyAt: "1770001200"
+      }
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x89",
+      transactionHash: "0xmoonbuilddone",
+      logIndex: "0x0",
+      topics: [
+        moonBuildingCompletedTopic,
+        topic(7n),
+        topic(2n)
+      ],
+      data: abiWords(1n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      queue: null,
+      buildings: expect.arrayContaining([
+        expect.objectContaining({ id: 2, level: 1 })
+      ])
+    });
+  });
+
+  test("indexes rift deposits and withdrawal lifecycle", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x8a",
+      transactionHash: "0xriftbuild",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(15n)
+      ],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x8b",
+      transactionHash: "0xdeposit",
+      logIndex: "0x0",
+      topics: [
+        marketResourceDepositedTopic,
+        addressTopic(player),
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x8c",
+      transactionHash: "0xwithdraw",
+      logIndex: "0x0",
+      topics: [
+        marketResourceWithdrawalRequestedTopic,
+        addressTopic(player),
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(250n, 1770500000n)
+    });
+
+    expect(indexer.riftState(player, planet.planetId)).toMatchObject({
+      unlocked: true,
+      resources: expect.arrayContaining([
+        expect.objectContaining({
+          key: "metal",
+          inGameBalance: "750",
+          lockedBalance: "250"
+        })
+      ]),
+      pendingWithdrawals: [
+        expect.objectContaining({
+          amount: "250",
+          resource: "metal",
+          unlocksAt: "1770500000"
+        })
+      ]
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x8d",
+      transactionHash: "0xfinishwithdraw",
+      logIndex: "0x0",
+      topics: [
+        marketResourceWithdrawalFinishedTopic,
+        addressTopic(player),
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(250n)
+    });
+
+    expect(indexer.riftState(player, planet.planetId)).toMatchObject({
+      resources: expect.arrayContaining([
+        expect.objectContaining({
+          key: "metal",
+          inGameBalance: "750",
+          lockedBalance: "0"
+        })
+      ]),
+      pendingWithdrawals: []
+    });
+  });
+
+  test("indexes fleet mission visibility from mission event logs", () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xfleet",
+      logIndex: "0x0",
+      topics: [
+        fleetMissionLaunchedTopic,
+        topic(44n),
+        addressTopic(attacker),
+        topic(3n)
+      ],
+      data: abiWords(99n, 7n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xfleet",
+      logIndex: "0x1",
+      topics: [
+        fleetMissionCargoTopic,
+        topic(44n)
+      ],
+      data: abiWords(100n, 50n, 0n, 20n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xfleet",
+      logIndex: "0x2",
+      topics: [
+        fleetMissionShipsTopic,
+        topic(44n)
+      ],
+      data: abiWords(1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    const visibility = indexer.fleetMissionVisibility(player);
+    expect(visibility.outgoing).toEqual([]);
+    expect(visibility.incoming[0]).toMatchObject({
+      missionId: "44",
+      missionType: "Attack",
+      owner: attacker,
+      originPlanetId: "99",
+      targetPlanetId: "7",
+      ships: {
+        smallCargo: "1",
+        lightFighter: "2"
+      }
+    });
+  });
+
+  test("removed duplicate log marks reorg health instead of being ignored", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const log = {
+      blockNumber: "0x7c",
+      transactionHash: "0xabc",
+      logIndex: "0x0",
+      topics: [
+        planetStartedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 211n, 1n)
+    };
+
+    indexer.applyLog(log);
+    expect(indexer.applyLog({ ...log, removed: true })).toMatchObject({
+      applied: false,
+      duplicate: false,
+      removed: true,
+      snapshot: {
+        indexedEventLogs: 2
+      }
+    });
+    expect(indexer.snapshot().reorgDetectedAt).toBeTruthy();
+  });
+
   test("rebuild applies repeated debris updates in chain order", async () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return [debris, updatedDebris, clearedDebris, updatedDebris]; },
@@ -498,6 +746,128 @@ describe("SettlementIndexer", () => {
       blockNumber: planet.blockNumber,
       lastSettledAt: currentPlanet.lastSettledAt,
       resources: currentPlanet.resources
+    });
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      safeToServeIndexedState: true,
+      staleReason: null
+    });
+  });
+
+  test("rebuild reconciles stale levels and queues from canonical on-chain snapshots", async () => {
+    const currentPlanet: SettledPlanetEvent = {
+      ...planet,
+      resources: {
+        metal: "9900",
+        crystal: "8800",
+        deuterium: "7700"
+      }
+    };
+    const liveInfrastructure: InfrastructureState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: true,
+      resources: currentPlanet.resources,
+      productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
+      energyBalance: { produced: "20", required: "10", scaleBps: "10000" },
+      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
+      protectedResources: { metal: "1000", crystal: "1000", deuterium: "1000" },
+      raidableResources: { metal: "8900", crystal: "7800", deuterium: "6700" },
+      technologyLevels: {},
+      buildings: [
+        { id: 0, level: 4, cost: { metal: "960", crystal: "240", deuterium: "0" } },
+        { id: 3, level: 2, cost: { metal: "150", crystal: "60", deuterium: "0" } }
+      ],
+      queue: {
+        active: true,
+        kind: "building",
+        itemId: 3,
+        targetLevel: 3,
+        readyAt: "1770000900",
+        startedAt: "1770000300",
+        cost: { metal: "150", crystal: "60", deuterium: "0" }
+      }
+    };
+    const liveQueues: PlayerQueues = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      building: liveInfrastructure.queue,
+      defense: null,
+      ship: null,
+      research: {
+        active: true,
+        kind: "research",
+        itemId: 4,
+        targetLevel: 2,
+        readyAt: "1770001200",
+        cost: { metal: "800", crystal: "400", deuterium: "200" }
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [currentPlanet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getInfrastructureState() { return liveInfrastructure; },
+      async getPlayerQueues() { return liveQueues; },
+      async getResearchState() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          researchAvailable: true,
+          resources: currentPlanet.resources,
+          researchLabLevel: 1,
+          researchNetworkLabLevels: [],
+          technologyLevels: { "4": 2 },
+          technologies: [
+            { id: 4, level: 2, cost: { metal: "1600", crystal: "800", deuterium: "400" } }
+          ],
+          queue: liveQueues.research
+        };
+      }
+    }, 100n);
+    indexer.applyEvent({
+      ...planet,
+      resources: { metal: "1", crystal: "1", deuterium: "1" }
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xstale",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+
+    await indexer.rebuild();
+
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual(currentPlanet.resources);
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)).toMatchObject({
+      id: 0,
+      level: 4
+    });
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 3)).toMatchObject({
+      id: 3,
+      level: 2
+    });
+    expect(indexer.playerQueues(player, planet.planetId).building).toMatchObject({
+      kind: "building",
+      itemId: 3,
+      targetLevel: 3,
+      readyAt: "1770000900"
+    });
+    expect(indexer.playerQueues(player, planet.planetId).research).toMatchObject({
+      kind: "research",
+      itemId: 4,
+      targetLevel: 2,
+      readyAt: "1770001200"
+    });
+    expect(indexer.technologyLevels(player)).toMatchObject({
+      "4": 2
+    });
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      safeToServeIndexedState: true,
+      staleReason: null
     });
   });
 

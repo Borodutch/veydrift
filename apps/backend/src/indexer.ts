@@ -2,30 +2,49 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+  buildingIds,
+  defenseIds,
+  shipIds,
+  technologyIds
+} from "./contractStateSchema";
+import {
+  decodeCompleteFleetMissionLogs,
   decodeDebrisFieldLog,
   decodeIndexedQueueCompletedLog,
   decodeIndexedQueueStartedLog,
+  decodeMoonCreatedLog,
   decodeMoonChanceReportLog,
   decodePlanetSettledLog,
+  decodeRiftResourceLog,
   decodeSettledPlanetLog,
   isDebrisFieldLog,
+  isFleetMissionLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
+  isMoonCreatedLog,
   isMoonChanceReportLog,
   isPlanetSettledLog,
+  isRiftResourceLog,
   isSettledPlanetLog,
   type ChainReader,
   type DebrisFieldEvent,
   type DefenseState,
+  type FleetMissionVisibility,
+  type FleetMissionSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
+  type IndexedMoonCreatedEvent,
+  type IndexedRiftResourceEvent,
   type InfrastructureState,
   type ManagedPlanet,
+  type MoonState,
   type MoonChanceReportEvent,
   type PlanetSettledEvent,
   type PlayerQueues,
   type QueueState,
   type ResearchState,
+  riftRequirements,
+  type RiftState,
   type RpcLog,
   type SettledPlanetEvent,
   type ShipyardState,
@@ -36,7 +55,8 @@ import {
   deriveBuildingRows,
   deriveDefenseRows,
   deriveShipRows,
-  deriveTechnologyRows
+  deriveTechnologyRows,
+  zeroResources
 } from "./readModels";
 import type { HighscoreEntry } from "./highscores";
 
@@ -47,15 +67,21 @@ export type IndexerSnapshot = {
   indexedDebrisFields: number;
   indexedEventLogs: number;
   indexedMoonChanceReports: number;
+  indexedMoons: number;
   indexedPlanets: number;
+  indexedState: "healthy" | "reconciling" | "stale";
+  indexedRiftBalances: number;
   fromBlock: string;
   lastRebuiltAt: string | null;
   lastReconciledAt: string | null;
   lastReconciledBlock: string | null;
   lastReconciliationError: string | null;
   latestIndexedBlock: string | null;
+  pendingReconciliationReason: string | null;
   reconciliationInProgress: boolean;
   reorgDetectedAt: string | null;
+  safeToServeIndexedState: boolean;
+  staleReason: string | null;
 };
 
 export type SettlementIndexerOptions = {
@@ -106,6 +132,23 @@ type LevelRow = {
   value: number;
 };
 
+type MoonRow = {
+  event_json: string;
+};
+
+type RiftBalanceRow = {
+  in_game_balance: string;
+  locked_balance: string;
+  resource_id: number;
+};
+
+type PendingWithdrawalRow = {
+  amount: string;
+  resource_id: number;
+  unlocks_at: string;
+  withdrawal_key: string;
+};
+
 type ResourceColumns = {
   metal: string;
   crystal: string;
@@ -134,7 +177,15 @@ export class SettlementIndexer {
     private readonly chainReader: Pick<
       ChainReader,
       "listDebrisFieldEvents" | "listMoonChanceReportEvents" | "listSettledPlanetEvents"
-    > & Pick<Partial<ChainReader>, "listCurrentPlanets">,
+    > & Pick<
+      Partial<ChainReader>,
+      "getDefenseState"
+        | "getInfrastructureState"
+        | "getPlayerQueues"
+        | "getResearchState"
+        | "getShipyardState"
+        | "listCurrentPlanets"
+    >,
     private readonly fromBlock: bigint,
     options: SettlementIndexerOptions = {}
   ) {
@@ -143,19 +194,28 @@ export class SettlementIndexer {
   }
 
   snapshot(): IndexerSnapshot {
+    const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
+    const staleReason = this.staleReason(reconciliationInProgress);
+    const safeToServeIndexedState = !reconciliationInProgress && staleReason === null;
     return {
       indexedDebrisFields: this.count("indexed_debris_fields"),
       indexedEventLogs: this.count("indexed_event_logs"),
       indexedMoonChanceReports: this.count("indexed_moon_chance_reports"),
+      indexedMoons: this.count("indexed_moons"),
       indexedPlanets: this.count("indexed_planets"),
+      indexedState: safeToServeIndexedState ? "healthy" : reconciliationInProgress ? "reconciling" : "stale",
+      indexedRiftBalances: this.count("indexed_rift_balances"),
       fromBlock: this.fromBlock.toString(),
       lastRebuiltAt: this.metadata("lastRebuiltAt"),
       lastReconciledAt: this.metadata("lastReconciledAt"),
       lastReconciledBlock: this.metadata("lastReconciledBlock"),
       lastReconciliationError: this.metadata("lastReconciliationError"),
       latestIndexedBlock: this.metadata("latestIndexedBlock"),
-      reconciliationInProgress: this.rebuildPromise !== null || this.planetRebuildPromise !== null,
-      reorgDetectedAt: this.metadata("reorgDetectedAt")
+      pendingReconciliationReason: this.metadata("pendingReconciliationReason"),
+      reconciliationInProgress,
+      reorgDetectedAt: this.metadata("reorgDetectedAt"),
+      safeToServeIndexedState,
+      staleReason
     };
   }
 
@@ -269,6 +329,41 @@ export class SettlementIndexer {
     };
   }
 
+  fleetMissionVisibility(wallet: `0x${string}`): FleetMissionVisibility {
+    const settlement = this.walletSettlement(wallet);
+    const walletLower = wallet.toLowerCase();
+    const ownedPlanetIds = new Set(
+      this.settledPlanets()
+        .filter((planet) => planet.owner.toLowerCase() === walletLower)
+        .map((planet) => planet.planetId)
+    );
+    const summaries = this.indexedFleetMissionSummaries();
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      incoming: summaries.filter((mission) =>
+        mission.owner.toLowerCase() !== walletLower
+          && ownedPlanetIds.has(mission.targetPlanetId)
+          && ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && mission.status === "Outbound"
+      ),
+      outgoing: summaries.filter((mission) =>
+        mission.owner.toLowerCase() === walletLower && mission.status === "Outbound"
+      ),
+      returning: summaries.filter((mission) =>
+        mission.owner.toLowerCase() === walletLower
+          && (mission.status === "Returning" || mission.status === "Recalled")
+      ),
+      joinableAttacks: summaries.filter((mission) =>
+        mission.owner.toLowerCase() !== walletLower
+          && !ownedPlanetIds.has(mission.targetPlanetId)
+          && mission.missionType === "Attack"
+          && mission.status === "Outbound"
+      )
+    };
+  }
+
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
     return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
   }
@@ -329,8 +424,87 @@ export class SettlementIndexer {
     return this.queueState(`${kind}:${planetId}`);
   }
 
+  moonQueue(planetId: string): QueueState | null {
+    return this.queueState(`moon-building:${planetId}`);
+  }
+
   researchQueue(wallet: `0x${string}`): QueueState | null {
     return this.queueState(`research:${wallet.toLowerCase()}`);
+  }
+
+  moonState(wallet: `0x${string}`, planetId: string | null): MoonState {
+    const moon = planetId ? this.moon(planetId) : null;
+    return {
+      wallet,
+      homePlanetId: planetId,
+      moonAvailable: true,
+      ...(moon ? {} : { unavailableReason: "No moon exists for this home planet yet." }),
+      moon: moon
+        ? {
+            exists: true,
+            planetId: moon.planetId,
+            owner: moon.owner,
+            fields: moon.fields,
+            diameterKm: moon.diameterKm,
+            createdAt: moon.createdAt,
+            jumpGateReadyAt: "0"
+          }
+        : null,
+      buildings: moonBuildingRows.map((building) => ({
+        ...building,
+        level: planetId ? this.indexedLevel("indexed_moon_building_levels", "building_id", planetId, building.id) : 0,
+        cost: zeroResources()
+      })),
+      queue: planetId ? this.moonQueue(planetId) : null
+    };
+  }
+
+  riftState(wallet: `0x${string}`, planetId: string | null): RiftState {
+    const buildings = planetId ? this.infrastructureRows(planetId) : [];
+    const levels = this.technologyLevels(wallet);
+    const riftBuilt = planetId
+      ? (buildings.find((building) => building.id === 15)?.level ?? 0) > 0
+      : null;
+    const balances = this.riftBalances(wallet, planetId);
+    const balanceById = new Map(balances.map((row) => [row.resource_id, row]));
+    const pending = this.pendingWithdrawals(wallet, planetId);
+    return {
+      wallet,
+      homePlanetId: planetId,
+      riftAvailable: riftBuilt !== null,
+      unlocked: riftBuilt === true,
+      ...(riftBuilt ? {} : {
+        unavailableReason: riftBuilt === null
+          ? "Settle a home planet before using the Rift."
+          : "Build the Interdimensional Rift Stabilizer before using the Rift."
+      }),
+      withdrawalDelaySeconds: "2592000",
+      requirements: riftRequirements(
+        riftBuilt,
+        buildings.find((building) => building.id === 4)?.level ?? 0,
+        buildings.find((building) => building.id === 6)?.level ?? 0,
+        levels
+      ),
+      resources: riftResourceRows.map((resource) => {
+        const balance = balanceById.get(resource.resourceId);
+        return {
+          ...resource,
+          tokenAddress: null,
+          walletBalance: null,
+          allowance: null,
+          inGameBalance: balance?.in_game_balance ?? "0",
+          lockedBalance: balance?.locked_balance ?? "0"
+        };
+      }),
+      pendingWithdrawals: pending.map((row) => ({
+        id: row.withdrawal_key,
+        resource: riftResourceRows.find((resource) => resource.resourceId === row.resource_id)?.key ?? "metal",
+        amount: row.amount,
+        requestedAt: "0",
+        unlocksAt: row.unlocks_at,
+        ready: BigInt(row.unlocks_at) <= BigInt(Math.floor(Date.now() / 1000))
+      }))
+    };
   }
 
   applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
@@ -361,6 +535,11 @@ export class SettlementIndexer {
     const eventId = indexedLogKey(log);
     const existing = this.db.query("SELECT event_json FROM indexed_event_logs WHERE event_id = ?").get(eventId) as EventRow | null;
     if (existing) {
+      if (log.removed) {
+        this.markReorgDetected();
+        this.recordRemovedLog(`${eventId}:removed`, log);
+        return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
+      }
       return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: this.snapshot() };
     }
 
@@ -368,11 +547,8 @@ export class SettlementIndexer {
     this.recordLatestBlock(log.blockNumber);
 
     if (log.removed) {
-      this.db.query(`
-        INSERT INTO indexer_metadata (key, value)
-        VALUES ('reorgDetectedAt', ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `).run(new Date().toISOString());
+      this.markReorgDetected();
+      this.markStale("removed log/reorg");
       return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
     }
 
@@ -394,6 +570,18 @@ export class SettlementIndexer {
     }
     if (isIndexedQueueCompletedLog(log)) {
       this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isMoonCreatedLog(log)) {
+      this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isRiftResourceLog(log)) {
+      this.applyRiftResourceEvent(decodeRiftResourceLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isFleetMissionLog(log)) {
+      this.touch();
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isMoonChanceReportLog(log)) {
@@ -422,6 +610,16 @@ export class SettlementIndexer {
     return this.rebuildPromise;
   }
 
+  async reconcile(reason = "requested"): Promise<IndexerSnapshot> {
+    this.markStale(reason);
+    return this.rebuild();
+  }
+
+  markStale(reason: string): IndexerSnapshot {
+    this.setMetadata("pendingReconciliationReason", reason);
+    return this.snapshot();
+  }
+
   async rebuildPlanets(): Promise<IndexerSnapshot> {
     if (this.rebuildPromise) {
       return this.rebuildPromise;
@@ -446,18 +644,16 @@ export class SettlementIndexer {
       : settledPlanetEvents;
     const debrisEvents = await this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest");
     const moonChanceEvents = await this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest");
+    const canonicalState = await this.readCanonicalState(planetEvents);
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();
       this.db.query("DELETE FROM indexed_moon_chance_reports").run();
-      this.db.query("DELETE FROM contract_players").run();
-      this.db.query("DELETE FROM contract_planets").run();
-      this.db.query("DELETE FROM contract_planet_resources").run();
-      this.db.query("DELETE FROM contract_debris_fields").run();
-      this.db.query("DELETE FROM contract_moon_chance_reports").run();
+      this.clearCanonicalState();
       for (const event of planetEvents) {
         this.upsertPlanet(event);
       }
+      this.applyCanonicalState(canonicalState);
       for (const event of debrisEvents) {
         this.upsertDebris(event);
       }
@@ -573,6 +769,19 @@ export class SettlementIndexer {
         level INTEGER NOT NULL,
         PRIMARY KEY (owner, technology_id)
       );
+      CREATE TABLE IF NOT EXISTS indexed_moons (
+        planet_id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        fields INTEGER NOT NULL,
+        diameter_km INTEGER NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS indexed_moon_building_levels (
+        planet_id TEXT NOT NULL,
+        building_id INTEGER NOT NULL,
+        level INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, building_id)
+      );
 
       CREATE TABLE IF NOT EXISTS contract_players (
         wallet TEXT PRIMARY KEY,
@@ -614,6 +823,23 @@ export class SettlementIndexer {
         building_id INTEGER NOT NULL,
         level INTEGER NOT NULL,
         PRIMARY KEY (planet_id, building_id)
+      );
+      CREATE TABLE IF NOT EXISTS indexed_rift_balances (
+        owner TEXT NOT NULL,
+        planet_id TEXT NOT NULL,
+        resource_id INTEGER NOT NULL,
+        in_game_balance TEXT NOT NULL,
+        locked_balance TEXT NOT NULL,
+        PRIMARY KEY (owner, planet_id, resource_id)
+      );
+      CREATE TABLE IF NOT EXISTS indexed_rift_withdrawals (
+        withdrawal_key TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        planet_id TEXT NOT NULL,
+        resource_id INTEGER NOT NULL,
+        amount TEXT NOT NULL,
+        unlocks_at TEXT NOT NULL,
+        event_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS contract_production_queues (
         queue_key TEXT PRIMARY KEY,
@@ -844,6 +1070,162 @@ export class SettlementIndexer {
     `).run(now);
   }
 
+  private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
+    const state: CanonicalReconciliationState = {
+      planetQueues: new Map(),
+      buildings: new Map(),
+      defenses: new Map(),
+      ships: new Map(),
+      research: new Map(),
+      researchQueues: new Map()
+    };
+    const owners = new Set(planets.map((planet) => planet.owner.toLowerCase() as `0x${string}`));
+
+    await Promise.all(planets.map(async (planet) => {
+      const planetId = planet.planetId;
+      const owner = planet.owner as `0x${string}`;
+      const [
+        infrastructure,
+        defenses,
+        shipyard,
+        queues
+      ] = await Promise.all([
+        this.chainReader.getInfrastructureState?.(owner, BigInt(planetId)),
+        this.chainReader.getDefenseState?.(owner, BigInt(planetId)),
+        this.chainReader.getShipyardState?.(owner, BigInt(planetId)),
+        this.chainReader.getPlayerQueues?.(owner, BigInt(planetId))
+      ]);
+
+      if (infrastructure) {
+        state.buildings.set(planetId, infrastructure.buildings);
+        if (infrastructure.queue?.active) {
+          state.planetQueues.set(`building:${planetId}`, infrastructure.queue);
+        }
+      }
+      if (defenses) {
+        state.defenses.set(planetId, defenses.defenses);
+        if (defenses.queue?.active) {
+          state.planetQueues.set(`defense:${planetId}`, defenses.queue);
+        }
+      }
+      if (shipyard) {
+        state.ships.set(planetId, shipyard.ships);
+        if (shipyard.queue?.active) {
+          state.planetQueues.set(`ship:${planetId}`, shipyard.queue);
+        }
+      }
+      if (queues) {
+        this.addActiveQueue(state.planetQueues, `building:${planetId}`, queues.building);
+        this.addActiveQueue(state.planetQueues, `defense:${planetId}`, queues.defense);
+        this.addActiveQueue(state.planetQueues, `ship:${planetId}`, queues.ship);
+        this.addActiveResearchQueue(state.researchQueues, owner, queues.research);
+      }
+    }));
+
+    await Promise.all([...owners].map(async (owner) => {
+      const research = await this.chainReader.getResearchState?.(owner);
+      if (!research) return;
+      state.research.set(owner, research.technologies);
+      this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
+    }));
+
+    return state;
+  }
+
+  private clearCanonicalState(): void {
+    this.db.query("DELETE FROM indexed_planet_queues").run();
+    this.db.query("DELETE FROM indexed_building_levels").run();
+    this.db.query("DELETE FROM indexed_defense_counts").run();
+    this.db.query("DELETE FROM indexed_ship_counts").run();
+    this.db.query("DELETE FROM indexed_research_levels").run();
+    this.db.query("DELETE FROM contract_players").run();
+    this.db.query("DELETE FROM contract_planets").run();
+    this.db.query("DELETE FROM contract_planet_resources").run();
+    this.db.query("DELETE FROM contract_debris_fields").run();
+    this.db.query("DELETE FROM contract_moon_chance_reports").run();
+    this.db.query("DELETE FROM contract_building_levels").run();
+    this.db.query("DELETE FROM contract_defense_counts").run();
+    this.db.query("DELETE FROM contract_ship_counts").run();
+    this.db.query("DELETE FROM contract_technology_levels").run();
+    this.db.query("DELETE FROM contract_production_queues").run();
+  }
+
+  private applyCanonicalState(state: CanonicalReconciliationState): void {
+    for (const [planetId, buildings] of state.buildings) {
+      for (const building of buildings) {
+        this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", planetId, building.id, building.level);
+        this.upsertIndexedLevel("contract_building_levels", "building_id", "level", planetId, building.id, building.level);
+      }
+    }
+    for (const [planetId, defenses] of state.defenses) {
+      for (const defense of defenses) {
+        this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
+        this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
+      }
+    }
+    for (const [planetId, ships] of state.ships) {
+      for (const ship of ships) {
+        this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
+        this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
+      }
+    }
+    for (const [owner, technologies] of state.research) {
+      for (const technology of technologies) {
+        this.db.query(`
+        INSERT INTO indexed_research_levels (owner, technology_id, level)
+        VALUES (lower(?), ?, ?)
+        ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
+      `).run(owner, technology.id, technology.level);
+        this.db.query(`
+          INSERT INTO contract_technology_levels (owner, technology_id, level)
+          VALUES (lower(?), ?, ?)
+          ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
+        `).run(owner, technology.id, technology.level);
+      }
+    }
+    for (const [key, queue] of state.planetQueues) {
+      const [kind, planetId] = key.split(":");
+      if (!kind || !planetId || !isPlanetQueueKind(kind)) continue;
+      this.upsertCanonicalQueue(kind, planetId, null, queue);
+    }
+    for (const [owner, queue] of state.researchQueues) {
+      this.upsertCanonicalQueue("research", null, owner, queue);
+    }
+  }
+
+  private addActiveQueue(queues: Map<string, QueueState>, key: string, queue: QueueState | null | undefined): void {
+    if (queue?.active) {
+      queues.set(key, queue);
+    }
+  }
+
+  private addActiveResearchQueue(queues: Map<`0x${string}`, QueueState>, owner: `0x${string}`, queue: QueueState | null | undefined): void {
+    if (queue?.active) {
+      queues.set(owner, queue);
+    }
+  }
+
+  private upsertCanonicalQueue(
+    kind: "building" | "defense" | "ship" | "research",
+    planetId: string | null,
+    owner: `0x${string}` | null,
+    queue: QueueState
+  ): void {
+    this.upsertQueue({
+      eventName: kind === "building" ? "BuildingStarted" : kind === "defense" ? "DefenseQueued" : kind === "ship" ? "ShipQueued" : "ResearchQueued",
+      transactionHash: "0x",
+      blockNumber: this.metadata("lastReconciledBlock") ?? "0",
+      queueKind: kind,
+      ...(planetId ? { planetId } : {}),
+      ...(owner ? { owner } : {}),
+      itemId: queue.itemId ?? 0,
+      ...(queue.targetLevel !== undefined ? { targetLevel: queue.targetLevel } : {}),
+      ...(queue.quantity !== undefined ? { quantity: queue.quantity } : {}),
+      readyAt: queue.readyAt ?? "0",
+      cost: queue.cost
+    });
+  }
+
   private upsertPlanet(event: SettledPlanetEvent): void {
     this.db.query(`
       INSERT INTO indexed_planets (planet_id, owner, galaxy, system, position, event_json)
@@ -1033,6 +1415,8 @@ export class SettlementIndexer {
     if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
       this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevel("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+    } else if (event.queueKind === "moon-building" && event.planetId && event.level !== undefined) {
+      this.upsertIndexedLevel("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "defense" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
       this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
@@ -1168,7 +1552,7 @@ export class SettlementIndexer {
   }
 
   private indexedLevel(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
     planetId: string,
     itemId: number
@@ -1183,7 +1567,7 @@ export class SettlementIndexer {
   }
 
   private upsertIndexedLevel(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
     valueColumn: string,
     planetId: string,
@@ -1195,6 +1579,48 @@ export class SettlementIndexer {
       VALUES (?, ?, ?)
       ON CONFLICT(planet_id, ${idColumn}) DO UPDATE SET ${valueColumn} = excluded.${valueColumn}
     `).run(planetId, itemId, value);
+  }
+
+  private applyMoonCreatedEvent(event: IndexedMoonCreatedEvent): void {
+    this.db.query(`
+      INSERT INTO indexed_moons (planet_id, owner, fields, diameter_km, event_json)
+      VALUES (?, lower(?), ?, ?, ?)
+      ON CONFLICT(planet_id) DO UPDATE SET
+        owner = excluded.owner,
+        fields = excluded.fields,
+        diameter_km = excluded.diameter_km,
+        event_json = excluded.event_json
+    `).run(event.planetId, event.owner, event.fields, event.diameterKm, JSON.stringify(event));
+    this.touch();
+  }
+
+  private applyRiftResourceEvent(event: IndexedRiftResourceEvent): void {
+    const owner = event.owner.toLowerCase();
+    const current = this.riftBalance(owner, event.planetId, event.resourceId);
+    const inGameBalance = BigInt(current?.in_game_balance ?? "0");
+    const lockedBalance = BigInt(current?.locked_balance ?? "0");
+    const amount = BigInt(event.amount);
+
+    if (event.eventName === "MarketResourceDeposited") {
+      this.upsertRiftBalance(owner, event.planetId, event.resourceId, inGameBalance + amount, lockedBalance);
+    } else if (event.eventName === "MarketResourceWithdrawalRequested") {
+      this.upsertRiftBalance(owner, event.planetId, event.resourceId, subtractNonNegative(inGameBalance, amount), lockedBalance + amount);
+      this.db.query(`
+        INSERT INTO indexed_rift_withdrawals (withdrawal_key, owner, planet_id, resource_id, amount, unlocks_at, event_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(withdrawal_key) DO UPDATE SET
+          amount = excluded.amount,
+          unlocks_at = excluded.unlocks_at,
+          event_json = excluded.event_json
+      `).run(riftWithdrawalKey(event), owner, event.planetId, event.resourceId, event.amount, event.unlocksAt ?? "0", JSON.stringify(event));
+    } else {
+      this.upsertRiftBalance(owner, event.planetId, event.resourceId, inGameBalance, subtractNonNegative(lockedBalance, amount));
+      this.db.query(`
+        DELETE FROM indexed_rift_withdrawals
+        WHERE owner = ? AND planet_id = ? AND resource_id = ? AND amount = ?
+      `).run(owner, event.planetId, event.resourceId, event.amount);
+    }
+    this.touch();
   }
 
   private touch(): void {
@@ -1216,6 +1642,24 @@ export class SettlementIndexer {
     );
   }
 
+  private recordRemovedLog(eventId: string, log: IndexedRpcLog): void {
+    this.db.query(`
+      INSERT OR IGNORE INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      eventId,
+      log.transactionHash,
+      `${log.logIndex ?? "0x0"}:removed`,
+      blockNumberToDecimal(log.blockNumber),
+      JSON.stringify(log),
+      new Date().toISOString()
+    );
+  }
+
+  private markReorgDetected(): void {
+    this.setMetadata("reorgDetectedAt", new Date().toISOString());
+  }
+
   private recordLatestBlock(blockNumber: string): void {
     this.setMetadata("latestIndexedBlock", blockNumberToDecimal(blockNumber));
   }
@@ -1225,6 +1669,7 @@ export class SettlementIndexer {
     this.setMetadata("lastReconciledAt", now);
     this.setMetadata("lastReconciledBlock", latestBlock ?? this.fromBlock.toString());
     this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastReconciliationError'").run();
+    this.db.query("DELETE FROM indexer_metadata WHERE key = 'pendingReconciliationReason'").run();
     if (latestBlock) {
       this.recordLatestBlock(latestBlock);
     }
@@ -1242,7 +1687,70 @@ export class SettlementIndexer {
     `).run(key, value);
   }
 
-  private count(table: "indexed_debris_fields" | "indexed_event_logs" | "indexed_moon_chance_reports" | "indexed_planets"): number {
+  private moon(planetId: string): IndexedMoonCreatedEvent | null {
+    const row = this.db.query("SELECT event_json FROM indexed_moons WHERE planet_id = ?").get(planetId) as MoonRow | null;
+    return row ? parseEvent<IndexedMoonCreatedEvent>(row.event_json) : null;
+  }
+
+  private riftBalances(wallet: `0x${string}`, planetId: string | null): RiftBalanceRow[] {
+    if (!planetId) return [];
+    return this.db.query(`
+      SELECT resource_id, in_game_balance, locked_balance
+      FROM indexed_rift_balances
+      WHERE owner = lower(?) AND planet_id = ?
+      ORDER BY resource_id ASC
+    `).all(wallet, planetId) as RiftBalanceRow[];
+  }
+
+  private riftBalance(owner: string, planetId: string, resourceId: number): RiftBalanceRow | null {
+    return this.db.query(`
+      SELECT resource_id, in_game_balance, locked_balance
+      FROM indexed_rift_balances
+      WHERE owner = lower(?) AND planet_id = ? AND resource_id = ?
+    `).get(owner, planetId, resourceId) as RiftBalanceRow | null;
+  }
+
+  private upsertRiftBalance(owner: string, planetId: string, resourceId: number, inGameBalance: bigint, lockedBalance: bigint): void {
+    this.db.query(`
+      INSERT INTO indexed_rift_balances (owner, planet_id, resource_id, in_game_balance, locked_balance)
+      VALUES (lower(?), ?, ?, ?, ?)
+      ON CONFLICT(owner, planet_id, resource_id) DO UPDATE SET
+        in_game_balance = excluded.in_game_balance,
+        locked_balance = excluded.locked_balance
+    `).run(owner, planetId, resourceId, inGameBalance.toString(), lockedBalance.toString());
+  }
+
+  private pendingWithdrawals(wallet: `0x${string}`, planetId: string | null): PendingWithdrawalRow[] {
+    if (!planetId) return [];
+    return this.db.query(`
+      SELECT withdrawal_key, resource_id, amount, unlocks_at
+      FROM indexed_rift_withdrawals
+      WHERE owner = lower(?) AND planet_id = ?
+      ORDER BY CAST(unlocks_at AS INTEGER) ASC
+    `).all(wallet, planetId) as PendingWithdrawalRow[];
+  }
+
+  private indexedFleetMissionSummaries(): FleetMissionSummary[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+    const logs = rows
+      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
+      .filter(isFleetMissionLog);
+    return decodeCompleteFleetMissionLogs(logs);
+  }
+
+  private count(table:
+    | "indexed_debris_fields"
+    | "indexed_event_logs"
+    | "indexed_moon_chance_reports"
+    | "indexed_moons"
+    | "indexed_planets"
+    | "indexed_rift_balances"
+  ): number {
     const row = this.db.query(`SELECT COUNT(*) AS count FROM ${table}`).get() as CountRow;
     return row.count;
   }
@@ -1255,7 +1763,26 @@ export class SettlementIndexer {
   private rows<T>(sql: string, ...params: SQLQueryBindings[]): T[] {
     return (this.db.query(sql).all(...params) as EventRow[]).map((row) => parseEvent<T>(row.event_json));
   }
+
+  private staleReason(reconciliationInProgress: boolean): string | null {
+    if (reconciliationInProgress) return "reconciliation_in_progress";
+    const error = this.metadata("lastReconciliationError");
+    if (error) return `reconciliation_failed: ${error}`;
+    const pending = this.metadata("pendingReconciliationReason");
+    if (pending) return pending;
+    if (!this.metadata("lastReconciledAt")) return "never_reconciled";
+    return null;
+  }
 }
+
+type CanonicalReconciliationState = {
+  planetQueues: Map<string, QueueState>;
+  buildings: Map<string, InfrastructureState["buildings"]>;
+  defenses: Map<string, DefenseState["defenses"]>;
+  ships: Map<string, ShipyardState["ships"]>;
+  research: Map<`0x${string}`, ResearchState["technologies"]>;
+  researchQueues: Map<`0x${string}`, QueueState>;
+};
 
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
   return event.outcomeId ? `outcome:${event.outcomeId}` : `battle:${event.battleId}:${event.targetPlanetId}`;
@@ -1267,6 +1794,10 @@ function queueKey(event: Pick<IndexedQueueStartedEvent | IndexedQueueCompletedEv
   }
 
   return `${event.queueKind}:${event.planetId ?? ""}`;
+}
+
+function isPlanetQueueKind(value: string): value is "building" | "defense" | "ship" {
+  return value === "building" || value === "defense" || value === "ship";
 }
 
 function openIndexerDatabase(databasePath: string): Database {
@@ -1344,6 +1875,16 @@ function subtractResource(left: string, right: string): string {
   return result > 0n ? result.toString() : "0";
 }
 
+const moonBuildingRows = [
+  { id: 0, key: "lunarBase", label: "Lunar Base" },
+  { id: 2, key: "jumpGate", label: "Jump Gate" }
+];
+const riftResourceRows = [
+  { key: "metal" as const, label: "Metal", resourceId: 0 },
+  { key: "crystal" as const, label: "Crystal", resourceId: 1 },
+  { key: "deuterium" as const, label: "Deuterium", resourceId: 2 }
+];
+
 function indexedLogKey(log: IndexedRpcLog): string {
   return `${log.transactionHash.toLowerCase()}:${log.logIndex ?? fallbackLogIndex(log)}`;
 }
@@ -1358,6 +1899,14 @@ function blockNumberToDecimal(blockNumber: string): string {
   } catch {
     return blockNumber;
   }
+}
+
+function subtractNonNegative(left: bigint, right: bigint): bigint {
+  return left > right ? left - right : 0n;
+}
+
+function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
+  return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
 }
 
 function latestEventBlock(events: Array<{ blockNumber: string }>): string | null {
