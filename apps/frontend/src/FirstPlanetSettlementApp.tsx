@@ -1,9 +1,11 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import heroUrl from "./assets/veydrift-hero.webp";
+import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
+import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
 import {
   ensureBaseSepoliaNetwork,
   getChainId,
@@ -391,6 +393,8 @@ export function FirstPlanetSettlementApp() {
         <div className="settlement-scanlines" />
       </div>
 
+      <SettlementSupportLink />
+
       <section className="settlement-shell" aria-label="First planet settlement">
         <div className="settlement-command">
           <FlowBody
@@ -408,6 +412,22 @@ export function FirstPlanetSettlementApp() {
         <SettlementScanner mode={mode} />
       </section>
     </main>
+  );
+}
+
+export function SettlementSupportLink() {
+  return (
+    <a
+      aria-label="Telegram support"
+      className="settlement-support-link"
+      href={TELEGRAM_SUPPORT_URL}
+      rel="noopener noreferrer"
+      target="_blank"
+      title="Telegram support"
+    >
+      <TelegramIcon className="settlement-support-icon" />
+      <span>Telegram</span>
+    </a>
   );
 }
 
