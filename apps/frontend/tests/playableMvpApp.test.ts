@@ -51,6 +51,33 @@ describe("Playable MVP app display helpers", () => {
     });
   });
 
+  test("derives top bar energy from indexed infrastructure levels when live energy is unavailable", () => {
+    const baseState = createInitialPlayableState();
+    const settledState = {
+      ...baseState,
+      buildings: {
+        ...baseState.buildings,
+        metalMine: 1,
+        solarPlant: 1,
+      },
+    };
+
+    expect(topBarEnergyFor({
+      infrastructureChainState: infrastructureState({
+        energyBalance: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isWalletConnected: true,
+      settledState,
+    })).toEqual({
+      deuteriumConsumed: 0,
+      produced: 22,
+      required: 11,
+      scaleBps: 10000,
+    });
+  });
+
   test("does not invent top bar energy when chain state is missing or errored", () => {
     const settledState = createInitialPlayableState();
 
@@ -222,10 +249,14 @@ describe("Playable MVP app display helpers", () => {
 
 function infrastructureState({
   energyBalance,
-}: Pick<ChainInfrastructureState, "energyBalance">): ChainInfrastructureState {
+  source,
+  stale,
+}: Pick<ChainInfrastructureState, "energyBalance" | "source" | "stale">): ChainInfrastructureState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
+    source,
+    stale,
     infrastructureAvailable: true,
     resources: { metal: "500", crystal: "500", deuterium: "0" },
     productionPerHour: { metal: "60", crystal: "30", deuterium: "0" },
