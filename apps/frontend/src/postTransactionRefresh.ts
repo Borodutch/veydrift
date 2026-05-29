@@ -181,6 +181,35 @@ export async function waitForHydratedWalletPlanet(
   throw new Error(walletPlanetHydrationTimeoutMessage(latest, lastError, attempts * intervalMs));
 }
 
+export async function waitForRenamedWalletPlanet(
+  load: () => Promise<WalletPlanetSyncSnapshot>,
+  expectation: { planetId: string; name: string },
+  options: WaitOptions = {},
+): Promise<HydratedWalletPlanetSnapshot> {
+  const attempts = options.attempts ?? 12;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: WalletPlanetSyncSnapshot | undefined;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      latest = await load();
+      lastError = undefined;
+      const hydrated = hydratedWalletPlanetSnapshot(latest, expectation.planetId);
+      if (hydrated?.selectedPlanet.name === expectation.name) return hydrated;
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(renamedPlanetTimeoutMessage(latest, lastError, expectation, attempts * intervalMs));
+}
+
 function collectedResourcesTimeoutMessage(
   snapshot: CollectedResourcesSnapshot | undefined,
   expectation: CollectedResourcesExpectation,
@@ -226,6 +255,20 @@ function walletPlanetHydrationTimeoutMessage(
       : "home planet id is not visible from the game API yet";
 
   return `Settlement transaction is confirmed, but the game API did not hydrate a complete planet after ${waitedSeconds}s. Last status: ${reason}. Indexed planets: ${planetCount}. Retry sync in a few seconds; if it repeats, share this status with the transaction hash.`;
+}
+
+function renamedPlanetTimeoutMessage(
+  snapshot: WalletPlanetSyncSnapshot | undefined,
+  lastError: unknown,
+  expectation: { planetId: string; name: string },
+  waitedMs: number,
+): string {
+  const waitedSeconds = Math.round(waitedMs / 1_000);
+  const hydrated = snapshot ? hydratedWalletPlanetSnapshot(snapshot, expectation.planetId) : undefined;
+  const latestName = hydrated?.selectedPlanet.name ?? "unavailable";
+  const reason = lastError instanceof Error ? lastError.message : `latest name: ${latestName}`;
+
+  return `Rename transaction is confirmed, but indexed planet ${expectation.planetId} did not show "${expectation.name}" after ${waitedSeconds}s. Last status: ${reason}. Retry sync in a few seconds; if it repeats, share this status with the transaction hash.`;
 }
 
 function defaultDelay(ms: number): Promise<void> {

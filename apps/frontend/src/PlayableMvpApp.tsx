@@ -63,6 +63,7 @@ import {
   waitForCollectedResourcesState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
+  waitForRenamedWalletPlanet,
   type CollectedResourcesExpectation,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
@@ -721,7 +722,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       });
   }, [account, activePlanetId, apiBaseUrl]);
 
-  const refreshOnChainState = useCallback(async () => {
+  const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }) => {
     if (!apiBaseUrl || !account) {
       setOnChainSettlement(undefined);
       setWalletPlanets([]);
@@ -734,10 +735,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
     try {
-      const snapshot = await waitForHydratedWalletPlanet(
-        () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId),
-        activePlanetId,
-      );
+      const loadSnapshot = () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId);
+      const snapshot = renameExpectation
+        ? await waitForRenamedWalletPlanet(loadSnapshot, renameExpectation)
+        : await waitForHydratedWalletPlanet(loadSnapshot, activePlanetId);
       const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
       const planets = planetsResponse.planets;
       setWalletPlanets(planets);
@@ -1791,7 +1792,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       .then(async (txHash) => {
         setPlanetRenameAction({ status: "pending", label: `Waiting for confirmation ${txHash.slice(0, 10)}...` });
         await waitForReceipt(provider, txHash);
-        await refreshOnChainState();
+        await refreshOnChainState({ planetId: activePlanetId, name: trimmedName });
         setPlanetRenameAction({ status: "success", label: "Planet renamed." });
       })
       .catch((error) => {
