@@ -321,11 +321,17 @@ export async function loadWalletPlanetSyncSnapshot(
     planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
   );
   if (indexedSettlement) {
+    const indexedQueues = playerQueuesFromIndexedPlanet(
+      account,
+      indexedSettlement.homePlanetId,
+      activePlanetId,
+      planetsResult.status === "fulfilled" ? planetsResult.value.planets : undefined,
+    );
     return walletPlanetSyncSnapshotFromResults(
       account,
       indexedSettlement,
       planetsResult,
-      { status: "fulfilled", value: emptyPlayerQueues(account, indexedSettlement.homePlanetId) },
+      { status: "fulfilled", value: indexedQueues },
       { status: "fulfilled", value: emptyFleetVisibility(account, indexedSettlement.homePlanetId) },
     );
   }
@@ -408,6 +414,24 @@ function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQ
     defense: null,
     ship: null,
     research: null,
+  };
+}
+
+function playerQueuesFromIndexedPlanet(
+  wallet: string,
+  homePlanetId: string | null,
+  activePlanetId: string | undefined,
+  planets: ManagedPlanetResponse[] | undefined,
+): PlayerQueuesResponse {
+  const queuePlanetId = activePlanetId ?? homePlanetId;
+  const selectedPlanet = planets?.find((planet) => planet.planetId === queuePlanetId)
+    ?? planets?.find((planet) => planet.planetId === homePlanetId || planet.isHomePlanet)
+    ?? planets?.[0];
+  return {
+    ...emptyPlayerQueues(wallet, selectedPlanet?.planetId ?? queuePlanetId ?? homePlanetId),
+    building: selectedPlanet?.queues.building ?? null,
+    defense: selectedPlanet?.queues.defense ?? null,
+    ship: selectedPlanet?.queues.ship ?? null,
   };
 }
 
