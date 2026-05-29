@@ -2319,6 +2319,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onResolveMission={handleResolveMission}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
+        isBuildingReadyToFinish={isBuildingReadyToFinish}
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}
