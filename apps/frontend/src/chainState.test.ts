@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { buildingQueueItemForDisplay, energyBalanceFromChain, infrastructurePlayableState } from "./chainState";
+import {
+  activeBuildingQueueResponse,
+  buildingQueueItemForDisplay,
+  energyBalanceFromChain,
+  infrastructurePlayableState,
+  isBuildingQueueReadyToFinish,
+} from "./chainState";
+import type { ChainInfrastructureState, PlayerQueuesResponse, QueueStateResponse } from "./walletFlow";
 import { createInitialPlayableState, progress } from "./playableMvp";
 
 describe("chainState", () => {
@@ -54,6 +61,31 @@ describe("chainState", () => {
       startedAt: (readyAtSeconds - 151) * 1_000,
     });
     expect(progress(queue, (readyAtSeconds - 76) * 1_000)).toBeCloseTo(75 / 151, 5);
+  });
+
+  test("uses the infrastructure queue when the wallet queues endpoint has not exposed the active building", () => {
+    const readyAtSeconds = 1_700_000_060;
+    const queues = playerQueues(null);
+    const infrastructure = infrastructureWithQueue(buildingQueue({
+      itemId: 0,
+      readyAt: readyAtSeconds.toString(),
+      targetLevel: 1,
+    }));
+    const queue = activeBuildingQueueResponse(queues, infrastructure);
+
+    expect(queue).toEqual(infrastructure.queue);
+    expect(isBuildingQueueReadyToFinish(queue, readyAtSeconds * 1_000)).toBe(true);
+    expect(isBuildingQueueReadyToFinish(queue, (readyAtSeconds - 1) * 1_000)).toBe(false);
+  });
+
+  test("prefers the wallet queues building payload when both queue sources are active", () => {
+    const queuesBuilding = buildingQueue({ itemId: 3, targetLevel: 1, readyAt: "1700000060" });
+    const infrastructureBuilding = buildingQueue({ itemId: 0, targetLevel: 1, readyAt: "1700000060" });
+
+    expect(activeBuildingQueueResponse(
+      playerQueues(queuesBuilding),
+      infrastructureWithQueue(infrastructureBuilding),
+    )).toEqual(queuesBuilding);
   });
 
   test("adapts contract energy shortage factor for display", () => {
@@ -140,3 +172,39 @@ describe("chainState", () => {
     expect(progress(queue, (readyAtSeconds + 5) * 1_000)).toBe(1);
   });
 });
+
+function buildingQueue(overrides: Partial<QueueStateResponse> = {}): QueueStateResponse {
+  return {
+    active: true,
+    kind: "building",
+    itemId: 0,
+    targetLevel: 1,
+    readyAt: "1700000060",
+    cost: { metal: "60", crystal: "15", deuterium: "0" },
+    ...overrides,
+  };
+}
+
+function playerQueues(building: QueueStateResponse | null): PlayerQueuesResponse {
+  return {
+    wallet: "0x1111111111111111111111111111111111111111",
+    homePlanetId: "7",
+    building,
+    defense: null,
+    ship: null,
+    research: null,
+  };
+}
+
+function infrastructureWithQueue(queue: QueueStateResponse | null): ChainInfrastructureState {
+  return {
+    wallet: "0x1111111111111111111111111111111111111111",
+    homePlanetId: "7",
+    resources: { metal: "0", crystal: "0", deuterium: "0" },
+    productionPerHour: null,
+    energyBalance: null,
+    storageCaps: null,
+    buildings: [],
+    queue,
+  };
+}

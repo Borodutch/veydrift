@@ -12,6 +12,7 @@ import {
 import type {
   ChainInfrastructureState,
   ChainResearchState,
+  PlayerQueuesResponse,
   QueueStateResponse,
 } from "./walletFlow";
 
@@ -118,6 +119,23 @@ export function buildingQueueForDisplay(
   now = Date.now(),
 ): PlayableState["queue"] {
   return buildingQueueItemForDisplay(infrastructureState.queue, buildingLevels(infrastructureState), now);
+}
+
+export function activeBuildingQueueResponse(
+  queues: PlayerQueuesResponse | undefined,
+  infrastructureState: ChainInfrastructureState | null,
+): QueueStateResponse | null {
+  if (queues?.building?.active) return queues.building;
+  if (infrastructureState?.queue?.active) return infrastructureState.queue;
+  return null;
+}
+
+export function isBuildingQueueReadyToFinish(
+  queue: QueueStateResponse | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!queue?.active || !queue.readyAt) return false;
+  return Number(queue.readyAt) * 1_000 <= now;
 }
 
 export function buildingQueueItemForDisplay(
