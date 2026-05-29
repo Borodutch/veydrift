@@ -46,10 +46,12 @@ import {
 } from "./playableMvp";
 import { allianceContractAddress, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
+  activeBuildingQueueResponse,
   buildingQueueItemForDisplay,
   buildingCosts,
   energyBalanceFromChain,
   infrastructurePlayableState,
+  isBuildingQueueReadyToFinish,
 } from "./chainState";
 import {
   isWalletPlanetHydrated,
@@ -555,11 +557,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     return runtimeConfig.status === "ready" ? moonContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
 
-  const isBuildingReadyToFinish = useMemo(() => {
-    if (!onChainQueues?.building?.active || !onChainQueues.building.readyAt) return false;
-    return Number(onChainQueues.building.readyAt) * 1_000 <= now;
-  }, [onChainQueues?.building, now]);
-
   const refreshInfrastructureState = useCallback(async () => {
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
@@ -1004,13 +1001,20 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (!isWalletConnected || !onChainSettlement?.planet?.lastSettledAt) return false;
     return hasCollectableResources(rates, Number(onChainSettlement.planet.lastSettledAt), now);
   }, [collectibleDeltas, isWalletConnected, onChainSettlement?.planet?.lastSettledAt, rates, now]);
+  const activeBuildingQueue = useMemo(
+    () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
+    [infrastructureChainState, onChainQueues],
+  );
+  const isBuildingReadyToFinish = useMemo(() => {
+    return isBuildingQueueReadyToFinish(activeBuildingQueue, now);
+  }, [activeBuildingQueue, now]);
   const buildingQueue = useMemo(() => {
-    if (onChainQueues?.building?.active) {
-      return buildingQueueItemForDisplay(onChainQueues.building, settledState.buildings, now);
+    if (activeBuildingQueue?.active) {
+      return buildingQueueItemForDisplay(activeBuildingQueue, settledState.buildings, now);
     }
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
-  }, [now, onChainQueues?.building, settledState.buildings, settledState.queue]);
+  }, [activeBuildingQueue, now, settledState.buildings, settledState.queue]);
   const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
   const queueProgress = progress(buildingQueue, now);
   const researchProgress = progress(settledState.researchQueue, now);
@@ -1186,13 +1190,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [runBuildingTransaction]);
 
   const handleFinishBuildingUpgrade = useCallback(async () => {
-    const buildingKey = buildingKeyForContractId(onChainQueues?.building?.itemId) ?? buildingQueue?.key;
+    const buildingKey = buildingKeyForContractId(activeBuildingQueue?.itemId) ?? buildingQueue?.key;
+    const planetId = activePlanetId ?? onChainSettlement?.homePlanetId;
 
-    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+    if (!provider || !account || !gameContract || !planetId) {
       setBuildingAction({
         status: "error",
         buildingKey,
-        label: "Wallet, game contract, or home planet is unavailable.",
+        label: "Wallet, game contract, or active planet is unavailable.",
       });
       return;
     }
@@ -1207,8 +1212,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setBuildingAction({ status: "pending", buildingKey, label: "Waiting for wallet confirmation" });
     const expectation = {
-      itemId: onChainQueues?.building?.itemId,
-      targetLevel: onChainQueues?.building?.targetLevel,
+      itemId: activeBuildingQueue?.itemId,
+      targetLevel: activeBuildingQueue?.targetLevel,
     };
 
     try {
@@ -1216,7 +1221,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         provider,
         account,
         gameContract,
-        onChainSettlement.homePlanetId,
+        planetId,
       );
       setBuildingAction({
         status: "pending",
@@ -1237,12 +1242,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [
     account,
+    activeBuildingQueue,
+    activePlanetId,
     gameContract,
     isBuildingReadyToFinish,
     buildingQueue?.key,
     onChainSettlement?.homePlanetId,
-    onChainQueues?.building?.itemId,
-    onChainQueues?.building?.targetLevel,
     provider,
     refreshFinishedBuildingState,
   ]);
