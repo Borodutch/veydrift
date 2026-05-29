@@ -228,6 +228,64 @@ describe("Playable MVP app display helpers", () => {
     }
   });
 
+  test("uses indexed queues for the requested active planet", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const homeBuilding = {
+      active: true,
+      kind: "building",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: "1770000600",
+      startedAt: "1770000000",
+      cost: { metal: "120", crystal: "30", deuterium: "0" },
+    };
+    const colonyBuilding = {
+      active: true,
+      kind: "building",
+      itemId: 1,
+      targetLevel: 3,
+      readyAt: "1770000900",
+      startedAt: "1770000300",
+      cost: { metal: "144", crystal: "72", deuterium: "0" },
+    };
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          planets: [
+            {
+              ...indexedPlanet(wallet),
+              queues: { building: homeBuilding, defense: null, ship: null },
+            },
+            {
+              ...indexedPlanet(wallet),
+              planetId: "8",
+              isHomePlanet: false,
+              coordinates: "2:44:10",
+              queues: { building: colonyBuilding, defense: null, ship: null },
+            },
+          ],
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, "8");
+
+      expect(snapshot.queues.homePlanetId).toBe("8");
+      expect(snapshot.queues.building).toEqual(colonyBuilding);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("falls back to live settlement state when indexed planets are empty", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";

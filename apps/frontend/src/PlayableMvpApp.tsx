@@ -323,6 +323,7 @@ export async function loadWalletPlanetSyncSnapshot(
     const indexedQueues = playerQueuesFromIndexedPlanet(
       account,
       indexedSettlement.homePlanetId,
+      activePlanetId,
       planetsResult.status === "fulfilled" ? planetsResult.value.planets : undefined,
     );
     return walletPlanetSyncSnapshotFromResults(
@@ -418,12 +419,15 @@ function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQ
 function playerQueuesFromIndexedPlanet(
   wallet: string,
   homePlanetId: string | null,
+  activePlanetId: string | undefined,
   planets: ManagedPlanetResponse[] | undefined,
 ): PlayerQueuesResponse {
-  const selectedPlanet = planets?.find((planet) => planet.planetId === homePlanetId || planet.isHomePlanet)
+  const queuePlanetId = activePlanetId ?? homePlanetId;
+  const selectedPlanet = planets?.find((planet) => planet.planetId === queuePlanetId)
+    ?? planets?.find((planet) => planet.planetId === homePlanetId || planet.isHomePlanet)
     ?? planets?.[0];
   return {
-    ...emptyPlayerQueues(wallet, homePlanetId),
+    ...emptyPlayerQueues(wallet, selectedPlanet?.planetId ?? queuePlanetId ?? homePlanetId),
     building: selectedPlanet?.queues.building ?? null,
     defense: selectedPlanet?.queues.defense ?? null,
     ship: selectedPlanet?.queues.ship ?? null,
