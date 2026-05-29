@@ -181,6 +181,53 @@ describe("Playable MVP app display helpers", () => {
     }
   });
 
+  test("keeps indexed active building queues in the reload snapshot", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const activeBuilding = {
+      active: true,
+      kind: "building",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: "1770000600",
+      startedAt: "1770000000",
+      cost: {
+        metal: "120",
+        crystal: "30",
+        deuterium: "0",
+      },
+    };
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          planets: [{
+            ...indexedPlanet(wallet),
+            queues: {
+              building: activeBuilding,
+              defense: null,
+              ship: null,
+            },
+          }],
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
+
+      expect(snapshot.queues.building).toEqual(activeBuilding);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("falls back to live settlement state when indexed planets are empty", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
