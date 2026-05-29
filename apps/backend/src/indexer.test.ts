@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, DebrisFieldEvent, MoonChanceReportEvent, SettledPlanetEvent } from "./evm";
+import type { Address, DebrisFieldEvent, InfrastructureState, MoonChanceReportEvent, PlayerQueues, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
@@ -746,6 +746,128 @@ describe("SettlementIndexer", () => {
       blockNumber: planet.blockNumber,
       lastSettledAt: currentPlanet.lastSettledAt,
       resources: currentPlanet.resources
+    });
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      safeToServeIndexedState: true,
+      staleReason: null
+    });
+  });
+
+  test("rebuild reconciles stale levels and queues from canonical on-chain snapshots", async () => {
+    const currentPlanet: SettledPlanetEvent = {
+      ...planet,
+      resources: {
+        metal: "9900",
+        crystal: "8800",
+        deuterium: "7700"
+      }
+    };
+    const liveInfrastructure: InfrastructureState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: true,
+      resources: currentPlanet.resources,
+      productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
+      energyBalance: { produced: "20", required: "10", scaleBps: "10000" },
+      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
+      protectedResources: { metal: "1000", crystal: "1000", deuterium: "1000" },
+      raidableResources: { metal: "8900", crystal: "7800", deuterium: "6700" },
+      technologyLevels: {},
+      buildings: [
+        { id: 0, level: 4, cost: { metal: "960", crystal: "240", deuterium: "0" } },
+        { id: 3, level: 2, cost: { metal: "150", crystal: "60", deuterium: "0" } }
+      ],
+      queue: {
+        active: true,
+        kind: "building",
+        itemId: 3,
+        targetLevel: 3,
+        readyAt: "1770000900",
+        startedAt: "1770000300",
+        cost: { metal: "150", crystal: "60", deuterium: "0" }
+      }
+    };
+    const liveQueues: PlayerQueues = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      building: liveInfrastructure.queue,
+      defense: null,
+      ship: null,
+      research: {
+        active: true,
+        kind: "research",
+        itemId: 4,
+        targetLevel: 2,
+        readyAt: "1770001200",
+        cost: { metal: "800", crystal: "400", deuterium: "200" }
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [currentPlanet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getInfrastructureState() { return liveInfrastructure; },
+      async getPlayerQueues() { return liveQueues; },
+      async getResearchState() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          researchAvailable: true,
+          resources: currentPlanet.resources,
+          researchLabLevel: 1,
+          researchNetworkLabLevels: [],
+          technologyLevels: { "4": 2 },
+          technologies: [
+            { id: 4, level: 2, cost: { metal: "1600", crystal: "800", deuterium: "400" } }
+          ],
+          queue: liveQueues.research
+        };
+      }
+    }, 100n);
+    indexer.applyEvent({
+      ...planet,
+      resources: { metal: "1", crystal: "1", deuterium: "1" }
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xstale",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+
+    await indexer.rebuild();
+
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual(currentPlanet.resources);
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)).toMatchObject({
+      id: 0,
+      level: 4
+    });
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 3)).toMatchObject({
+      id: 3,
+      level: 2
+    });
+    expect(indexer.playerQueues(player, planet.planetId).building).toMatchObject({
+      kind: "building",
+      itemId: 3,
+      targetLevel: 3,
+      readyAt: "1770000900"
+    });
+    expect(indexer.playerQueues(player, planet.planetId).research).toMatchObject({
+      kind: "research",
+      itemId: 4,
+      targetLevel: 2,
+      readyAt: "1770001200"
+    });
+    expect(indexer.technologyLevels(player)).toMatchObject({
+      "4": 2
+    });
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      safeToServeIndexedState: true,
+      staleReason: null
     });
   });
 
