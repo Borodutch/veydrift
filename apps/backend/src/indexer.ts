@@ -50,6 +50,15 @@ import {
   type ShipyardState,
   type WalletPlanets
 } from "./evm";
+import {
+  calculateIndexedHighscore,
+  deriveBuildingRows,
+  deriveDefenseRows,
+  deriveShipRows,
+  deriveTechnologyRows,
+  zeroResources
+} from "./readModels";
+import type { HighscoreEntry } from "./highscores";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -356,27 +365,15 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    return buildingIds.map((id) => ({
-      id,
-      level: this.indexedLevel("contract_building_levels", "building_id", planetId, id),
-      cost: zeroResources()
-    }));
+    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
   }
 
   shipRows(planetId: string): ShipyardState["ships"] {
-    return shipIds.map((id) => ({
-      id,
-      count: this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
-      cost: zeroResources()
-    }));
+    return deriveShipRows((id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id));
   }
 
   defenseRows(planetId: string): DefenseState["defenses"] {
-    return defenseIds.map((id) => ({
-      id,
-      count: this.indexedLevel("contract_defense_counts", "defense_id", planetId, id),
-      cost: zeroResources()
-    }));
+    return deriveDefenseRows((id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id));
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -392,11 +389,35 @@ export class SettlementIndexer {
 
   technologyRows(wallet: `0x${string}`): ResearchState["technologies"] {
     const levels = this.technologyLevels(wallet);
-    return technologyIds.map((id) => ({
-      id,
-      level: levels[String(id)] ?? 0,
-      cost: zeroResources()
-    }));
+    return deriveTechnologyRows((id) => levels[String(id)] ?? 0);
+  }
+
+  highscoreForWallet(wallet: `0x${string}`, planetIds?: string[]): HighscoreEntry {
+    const settlement = this.walletSettlement(wallet);
+    const ownedPlanets = (planetIds?.length
+      ? planetIds.map((planetId) => this.planet(planetId)).filter((planet): planet is SettledPlanetEvent => (
+        planet !== null && planet.owner.toLowerCase() === wallet.toLowerCase()
+      ))
+      : this.rows<SettledPlanetEvent>(
+        "SELECT event_json FROM indexed_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
+        wallet
+      ));
+
+    return calculateIndexedHighscore({
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      planetCount: ownedPlanets.length,
+      planets: ownedPlanets.map((planet) => ({
+        buildings: this.infrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
+        defenses: this.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+        ships: this.shipRows(planet.planetId).map(({ id, count }) => ({ id, count }))
+      })),
+      technologies: this.technologyRows(wallet).map(({ id, level }) => ({ id, level }))
+    });
+  }
+
+  highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): HighscoreEntry[] {
+    return [...planetsByOwner.keys()].map((owner) => this.highscoreForWallet(owner as `0x${string}`));
   }
 
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
@@ -1838,14 +1859,6 @@ function indexedManagedPlanet(
     },
     queues,
     moon: null
-  };
-}
-
-function zeroResources() {
-  return {
-    metal: "0",
-    crystal: "0",
-    deuterium: "0"
   };
 }
 

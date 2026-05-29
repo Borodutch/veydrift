@@ -48,6 +48,8 @@ const player = "0x2222222222222222222222222222222222222222" as Address;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
+const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
+const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
@@ -1900,6 +1902,31 @@ describe("Veydrift backend", () => {
         crystal: "4780",
         deuterium: "4740"
       },
+      productionPerHour: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0"
+      },
+      energyBalance: {
+        produced: "0",
+        required: "0",
+        scaleBps: "10000"
+      },
+      storageCaps: {
+        metal: "10000",
+        crystal: "10000",
+        deuterium: "10000"
+      },
+      protectedResources: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0"
+      },
+      raidableResources: {
+        metal: "4600",
+        crystal: "4780",
+        deuterium: "4740"
+      },
       queue: {
         active: true,
         kind: "building",
@@ -2083,9 +2110,39 @@ describe("Veydrift backend", () => {
       buildings: expect.arrayContaining([
         expect.objectContaining({
           id: 0,
-          level: 0
+          level: 0,
+          cost: {
+            metal: "60",
+            crystal: "15",
+            deuterium: "0"
+          }
         })
       ]),
+      productionPerHour: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0"
+      },
+      energyBalance: {
+        produced: "0",
+        required: "0",
+        scaleBps: "10000"
+      },
+      storageCaps: {
+        metal: "10000",
+        crystal: "10000",
+        deuterium: "10000"
+      },
+      protectedResources: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0"
+      },
+      raidableResources: {
+        metal: "5000",
+        crystal: "4900",
+        deuterium: "4800"
+      },
       queue: null,
       stale: true,
       source: "contract-state-indexer",
@@ -2367,6 +2424,50 @@ describe("Veydrift backend", () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xbuildingdone",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xdefensedone",
+      logIndex: "0x0",
+      topics: [
+        defenseCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(3n, 3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xshipdone",
+      logIndex: "0x0",
+      topics: [
+        shipCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xresearchdone",
+      logIndex: "0x0",
+      topics: [
+        researchCompletedTopic,
+        addressTopic(player),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -2404,6 +2505,7 @@ describe("Veydrift backend", () => {
         defense: "6"
       }
     });
+    expect(body.source).toBe("contract-state-indexer");
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
   });
 
@@ -2435,10 +2537,10 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("returns a service error instead of a bad request when highscore RPC reads fail", async () => {
+  test("serves indexed highscores without live highscore RPC reads", async () => {
     const chainReader = new MockChainReader();
     chainReader.getHighscoreForWallet = async () => {
-      throw new Error("RPC HTTP 429");
+      throw new Error("highscores should not call live RPC");
     };
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -2451,11 +2553,24 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request("http://localhost/highscores?limit=10"));
     const body = await response.json();
 
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(200);
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
-    expect(body).toEqual({
-      error: "highscores_unavailable",
-      detail: "RPC HTTP 429"
+    expect(body.source).toBe("contract-state-indexer");
+    expect(body.rankings.total[0]).toMatchObject({
+      rank: 1,
+      wallet: player,
+      homePlanetId: planet.planetId,
+      planetCount: 1,
+      score: {
+        total: "15",
+        economy: "0",
+        research: "1",
+        researchLevels: "1",
+        military: "14",
+        fleet: "8",
+        fleetCount: "2",
+        defense: "6"
+      }
     });
   });
 
