@@ -3,6 +3,7 @@ import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
 } from "../src/overviewHeroImage";
+import { shouldShowOverviewBuildingFinishAction } from "../src/components/OverviewPage";
 import {
   overviewQueueItemLabelClassName,
   overviewQueueItemRemainingClassName,
@@ -172,5 +173,21 @@ describe("overview queue progress display", () => {
       elapsedMs: 1_000_000,
       progress: 1,
     });
+  });
+
+  test("shows the ready building finish action for infrastructure-backed queues", () => {
+    const onFinishBuilding = () => undefined;
+
+    expect(shouldShowOverviewBuildingFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+    })).toBe(true);
+    expect(shouldShowOverviewBuildingFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+    })).toBe(false);
+    expect(shouldShowOverviewBuildingFinishAction({
+      isBuildingReadyToFinish: true,
+    })).toBe(false);
   });
 });

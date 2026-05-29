@@ -50,6 +50,7 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
+  isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
@@ -81,6 +82,7 @@ export function OverviewPage({
   planet,
   homePlanet,
   isWalletConnected,
+  isBuildingReadyToFinish,
   onFinishBuilding,
   onNavigate,
   onCounterplay,
@@ -112,6 +114,10 @@ export function OverviewPage({
   const localBuildingLabel = buildingQueue
     ? buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel)
     : settledState.queue?.label;
+  const showBuildingFinishAction = shouldShowOverviewBuildingFinishAction({
+    isBuildingReadyToFinish,
+    onFinishBuilding,
+  });
 
   const planetName = homePlanet?.name
     ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
@@ -374,26 +380,25 @@ export function OverviewPage({
                   indeterminate
                 />
               )}
-              {queueRemaining(onChainQueues.building.readyAt, now) === "Ready" && onFinishBuilding && (
-                <button
-                  className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
-                  onClick={onFinishBuilding}
-                  type="button"
-                >
-                  Finish upgrade
-                </button>
-              )}
+              <OverviewBuildingFinishButton
+                onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
+              />
             </div>
           ) : buildingQueue ? (
-            <QueueItemDisplay
-              label={localBuildingLabel ?? buildingQueue.label}
-              remaining={formatDurationUntil(buildingQueue.readyAt, now)}
-              progress={queueProgress}
-              readyAt={buildingQueue.readyAt}
-              startedAt={buildingQueue.startedAt}
-              thumbnailSrc={localBuildingAsset}
-              now={now}
-            />
+            <div className="grid gap-2">
+              <QueueItemDisplay
+                label={localBuildingLabel ?? buildingQueue.label}
+                remaining={formatDurationUntil(buildingQueue.readyAt, now)}
+                progress={queueProgress}
+                readyAt={buildingQueue.readyAt}
+                startedAt={buildingQueue.startedAt}
+                thumbnailSrc={localBuildingAsset}
+                now={now}
+              />
+              <OverviewBuildingFinishButton
+                onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
+              />
+            </div>
           ) : (
             <EmptyQueue action={<QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>}>
               No active construction.
@@ -487,6 +492,34 @@ export function OverviewPage({
       )}
 
     </div>
+  );
+}
+
+export function shouldShowOverviewBuildingFinishAction({
+  isBuildingReadyToFinish,
+  onFinishBuilding,
+}: {
+  isBuildingReadyToFinish?: boolean | undefined;
+  onFinishBuilding?: (() => void) | undefined;
+}): boolean {
+  return Boolean(isBuildingReadyToFinish && onFinishBuilding);
+}
+
+function OverviewBuildingFinishButton({
+  onFinishBuilding,
+}: {
+  onFinishBuilding?: (() => void) | undefined;
+}) {
+  if (!onFinishBuilding) return null;
+
+  return (
+    <button
+      className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+      onClick={onFinishBuilding}
+      type="button"
+    >
+      Finish upgrade
+    </button>
   );
 }
 
