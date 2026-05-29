@@ -5,6 +5,7 @@ import {
   waitForCollectedResourcesState,
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
+  waitForRenamedWalletPlanet,
   type CollectedResourcesSnapshot,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingSnapshot,
@@ -132,6 +133,35 @@ describe("post-transaction refresh reconciliation", () => {
 
     expect(attempts).toBe(2);
     expect(result.selectedPlanet.planetId).toBe("7");
+  });
+
+  test("polls past hydrated but stale planet names after rename confirmation", async () => {
+    const snapshots = [
+      hydratedWalletPlanetSyncSnapshot(),
+      renamedWalletPlanetSyncSnapshot("New Eos"),
+    ];
+    const loads: WalletPlanetSyncSnapshot[] = [];
+
+    const result = await waitForRenamedWalletPlanet(
+      async () => {
+        const snapshot = snapshots.shift() ?? renamedWalletPlanetSyncSnapshot("New Eos");
+        loads.push(snapshot);
+        return snapshot;
+      },
+      { planetId: "7", name: "New Eos" },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.selectedPlanet.name).toBe("New Eos");
+  });
+
+  test("reports a retryable status when a confirmed rename stays stale", async () => {
+    await expect(waitForRenamedWalletPlanet(
+      async () => hydratedWalletPlanetSyncSnapshot(),
+      { planetId: "7", name: "New Eos" },
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    )).rejects.toThrow("did not show \"New Eos\"");
   });
 
   test("reports a specific retryable status when hydration times out", async () => {
@@ -323,6 +353,28 @@ function hydratedWalletPlanetSyncSnapshot(): WalletPlanetSyncSnapshot {
     },
     queues: emptyQueues(),
     fleetVisibility: emptyFleetVisibility(),
+  };
+}
+
+function renamedWalletPlanetSyncSnapshot(name: string): WalletPlanetSyncSnapshot {
+  const snapshot = hydratedWalletPlanetSyncSnapshot();
+  const renamedPlanet = {
+    ...snapshot.planetsResponse.planets[0]!,
+    name,
+  };
+  return {
+    ...snapshot,
+    settlement: {
+      ...snapshot.settlement,
+      planet: {
+        ...snapshot.settlement.planet!,
+        name,
+      },
+    },
+    planetsResponse: {
+      ...snapshot.planetsResponse,
+      planets: [renamedPlanet],
+    },
   };
 }
 
