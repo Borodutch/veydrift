@@ -2,6 +2,8 @@ import type { EnergyBalance, Resources, QueueItem } from "../playableMvp";
 import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { shortAddress } from "../walletFlow";
 import { Download } from "lucide-preact";
+import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
+import { TelegramIcon } from "./TelegramIcon";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const compactFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
@@ -119,6 +121,17 @@ export function TopBar({
         </div>
 
         <div className="flex min-w-0 max-w-full items-center justify-center gap-2 sm:justify-end sm:gap-3">
+          <a
+            aria-label="Telegram support"
+            className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded border border-signal/35 bg-signal/10 px-2 text-[11px] font-semibold leading-none text-signal transition hover:bg-signal/20"
+            href={TELEGRAM_SUPPORT_URL}
+            rel="noopener noreferrer"
+            target="_blank"
+            title="Telegram support"
+          >
+            <TelegramIcon className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Telegram</span>
+          </a>
           {coordinates && (
             <span className="inline-flex h-6 items-center whitespace-nowrap font-mono text-xs leading-none text-slate-400">
               {coordinates}

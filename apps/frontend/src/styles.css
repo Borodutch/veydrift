@@ -814,6 +814,42 @@ h4 {
   align-items: stretch;
 }
 
+.settlement-support-link {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 4;
+  display: inline-flex;
+  max-width: calc(100vw - 36px);
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(128, 241, 255, 0.36);
+  border-radius: 8px;
+  background: rgba(4, 10, 18, 0.72);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28), inset 0 1px rgba(255, 255, 255, 0.08);
+  color: #80f1ff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0 12px;
+  text-decoration: none;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.settlement-support-link:hover {
+  border-color: rgba(128, 241, 255, 0.62);
+  background: rgba(128, 241, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.settlement-support-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
 .settlement-command,
 .scanner-frame {
   border: 1px solid rgba(128, 241, 255, 0.24);
@@ -1161,6 +1197,7 @@ h4 {
 
   .settlement-stage {
     padding: 18px;
+    padding-top: 62px;
   }
 
   .settlement-shell,
@@ -1243,6 +1280,13 @@ h4 {
 
   .settlement-stage {
     padding: 12px;
+    padding-top: 58px;
+  }
+
+  .settlement-support-link {
+    top: 12px;
+    right: 12px;
+    max-width: calc(100vw - 24px);
   }
 
   .settlement-shell {
