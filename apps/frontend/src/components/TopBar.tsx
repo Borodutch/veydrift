@@ -52,7 +52,7 @@ export function TopBar({
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
       <div className="mx-auto flex min-h-10 max-w-7xl flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
-        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
+        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem_1.75rem] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
           {resourceStatus === "loading" ? (
             <span className="text-xs text-slate-400">Resources loading</span>
           ) : resourceStatus === "error" || !resources ? (
@@ -95,10 +95,20 @@ export function TopBar({
               )}
             </>
           )}
+          <a
+            aria-label="Telegram support"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded border border-signal/35 bg-signal/10 text-signal transition hover:bg-signal/20 sm:hidden"
+            href={TELEGRAM_SUPPORT_URL}
+            rel="noopener noreferrer"
+            target="_blank"
+            title="Telegram support"
+          >
+            <TelegramIcon className="h-3.5 w-3.5" />
+          </a>
           {showCollectButton && (
             <button
               aria-label={collectResourcesTitle(resourceDeltas, canCollectResources)}
-              className="col-start-5 grid h-7 w-7 shrink-0 place-items-center rounded border border-cyan-300/30 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-start-auto sm:inline-flex sm:w-auto sm:px-2.5 sm:text-[11px] sm:font-semibold sm:leading-none"
+              className="col-start-6 grid h-7 w-7 shrink-0 place-items-center rounded border border-cyan-300/30 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-start-auto sm:inline-flex sm:w-auto sm:px-2.5 sm:text-[11px] sm:font-semibold sm:leading-none"
               disabled={!canCollectResources}
               onClick={onCollectResources}
               title={collectResourcesTitle(resourceDeltas, canCollectResources)}
@@ -123,7 +133,7 @@ export function TopBar({
         <div className="flex min-w-0 max-w-full items-center justify-center gap-2 sm:justify-end sm:gap-3">
           <a
             aria-label="Telegram support"
-            className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded border border-signal/35 bg-signal/10 px-2 text-[11px] font-semibold leading-none text-signal transition hover:bg-signal/20"
+            className="hidden h-7 shrink-0 items-center justify-center gap-1.5 rounded border border-signal/35 bg-signal/10 px-2 text-[11px] font-semibold leading-none text-signal transition hover:bg-signal/20 sm:inline-flex"
             href={TELEGRAM_SUPPORT_URL}
             rel="noopener noreferrer"
             target="_blank"
