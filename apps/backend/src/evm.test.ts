@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import type { BackendConfig } from "./config";
 import {
+  decodePlanetRenamedLog,
   decodeMoonChanceReportLog,
   HttpJsonRpcTransport,
+  isPlanetRenamedLog,
   isMoonChanceReportLog,
   VeydriftGameReader,
   type Address,
@@ -13,6 +15,7 @@ import {
 const requestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";
 const finalizedTopic = "0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d76e501b618572e6705d04";
 const skippedTopic = "0x93793f9a66f3a0a4cea93b7eb92e142d7283b5b33f657e14277879f2f8e7ab4e";
+const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
 const moonDestructionRequestedTopic = "0x719ab77026e22a766a85f5c32e5294b20e76b8a0490812761ab98ab3a1739884";
 const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e9e011bd7eddc6c104221ed803";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
@@ -114,6 +117,11 @@ describe("current planet enumeration", () => {
             const [call] = request.params as [{ data: string }];
             const selector = call.data.slice(0, 10);
             batchSelectors.push(selector);
+
+            if (selector === "0xec16d865") {
+              return stringResult(batchSelectors.length === 2 ? "New Eos" : "");
+            }
+
             expect(selector).toBe("0x181c1bc4");
 
             if (batchSelectors.length === 1) {
@@ -159,12 +167,36 @@ describe("current planet enumeration", () => {
         eventName: "PlanetStarted",
         owner: "0x0000000000000000000000000000000000000def",
         planetId: "1",
+        name: "New Eos",
         galaxy: 2,
         system: 44,
         position: 9
       })
     ]);
-    expect(batchSelectors).toHaveLength(2);
+    expect(batchSelectors).toEqual(["0x181c1bc4", "0xec16d865", "0x181c1bc4", "0xec16d865"]);
+  });
+});
+
+describe("planet rename event decoding", () => {
+  test("decodes planet rename logs", () => {
+    const log = makeLog({
+      topics: [
+        planetRenamedTopic,
+        addressTopic("0x0000000000000000000000000000000000000def"),
+        topic(7n)
+      ],
+      data: stringResult("New Eos")
+    });
+
+    expect(isPlanetRenamedLog(log)).toBe(true);
+    expect(decodePlanetRenamedLog(log)).toEqual({
+      eventName: "PlanetRenamed",
+      transactionHash: "0xtx",
+      blockNumber: "16",
+      owner: "0x0000000000000000000000000000000000000def",
+      planetId: "7",
+      name: "New Eos"
+    });
   });
 });
 
@@ -657,6 +689,10 @@ function uintArrayResult(values: bigint[]): string {
 
 function addressArrayResult(values: Address[]): string {
   return dataWords([word(32n), word(BigInt(values.length)), ...values.map(addressWord)]);
+}
+
+function stringResult(value: string): string {
+  return dataWords([word(32n), stringTail(value)]);
 }
 
 function allianceProfileResult({

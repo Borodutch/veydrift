@@ -1875,6 +1875,8 @@ contract VeydriftGameTest is Test {
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
 
         vm.prank(player);
+        vm.expectEmit(true, true, false, true);
+        emit PlanetRenamed(player, planetId, "New Eos");
         game.renamePlanet(planetId, "New Eos");
 
         assertEq(game.planetNames(planetId), "New Eos");
