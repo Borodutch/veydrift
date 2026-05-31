@@ -22,7 +22,7 @@ describe("building detail helpers", () => {
     expect(formatDuration(3 * 24 * 60 * 60 + 4 * 60 * 60 + 59 * 60)).toBe("3d 4h");
     expect(formatDuration(2 * 7 * 24 * 60 * 60 + 24 * 60 * 60 + 23 * 60 * 60)).toBe("2w 1d");
     expect(formatDuration(62549994824590 * 60 + 13)).toBe("99w+");
-    expect(formatCost({ metal: 60, crystal: 15, deuterium: 0 })).toBe("Metal 60 / Crystal 15");
+    expect(formatCost({ metal: 60, crystal: 15, deuterium: 0 })).toBe("Metal 60, Crystal 15");
   });
 
   test("reports specific disabled reasons when resources are short", () => {

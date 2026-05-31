@@ -250,7 +250,7 @@ export function formatBuildingRequirements(key: BuildingKey): string {
   ];
 
   return requirements.length > 0
-    ? requirements.join(" / ")
+    ? requirements.join(", ")
     : "None";
 }
 
@@ -320,7 +320,7 @@ export function formatCost(cost: Resources): string {
   return resourceEntries(cost)
     .filter(([, value]) => value > 0)
     .map(([resource, value]) => `${resourceLabels[resource]} ${formatNumber(value)}`)
-    .join(" / ") || "No resource cost";
+    .join(", ") || "No resource cost";
 }
 
 function formatMissingResources(resources: Resources, cost: Resources): string {
