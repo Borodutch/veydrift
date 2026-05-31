@@ -8,6 +8,7 @@ import {
   formatCost,
   formatDuration,
   formatNumber,
+  mineSolarPlantPrerequisiteFor,
 } from "../src/buildingDetails";
 import { buildingRequirementsFor, createInitialPlayableState, unmetBuildingRequirement } from "../src/playableMvp";
 
@@ -27,6 +28,10 @@ describe("building detail helpers", () => {
   test("reports specific disabled reasons when resources are short", () => {
     const state = {
       ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        solarPlant: 1,
+      },
       resources: { metal: 10, crystal: 5_000, deuterium: 5_000 },
     };
 
@@ -47,6 +52,58 @@ describe("building detail helpers", () => {
     ).toMatchObject({
       disabled: true,
       reason: "Game state unavailable; upgrades are disabled until your wallet resources load.",
+      targetLevel: 1,
+    });
+  });
+
+  test("blocks mine upgrades until Solar Plant level 1 exists", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    for (const key of ["metalMine", "crystalMine", "deuteriumSynthesizer"] as const) {
+      expect(mineSolarPlantPrerequisiteFor(state, key)).toBe("Solar Plant level 1");
+      expect(formatBuildingRequirements(key)).toContain("Solar Plant level 1");
+      expect(buildingUpgradeStatus(state, key)).toMatchObject({
+        disabled: true,
+        reason: "Requires Solar Plant level 1",
+        targetLevel: 1,
+      });
+    }
+  });
+
+  test("allows mine upgrades after Solar Plant level 1 exists", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        solarPlant: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    for (const key of ["metalMine", "crystalMine", "deuteriumSynthesizer"] as const) {
+      expect(mineSolarPlantPrerequisiteFor(state, key)).toBeUndefined();
+      expect(buildingUpgradeStatus(state, key)).toMatchObject({
+        disabled: false,
+        reason: "Ready for Level 1",
+        targetLevel: 1,
+      });
+    }
+  });
+
+  test("keeps Solar Plant buildable at level 0", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(mineSolarPlantPrerequisiteFor(state, "solarPlant")).toBeUndefined();
+    expect(formatBuildingRequirements("solarPlant")).toBe("None");
+    expect(buildingUpgradeStatus(state, "solarPlant")).toMatchObject({
+      disabled: false,
+      reason: "Ready for Level 1",
       targetLevel: 1,
     });
   });

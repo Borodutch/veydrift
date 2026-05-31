@@ -13,6 +13,7 @@ import {
   formatDuration,
   formatNumber,
   formatSigned,
+  mineSolarPlantPrerequisiteFor,
 } from "../buildingDetails";
 import { formatDurationUntil } from "../durationFormat";
 import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
@@ -146,6 +147,7 @@ export function InfrastructurePage({
             const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
             const isSelected = building.key === selectedBuilding.key;
             const missingRequirement = unmetBuildingRequirement(settledState, building.key);
+            const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
 
             return (
               <BuildingSelectorTile
@@ -156,7 +158,7 @@ export function InfrastructurePage({
                 isUnbuilt={currentLevel === 0}
                 key={building.key}
                 label={building.label}
-                statusText={missingRequirement ? "Locked" : undefined}
+                statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : undefined}
                 onClick={() => handleSelectBuilding(building.key)}
               />
             );
