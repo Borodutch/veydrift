@@ -141,6 +141,15 @@ export type IndexedRiftResourceEvent = {
   unlocksAt?: string;
 };
 
+export type IndexedShipCountChangedEvent = {
+  eventName: "PlanetShipCountChanged";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  shipId: number;
+  total: number;
+};
+
 export type FleetMissionVisibility = {
   wallet: Address;
   homePlanetId: string | null;
@@ -2731,6 +2740,7 @@ const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e0
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
+const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -2861,6 +2871,10 @@ export function isDebrisFieldLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === debrisFieldUpdatedTopic;
 }
 
+export function isShipCountChangedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === planetShipCountChangedTopic;
+}
+
 export function isIndexedQueueStartedLog(log: RpcLog): boolean {
   const topic = topicAt(log.topics, 0);
   return topic === buildingStartedTopic
@@ -2943,6 +2957,19 @@ export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
     resources: decodeResources(words.slice(0, 3)),
     lastSettledAt: decodeUintWord(wordAt(words, 3)).toString()
+  };
+}
+
+export function decodeShipCountChangedLog(log: RpcLog): IndexedShipCountChangedEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "PlanetShipCountChanged",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    shipId: Number(decodeUint(topicAt(log.topics, 2))),
+    total: Number(decodeUintWord(wordAt(words, 0)))
   };
 }
 

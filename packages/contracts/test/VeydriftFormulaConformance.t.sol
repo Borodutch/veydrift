@@ -18,19 +18,19 @@ contract VeydriftFormulaConformanceTest is Test {
 
     function testCanonicalVeydriftMineProductionAndEnergy() public pure {
         (uint256 produced, uint256 required, uint256 scaleBps) =
-            VeydriftFormulas.energyBalance(3, 3, 2, 6, 0, 0);
+            VeydriftFormulas.energyBalance(3, 3, 2, 6, 0, 0, 0, 0);
         assertEq(produced, 212);
         assertEq(required, 126);
         assertEq(scaleBps, BPS);
 
         (uint256 metal, uint256 crystal, uint256 deuterium) =
-            VeydriftFormulas.productionPerHour(5, 4, 3, 12, 0, 0, 10_000, 10_000, 13_040);
+            VeydriftFormulas.productionPerHour(5, 4, 3, 12, 0, 0, 0, 0, 10_000, 10_000, 13_040);
         assertEq(metal, 241);
         assertEq(crystal, 117);
         assertEq(deuterium, 50);
 
         (metal, crystal, deuterium) =
-            VeydriftFormulas.productionPerHour(5, 4, 3, 0, 0, 0, 10_000, 10_000, 13_040);
+            VeydriftFormulas.productionPerHour(5, 4, 3, 0, 0, 0, 0, 0, 10_000, 10_000, 13_040);
         assertEq(metal, 0);
         assertEq(crystal, 0);
         assertEq(deuterium, 0);
@@ -38,7 +38,7 @@ contract VeydriftFormulaConformanceTest is Test {
 
     function testCanonicalVeydriftFusionReactorEnergyAndDeuteriumUse() public pure {
         (uint256 produced, uint256 required, uint256 scaleBps) =
-            VeydriftFormulas.energyBalance(0, 0, 0, 0, 2, 3);
+            VeydriftFormulas.energyBalance(0, 0, 0, 0, 2, 0, 0, 3);
 
         assertEq(produced, 69);
         assertEq(required, 0);
@@ -48,10 +48,20 @@ contract VeydriftFormulaConformanceTest is Test {
         assertEq(VeydriftFormulas.fusionReactorDeuteriumConsumption(2), 25);
 
         (uint256 metal, uint256 crystal, uint256 deuterium) =
-            VeydriftFormulas.productionPerHour(0, 0, 3, 0, 2, 3, 10_000, 10_000, 13_040);
+            VeydriftFormulas.productionPerHour(0, 0, 3, 0, 2, 0, 0, 3, 10_000, 10_000, 13_040);
         assertEq(metal, 0);
         assertEq(crystal, 0);
         assertEq(deuterium, 21);
+    }
+
+    function testSolarSatellitesProduceTemperatureScaledEnergy() public pure {
+        (uint256 produced, uint256 required, uint256 scaleBps) =
+            VeydriftFormulas.energyBalance(0, 0, 0, 1, 0, 3, 80, 0);
+
+        assertEq(VeydriftFormulas.solarSatelliteEnergy(80), 36);
+        assertEq(produced, 130);
+        assertEq(required, 0);
+        assertEq(scaleBps, BPS);
     }
 
     function testCanonicalVeydriftPlanetMultipliers() public pure {

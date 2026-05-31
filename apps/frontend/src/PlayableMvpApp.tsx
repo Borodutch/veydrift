@@ -181,11 +181,13 @@ export function topBarEnergyFor({
   infrastructureChainState,
   infrastructureError,
   isWalletConnected,
+  planetProductionProfile,
   settledState,
 }: {
   infrastructureChainState: ChainInfrastructureState | null;
   infrastructureError?: string | undefined;
   isWalletConnected: boolean;
+  planetProductionProfile?: PlanetProductionProfile | undefined;
   settledState: PlayableState;
 }): EnergyBalance | undefined {
   if (!isWalletConnected || !infrastructureChainState || infrastructureError) {
@@ -193,7 +195,12 @@ export function topBarEnergyFor({
   }
 
   return energyBalanceFromChain(infrastructureChainState.energyBalance)
-    ?? energyBalance(settledState.buildings, settledState.research.energy);
+    ?? energyBalance(
+      settledState.buildings,
+      settledState.research.energy,
+      settledState.ships.solarSatellite,
+      planetProductionProfile,
+    );
 }
 
 function resourceAmountIsZero(value: string): boolean {
@@ -978,6 +985,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (!planetState) return undefined;
 
     return {
+      maxTemperature: planetState.temperature,
       metalMultiplierBps: planetState.metalMultiplierBps,
       crystalMultiplierBps: planetState.crystalMultiplierBps,
       deuteriumMultiplierBps: planetState.deuteriumMultiplierBps,
@@ -986,11 +994,17 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     onChainSettlement?.planet?.crystalMultiplierBps,
     onChainSettlement?.planet?.deuteriumMultiplierBps,
     onChainSettlement?.planet?.metalMultiplierBps,
+    onChainSettlement?.planet?.temperature,
   ]);
   const rates = useMemo(() => {
     const production = infrastructureChainState?.productionPerHour;
     if (!production) {
-      return productionPerHour(settledState.buildings, planetProductionProfile, settledState.research.energy);
+      return productionPerHour(
+        settledState.buildings,
+        planetProductionProfile,
+        settledState.research.energy,
+        settledState.ships.solarSatellite,
+      );
     }
     return {
       metal: Number(production.metal),
@@ -1090,12 +1104,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       infrastructureChainState,
       infrastructureError,
       isWalletConnected,
+      planetProductionProfile,
       settledState,
     });
   }, [
     infrastructureChainState,
     infrastructureError,
     isWalletConnected,
+    planetProductionProfile,
     settledState,
   ]);
 

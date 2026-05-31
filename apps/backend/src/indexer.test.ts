@@ -15,6 +15,7 @@ const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
+const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
@@ -226,6 +227,46 @@ describe("SettlementIndexer", () => {
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }
+  });
+
+  test("applies combat ship count changes to indexed ship rows", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xshipdone",
+      logIndex: "0x0",
+      topics: [
+        shipCompletedTopic,
+        topic(7n),
+        topic(9n)
+      ],
+      data: abiWords(5n, 5n)
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 9)?.count).toBe(5);
+    expect(indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xcombat",
+      logIndex: "0x0",
+      topics: [
+        planetShipCountChangedTopic,
+        topic(7n),
+        topic(9n)
+      ],
+      data: abiWords(2n)
+    })).toMatchObject({
+      applied: true,
+      duplicate: false,
+      snapshot: {
+        indexedEventLogs: 2
+      }
+    });
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 9)?.count).toBe(2);
   });
 
   test("applies duplicate webhook logs only once", () => {

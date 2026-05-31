@@ -18,6 +18,7 @@ import {
   decodePlanetRenamedLog,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
+  decodeShipCountChangedLog,
   isDebrisFieldLog,
   isFleetMissionLog,
   isIndexedQueueCompletedLog,
@@ -28,6 +29,7 @@ import {
   isPlanetRenamedLog,
   isRiftResourceLog,
   isSettledPlanetLog,
+  isShipCountChangedLog,
   type ChainReader,
   type DebrisFieldEvent,
   type DefenseState,
@@ -37,6 +39,7 @@ import {
   type IndexedQueueStartedEvent,
   type IndexedMoonCreatedEvent,
   type IndexedRiftResourceEvent,
+  type IndexedShipCountChangedEvent,
   type InfrastructureState,
   type ManagedPlanet,
   type MoonState,
@@ -569,6 +572,10 @@ export class SettlementIndexer {
     }
     if (isDebrisFieldLog(log)) {
       this.applyDebrisEvent(decodeDebrisFieldLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isShipCountChangedLog(log)) {
+      this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isIndexedQueueStartedLog(log)) {
@@ -1431,6 +1438,26 @@ export class SettlementIndexer {
     if (event.planetId) {
       this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
     }
+    this.touch();
+  }
+
+  private applyShipCountChangedEvent(event: IndexedShipCountChangedEvent): void {
+    this.upsertIndexedLevel(
+      "indexed_ship_counts",
+      "ship_id",
+      "count",
+      event.planetId,
+      event.shipId,
+      event.total
+    );
+    this.upsertIndexedLevel(
+      "contract_ship_counts",
+      "ship_id",
+      "count",
+      event.planetId,
+      event.shipId,
+      event.total
+    );
     this.touch();
   }
 

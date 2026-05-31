@@ -76,6 +76,8 @@ contract ShortTransferResourceToken is MockResourceToken {
 }
 
 contract VeydriftGameTest is Test {
+    event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
+
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
     bytes32 internal constant DEP_SHIPYARD_2 = "SHIPYARD_2";
     bytes32 internal constant DEP_WEAPONS_3 = "WEAPONS_3";
@@ -690,6 +692,55 @@ contract VeydriftGameTest is Test {
         (uint128 levelThreeStorage,,) = VeydriftFormulas.storageCaps(3, 0, 0);
         assertEq(levelThreeStorage, 75_000);
         assertEq(VeydriftFormulas.buildingDuration(2, 1, 10_000, 5_000, 1, 1), 3_600);
+    }
+
+    function testSolarSatellitesIncreasePlanetEnergy() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        VeydriftGameStorage.FirstPlanet memory planet = game.firstPlanetOf(player);
+        uint256 perSatelliteEnergy = VeydriftFormulas.solarSatelliteEnergy(planet.temperature);
+
+        _setShipCount(planetId, Ship.SolarSatellite, 3);
+
+        (uint256 producedEnergy, uint256 requiredEnergy, uint256 scaleBps) =
+            game.energyBalance(planetId);
+        assertEq(producedEnergy, perSatelliteEnergy * 3);
+        assertEq(requiredEnergy, 0);
+        assertEq(scaleBps, 10_000);
+    }
+
+    function testDestroyedSolarSatellitesReducePlanetEnergy() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setShipCount(targetPlanetId, Ship.SolarSatellite, 100);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        (uint256 energyBefore,,) = game.energyBalance(targetPlanetId);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            901
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 901);
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetShipCountChanged(targetPlanetId, Ship.SolarSatellite, 0);
+        game.resolveFleetMission(missionId);
+
+        uint32 satellitesAfter = game.shipCount(targetPlanetId, Ship.SolarSatellite);
+        (uint256 energyAfter,,) = game.energyBalance(targetPlanetId);
+        assertEq(satellitesAfter, 0);
+        assertLt(energyAfter, energyBefore);
     }
 
     function testBuildingUpgradeSpendsInternalResources() public {

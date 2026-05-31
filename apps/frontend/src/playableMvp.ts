@@ -177,6 +177,7 @@ export type EnergyBalance = {
 };
 
 export type PlanetProductionProfile = {
+  maxTemperature?: number;
   metalMultiplierBps: number;
   crystalMultiplierBps: number;
   deuteriumMultiplierBps: number;
@@ -1083,6 +1084,7 @@ export const QUEUE_UNIVERSE_SPEED = 1;
 const MIN_QUEUE_SECONDS = 1;
 const PLANET = {
   fields: 206,
+  maxTemperature: -12,
   temperature: -12,
   metalMultiplierBps: 9_772,
   crystalMultiplierBps: 10_218,
@@ -1165,8 +1167,9 @@ export function productionPerHour(
   buildings: Record<BuildingKey, number>,
   profile: PlanetProductionProfile = PLANET,
   energyTechnologyLevel = 0,
+  solarSatelliteCount = 0,
 ): Resources {
-  const energy = energyBalance(buildings, energyTechnologyLevel);
+  const energy = energyBalance(buildings, energyTechnologyLevel, solarSatelliteCount, profile);
 
   const capacity = productionCapacityPerHour(buildings, profile);
 
@@ -1191,6 +1194,8 @@ export function productionCapacityPerHour(
 export function energyBalance(
   buildings: Record<BuildingKey, number>,
   energyTechnologyLevel = 0,
+  solarSatelliteCount = 0,
+  profile: PlanetProductionProfile = PLANET,
 ): EnergyBalance {
   const required = (
     scaledLevelValue(10, buildings.metalMine)
@@ -1198,7 +1203,8 @@ export function energyBalance(
     + scaledLevelValue(20, buildings.deuteriumSynthesizer)
   );
   const produced = scaledLevelValue(20, buildings.solarPlant)
-    + fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel);
+    + fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel)
+    + solarSatelliteEnergy(profile.maxTemperature ?? PLANET.maxTemperature) * solarSatelliteCount;
 
   return {
     deuteriumConsumed: fusionReactorDeuteriumConsumption(buildings.fusionReactor),
@@ -1424,7 +1430,7 @@ export function unmetBuildingRequirement(
 }
 
 export function unmetResearchRequirement(
-  state: Pick<PlayableState, "buildings" | "research">,
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
   key: ResearchKey,
 ): ResearchRequirement | undefined {
   return researchRequirementsFor(key).find((requirement) => {
@@ -1433,7 +1439,11 @@ export function unmetResearchRequirement(
     }
 
     if (requirement.type === "energy") {
-      return energyBalance(state.buildings, state.research.energy).produced < requirement.produced;
+      return energyBalance(
+        state.buildings,
+        state.research.energy,
+        state.ships.solarSatellite,
+      ).produced < requirement.produced;
     }
 
     return state.research[requirement.key] < requirement.level;
@@ -1658,6 +1668,10 @@ export function fusionReactorEnergyProduction(level: number, energyTechnologyLev
 export function fusionReactorDeuteriumConsumption(level: number): number {
   if (level === 0) return 0;
   return Math.ceil((10 * level * (11 ** level)) / (10 ** level));
+}
+
+export function solarSatelliteEnergy(maxTemperature: number): number {
+  return Math.max(1, Math.min(65, Math.floor((maxTemperature + 140) / 6)));
 }
 
 function scaleByFactor(value: number, exponent: number, numerator: number, denominator: number): number {

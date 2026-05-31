@@ -188,10 +188,12 @@ export function deriveTechnologyRows(levelFor: (id: number) => number): Research
 export function deriveInfrastructureFields(
   planet: SettledPlanetEvent,
   buildings: InfrastructureState["buildings"],
+  ships: ShipyardState["ships"],
   technologyLevels: Record<string, number>
 ): Pick<InfrastructureState, "energyBalance" | "productionPerHour" | "protectedResources" | "raidableResources" | "storageCaps"> {
   const levels = buildingLevels(buildings);
-  const energy = energyBalance(levels, technologyLevels["0"] ?? 0);
+  const solarSatelliteCount = ships.find((ship) => ship.id === 9)?.count ?? 0;
+  const energy = energyBalance(levels, solarSatelliteCount, planet.temperature, technologyLevels["0"] ?? 0);
   const caps = storageCaps(levels);
   const protectedResources = scaleResources(caps, RAID_PROTECTED_STORAGE_BPS);
 
@@ -317,13 +319,16 @@ function productionPerHour(
 
 function energyBalance(
   buildings: Record<BuildingKey, number>,
+  solarSatelliteCount: number,
+  maxTemperature: number,
   energyTechnologyLevel: number
 ): { deuteriumConsumed: number; produced: number; required: number; scaleBps: number } {
   const required = scaledLevelValue(10, buildings.metalMine)
     + scaledLevelValue(10, buildings.crystalMine)
     + scaledLevelValue(20, buildings.deuteriumSynthesizer);
   const produced = scaledLevelValue(20, buildings.solarPlant)
-    + fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel);
+    + fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel)
+    + solarSatelliteEnergy(maxTemperature) * solarSatelliteCount;
 
   return {
     deuteriumConsumed: fusionReactorDeuteriumConsumption(buildings.fusionReactor),
@@ -365,6 +370,10 @@ function fusionReactorEnergyProduction(level: number, energyTechnologyLevel: num
 function fusionReactorDeuteriumConsumption(level: number): number {
   if (level === 0) return 0;
   return Math.ceil((10 * level * (11 ** level)) / (10 ** level));
+}
+
+function solarSatelliteEnergy(maxTemperature: number): number {
+  return Math.max(1, Math.min(65, Math.floor((maxTemperature + 140) / 6)));
 }
 
 function storageCap(level: number): number {

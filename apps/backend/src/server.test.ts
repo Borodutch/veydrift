@@ -52,6 +52,7 @@ const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe2
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
+const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const planet: PlanetState = {
@@ -1952,6 +1953,77 @@ describe("Veydrift backend", () => {
     expect(completedInfrastructureBody.buildings.find((building: { id: number }) => building.id === 5)).toMatchObject({
       id: 5,
       level: 1
+    });
+  });
+
+  test("serves indexed infrastructure energy from solar satellite ship counts", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("infrastructure should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm indexed state should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xbuilddone",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xsatdone",
+      logIndex: "0x0",
+      topics: [
+        shipCompletedTopic,
+        topic(7n),
+        topic(9n)
+      ],
+      data: abiWords(5n, 5n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const poweredResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const poweredBody = await poweredResponse.json();
+    expect(poweredBody.energyBalance).toEqual({
+      produced: "110",
+      required: "11",
+      scaleBps: "10000"
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xcombat",
+      logIndex: "0x0",
+      topics: [
+        planetShipCountChangedTopic,
+        topic(7n),
+        topic(9n)
+      ],
+      data: abiWords(2n)
+    });
+    const damagedResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const damagedBody = await damagedResponse.json();
+    expect(damagedBody.energyBalance).toEqual({
+      produced: "44",
+      required: "11",
+      scaleBps: "10000"
     });
   });
 
