@@ -8,16 +8,20 @@ describe("TopBar", () => {
     const resourceRow = elementNodes(topBar).find(
       (node) =>
         typeof node.props?.className === "string" &&
-        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem]")
+        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem_1.75rem]")
     );
     const collectButton = buttonWithLabel(topBar, "Collect accrued resources: Metal +10 / Crystal +5");
+    const supportLink = linkWithLabel(topBar, "Telegram support");
 
     expect(resourceRow?.props?.className).toContain("sm:flex-wrap");
     expect(resourceRow?.props?.className).toContain("gap-0.5");
+    expect(resourceRow?.props?.className).toContain("_1.75rem_1.75rem]");
     expect(collectButton?.props?.className).toContain("h-7 w-7");
-    expect(collectButton?.props?.className).toContain("col-start-5");
+    expect(collectButton?.props?.className).toContain("col-start-6");
     expect(collectButton?.props?.className).toContain("sm:w-auto");
     expect(collectButton?.props?.title).toBe("Collect accrued resources: Metal +10 / Crystal +5");
+    expect(supportLink?.props?.className).toContain("h-7 w-7");
+    expect(supportLink?.props?.className).toContain("sm:hidden");
   });
 
   test("renders abbreviated mobile resource labels and full desktop labels", () => {
@@ -89,6 +93,10 @@ function textParts(node: ComponentChildren): string[] {
 
 function buttonWithLabel(node: ComponentChildren, label: string): VNode | undefined {
   return elementNodes(node).find((item) => item.type === "button" && item.props?.["aria-label"] === label);
+}
+
+function linkWithLabel(node: ComponentChildren, label: string): VNode | undefined {
+  return elementNodes(node).find((item) => item.type === "a" && item.props?.["aria-label"] === label);
 }
 
 function elementNodes(node: ComponentChildren): VNode[] {
