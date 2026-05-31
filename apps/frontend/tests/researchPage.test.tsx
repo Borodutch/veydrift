@@ -1,11 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import {
+  formatCost,
+  formatResearchRequirements,
   ResearchLoadErrorPanel,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
 
 describe("Research page load-error display", () => {
+  test("formats cumulative costs and requirements with commas", () => {
+    expect(formatCost({ metal: 2_000, crystal: 4_000, deuterium: 600 })).toBe("Metal 2,000, Crystal 4,000, Deut. 600");
+    expect(formatResearchRequirements([
+      { type: "building", key: "researchLab", level: 4 },
+      { type: "research", key: "laser", level: 10 },
+      { type: "research", key: "energy", level: 5 },
+    ])).toBe("Research Lab 4, Laser Technology 10, Energy Technology 5");
+  });
+
   test("hides live research values after backend load errors", () => {
     expect(shouldHideResearchValues({
       error: "Research request failed with 503",

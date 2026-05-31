@@ -56,7 +56,7 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Energy use");
     expect(text).toContain("Level 1 Current");
     expect(text).toContain("Level 2 Next");
-    expect(text).toContain("Metal 90 / Crystal 22");
+    expect(text).toContain("Metal 90, Crystal 22");
     expect(text).toContain("2m 41s");
     expect(text).toContain("72 Metal/h");
     expect(text).toContain("24 required");
@@ -74,7 +74,7 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Solar Plant levels");
     expect(text).toContain("Energy output");
     expect(text).toContain("Level 1 Next");
-    expect(text).toContain("Metal 75 / Crystal 30");
+    expect(text).toContain("Metal 75, Crystal 30");
     expect(text).toContain("22 produced");
     expect(text).toContain("48 produced");
   });

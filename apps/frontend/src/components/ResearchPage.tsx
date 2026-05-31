@@ -428,7 +428,7 @@ function ResearchDetailPanel({
 
       <dl className="mt-4 grid gap-2">
         <ResearchInfoRow label="Category" value={research.lane} />
-        <ResearchInfoRow label="Requirements" value={requirements.length > 0 ? requirements.map(formatRequirement).join(" / ") : "None"} />
+        <ResearchInfoRow label="Requirements" value={formatResearchRequirements(requirements)} />
         <ResearchInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
         <ResearchInfoRow
           label="Research time"
@@ -618,7 +618,11 @@ function toResources(resources: ChainResearchState["resources"] | ChainResearchS
   };
 }
 
-function formatCost(cost: Resources): string {
+export function formatResearchRequirements(requirements: ResearchRequirement[]): string {
+  return requirements.length > 0 ? requirements.map(formatRequirement).join(", ") : "None";
+}
+
+export function formatCost(cost: Resources): string {
   const parts: Array<[string, number]> = [
     ["Metal", cost.metal],
     ["Crystal", cost.crystal],
@@ -627,7 +631,7 @@ function formatCost(cost: Resources): string {
   return parts
     .filter(([, v]) => v > 0)
     .map(([label, v]) => `${label} ${format(v)}`)
-    .join(" / ") || "No resource cost";
+    .join(", ") || "No resource cost";
 }
 
 function format(value: number): string {
