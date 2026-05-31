@@ -13,6 +13,9 @@ import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 
 contract Deploy is ResourceTokenDeployment {
+    string internal constant ALPHA_REDEPLOY_ACK =
+        "I have verified Veydrift alpha state migration requirements";
+
     event VeydriftDeployment(
         address indexed game,
         address indexed allianceSystem,
@@ -35,6 +38,7 @@ contract Deploy is ResourceTokenDeployment {
             address deuteriumToken
         )
     {
+        _requireAlphaRedeployAcknowledgement();
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         address admin = vm.envOr("ADMIN_ADDRESS", vm.addr(privateKey));
         require(admin == vm.addr(privateKey), "ADMIN_MUST_MATCH_BROADCASTER");
@@ -78,5 +82,13 @@ contract Deploy is ResourceTokenDeployment {
             deuteriumToken
         );
         vm.stopBroadcast();
+    }
+
+    function _requireAlphaRedeployAcknowledgement() private view {
+        string memory acknowledgement = vm.envString("VEYDRIFT_ALPHA_REDEPLOY_ACK");
+        require(
+            keccak256(bytes(acknowledgement)) == keccak256(bytes(ALPHA_REDEPLOY_ACK)),
+            "OPEN_ALPHA_STATE_PRESERVATION_ACK_REQUIRED"
+        );
     }
 }

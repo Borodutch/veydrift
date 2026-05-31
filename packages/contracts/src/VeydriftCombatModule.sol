@@ -399,6 +399,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         BattleSettlement memory settlement = _runBattle(missionId, mission);
 
         if (settlement.outcome == BattleOutcome.AttackerWin) {
+            // Solar satellites are stationary planet fixtures. A cleared defense wipes
+            // the remaining satellite field and emits one canonical total for indexers.
             delete _shipCounts[mission.targetPlanetId][Ship.SolarSatellite];
             emit PlanetShipCountChanged(mission.targetPlanetId, Ship.SolarSatellite, 0);
             _raidResourcesForAttackGroup(missionId, mission);

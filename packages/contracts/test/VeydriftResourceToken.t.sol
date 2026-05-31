@@ -141,6 +141,10 @@ contract VeydriftResourceTokenTest is Test {
 
     function testFullDeployScriptWiresGameAndResourceTokenReserves() public {
         address deployer = _setDeployEnv();
+        vm.setEnv(
+            "VEYDRIFT_ALPHA_REDEPLOY_ACK",
+            "I have verified Veydrift alpha state migration requirements"
+        );
 
         (
             address gameAddress,
@@ -183,6 +187,33 @@ contract VeydriftResourceTokenTest is Test {
         assertEq(available.metal, INITIAL_SUPPLY - 500);
         assertEq(available.crystal, INITIAL_SUPPLY - 500);
         assertEq(available.deuterium, INITIAL_SUPPLY);
+    }
+
+    function testBaseSepoliaDeployScriptAcceptsExplicitAlphaStatePreservationAck() public {
+        address deployer = _setDeployEnv();
+        vm.chainId(84532);
+        vm.setEnv(
+            "VEYDRIFT_ALPHA_REDEPLOY_ACK",
+            "I have verified Veydrift alpha state migration requirements"
+        );
+
+        (
+            address gameAddress,
+            address allianceSystemAddress,
+            address moonSystemAddress,
+            address randomnessEngineAddress,
+            address metalToken,
+            address crystalToken,
+            address deuteriumToken
+        ) = new Deploy().run();
+
+        assertEq(VeydriftGame(gameAddress).owner(), deployer);
+        assertTrue(allianceSystemAddress.code.length > 0);
+        assertTrue(moonSystemAddress.code.length > 0);
+        assertTrue(randomnessEngineAddress.code.length > 0);
+        assertEq(VeydriftMetal(metalToken).balanceOf(gameAddress), INITIAL_SUPPLY);
+        assertEq(VeydriftCrystal(crystalToken).balanceOf(gameAddress), INITIAL_SUPPLY);
+        assertEq(VeydriftDeuterium(deuteriumToken).balanceOf(gameAddress), INITIAL_SUPPLY);
     }
 
     function testResourceTokenDeployScriptMintsInitialSupplyToExistingGame() public {

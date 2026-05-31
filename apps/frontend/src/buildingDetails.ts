@@ -50,6 +50,12 @@ export type BuildingEnergyDetail =
       kind: "none";
     };
 
+const solarPrerequisiteMineKeys = new Set<BuildingKey>([
+  "metalMine",
+  "crystalMine",
+  "deuteriumSynthesizer",
+]);
+
 export type BuildingLevelInfoRow = {
   cost: Resources;
   current: boolean;
@@ -121,6 +127,17 @@ export function buildingUpgradeStatus(
       reason: state.queue.key === key
         ? `${queuedBuildingLabel} upgrade in progress`
         : `Another building is currently upgrading: ${queuedBuildingLabel}`,
+      targetLevel,
+    };
+  }
+
+  const solarPrerequisite = mineSolarPlantPrerequisiteFor(state, key);
+  if (solarPrerequisite) {
+    return {
+      cost,
+      disabled: true,
+      durationSeconds,
+      reason: `Requires ${solarPrerequisite}`,
       targetLevel,
     };
   }
@@ -227,10 +244,27 @@ export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): Building
 }
 
 export function formatBuildingRequirements(key: BuildingKey): string {
-  const requirements = buildingRequirementsFor(key);
+  const requirements = [
+    ...frontendOnlyBuildingRequirementsFor(key),
+    ...buildingRequirementsFor(key).map(formatBuildingRequirement),
+  ];
+
   return requirements.length > 0
-    ? requirements.map(formatBuildingRequirement).join(" / ")
+    ? requirements.join(" / ")
     : "None";
+}
+
+export function mineSolarPlantPrerequisiteFor(
+  state: Pick<PlayableState, "buildings">,
+  key: BuildingKey,
+): string | undefined {
+  return solarPrerequisiteMineKeys.has(key) && state.buildings.solarPlant < 1
+    ? "Solar Plant level 1"
+    : undefined;
+}
+
+function frontendOnlyBuildingRequirementsFor(key: BuildingKey): string[] {
+  return solarPrerequisiteMineKeys.has(key) ? ["Solar Plant level 1"] : [];
 }
 
 function formatBuildingRequirement(requirement: ReturnType<typeof buildingRequirementsFor>[number]): string {

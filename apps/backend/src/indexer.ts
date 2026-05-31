@@ -15,6 +15,7 @@ import {
   decodeMoonCreatedLog,
   decodeMoonChanceReportLog,
   decodePlanetSettledLog,
+  decodePlanetRenamedLog,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
@@ -25,6 +26,7 @@ import {
   isMoonCreatedLog,
   isMoonChanceReportLog,
   isPlanetSettledLog,
+  isPlanetRenamedLog,
   isRiftResourceLog,
   isSettledPlanetLog,
   isShipCountChangedLog,
@@ -43,6 +45,7 @@ import {
   type MoonState,
   type MoonChanceReportEvent,
   type PlanetSettledEvent,
+  type PlanetRenamedEvent,
   type PlayerQueues,
   type QueueState,
   type ResearchState,
@@ -561,6 +564,10 @@ export class SettlementIndexer {
     }
     if (isPlanetSettledLog(log)) {
       this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isPlanetRenamedLog(log)) {
+      this.applyPlanetRenamedEvent(decodePlanetRenamedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isDebrisFieldLog(log)) {
@@ -1344,6 +1351,24 @@ export class SettlementIndexer {
       lastSettledAt: event.lastSettledAt,
       resources: event.resources
     });
+  }
+
+  private applyPlanetRenamedEvent(event: PlanetRenamedEvent): void {
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
+    if (!row) {
+      this.markStale("planet rename for unknown planet");
+      return;
+    }
+
+    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
+    this.upsertPlanet({
+      ...planet,
+      transactionHash: event.transactionHash,
+      blockNumber: event.blockNumber,
+      owner: event.owner,
+      name: event.name.length > 0 ? event.name : null
+    });
+    this.touch();
   }
 
   private upsertDebris(event: DebrisFieldEvent): void {

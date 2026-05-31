@@ -410,6 +410,15 @@ export type PlanetSettledEvent = {
   resources: Resources;
 };
 
+export type PlanetRenamedEvent = {
+  eventName: "PlanetRenamed";
+  transactionHash: string;
+  blockNumber: string;
+  owner: Address;
+  planetId: string;
+  name: string;
+};
+
 export type MoonChanceReportEvent = {
   eventName:
     | "MoonChanceRequested"
@@ -1709,13 +1718,21 @@ export class VeydriftGameReader implements ChainReader {
     const planetIds = Array.from({ length: Number(nextPlanetId - 1n) }, (_, index) => BigInt(index + 1));
     const results = await this.batchCallContract(
       this.gameContractAddress,
-      planetIds.map((planetId) => ({
-        selector: "0x181c1bc4",
-        args: [encodeUint(planetId)]
-      }))
+      planetIds.flatMap((planetId) => ([
+        {
+          selector: "0x181c1bc4",
+          args: [encodeUint(planetId)]
+        },
+        {
+          selector: "0xec16d865",
+          args: [encodeUint(planetId)]
+        }
+      ]))
     );
 
-    return results.flatMap((result, index) => {
+    return planetIds.flatMap((planetId, index) => {
+      const result = results[index * 2] ?? "0x";
+      const nameResult = results[index * 2 + 1] ?? "0x";
       const words = splitWords(result);
       const owner = decodeAddressWord(wordAt(words, 0));
       if (owner === zeroAddress) return [];
@@ -1725,8 +1742,8 @@ export class VeydriftGameReader implements ChainReader {
         transactionHash: "0x",
         blockNumber: "0",
         owner,
-        planetId: planetIds[index]!.toString(),
-        name: null,
+        planetId: planetId.toString(),
+        name: decodeNullableStringResult(nameResult),
         galaxy: Number(decodeUintWord(wordAt(words, 1))),
         system: Number(decodeUintWord(wordAt(words, 2))),
         position: Number(decodeUintWord(wordAt(words, 3))),
@@ -2713,6 +2730,7 @@ const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "ke
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
+const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
 const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
@@ -2845,6 +2863,10 @@ export function isPlanetSettledLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetSettledTopic;
 }
 
+export function isPlanetRenamedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === planetRenamedTopic;
+}
+
 export function isDebrisFieldLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === debrisFieldUpdatedTopic;
 }
@@ -2948,6 +2970,17 @@ export function decodeShipCountChangedLog(log: RpcLog): IndexedShipCountChangedE
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
     shipId: Number(decodeUint(topicAt(log.topics, 2))),
     total: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
+export function decodePlanetRenamedLog(log: RpcLog): PlanetRenamedEvent {
+  return {
+    eventName: "PlanetRenamed",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    owner: decodeAddressWord(topicAt(log.topics, 1)),
+    planetId: decodeUint(topicAt(log.topics, 2)).toString(),
+    name: decodeStringResult(log.data)
   };
 }
 
@@ -3318,6 +3351,15 @@ function decodeStringResult(hex: string): string {
     bytes[index] = Number.parseInt(data.slice(index * 2, index * 2 + 2), 16);
   }
   return new TextDecoder().decode(bytes);
+}
+
+function decodeNullableStringResult(hex: string): string | null {
+  try {
+    const value = decodeStringResult(hex);
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 function decodeString(words: string[], headIndex: number, baseIndex = 0): string {

@@ -76,6 +76,8 @@ contract ShortTransferResourceToken is MockResourceToken {
 }
 
 contract VeydriftGameTest is Test {
+    event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
+
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
     bytes32 internal constant DEP_SHIPYARD_2 = "SHIPYARD_2";
     bytes32 internal constant DEP_WEAPONS_3 = "WEAPONS_3";
@@ -731,11 +733,13 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 901);
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetShipCountChanged(targetPlanetId, Ship.SolarSatellite, 0);
         game.resolveFleetMission(missionId);
 
         uint32 satellitesAfter = game.shipCount(targetPlanetId, Ship.SolarSatellite);
         (uint256 energyAfter,,) = game.energyBalance(targetPlanetId);
-        assertLt(satellitesAfter, 100);
+        assertEq(satellitesAfter, 0);
         assertLt(energyAfter, energyBefore);
     }
 
@@ -1922,6 +1926,8 @@ contract VeydriftGameTest is Test {
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
 
         vm.prank(player);
+        vm.expectEmit(true, true, false, true);
+        emit PlanetRenamed(player, planetId, "New Eos");
         game.renamePlanet(planetId, "New Eos");
 
         assertEq(game.planetNames(planetId), "New Eos");
