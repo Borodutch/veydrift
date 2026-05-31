@@ -1,8 +1,45 @@
 # Veydrift Contract Redeploy Runbook
 
-This is the canonical handoff for Base Sepolia contract redeploys. The goal is to keep contract
-addresses, backend runtime config, frontend ABI/runtime assumptions, and tab smoke checks in one
+This is the canonical handoff for Base Sepolia contract redeploys. Veydrift is
+in open alpha as of 2026-05-29, so redeploying is not a reset button. Preserve
+current player state, prefer proxy upgrades when available, and use this runbook
+only after the state-preservation gate in
+`docs/open-alpha-state-preservation.md` is satisfied.
+
+The goal is to keep contract addresses, backend runtime config, frontend
+ABI/runtime assumptions, migration evidence, and tab smoke checks in one
 repeatable path.
+
+## 0. Migration Verification Gate
+
+Before broadcasting a full deploy:
+
+1. Decide whether the change can be handled as a proxy upgrade instead. If yes,
+   use the proxy upgrade path and record old/new implementation addresses,
+   storage-layout evidence, upgrade tx, and post-upgrade state checks.
+2. If a full redeploy is unavoidable, record one of:
+   - `No alpha player state exists`, with onchain and backend indexer evidence;
+   - `Migration plan approved`, with export/import/reconcile/rollback details
+     covering the state classes listed in
+     `docs/open-alpha-state-preservation.md`.
+3. Capture the current manifest/runtime state before mutation:
+   game, settlement, resource tokens, alliance, randomness, moon, index block,
+   ABI hash, backend `GET /health`, `/runtime-config`, and `/debug/indexer`.
+4. Export or read the current state needed for migration: planets and owners,
+   names, resources and reserves, buildings and queues, ships and defenses,
+   research, fleets and cargo/returns, moons and moon buildings, alliances,
+   debris, moon chance, rift state, and backend indexed DB position.
+5. Define rollback and verification. The Kaneo handoff must include the
+   migration verification note before the task can move to done.
+
+Full deploys through `Deploy.s.sol` also require:
+
+```sh
+export VEYDRIFT_ALPHA_REDEPLOY_ACK="I have verified Veydrift alpha state migration requirements"
+```
+
+This acknowledgement prevents accidental script use. It does not replace the
+Kaneo/PR evidence required by the policy.
 
 ## 1. Build And Deploy
 
@@ -14,7 +51,8 @@ bun run test:contracts
 ```
 
 Deploy from `packages/contracts` with the funded deployer wallet and the intended RPC. Do not print
-or commit `PRIVATE_KEY`.
+or commit `PRIVATE_KEY`. Only run this full deploy path after section 0 is
+complete.
 
 ```sh
 cd packages/contracts
@@ -118,5 +156,10 @@ that feature.
 ## 5. Kaneo Evidence
 
 Record the manifest path, deployed addresses, deploy block, commit SHA, smoke command output, and
-any live tx used for proof in the Kaneo workpad. Manual browser QA can then focus on gameplay rather
-than discovering config drift.
+any live tx used for proof in the Kaneo workpad. Also record the preservation
+path used: proxy upgrade, no-state redeploy, or migrated redeploy.
+
+For a migrated redeploy, include pre/post evidence for planets, resources,
+queues, fleets, research, moons, reserve backing, and backend indexer
+reconciliation. Manual browser QA can then focus on gameplay rather than
+discovering config drift.

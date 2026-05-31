@@ -266,11 +266,22 @@ Resources:
 ## Deployment
 
 Scripts require a funded deployer key in the shell environment. Do not commit or print private keys.
+Veydrift is in open alpha as of 2026-05-29, so contract deployments must preserve
+existing player state. Read `../../docs/open-alpha-state-preservation.md` before
+running any deploy or upgrade command.
+
+Prefer upgrading an existing proxy when the live contract is upgradeable and
+storage-compatible. If a full redeploy is unavoidable, first record either
+`No alpha player state exists` with onchain/indexer evidence or
+`Migration plan approved` with export, import, backend reconciliation, rollback,
+and verification details. The Kaneo/PR handoff must include that migration
+verification note before the task is marked done.
 
 Deploy the test game contract to Base Sepolia:
 
 ```bash
 PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin \
+VEYDRIFT_ALPHA_REDEPLOY_ACK="I have verified Veydrift alpha state migration requirements" \
 forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
 ```
@@ -315,6 +326,7 @@ Deploy to Base mainnet:
 
 ```bash
 PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin \
+VEYDRIFT_ALPHA_REDEPLOY_ACK="I have verified Veydrift alpha state migration requirements" \
 METAL_TOKEN_ADDRESS=0xMetal CRYSTAL_TOKEN_ADDRESS=0xCrystal DEUTERIUM_TOKEN_ADDRESS=0xDeuterium \
 forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_MAINNET_RPC_URL" --broadcast --verify
@@ -326,7 +338,9 @@ or new resources can be credited.
 
 `VeydriftGame` is intentionally deployed directly for the test MVP so it remains under the
 Base Sepolia contract size limit. `Upgrade.s.sol` is retained only as an explicit guard and
-will revert.
+will revert. If a future live deployment uses an upgradeable proxy, replace this
+guard with a reviewed upgrade script and storage-layout gate instead of using a
+fresh deploy to sidestep migration.
 
 Upgrade an existing proxy:
 

@@ -136,6 +136,13 @@ home planet per wallet, deterministic coordinates, lazy resource settlement,
 building upgrades, defense and ship production, technology research, and
 deployment/upgrade scripts.
 
+Veydrift is in open alpha as of 2026-05-29. Contract-affecting work must
+preserve existing player state. Prefer proxy upgrades when the deployed contract
+supports them; if a full redeploy is unavoidable, follow
+`docs/open-alpha-state-preservation.md` and
+`docs/veydrift-contract-redeploy-runbook.md` before broadcasting or marking the
+task done.
+
 ```sh
 cd packages/contracts
 forge fmt --check
@@ -178,6 +185,9 @@ bun run check
 ## Deployment
 
 The initial production target is the existing Hetzner Easypanel instance. The
+contract deployment path is state-preserving by policy: do not redeploy alpha
+contracts as a reset, and do not update backend runtime addresses without a
+proxy-upgrade, no-state, or migrated-redeploy note in the Kaneo/PR handoff.
 `veydrift/frontend` service is sourced from this GitHub repository on `main`.
 Use the repository root as the EasyPanel source/build path and configure
 Nixpacks with frontend-scoped commands so Bun can install the whole monorepo
