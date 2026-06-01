@@ -246,6 +246,12 @@ export type BuildingEffectMetrics =
       nextUnlocked: boolean;
     }
   | {
+      kind: "terraformer";
+      currentFieldsAdded: number;
+      nextFieldsAdded: number;
+      deltaFields: number;
+    }
+  | {
       kind: "facility";
       currentLevel: number;
       nextLevel: number;
@@ -1349,6 +1355,18 @@ export function buildingEffectMetrics(
       nextFactor: nextBuildings.researchLab + 1,
       unlocked: buildings.researchLab > 0,
       nextUnlocked: nextBuildings.researchLab > 0,
+    };
+  }
+
+  if (key === "terraformer") {
+    const currentFieldsAdded = buildings.terraformer * 5;
+    const nextFieldsAdded = nextBuildings.terraformer * 5;
+
+    return {
+      kind: "terraformer",
+      currentFieldsAdded,
+      nextFieldsAdded,
+      deltaFields: nextFieldsAdded - currentFieldsAdded,
     };
   }
 
