@@ -1798,6 +1798,40 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("does not rebuild a cold planet index during wallet settlement requests", async () => {
+    const chainReader = new MockChainReader();
+    let liveReadCalled = false;
+    chainReader.getWalletSettlement = async (wallet) => {
+      liveReadCalled = true;
+      return {
+        wallet,
+        hasFirstPlanet: false,
+        homePlanetId: null,
+        planet: null
+      };
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("cold settlement request should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+
+    expect(response.status).toBe(200);
+    expect(liveReadCalled).toBe(true);
+    await expect(response.json()).resolves.toMatchObject({
+      wallet: player,
+      hasFirstPlanet: false,
+      homePlanetId: null,
+      planet: null
+    });
+  });
+
   test("serves indexed player queues without live chain reads when warm", async () => {
     const chainReader = new MockChainReader();
     let liveReadCalled = false;

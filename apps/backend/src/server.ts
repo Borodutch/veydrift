@@ -36,6 +36,8 @@ const corsHeaders = {
   ...jsonHeaders
 } as const;
 
+const LIVE_WALLET_READ_TIMEOUT_MS = 6_000;
+
 type GraphQLPayload = {
   query?: string;
 };
@@ -205,15 +207,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (indexer) {
-          await ensurePlanetIndex(indexer);
+        if (hasWarmPlanetIndex(indexer)) {
           return Response.json(indexer.walletSettlement(wallet), {
             headers: corsHeaders
           });
         }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) return ready;
-        return Response.json(await ready.getWalletSettlement(wallet), {
+        return Response.json(await liveWalletRead(ready.getWalletSettlement(wallet), "wallet settlement"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -225,15 +226,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (indexer) {
-          await ensurePlanetIndex(indexer);
+        if (hasWarmPlanetIndex(indexer)) {
           return Response.json(indexer.walletPlanets(wallet), {
             headers: corsHeaders
           });
         }
         const ready = requireChainReader(chainReader, loaded.problems);
         if (ready instanceof Response) return ready;
-        return Response.json(await ready.getWalletPlanets(wallet), {
+        return Response.json(await liveWalletRead(ready.getWalletPlanets(wallet), "wallet planets"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -255,7 +255,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return await indexedDegradedResponse(indexer, wallet, planetId, "player queues", new Error("backend_not_configured"), indexedPlayerQueues)
             ?? ready;
         }
-        return Response.json(await ready.getPlayerQueues(wallet, planetId), {
+        return Response.json(await liveWalletRead(ready.getPlayerQueues(wallet, planetId), "player queues"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -278,7 +278,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return await indexedDegradedResponse(indexer, wallet, undefined, "fleet visibility", new Error("backend_not_configured"), indexedFleetVisibility)
             ?? ready;
         }
-        return Response.json(await ready.getFleetMissionVisibility(wallet), {
+        return Response.json(await liveWalletRead(ready.getFleetMissionVisibility(wallet), "fleet visibility"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -302,7 +302,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return await indexedDegradedResponse(indexer, wallet, planetId, "infrastructure", new Error("backend_not_configured"), indexedInfrastructureState)
             ?? ready;
         }
-        return Response.json(await ready.getInfrastructureState(wallet, planetId), {
+        return Response.json(await liveWalletRead(ready.getInfrastructureState(wallet, planetId), "infrastructure"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -326,7 +326,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return await indexedDegradedResponse(indexer, wallet, planetId, "moon", new Error("backend_not_configured"), indexedMoonState)
             ?? ready;
         }
-        return Response.json(await ready.getMoonState(wallet, planetId), {
+        return Response.json(await liveWalletRead(ready.getMoonState(wallet, planetId), "moon"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -350,7 +350,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return await indexedDegradedResponse(indexer, wallet, planetId, "shipyard", new Error("backend_not_configured"), indexedShipyardState)
             ?? ready;
         }
-        return Response.json(await ready.getShipyardState(wallet, planetId), {
+        return Response.json(await liveWalletRead(ready.getShipyardState(wallet, planetId), "shipyard"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -374,7 +374,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return await indexedDegradedResponse(indexer, wallet, planetId, "defenses", new Error("backend_not_configured"), indexedDefenseState)
             ?? ready;
         }
-        return Response.json(await ready.getDefenseState(wallet, planetId), {
+        return Response.json(await liveWalletRead(ready.getDefenseState(wallet, planetId), "defenses"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -398,7 +398,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return await indexedDegradedResponse(indexer, wallet, planetId, "research", new Error("backend_not_configured"), indexedResearchState)
             ?? ready;
         }
-        return Response.json(await ready.getResearchState(wallet, planetId), {
+        return Response.json(await liveWalletRead(ready.getResearchState(wallet, planetId), "research"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -415,7 +415,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await ready.getAllianceState(wallet), {
+        return Response.json(await liveWalletRead(ready.getAllianceState(wallet), "alliance"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -437,7 +437,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return await indexedDegradedResponse(indexer, wallet, planetId, "rift", new Error("backend_not_configured"), indexedRiftState)
             ?? ready;
         }
-        return Response.json(await ready.getRiftState(wallet, planetId), {
+        return Response.json(await liveWalletRead(ready.getRiftState(wallet, planetId), "rift"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -455,7 +455,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const targetPlanetId = positiveBigIntQuery(url, "targetPlanetId");
-        return Response.json(await ready.getAttackProtectionStatus(wallet, targetPlanetId), {
+        return Response.json(await liveWalletRead(ready.getAttackProtectionStatus(wallet, targetPlanetId), "attack protection"), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -802,6 +802,11 @@ async function ensurePlanetIndex(indexer: SettlementIndexer): Promise<void> {
   }
 }
 
+function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
+  if (!indexer) return false;
+  return indexer.snapshot().indexedPlanets > 0;
+}
+
 type IndexedDegradedBody<T extends object> = T & {
   degraded: true;
   detail: string;
@@ -834,7 +839,7 @@ async function indexedWarmResponse<T extends object>(
 ): Promise<Response | null> {
   if (!indexer) return null;
 
-  await ensurePlanetIndex(indexer);
+  if (!hasWarmPlanetIndex(indexer)) return null;
   const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
   if (!settlement?.planet) return null;
 
@@ -873,7 +878,7 @@ async function indexedDegradedResponse<T extends object>(
 ): Promise<Response | null> {
   if (!indexer || !isDegradableReadError(error)) return null;
 
-  await ensurePlanetIndex(indexer);
+  if (!hasWarmPlanetIndex(indexer)) return null;
   const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
   if (!settlement) return null;
 
@@ -1266,6 +1271,23 @@ function requireChainReader(chainReader: ChainReader | undefined, problems: Conf
   return chainReader;
 }
 
+async function liveWalletRead<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Timed out reading ${label} from live chain state after ${Math.round(LIVE_WALLET_READ_TIMEOUT_MS / 1_000)} seconds.`));
+    }, LIVE_WALLET_READ_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 type HighscoreReader = ChainReader & Required<Pick<ChainReader, "getHighscoreForWallet">>;
 
 function requireHighscoreReader(chainReader: ChainReader | undefined, problems: ConfigProblem[]): HighscoreReader | Response {
@@ -1304,7 +1326,7 @@ function highscoreFailureResponse(error: unknown): Response {
 }
 
 function isRpcTransportError(error: unknown): boolean {
-  return error instanceof Error && /^RPC(?: HTTP)?\b/.test(error.message);
+  return error instanceof Error && (/^RPC(?: HTTP)?\b/.test(error.message) || isLiveWalletReadTimeout(error));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1412,10 +1434,15 @@ function errorResponse(error: unknown, status: number): Response {
 function statusForError(error: unknown, fallback: number): number {
   if (!(error instanceof Error)) return fallback;
 
+  if (isLiveWalletReadTimeout(error)) return 503;
   if (isRateLimitedRpcError(error)) return 503;
   if (isUpstreamRpcError(error)) return 502;
 
   return fallback;
+}
+
+function isLiveWalletReadTimeout(error: Error): boolean {
+  return /^Timed out reading .+ from live chain state after \d+ seconds\.$/.test(error.message);
 }
 
 function isRateLimitedRpcError(error: Error): boolean {
