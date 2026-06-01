@@ -2,6 +2,7 @@ import { EyeOff, RefreshCw, Route, ShieldAlert, TimerReset } from "lucide-preact
 
 import { formatDurationUntil } from "../durationFormat";
 import type { FleetMissionSummary, FleetMissionVisibilityResponse, OnChainResources } from "../walletFlow";
+import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type MissionControlActionState =
   | { status: "idle" }
@@ -54,6 +55,7 @@ export function MissionControlPage({
   const returning = fleetVisibility?.returning ?? [];
   const due = [...incoming, ...outgoing].filter((mission) => isMissionDue(mission, now));
   const activeCount = incoming.length + outgoing.length + returning.length;
+  const initialLoading = loading && !fleetVisibility;
 
   return (
     <section className="grid gap-4">
@@ -92,105 +94,111 @@ export function MissionControlPage({
           {actionState.label}
         </Notice>
       )}
-      {loading && <Notice tone="info">Loading mission state from indexed contract logs.</Notice>}
+      {loading && fleetVisibility ? <InlineSyncIndicator label="Refreshing missions" /> : null}
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <Metric label="Active missions" value={activeCount.toString()} />
-        <Metric label="Due resolvers" value={due.length.toString()} />
-        <Metric label="Hostile inbound" value={incoming.length.toString()} />
-        <Metric label="Returns" value={returning.length.toString()} />
-      </div>
+      {initialLoading ? (
+        <VeydriftLoader label="Mapping missions" />
+      ) : (
+        <>
+          <div className="grid gap-3 md:grid-cols-4">
+            <Metric label="Active missions" value={activeCount.toString()} />
+            <Metric label="Due resolvers" value={due.length.toString()} />
+            <Metric label="Hostile inbound" value={incoming.length.toString()} />
+            <Metric label="Returns" value={returning.length.toString()} />
+          </div>
 
-      <RaidProtectionPanel
-        protectedResources={protectedResources}
-        raidableResources={raidableResources}
-      />
+          <RaidProtectionPanel
+            protectedResources={protectedResources}
+            raidableResources={raidableResources}
+          />
 
-      {activeCount === 0 ? (
-        <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
-          No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy when the target action is contract-supported.
-        </div>
-      ) : null}
+          {activeCount === 0 ? (
+            <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
+              No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy when the target action is contract-supported.
+            </div>
+          ) : null}
 
-      {due.length > 0 ? (
-        <MissionSection
-          actionContext="due"
-          canTransact={canTransact}
-          missions={due}
-          now={now}
-          onCompleteReturn={onCompleteReturn}
-          onCounterplay={onCounterplay}
-          onRecall={onRecall}
-          onResolve={onResolve}
-          title="Due Public Resolution"
-          tone="danger"
-        />
-      ) : null}
+          {due.length > 0 ? (
+            <MissionSection
+              actionContext="due"
+              canTransact={canTransact}
+              missions={due}
+              now={now}
+              onCompleteReturn={onCompleteReturn}
+              onCounterplay={onCounterplay}
+              onRecall={onRecall}
+              onResolve={onResolve}
+              title="Due Public Resolution"
+              tone="danger"
+            />
+          ) : null}
 
-      <div className="grid gap-3 xl:grid-cols-3">
-        <MissionSection
-          actionContext="incoming"
-          canTransact={canTransact}
-          empty="No hostile inbound missions."
-          missions={incoming}
-          now={now}
-          onCompleteReturn={onCompleteReturn}
-          onCounterplay={onCounterplay}
-          onRecall={onRecall}
-          onResolve={onResolve}
-          title="Incoming Hostile"
-          tone="danger"
-        />
-        <MissionSection
-          actionContext="outgoing"
-          canTransact={canTransact}
-          empty="No outbound missions."
-          missions={outgoing}
-          now={now}
-          onCompleteReturn={onCompleteReturn}
-          onCounterplay={onCounterplay}
-          onRecall={onRecall}
-          onResolve={onResolve}
-          title="Outgoing"
-          tone="neutral"
-        />
-        <MissionSection
-          actionContext="returning"
-          canTransact={canTransact}
-          empty="No fleets waiting to return."
-          missions={returning}
-          now={now}
-          onCompleteReturn={onCompleteReturn}
-          onCounterplay={onCounterplay}
-          onRecall={onRecall}
-          onResolve={onResolve}
-          title="Returning"
-          tone="warning"
-        />
-      </div>
+          <div className="grid gap-3 xl:grid-cols-3">
+            <MissionSection
+              actionContext="incoming"
+              canTransact={canTransact}
+              empty="No hostile inbound missions."
+              missions={incoming}
+              now={now}
+              onCompleteReturn={onCompleteReturn}
+              onCounterplay={onCounterplay}
+              onRecall={onRecall}
+              onResolve={onResolve}
+              title="Incoming Hostile"
+              tone="danger"
+            />
+            <MissionSection
+              actionContext="outgoing"
+              canTransact={canTransact}
+              empty="No outbound missions."
+              missions={outgoing}
+              now={now}
+              onCompleteReturn={onCompleteReturn}
+              onCounterplay={onCounterplay}
+              onRecall={onRecall}
+              onResolve={onResolve}
+              title="Outgoing"
+              tone="neutral"
+            />
+            <MissionSection
+              actionContext="returning"
+              canTransact={canTransact}
+              empty="No fleets waiting to return."
+              missions={returning}
+              now={now}
+              onCompleteReturn={onCompleteReturn}
+              onCounterplay={onCounterplay}
+              onRecall={onRecall}
+              onResolve={onResolve}
+              title="Returning"
+              tone="warning"
+            />
+          </div>
 
-      <div className="grid gap-3 lg:grid-cols-4">
-        <CapabilityPanel
-          icon={<ShieldAlert aria-hidden="true" size={18} />}
-          title="ACS and Intercept"
-          body="Inbound attacks expose ACS defend and intercept launches when the wallet has an available combat ship."
-        />
-        <CapabilityPanel
-          icon={<Route aria-hidden="true" size={18} />}
-          title="Harvests and Saves"
-          body="Recycler harvests, transport, deploy, and resource-save launches remain Galaxy actions because they need a target coordinate."
-        />
-        <CapabilityPanel
-          icon={<TimerReset aria-hidden="true" size={18} />}
-          title="Missiles and Moons"
-          body="Missile and moon-chance entries appear here only after the indexed contract stream exposes them as mission records."
-        />
-        <CapabilityPanel
-          icon={<EyeOff aria-hidden="true" size={18} />}
-          title="No Spy Reports"
-          body="Target intel is public contract state; Veydrift does not support espionage probes, scan missions, or hidden reveal reports."
-        />
-      </div>
+          <div className="grid gap-3 lg:grid-cols-4">
+            <CapabilityPanel
+              icon={<ShieldAlert aria-hidden="true" size={18} />}
+              title="ACS and Intercept"
+              body="Inbound attacks expose ACS defend and intercept launches when the wallet has an available combat ship."
+            />
+            <CapabilityPanel
+              icon={<Route aria-hidden="true" size={18} />}
+              title="Harvests and Saves"
+              body="Recycler harvests, transport, deploy, and resource-save launches remain Galaxy actions because they need a target coordinate."
+            />
+            <CapabilityPanel
+              icon={<TimerReset aria-hidden="true" size={18} />}
+              title="Missiles and Moons"
+              body="Missile and moon-chance entries appear here only after the indexed contract stream exposes them as mission records."
+            />
+            <CapabilityPanel
+              icon={<EyeOff aria-hidden="true" size={18} />}
+              title="No Spy Reports"
+              body="Target intel is public contract state; Veydrift does not support espionage probes, scan missions, or hidden reveal reports."
+            />
+          </div>
+        </>
+      )}
     </section>
   );
 }

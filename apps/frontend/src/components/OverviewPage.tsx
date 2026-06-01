@@ -23,6 +23,7 @@ import type { FleetMissionVisibilityResponse, PlanetSummary, PlayerQueuesRespons
 import { formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
+import { InlineSyncIndicator } from "./VeydriftLoader";
 
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
@@ -502,9 +503,7 @@ export function OverviewPage({
 
       {/* Resource values live in the persistent top bar; keep Overview focused on planet state and actions. */}
       {isWalletConnected && onChainStatus === "loading" && (
-        <div className="rounded-lg border border-white/10 bg-[#101624] p-3 text-sm text-slate-400 sm:p-4">
-          Loading wallet resources...
-        </div>
+        <InlineSyncIndicator label="Refreshing resources" />
       )}
 
     </div>

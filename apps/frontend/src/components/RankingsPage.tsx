@@ -3,6 +3,7 @@ import { RotateCw } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
+import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type RankingsPageProps = {
   apiBaseUrl: string | undefined;
@@ -83,6 +84,8 @@ export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) 
         </div>
       ) : null}
 
+      {loading && data ? <InlineSyncIndicator label="Refreshing rankings" /> : null}
+
       <div className="flex flex-wrap gap-2">
         {categories.map((category) => (
           <button
@@ -132,8 +135,10 @@ export function RankingsTable({
           </span>
         ))}
       </div>
-      {loading ? (
-        <RankingsMessage label="Loading rankings" />
+      {loading && entries.length === 0 ? (
+        <div className="p-3">
+          <VeydriftLoader label="Loading rankings" />
+        </div>
       ) : entries.length === 0 ? (
         <RankingsMessage label="No settled commanders indexed yet" />
       ) : (

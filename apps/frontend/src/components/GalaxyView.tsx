@@ -31,6 +31,7 @@ import {
 import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
+import { VeydriftLoader } from "./VeydriftLoader";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
@@ -352,11 +353,7 @@ export function GalaxyView({
         ) : null}
 
         <div className="grid gap-1.5">
-          {loading && (
-            <div className="py-12 text-center text-sm text-slate-400">
-              Loading system data...
-            </div>
-          )}
+          {loading && <VeydriftLoader label="Mapping galaxy" />}
 
           {!loading && loadError ? (
             <div className="rounded border border-rose-300/20 bg-rose-300/5 px-3 py-4 text-sm text-rose-100">

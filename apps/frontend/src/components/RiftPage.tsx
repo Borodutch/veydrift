@@ -1,5 +1,6 @@
 import { useMemo, useState } from "preact/hooks";
 import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceState } from "../walletFlow";
+import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type RiftActionState =
   | { status: "idle" }
@@ -44,6 +45,7 @@ export function RiftPage({
   const unavailableReason = error
     ?? riftState?.unavailableReason
     ?? (!riftState ? "Rift state is not loaded yet." : undefined);
+  const initialLoading = loading && !riftState;
 
   const updateAmount = (resource: RiftResourceKey, intent: AmountIntent, value: string) => {
     setAmounts((current) => ({
@@ -81,9 +83,11 @@ export function RiftPage({
         </Notice>
       )}
 
-      {loading && <Notice tone="info">Loading Rift bridge state.</Notice>}
+      {loading && riftState ? <InlineSyncIndicator label="Refreshing Rift" /> : null}
 
-      {locked ? (
+      {initialLoading ? (
+        <VeydriftLoader label="Stabilizing Rift" />
+      ) : locked ? (
         <LockedRiftState riftState={riftState} unavailableReason={unavailableReason} />
       ) : (
         <>

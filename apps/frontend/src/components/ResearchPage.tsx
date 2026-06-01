@@ -14,6 +14,7 @@ import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
+import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const researchGroups = ["Basic", "Drive", "Advanced", "Combat"];
@@ -221,10 +222,14 @@ export function ResearchLoadErrorPanel({
   loading: boolean;
   reason: string | undefined;
 }) {
+  if (loading) {
+    return <VeydriftLoader label="Syncing research" />;
+  }
+
   return (
     <div className="rounded-lg border border-rose-300/20 bg-rose-300/5 px-4 py-4 text-sm text-rose-100">
       <p className="font-semibold">
-        {loading ? "Research state is loading." : "Research state could not be loaded."}
+        Research state could not be loaded.
       </p>
       {reason ? (
         <p className="mt-1 text-rose-100/80">{reason}</p>
@@ -249,8 +254,12 @@ function ResearchStatusPanel({
   queue: ReturnType<typeof researchQueueForDisplay>;
   researchState: ChainResearchState | null;
 }) {
+  if (loading && researchState) {
+    return <InlineSyncIndicator label="Refreshing research" />;
+  }
+
   if (loading) {
-    return <Notice tone="neutral">Reading on-chain research state.</Notice>;
+    return null;
   }
 
   if (error) {
@@ -258,7 +267,7 @@ function ResearchStatusPanel({
   }
 
   if (!researchState) {
-    return <Notice tone="neutral">Reading on-chain research state.</Notice>;
+    return null;
   }
 
   if (researchState?.researchAvailable === false) {
