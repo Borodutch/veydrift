@@ -398,7 +398,7 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
   }
 
   if (key === "researchLab") {
-    return `x${formatNumber(level + 1)} research speed`;
+    return `x${formatNumber(Math.max(1, level))} research speed`;
   }
 
   if (key === "missileSilo") {

@@ -270,23 +270,40 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("25 %");
   });
 
-  test("shows Research Lab 1 as unlocking research with a 2x denominator", () => {
+  test("shows Research Lab 1 as unlocking research without a misleading speed multiplier", () => {
     const state = createInitialPlayableState(1_000);
     const effect = buildingEffectMetrics(state.buildings, "researchLab");
     const rows = detailEffectRows(effect, buildingEnergyDetail(state.buildings, "researchLab"));
 
     expect(rows).toContainEqual({
       label: "Research capacity",
-      next: "Unlocks research (x2)",
+      next: "Unlocks research",
       value: "Unavailable",
     });
   });
 
-  test("shows Research Lab level 1 to 2 as x2 to x3 instead of doubling", () => {
+  test("shows Research Lab level 1 to 2 as the x1 to x2 baseline upgrade", () => {
     const state = createInitialPlayableState(1_000);
     const buildings = {
       ...state.buildings,
       researchLab: 1,
+    };
+    const effect = buildingEffectMetrics(buildings, "researchLab");
+    const rows = detailEffectRows(effect, buildingEnergyDetail(buildings, "researchLab"));
+
+    expect(rows).toContainEqual({
+      delta: "+100% faster",
+      label: "Research speed",
+      next: "x2",
+      value: "x1",
+    });
+  });
+
+  test("shows Research Lab level 2 to 3 as the next visible research speed tier", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      researchLab: 2,
     };
     const effect = buildingEffectMetrics(buildings, "researchLab");
     const rows = detailEffectRows(effect, buildingEnergyDetail(buildings, "researchLab"));
