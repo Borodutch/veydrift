@@ -1006,6 +1006,48 @@ contract VeydriftGameTest is Test {
         game.startDefenseProduction(planetId, Defense.AntiBallisticMissile, 1);
     }
 
+    function testDefenseProductionAppendsMatchingActiveQueue() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _seedDefensePrerequisites(planetId);
+        _setResources(planetId, 5_000_000, 5_000_000, 5_000_000);
+
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 2);
+        VeydriftGameStorage.DefenseQueue memory firstQueue = game.defenseQueue(planetId);
+        (uint128 metalCost, uint128 crystalCost, uint128 deuteriumCost) =
+            VeydriftCatalog.defenseCost(Defense.RocketLauncher);
+        uint256 appendedDuration =
+            VeydriftFormulas.unitDuration(8, 0, metalCost, crystalCost, deuteriumCost, 3, 1, 1);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
+
+        VeydriftGameStorage.DefenseQueue memory appendedQueue = game.defenseQueue(planetId);
+        assertTrue(appendedQueue.active);
+        assertEq(uint8(appendedQueue.defense), uint8(Defense.RocketLauncher));
+        assertEq(appendedQueue.quantity, 5);
+        assertEq(appendedQueue.readyAt, firstQueue.readyAt + appendedDuration);
+        assertEq(appendedQueue.cost.metal, metalCost * 5);
+        assertEq(appendedQueue.cost.crystal, crystalCost * 5);
+        assertEq(appendedQueue.cost.deuterium, deuteriumCost * 5);
+    }
+
+    function testDefenseProductionRejectsDifferentActiveQueue() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _seedDefensePrerequisites(planetId);
+        _setResources(planetId, 5_000_000, 5_000_000, 5_000_000);
+
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 2);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.QueueActive.selector);
+        game.startDefenseProduction(planetId, Defense.LightLaser, 1);
+    }
+
     function testInterplanetaryMissileAttackConsumesSilosInterceptionAndDestroysDefense() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
         _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 5);

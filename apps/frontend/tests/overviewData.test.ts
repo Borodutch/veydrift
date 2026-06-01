@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildingQueueLabel,
   buildingQueuePreview,
+  defenseQueuePreview,
   displayPlanetStats,
   isWalletPlanetHydrated,
   safePlanetFields,
@@ -191,6 +192,20 @@ describe("overview data guards", () => {
       targetLevel: 3,
     })).toEqual({
       label: "Building Level 3",
+    });
+  });
+
+  test("resolves active defense queues to catalog names and thumbnails", () => {
+    expect(defenseQueuePreview({
+      active: true,
+      cost: { metal: "4000", crystal: "0", deuterium: "0" },
+      itemId: 0,
+      kind: "defense",
+      quantity: 2,
+      readyAt: "1700000000",
+    })).toEqual({
+      asset: "/assets/game/style-pass/generated/defenses/rocket-launcher.webp",
+      label: "Rocket Launcher x2",
     });
   });
 });

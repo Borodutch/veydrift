@@ -1,4 +1,5 @@
 import type {
+  ChainDefenseState,
   FleetMissionVisibilityResponse,
   ChainInfrastructureState,
   ManagedPlanetResponse,
@@ -26,6 +27,17 @@ export type CollectedResourcesExpectation = {
 export type CollectedResourcesSnapshot = {
   infrastructure: ChainInfrastructureState;
   settlement: WalletSettlementResponse;
+};
+
+export type StartedDefenseProductionExpectation = {
+  itemId: number;
+  planetId?: string | undefined;
+  quantity: number;
+};
+
+export type StartedDefenseProductionSnapshot = {
+  defense: ChainDefenseState;
+  queues: PlayerQueuesResponse;
 };
 
 export type WalletPlanetSyncSnapshot = {
@@ -104,6 +116,27 @@ export function hydratedWalletPlanetSnapshot(
   };
 }
 
+export function isStartedDefenseProductionVisible(
+  snapshot: StartedDefenseProductionSnapshot,
+  expectation: StartedDefenseProductionExpectation,
+): boolean {
+  if (expectation.planetId && snapshot.defense.homePlanetId !== expectation.planetId) return false;
+
+  return defenseQueueMatches(snapshot.defense.queue, expectation)
+    && defenseQueueMatches(snapshot.queues.defense, expectation);
+}
+
+function defenseQueueMatches(
+  queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
+  expectation: StartedDefenseProductionExpectation,
+): boolean {
+  return Boolean(
+    queue?.active
+    && queue.itemId === expectation.itemId
+    && (queue.quantity ?? 0) >= expectation.quantity,
+  );
+}
+
 export async function waitForFinishedBuildingState(
   load: () => Promise<FinishedBuildingSnapshot>,
   expectation: FinishedBuildingExpectation,
@@ -126,6 +159,30 @@ export async function waitForFinishedBuildingState(
   }
 
   throw new Error(finishedBuildingTimeoutMessage(latest, expectation));
+}
+
+export async function waitForStartedDefenseProductionState(
+  load: () => Promise<StartedDefenseProductionSnapshot>,
+  expectation: StartedDefenseProductionExpectation,
+  options: WaitOptions = {},
+): Promise<StartedDefenseProductionSnapshot> {
+  const attempts = options.attempts ?? 8;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: StartedDefenseProductionSnapshot | undefined;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    latest = await load();
+    if (isStartedDefenseProductionVisible(latest, expectation)) {
+      return latest;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(startedDefenseProductionTimeoutMessage(latest, expectation));
 }
 
 export async function waitForCollectedResourcesState(
@@ -238,6 +295,22 @@ function finishedBuildingTimeoutMessage(
   }
 
   return "Building transaction confirmed, but the completed building state is still syncing. Try refreshing the game state in a few seconds.";
+}
+
+function startedDefenseProductionTimeoutMessage(
+  snapshot: StartedDefenseProductionSnapshot | undefined,
+  expectation: StartedDefenseProductionExpectation,
+): string {
+  const defenseQueue = snapshot?.defense.queue;
+  const overviewQueue = snapshot?.queues.defense;
+  const defenseQuantity = defenseQueue?.active && defenseQueue.itemId === expectation.itemId
+    ? defenseQueue.quantity ?? 0
+    : 0;
+  const overviewQuantity = overviewQueue?.active && overviewQueue.itemId === expectation.itemId
+    ? overviewQueue.quantity ?? 0
+    : 0;
+
+  return `Defense production transaction confirmed, but indexed defense queue state is still syncing. Expected item ${expectation.itemId} x${expectation.quantity}; Defenses page queue x${defenseQuantity}; Overview queue x${overviewQuantity}. Try refreshing in a few seconds.`;
 }
 
 function walletPlanetHydrationTimeoutMessage(
