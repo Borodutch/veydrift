@@ -47,9 +47,16 @@ describe("TopBar", () => {
     expect(text).toContain("(+5)");
     expect(text).not.toContain("(+0)");
   });
+
+  test("keeps loaded resources visible during background loading and error states", () => {
+    expect(visibleText(renderTopBar({ resourceStatus: "loading" }))).toContain("Metal");
+    expect(visibleText(renderTopBar({ resourceStatus: "loading" }))).not.toContain("Resources loading");
+    expect(visibleText(renderTopBar({ resourceStatus: "error" }))).toContain("Metal");
+    expect(visibleText(renderTopBar({ resourceStatus: "error" }))).not.toContain("Resources unavailable");
+  });
 });
 
-function renderTopBar(): ComponentChildren {
+function renderTopBar(overrides: Partial<Parameters<typeof TopBar>[0]> = {}): ComponentChildren {
   return TopBar({
     canCollectResources: true,
     caps: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
@@ -61,6 +68,7 @@ function renderTopBar(): ComponentChildren {
     resources: { metal: 56, crystal: 243, deuterium: 31 },
     resourceStatus: "ready",
     showCollectResources: true,
+    ...overrides,
   });
 }
 

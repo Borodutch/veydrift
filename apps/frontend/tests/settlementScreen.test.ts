@@ -24,6 +24,7 @@ describe("settlement screen mode", () => {
     expect(preSettlementMode({ account: connected.account, chainId: "0x1", kind: "wrong-network" }, { kind: "idle" })).toBe("wrong-network");
     expect(preSettlementMode(connected, pending)).toBe("pending");
     expect(preSettlementMode(connected, { kind: "error", message: "RPC unavailable" })).toBe("error");
+    expect(preSettlementMode({ kind: "disconnected" }, { kind: "error", message: "Wallet read timed out" })).toBe("error");
   });
 
   test("maps indexed API settlement state to playable state without wallet eth_call reads", () => {

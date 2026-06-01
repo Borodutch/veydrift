@@ -158,6 +158,11 @@ export type ResearchQueueItem = {
 
 export type QueueItem = MainQueueItem | ResearchQueueItem;
 
+export type QueueTimeline = {
+  readyAt: number;
+  startedAt: number;
+};
+
 export type PlayableState = {
   resources: Resources;
   buildings: Record<BuildingKey, number>;
@@ -239,6 +244,12 @@ export type BuildingEffectMetrics =
       nextFactor: number;
       unlocked: boolean;
       nextUnlocked: boolean;
+    }
+  | {
+      kind: "terraformer";
+      currentFieldsAdded: number;
+      nextFieldsAdded: number;
+      deltaFields: number;
     }
   | {
       kind: "facility";
@@ -1347,6 +1358,18 @@ export function buildingEffectMetrics(
     };
   }
 
+  if (key === "terraformer") {
+    const currentFieldsAdded = buildings.terraformer * 5;
+    const nextFieldsAdded = nextBuildings.terraformer * 5;
+
+    return {
+      kind: "terraformer",
+      currentFieldsAdded,
+      nextFieldsAdded,
+      deltaFields: nextFieldsAdded - currentFieldsAdded,
+    };
+  }
+
   if (key === "interdimensionalRiftStabilizer") {
     return {
       kind: "facility",
@@ -1587,7 +1610,7 @@ export function collectibleResourceDeltas(
   }, { metal: 0, crystal: 0, deuterium: 0 });
 }
 
-export function progress(queue: QueueItem | undefined, now = Date.now()): number {
+export function queueProgress(queue: QueueTimeline | undefined, now = Date.now()): number {
   if (!queue) {
     return 0;
   }
@@ -1599,6 +1622,14 @@ export function progress(queue: QueueItem | undefined, now = Date.now()): number
   }
 
   return Math.min(1, Math.max(0, elapsed / total));
+}
+
+export function queueProgressPercent(queue: QueueTimeline | undefined, now = Date.now()): number {
+  return Math.round(queueProgress(queue, now) * 100);
+}
+
+export function progress(queue: QueueItem | undefined, now = Date.now()): number {
+  return queueProgress(queue, now);
 }
 
 export function planetSummary() {

@@ -684,17 +684,7 @@ function QueueItemDisplay({
     remaining,
     startedAt,
   });
-  const progressStyle = progressFill.animated
-    ? {
-      animationDelay: `-${progressFill.elapsedMs}ms`,
-      animationDuration: `${progressFill.durationMs}ms`,
-      animationFillMode: "both",
-      animationName: "queue-progress-fill",
-      animationTimingFunction: "linear",
-      transformOrigin: "left",
-      width: "100%",
-    }
-    : { width: `${progressFill.progress * 100}%` };
+  const progressStyle = { width: `${progressFill.progress * 100}%` };
 
   return (
     <div className={thumbnailSrc ? "flex min-w-0 items-center gap-3" : undefined}>

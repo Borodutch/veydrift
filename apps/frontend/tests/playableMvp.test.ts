@@ -420,6 +420,7 @@ describe("playable MVP contract display helpers", () => {
     const mineEffect = buildingEffectMetrics(buildings, "metalMine");
     const storageEffect = buildingEffectMetrics(buildings, "metalStorage");
     const missileSiloEffect = buildingEffectMetrics(buildings, "missileSilo");
+    const terraformerEffect = buildingEffectMetrics({ ...buildings, terraformer: 1 }, "terraformer");
 
     expect(mineEffect.kind).toBe("production");
     if (mineEffect.kind === "production") {
@@ -441,6 +442,12 @@ describe("playable MVP contract display helpers", () => {
       currentSlots: 30,
       nextSlots: 40,
       deltaSlots: 10,
+    });
+    expect(terraformerEffect).toEqual({
+      kind: "terraformer",
+      currentFieldsAdded: 5,
+      nextFieldsAdded: 10,
+      deltaFields: 5,
     });
   });
 

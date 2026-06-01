@@ -409,6 +409,10 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
     return `${formatNumber(allianceDepotSupportCapacity(level))} Deut. support`;
   }
 
+  if (key === "terraformer") {
+    return `+${formatNumber(level * 5)} total fields`;
+  }
+
   if (key === "interdimensionalRiftStabilizer") {
     return level > 0 ? "Rift bridge online" : "Rift bridge locked";
   }

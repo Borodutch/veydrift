@@ -10,6 +10,7 @@ import {
   queueProgressBarState,
   queueProgressFillState,
 } from "../src/overviewData";
+import { queueProgressPercent } from "../src/playableMvp";
 import type { Planet } from "../src/types";
 
 const homePlanet: Planet = {
@@ -110,7 +111,7 @@ describe("overview queue progress display", () => {
       remaining: "8m 20s",
       startedAt: 1_700_000_000_000,
     })).toEqual({
-      animated: true,
+      animated: false,
       durationMs: 1_000_000,
       elapsedMs: 500_000,
       progress: 0.5,
@@ -125,24 +126,46 @@ describe("overview queue progress display", () => {
       remaining: "16m 40s",
       startedAt: 1_700_000_000_000,
     })).toEqual({
-      animated: true,
+      animated: false,
       durationMs: 1_000_000,
       elapsedMs: 0,
       progress: 0,
     });
   });
 
-  test("prefers canonical timeline progress over a stale caller progress value", () => {
+  test("prefers canonical rounded timeline progress over a stale caller progress value", () => {
     expect(queueProgressFillState({
-      now: 1_700_000_750_000,
+      now: 1_700_000_755_000,
       progress: 0.1,
       readyAt: 1_700_001_000_000,
       remaining: "4m 10s",
       startedAt: 1_700_000_000_000,
     })).toMatchObject({
-      animated: true,
-      progress: 0.75,
+      animated: false,
+      progress: 0.76,
     });
+  });
+
+  test("matches infrastructure rounded progress for the same queue and clock", () => {
+    const queue = {
+      readyAt: 1_700_001_000_000,
+      startedAt: 1_700_000_000_000,
+    };
+    const now = 1_700_000_755_000;
+    const infrastructurePercent = queueProgressPercent(queue, now);
+    const overviewFill = queueProgressFillState({
+      now,
+      progress: 0,
+      readyAt: queue.readyAt,
+      remaining: "4m 5s",
+      startedAt: queue.startedAt,
+    });
+
+    expect(overviewFill).toMatchObject({
+      animated: false,
+      progress: infrastructurePercent / 100,
+    });
+    expect(overviewFill.progress * 100).toBe(infrastructurePercent);
   });
 
   test("renders ready live queues as complete without continuing animation", () => {
