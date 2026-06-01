@@ -1351,8 +1351,8 @@ export function buildingEffectMetrics(
   if (key === "researchLab") {
     return {
       kind: "researchSpeed",
-      currentFactor: buildings.researchLab + 1,
-      nextFactor: nextBuildings.researchLab + 1,
+      currentFactor: Math.max(1, buildings.researchLab),
+      nextFactor: Math.max(1, nextBuildings.researchLab),
       unlocked: buildings.researchLab > 0,
       nextUnlocked: nextBuildings.researchLab > 0,
     };
