@@ -53,20 +53,27 @@ export function MoonPage({
         ) : null}
       </div>
 
-      {loading ? (
+      {hasMoon && moon ? (
+        <>
+          {loading ? (
+            <MoonStatusPanel title="Reading lunar telemetry" body="Refreshing moon state from the game contract." />
+          ) : error ? (
+            <MoonStatusPanel title="Moon state refresh failed" body={error} tone="warning" />
+          ) : null}
+          <MoonSystemsPanel
+            action={action}
+            canTransact={canTransact}
+            moon={moon}
+            moonState={moonState}
+            onFinishBuilding={onFinishBuilding}
+            onJumpGate={onJumpGate}
+            onStartBuilding={onStartBuilding}
+          />
+        </>
+      ) : loading ? (
         <MoonStatusPanel title="Reading lunar telemetry" body="Loading moon state from the game contract." />
       ) : error ? (
         <MoonStatusPanel title="Moon state unavailable" body={error} tone="warning" />
-      ) : hasMoon && moon ? (
-        <MoonSystemsPanel
-          action={action}
-          canTransact={canTransact}
-          moon={moon}
-          moonState={moonState}
-          onFinishBuilding={onFinishBuilding}
-          onJumpGate={onJumpGate}
-          onStartBuilding={onStartBuilding}
-        />
       ) : (
         <NoMoonGuidance reason={moonState?.unavailableReason} />
       )}

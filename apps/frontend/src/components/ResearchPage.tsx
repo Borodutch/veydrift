@@ -202,8 +202,6 @@ export function ResearchPage({
 }
 
 export function shouldHideResearchValues({
-  error,
-  loading,
   researchState,
   useLocalStateFallback,
 }: {
@@ -213,7 +211,7 @@ export function shouldHideResearchValues({
   useLocalStateFallback: boolean;
 }): boolean {
   if (useLocalStateFallback) return false;
-  return Boolean(error) || loading || !researchState;
+  return !researchState;
 }
 
 export function ResearchLoadErrorPanel({

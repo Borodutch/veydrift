@@ -13,6 +13,8 @@ export type InjectedWindow = {
   ethereum?: Eip1193Provider;
 };
 
+const WALLET_READ_TIMEOUT_MS = 10_000;
+
 export type SettlementConfig = {
   address?: string;
   legacyAddress?: string;
@@ -511,6 +513,10 @@ export function walletRequestErrorMessage(error: unknown): string {
   const message = errorMessage(error);
   const code = errorCode(error);
 
+  if (/timed out reading .* from the wallet/i.test(message)) {
+    return `${message} Unlock or reconnect MetaMask, then retry.`;
+  }
+
   if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
     return "The wallet could not read the current game contract state. Retry in a moment, or switch to Base Sepolia and reconnect your wallet.";
   }
@@ -761,9 +767,9 @@ export function decodeBoolResult(hex: string): boolean {
 }
 
 export async function getCurrentAccounts(provider: Eip1193Provider): Promise<string[]> {
-  return provider.request<string[]>({
+  return readWalletRequest<string[]>(provider, {
     method: "eth_accounts"
-  });
+  }, "wallet accounts");
 }
 
 export async function requestAccounts(provider: Eip1193Provider): Promise<string[]> {
@@ -773,9 +779,9 @@ export async function requestAccounts(provider: Eip1193Provider): Promise<string
 }
 
 export async function getChainId(provider: Eip1193Provider): Promise<string> {
-  return provider.request<string>({
+  return readWalletRequest<string>(provider, {
     method: "eth_chainId"
-  });
+  }, "wallet network");
 }
 
 export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promise<void> {
@@ -1659,7 +1665,7 @@ async function readHasFirstPlanet(
   contractAddress: string,
   account: string
 ): Promise<boolean> {
-  const result = await provider.request<string>({
+  const result = await readWalletRequest<string>(provider, {
     method: "eth_call",
     params: [
       {
@@ -1668,7 +1674,7 @@ async function readHasFirstPlanet(
       },
       "latest"
     ]
-  });
+  }, "first planet settlement");
 
   return decodeBoolResult(result);
 }
@@ -1678,7 +1684,7 @@ async function readFirstPlanet(
   contractAddress: string,
   account: string
 ): Promise<PlanetSummary> {
-  const result = await provider.request<string>({
+  const result = await readWalletRequest<string>(provider, {
     method: "eth_call",
     params: [
       {
@@ -1687,7 +1693,7 @@ async function readFirstPlanet(
       },
       "latest"
     ]
-  });
+  }, "first planet details");
 
   const decoded = decodeFirstPlanetWords(result);
 
@@ -1707,7 +1713,7 @@ async function readGameSettlement(
   account: string
 ): Promise<SettlementState | undefined> {
   try {
-    const homePlanetId = decodeUintResult(await provider.request<string>({
+    const homePlanetId = decodeUintResult(await readWalletRequest<string>(provider, {
       method: "eth_call",
       params: [
         {
@@ -1716,7 +1722,7 @@ async function readGameSettlement(
         },
         "latest"
       ]
-    }));
+    }, "game home planet"));
 
     if (homePlanetId === 0n) {
       return {
@@ -1764,7 +1770,7 @@ async function readLegacySettlementState(
 
 async function readStartPrice(provider: Eip1193Provider, contractAddress: string): Promise<bigint | undefined> {
   try {
-    return decodeUintResult(await provider.request<string>({
+    return decodeUintResult(await readWalletRequest<string>(provider, {
       method: "eth_call",
       params: [
         {
@@ -1773,20 +1779,20 @@ async function readStartPrice(provider: Eip1193Provider, contractAddress: string
         },
         "latest"
       ]
-    }));
+    }, "settlement price"));
   } catch {
     return undefined;
   }
 }
 
 async function readNativeBalance(provider: Eip1193Provider, account: string): Promise<bigint> {
-  return decodeUintResult(await provider.request<string>({
+  return decodeUintResult(await readWalletRequest<string>(provider, {
     method: "eth_getBalance",
     params: [
       account,
       "latest"
     ]
-  }));
+  }, "wallet balance"));
 }
 
 function formatEth(wei: bigint): string {
@@ -1805,7 +1811,7 @@ async function readGamePlanet(
   contractAddress: string,
   planetId: bigint
 ): Promise<PlanetSummary | undefined> {
-  const result = await provider.request<string>({
+  const result = await readWalletRequest<string>(provider, {
     method: "eth_call",
     params: [
       {
@@ -1814,7 +1820,7 @@ async function readGamePlanet(
       },
       "latest"
     ]
-  });
+  }, "planet details");
 
   return decodeGamePlanetWords(result);
 }
@@ -1828,7 +1834,7 @@ export async function previewFirstPlanet(
     return undefined;
   }
 
-  const result = await provider.request<string>({
+  const result = await readWalletRequest<string>(provider, {
     method: "eth_call",
     params: [
       {
@@ -1837,9 +1843,34 @@ export async function previewFirstPlanet(
       },
       "latest"
     ]
-  });
+  }, "first planet preview");
 
   return decodeFirstPlanetWords(result);
+}
+
+async function readWalletRequest<T>(
+  provider: Eip1193Provider,
+  args: { method: string; params?: unknown[] },
+  label: string
+): Promise<T> {
+  return timeoutPromise(provider.request<T>(args), WALLET_READ_TIMEOUT_MS, label);
+}
+
+async function timeoutPromise<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Timed out reading ${label} from the wallet after ${Math.round(timeoutMs / 1_000)} seconds.`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 function decodeGamePlanetWords(hex: string): PlanetSummary | undefined {
