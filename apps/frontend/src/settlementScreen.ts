@@ -44,6 +44,10 @@ export function preSettlementMode(wallet: WalletState, planet: PlanetState): Pre
     return "no-wallet";
   }
 
+  if (planet.kind === "rejected" || planet.kind === "error") {
+    return "error";
+  }
+
   if (wallet.kind === "disconnected" || wallet.kind === "connecting") {
     return "connect";
   }
@@ -63,9 +67,6 @@ export function preSettlementMode(wallet: WalletState, planet: PlanetState): Pre
     case "success":
     case "already-settled":
       return "settled";
-    case "rejected":
-    case "error":
-      return "error";
     default:
       return "resolving";
   }

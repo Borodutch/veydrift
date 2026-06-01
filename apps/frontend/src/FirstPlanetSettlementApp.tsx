@@ -158,9 +158,9 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
-    const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected);
+    try {
+      const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected);
 
-    if (settlementConfigState.status === "loading") {
       if (!accounts[0]) {
         setWallet({
           kind: "disconnected"
@@ -171,50 +171,52 @@ export function FirstPlanetSettlementApp() {
         setSettlementFunding({ status: "idle" });
         return;
       }
+
+      if (settlementConfigState.status === "loading") {
+        setWallet({
+          kind: "connected",
+          account: accounts[0]
+        });
+        setPlanet({
+          kind: "checking"
+        });
+        return;
+      }
+
+      const chainId = await getChainId(injected);
+
+      if (!isBaseSepoliaChain(chainId)) {
+        setWallet({
+          kind: "wrong-network",
+          account: accounts[0],
+          chainId
+        });
+        setPlanet({
+          kind: "idle"
+        });
+        setSettlementFunding({ status: "idle" });
+        return;
+      }
+
+      setPlanet({
+        kind: "checking"
+      });
       setWallet({
         kind: "connected",
         account: accounts[0]
       });
-      setPlanet({
-        kind: "checking"
-      });
-      return;
-    }
-
-    if (!accounts[0]) {
+      await refreshPlanet(injected, accounts[0]);
+    } catch (error) {
+      console.error("Wallet bootstrap failed", error);
       setWallet({
         kind: "disconnected"
       });
       setPlanet({
-        kind: "idle"
+        kind: "error",
+        message: walletRequestErrorMessage(error)
       });
       setSettlementFunding({ status: "idle" });
-      return;
     }
-
-    const chainId = await getChainId(injected);
-
-    if (!isBaseSepoliaChain(chainId)) {
-      setWallet({
-        kind: "wrong-network",
-        account: accounts[0],
-        chainId
-      });
-      setPlanet({
-        kind: "idle"
-      });
-      setSettlementFunding({ status: "idle" });
-      return;
-    }
-
-    setPlanet({
-      kind: "checking"
-    });
-    setWallet({
-      kind: "connected",
-      account: accounts[0]
-    });
-    await refreshPlanet(injected, accounts[0]);
   }
 
   async function refreshPlanet(injected: Eip1193Provider, connectedAccount: string) {
