@@ -14,6 +14,7 @@ export type InjectedWindow = {
 };
 
 const WALLET_READ_TIMEOUT_MS = 10_000;
+const WALLET_API_READ_TIMEOUT_MS = 10_000;
 
 export type SettlementConfig = {
   address?: string;
@@ -515,6 +516,10 @@ export function walletRequestErrorMessage(error: unknown): string {
 
   if (/timed out reading .* from the wallet/i.test(message)) {
     return `${message} Unlock or reconnect MetaMask, then retry.`;
+  }
+
+  if (/timed out reading .* from the game api/i.test(message)) {
+    return `${message} Retry in a moment.`;
   }
 
   if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
@@ -2122,10 +2127,29 @@ async function fetchWalletJson<T>(
   path: string,
   label: string
 ): Promise<T> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`, {
-    cache: "no-store",
-    headers: { accept: "application/json" },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`));
+  }, WALLET_API_READ_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`, {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw controller.signal.reason instanceof Error
+        ? controller.signal.reason
+        : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!response.ok) {
     throw new Error(await apiErrorMessage(response, label));
   }
