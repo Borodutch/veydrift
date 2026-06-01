@@ -94,9 +94,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
+  const indexerChainReader =
+    dependencies.chainReader
+      ? chainReader
+      : loaded.problems.length === 0
+        ? new VeydriftGameReader(loaded.config)
+        : undefined;
   const indexer =
     dependencies.indexer ??
-    (isIndexableChainReader(chainReader) ? new SettlementIndexer(chainReader, loaded.config.indexFromBlock, {
+    (isIndexableChainReader(indexerChainReader) ? new SettlementIndexer(indexerChainReader, loaded.config.indexFromBlock, {
       databasePath: loaded.config.indexDbPath
     }) : undefined);
   const chainSync =
