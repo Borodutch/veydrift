@@ -2,11 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   isCollectedResourcesStateVisible,
   isFinishedBuildingStateVisible,
+  isStartedDefenseProductionVisible,
   waitForCollectedResourcesState,
+  waitForStartedDefenseProductionState,
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
   waitForRenamedWalletPlanet,
   type CollectedResourcesSnapshot,
+  type StartedDefenseProductionSnapshot,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingSnapshot,
 } from "./postTransactionRefresh";
@@ -62,6 +65,36 @@ describe("post-transaction refresh reconciliation", () => {
       { itemId: 3, targetLevel: 2 },
       { attempts: 2, intervalMs: 1, delay: async () => undefined },
     )).rejects.toThrow("completed building queue is still syncing");
+  });
+
+  test("polls until started defense production is visible on Defense and Overview state", async () => {
+    expect(isStartedDefenseProductionVisible(staleDefenseProductionSnapshot(), {
+      itemId: 0,
+      planetId: "7",
+      quantity: 2,
+    })).toBe(false);
+
+    const snapshots = [
+      staleDefenseProductionSnapshot(),
+      startedDefenseProductionSnapshot(),
+    ];
+    const loads: StartedDefenseProductionSnapshot[] = [];
+
+    const result = await waitForStartedDefenseProductionState(
+      async () => {
+        const snapshot = snapshots.shift() ?? startedDefenseProductionSnapshot();
+        loads.push(snapshot);
+        return snapshot;
+      },
+      { itemId: 0, planetId: "7", quantity: 2 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.defense.queue?.itemId).toBe(0);
+    expect(result.defense.queue?.quantity).toBe(2);
+    expect(result.queues.defense?.itemId).toBe(0);
+    expect(result.queues.defense?.quantity).toBe(2);
   });
 
   test("does not accept stale indexed collect resources while infrastructure has newer resources", () => {
@@ -211,6 +244,54 @@ function staleSolarPlantSnapshot(): FinishedBuildingSnapshot {
         readyAt: "1770000060",
         cost: { metal: "150", crystal: "60", deuterium: "0" },
       },
+    },
+  };
+}
+
+function staleDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
+  return {
+    defense: {
+      wallet,
+      homePlanetId: "7",
+      productionAvailable: true,
+      resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+      shipyardLevel: 1,
+      missileSiloLevel: 0,
+      technologyLevels: {},
+      defenses: [
+        { id: 0, count: 0, cost: { metal: "2000", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+    },
+    queues: {
+      wallet,
+      homePlanetId: "7",
+      building: null,
+      defense: null,
+      ship: null,
+      research: null,
+    },
+  };
+}
+
+function startedDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
+  const defenseQueue = {
+    active: true,
+    kind: "defense" as const,
+    itemId: 0,
+    quantity: 2,
+    readyAt: "1770000060",
+    cost: { metal: "4000", crystal: "0", deuterium: "0" },
+  };
+
+  return {
+    defense: {
+      ...staleDefenseProductionSnapshot().defense,
+      queue: defenseQueue,
+    },
+    queues: {
+      ...staleDefenseProductionSnapshot().queues,
+      defense: defenseQueue,
     },
   };
 }

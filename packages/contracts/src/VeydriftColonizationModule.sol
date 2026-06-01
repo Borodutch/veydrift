@@ -54,7 +54,8 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity) external {
         _requirePlanetOwner(planetId);
         if (quantity == 0) revert InvalidQuantity();
-        if (defenseQueues[planetId].active) revert QueueActive();
+        DefenseQueue memory activeQueue = defenseQueues[planetId];
+        if (activeQueue.active && activeQueue.defense != defense) revert QueueActive();
 
         _requireDefenseDependencies(planetId, defense);
         _requireDefenseCapacity(planetId, defense, quantity);
@@ -64,21 +65,30 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         Resources memory totalCost = _multiply(unitCost, quantity);
         _spend(planetId, totalCost);
 
-        uint64 readyAt = (uint256(_currentTimestamp())
-                + _defenseDuration(planetId, unitCost, quantity))
-        .toUint64();
+        uint256 currentTime = _currentTimestamp();
+        uint256 baseReadyAt = activeQueue.active && activeQueue.readyAt > currentTime
+            ? activeQueue.readyAt
+            : currentTime;
+        uint64 readyAt = (baseReadyAt + _defenseDuration(planetId, unitCost, quantity)).toUint64();
+        uint32 queuedQuantity = activeQueue.active ? activeQueue.quantity + quantity : quantity;
+        Resources memory queuedCost =
+            activeQueue.active ? _add(activeQueue.cost, totalCost) : totalCost;
         defenseQueues[planetId] = DefenseQueue({
-            active: true, defense: defense, quantity: quantity, readyAt: readyAt, cost: totalCost
+            active: true,
+            defense: defense,
+            quantity: queuedQuantity,
+            readyAt: readyAt,
+            cost: queuedCost
         });
 
         emit DefenseQueued(
             planetId,
             defense,
-            quantity,
+            queuedQuantity,
             readyAt,
-            totalCost.metal,
-            totalCost.crystal,
-            totalCost.deuterium
+            queuedCost.metal,
+            queuedCost.crystal,
+            queuedCost.deuterium
         );
     }
 
@@ -545,8 +555,11 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         private
         view
     {
+        DefenseQueue memory activeQueue = defenseQueues[planetId];
+        uint32 queuedQuantity =
+            activeQueue.active && activeQueue.defense == defense ? activeQueue.quantity : 0;
         if (VeydriftCatalog.isShieldDome(defense)) {
-            if (quantity != 1 || _defenseCounts[planetId][defense] != 0) {
+            if (_defenseCounts[planetId][defense] + queuedQuantity + quantity > 1) {
                 revert DefenseLimitReached(defense);
             }
         }
@@ -554,7 +567,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         uint8 slotsPerUnit = VeydriftCatalog.missileSlots(defense);
         if (slotsPerUnit == 0) return;
 
-        uint32 usedSlots = _missileSiloSlotsUsed(planetId);
+        uint32 usedSlots = _missileSiloSlotsUsed(planetId) + _queuedMissileSiloSlots(planetId);
         uint32 requestedSlots = uint32(slotsPerUnit) * quantity;
         uint32 capacity =
             VeydriftCatalog.missileSiloCapacity(_buildingLevels[planetId][Building.MissileSilo]);
@@ -566,6 +579,12 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     function _missileSiloSlotsUsed(uint256 planetId) private view returns (uint32) {
         return _defenseCounts[planetId][Defense.AntiBallisticMissile]
             + (_defenseCounts[planetId][Defense.InterplanetaryMissile] * 2);
+    }
+
+    function _queuedMissileSiloSlots(uint256 planetId) private view returns (uint32) {
+        DefenseQueue memory queue = defenseQueues[planetId];
+        if (!queue.active) return 0;
+        return uint32(VeydriftCatalog.missileSlots(queue.defense)) * queue.quantity;
     }
 
     function _multiply(Resources memory resources, uint32 quantity)

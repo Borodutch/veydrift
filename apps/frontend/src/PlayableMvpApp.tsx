@@ -61,10 +61,12 @@ import {
 } from "./overviewData";
 import {
   waitForCollectedResourcesState,
+  waitForStartedDefenseProductionState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForRenamedWalletPlanet,
   type CollectedResourcesExpectation,
+  type StartedDefenseProductionExpectation,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
@@ -901,6 +903,46 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [account, activePlanetId, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
 
+  const refreshStartedDefenseProductionState = useCallback(async (expectation: StartedDefenseProductionExpectation) => {
+    if (!apiBaseUrl || !account) {
+      refreshDefenseState();
+      void refreshOnChainState();
+      return;
+    }
+
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setDefenseLoading(true);
+    setDefenseError(undefined);
+
+    try {
+      const snapshot = await waitForStartedDefenseProductionState(
+        async () => {
+          const [defense, queues] = await Promise.all([
+            fetchDefenseState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+          ]);
+
+          return { defense, queues };
+        },
+        expectation,
+      );
+
+      setDefenseState(snapshot.defense);
+      setDefenseError(undefined);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load started defense production state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setDefenseError(message);
+      throw error;
+    } finally {
+      setDefenseLoading(false);
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshDefenseState, refreshOnChainState]);
+
   useEffect(() => {
     if (homeCoords) {
       setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
@@ -1353,7 +1395,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
 
-  const runDefenseTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+  const runDefenseTransaction = useCallback(async (
+    label: string,
+    send: () => Promise<string>,
+    afterReceipt?: (() => Promise<void>) | undefined,
+  ) => {
     setDefenseAction({ status: "pending", label });
 
     try {
@@ -1362,10 +1408,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       if (provider) {
         await waitForReceipt(provider, txHash);
       }
+      if (afterReceipt) {
+        setDefenseAction({ status: "pending", label: `${label}: syncing indexed queue...` });
+        await afterReceipt();
+      } else {
+        refreshDefenseState();
+        void refreshOnChainState();
+        refreshInfrastructureState();
+      }
       setDefenseAction({ status: "success", label: `${label} confirmed.` });
-      refreshDefenseState();
-      void refreshOnChainState();
-      refreshInfrastructureState();
     } catch (error) {
       console.error(error);
       setDefenseAction({
@@ -1542,15 +1593,34 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return;
     }
 
+    const planetId = defenseState.homePlanetId;
+    const currentQueuedQuantity =
+      defenseState.queue?.active && defenseState.queue.itemId === defenseId
+        ? defenseState.queue.quantity ?? 0
+        : 0;
+    const expectedQuantity = currentQueuedQuantity + quantity;
+
     void runDefenseTransaction("Defense production", () => sendStartDefenseProductionTransaction(
       provider,
       account,
       gameContract,
-      defenseState.homePlanetId ?? "0",
+      planetId,
       defenseId,
       quantity,
-    ));
-  }, [account, defenseState?.homePlanetId, gameContract, provider, runDefenseTransaction]);
+    ), () => refreshStartedDefenseProductionState({
+      itemId: defenseId,
+      planetId,
+      quantity: expectedQuantity,
+    }));
+  }, [
+    account,
+    defenseState?.homePlanetId,
+    defenseState?.queue,
+    gameContract,
+    provider,
+    refreshStartedDefenseProductionState,
+    runDefenseTransaction,
+  ]);
 
   const handleFinishDefenseProduction = useCallback(() => {
     if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
