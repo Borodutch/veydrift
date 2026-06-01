@@ -866,7 +866,7 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     const row = {
       label: effect.unlocked ? "Research speed" : "Research capacity",
       next: effect.nextUnlocked && !effect.unlocked
-        ? `Unlocks research (x${formatNumber(effect.nextFactor)})`
+        ? "Unlocks research"
         : `x${formatNumber(effect.nextFactor)}`,
       value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Unavailable",
     };
@@ -929,6 +929,10 @@ function compactEffect(effect: BuildingEffectMetrics): string {
   }
 
   if (effect.kind === "shipyard") {
+    return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
+  }
+
+  if (effect.kind === "researchSpeed") {
     return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
   }
 

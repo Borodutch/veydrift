@@ -431,6 +431,26 @@ describe("building detail helpers", () => {
     expect(rows[1]).toMatchObject({ current: false, next: true });
   });
 
+  test("builds Research Lab rows with Level 1 as the visible x1 baseline", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        researchLab: 1,
+      },
+    };
+    const rows = buildingLevelInfoRows(state.buildings, "researchLab", undefined, 3);
+
+    expect(buildingLevelInfoColumns(rows).effect).toBe(true);
+    expect(rows.map(({ effect, level }) => ({ effect, level }))).toEqual([
+      { effect: "x1 research speed", level: 1 },
+      { effect: "x2 research speed", level: 2 },
+      { effect: "x3 research speed", level: 3 },
+    ]);
+    expect(rows[0]).toMatchObject({ current: true, next: false });
+    expect(rows[1]).toMatchObject({ current: false, next: true });
+  });
+
   test("builds level table rows with the current construction-time divisor", () => {
     const state = {
       ...createInitialPlayableState(1_000),
