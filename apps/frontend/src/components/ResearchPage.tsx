@@ -11,6 +11,7 @@ import {
   unmetResearchRequirement,
 } from "../playableMvp";
 import type { ChainResearchState } from "../walletFlow";
+import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
 
@@ -77,9 +78,10 @@ export function ResearchPage({
     researchState,
     useLocalStateFallback,
   });
-  const viewState = researchViewState(settledState, researchState, useLocalStateFallback);
-  const queue = hideLiveValues ? undefined : researchQueueForDisplay(researchState, viewState);
-  const queueReady = queue?.readyAt ? queue.readyAt <= Date.now() : false;
+  const now = Date.now();
+  const viewState = researchViewState(settledState, researchState, useLocalStateFallback, now);
+  const queue = hideLiveValues ? undefined : researchQueueForDisplay(researchState, viewState, now);
+  const queueReady = queue?.readyAt ? queue.readyAt <= now : false;
 
   function handleSelectResearch(key: ResearchKey) {
     setSelectedKey(key);
@@ -553,6 +555,7 @@ function researchViewState(
   state: PlayableState,
   researchState: ChainResearchState | null,
   useLocalStateFallback: boolean,
+  now = Date.now(),
 ): PlayableState {
   if (!researchState) {
     return useLocalStateFallback ? state : { ...state, researchQueue: undefined };
@@ -565,7 +568,7 @@ function researchViewState(
       researchLab: researchState.researchLabLevel,
     },
     research: researchLevels(researchState),
-    researchQueue: researchQueueForDisplay(researchState, state) ?? undefined,
+    researchQueue: researchQueueForDisplay(researchState, state, now) ?? undefined,
     resources: toResources(researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
 }
@@ -582,26 +585,14 @@ function researchLevels(researchState: ChainResearchState): PlayableState["resea
 function researchQueueForDisplay(
   researchState: ChainResearchState | null,
   state: Pick<PlayableState, "researchQueue">,
+  now = Date.now(),
 ): PlayableState["researchQueue"] {
   const queue = researchState?.queue;
   if (!queue?.active || queue.itemId === undefined) {
     return researchState ? undefined : state.researchQueue;
   }
 
-  const research = researchCatalog.find((item) => item.id === queue.itemId);
-  if (!research) {
-    return undefined;
-  }
-
-  const readyAt = queue.readyAt ? Number(queue.readyAt) * 1_000 : Date.now();
-  return {
-    kind: "research",
-    key: research.key,
-    label: research.label,
-    readyAt,
-    startedAt: Date.now(),
-    targetLevel: queue.targetLevel ?? 0,
-  };
+  return chainResearchQueueForDisplay(queue, now);
 }
 
 function chainCostFor(researchState: ChainResearchState | null, technologyId: number): Resources | undefined {

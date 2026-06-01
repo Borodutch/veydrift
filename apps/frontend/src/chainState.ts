@@ -49,6 +49,7 @@ export function infrastructurePlayableState(
 export function researchPlayableState(
   state: PlayableState,
   researchState: ChainResearchState | null,
+  now = Date.now(),
 ): PlayableState {
   if (!researchState) {
     return {
@@ -72,7 +73,7 @@ export function researchPlayableState(
         return [research.key, row?.level ?? researchState.technologyLevels[research.id.toString()] ?? 0];
       }),
     ) as PlayableState["research"],
-    researchQueue: researchQueueForDisplay(researchState.queue) ?? undefined,
+    researchQueue: researchQueueForDisplay(researchState.queue, now) ?? undefined,
     resources: toResources(researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
 }
@@ -164,18 +165,22 @@ export function buildingQueueItemForDisplay(
   };
 }
 
-export function researchQueueForDisplay(queue: QueueStateResponse | null): PlayableState["researchQueue"] {
+export function researchQueueForDisplay(
+  queue: QueueStateResponse | null,
+  now = Date.now(),
+): PlayableState["researchQueue"] {
   if (!queue?.active || queue.itemId === undefined) return undefined;
   const research = researchCatalog.find((item) => item.id === queue.itemId);
   if (!research) return undefined;
 
-  const readyAt = queue.readyAt ? Number(queue.readyAt) * 1_000 : Date.now();
+  const readyAt = queueTimestampMs(queue.readyAt) ?? now;
+  const chainStartedAt = queueTimestampMs(queue.startedAt);
   return {
     kind: "research",
     key: research.key,
     label: research.label,
     readyAt,
-    startedAt: Date.now(),
+    startedAt: chainStartedAt !== undefined && chainStartedAt < readyAt ? chainStartedAt : now,
     targetLevel: queue.targetLevel ?? 0,
   };
 }
