@@ -543,6 +543,8 @@ describe("playable MVP contract display helpers", () => {
     const state = createInitialPlayableState(1_000);
     const energyEffect = buildingEffectMetrics(state.buildings, "solarPlant");
     const shipyardEffect = buildingEffectMetrics(state.buildings, "shipyard");
+    const lockedResearchEffect = buildingEffectMetrics(state.buildings, "researchLab");
+    const baselineResearchEffect = buildingEffectMetrics({ ...state.buildings, researchLab: 1 }, "researchLab");
 
     expect(energyBalance({ ...state.buildings, metalMine: 1 })).toMatchObject({
       produced: 0,
@@ -558,6 +560,21 @@ describe("playable MVP contract display helpers", () => {
     if (shipyardEffect.kind === "shipyard") {
       expect(shipyardEffect.unlocked).toBe(false);
       expect(shipyardEffect.nextUnlocked).toBe(true);
+    }
+
+    expect(lockedResearchEffect.kind).toBe("researchSpeed");
+    if (lockedResearchEffect.kind === "researchSpeed") {
+      expect(lockedResearchEffect.unlocked).toBe(false);
+      expect(lockedResearchEffect.nextUnlocked).toBe(true);
+      expect(lockedResearchEffect.currentFactor).toBe(1);
+      expect(lockedResearchEffect.nextFactor).toBe(1);
+    }
+
+    expect(baselineResearchEffect.kind).toBe("researchSpeed");
+    if (baselineResearchEffect.kind === "researchSpeed") {
+      expect(baselineResearchEffect.unlocked).toBe(true);
+      expect(baselineResearchEffect.currentFactor).toBe(1);
+      expect(baselineResearchEffect.nextFactor).toBe(2);
     }
   });
 
