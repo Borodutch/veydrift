@@ -179,18 +179,16 @@ export function displayHomeCoordinates(
 
 export function topBarEnergyFor({
   infrastructureChainState,
-  infrastructureError,
   isWalletConnected,
   planetProductionProfile,
   settledState,
 }: {
   infrastructureChainState: ChainInfrastructureState | null;
-  infrastructureError?: string | undefined;
   isWalletConnected: boolean;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   settledState: PlayableState;
 }): EnergyBalance | undefined {
-  if (!isWalletConnected || !infrastructureChainState || infrastructureError) {
+  if (!isWalletConnected || !infrastructureChainState) {
     return undefined;
   }
 
@@ -201,6 +199,54 @@ export function topBarEnergyFor({
       settledState.ships.solarSatellite,
       planetProductionProfile,
     );
+}
+
+export function infrastructureUnavailableReasonFor({
+  buildingAction,
+  gameContract,
+  homePlanetId,
+  infrastructureChainState,
+  infrastructureError,
+  infrastructureLoading,
+  isWalletConnected,
+  onChainResources,
+  onChainStatus,
+  runtimeConfigStatus,
+}: {
+  buildingAction: BuildingActionState;
+  gameContract?: string | undefined;
+  homePlanetId?: string | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  infrastructureError?: string | undefined;
+  infrastructureLoading: boolean;
+  isWalletConnected: boolean;
+  onChainResources?: PlayableState["resources"] | undefined;
+  onChainStatus: ChainLoadStatus;
+  runtimeConfigStatus: RuntimeConfigState["status"];
+}): string | undefined {
+  if (!isWalletConnected) return "Connect a wallet to load your infrastructure.";
+  if (buildingAction.status === "pending") return buildingAction.label;
+
+  const hasLoadedInfrastructureState = Boolean(onChainResources && homePlanetId && infrastructureChainState);
+  if (
+    (runtimeConfigStatus === "loading" || onChainStatus === "loading" || infrastructureLoading)
+    && !hasLoadedInfrastructureState
+  ) {
+    return "Loading your wallet resources and building levels";
+  }
+  if (
+    (runtimeConfigStatus === "error" || onChainStatus === "error" || infrastructureError || !onChainResources)
+    && !hasLoadedInfrastructureState
+  ) {
+    return "Game state unavailable; upgrades are disabled until your wallet resources and building levels load.";
+  }
+  if (!gameContract) return "Game contract unavailable; upgrades are disabled.";
+  if (!homePlanetId) return "No home planet found for this wallet.";
+  if (infrastructureChainState?.infrastructureAvailable === false) {
+    return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
+  }
+  if (!infrastructureChainState) return "Infrastructure state unavailable.";
+  return undefined;
 }
 
 function resourceAmountIsZero(value: string): boolean {
@@ -609,8 +655,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setMoonState(nextMoon);
     } catch (error) {
       console.error(error);
-      setInfrastructureChainState(null);
-      setMoonState(null);
       setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
       setMoonError(error instanceof Error ? error.message : "Moon state could not be loaded.");
     } finally {
@@ -633,7 +677,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setDefenseState(null);
         setDefenseError(error instanceof Error ? error.message : "Defense state could not be loaded.");
       })
       .finally(() => {
@@ -655,7 +698,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setAllianceState(null);
         setAllianceError(error instanceof Error ? error.message : "Alliance state could not be loaded.");
       })
       .finally(() => {
@@ -677,7 +719,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setShipyardState(null);
         setShipyardError(error instanceof Error ? error.message : "Shipyard state could not be loaded.");
       })
       .finally(() => {
@@ -699,7 +740,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setResearchState(null);
         setResearchError(error instanceof Error ? error.message : "Research state could not be loaded.");
       })
       .finally(() => {
@@ -721,7 +761,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setRiftState(null);
         setRiftError(error instanceof Error ? error.message : "Rift state could not be loaded.");
       })
       .finally(() => {
@@ -765,10 +804,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setOnChainStatus("ready");
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
-      setOnChainSettlement(undefined);
-      setWalletPlanets([]);
-      setOnChainQueues(undefined);
-      setFleetVisibility(undefined);
       setOnChainStatus("error");
     }
   }, [account, activePlanetId, apiBaseUrl, isWalletConnected, selectedPlanetId]);
@@ -819,7 +854,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       const message = error instanceof Error ? error.message : "Failed to load completed building state.";
       setOnChainError(message);
       setOnChainStatus("error");
-      setInfrastructureChainState(null);
       setInfrastructureError(message);
       throw error;
     } finally {
@@ -1071,21 +1105,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [buildingQueue, isWalletConnected, onChainResources, settledState]);
   const chainBuildingCosts = useMemo(() => buildingCosts(infrastructureChainState), [infrastructureChainState]);
   const infrastructureUnavailableReason = useMemo(() => {
-    if (!isWalletConnected) return "Connect a wallet to load your infrastructure.";
-    if (buildingAction.status === "pending") return buildingAction.label;
-    if (runtimeConfig.status === "loading" || onChainStatus === "loading" || infrastructureLoading) {
-      return "Loading your wallet resources and building levels";
-    }
-    if (runtimeConfig.status === "error" || onChainStatus === "error" || infrastructureError || !onChainResources) {
-      return "Game state unavailable; upgrades are disabled until your wallet resources and building levels load.";
-    }
-    if (!gameContract) return "Game contract unavailable; upgrades are disabled.";
-    if (!onChainSettlement?.homePlanetId) return "No home planet found for this wallet.";
-    if (infrastructureChainState?.infrastructureAvailable === false) {
-      return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
-    }
-    if (!infrastructureChainState) return "Infrastructure state unavailable.";
-    return undefined;
+    return infrastructureUnavailableReasonFor({
+      buildingAction,
+      gameContract,
+      homePlanetId: onChainSettlement?.homePlanetId,
+      infrastructureChainState,
+      infrastructureError,
+      infrastructureLoading,
+      isWalletConnected,
+      onChainResources,
+      onChainStatus,
+      runtimeConfigStatus: runtimeConfig.status,
+    });
   }, [
     buildingAction,
     gameContract,
@@ -1102,14 +1133,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const topBarEnergy = useMemo(() => {
     return topBarEnergyFor({
       infrastructureChainState,
-      infrastructureError,
       isWalletConnected,
       planetProductionProfile,
       settledState,
     });
   }, [
     infrastructureChainState,
-    infrastructureError,
     isWalletConnected,
     planetProductionProfile,
     settledState,
@@ -2200,7 +2229,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
-          loadError={isWalletConnected ? infrastructureError : undefined}
+          loadError={isWalletConnected && !infrastructureChainState ? infrastructureError : undefined}
           now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onUpgrade={handleUpgrade}

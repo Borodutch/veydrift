@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { infrastructureActionNoticeFor, loadWalletPlanetSyncSnapshot, topBarEnergyFor } from "../src/PlayableMvpApp";
+import {
+  infrastructureActionNoticeFor,
+  infrastructureUnavailableReasonFor,
+  loadWalletPlanetSyncSnapshot,
+  topBarEnergyFor,
+} from "../src/PlayableMvpApp";
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { ChainInfrastructureState } from "../src/walletFlow";
 
@@ -41,6 +46,27 @@ describe("Playable MVP app display helpers", () => {
 
     expect(topBarEnergyFor({
       infrastructureChainState,
+      isWalletConnected: true,
+      settledState,
+    })).toEqual({
+      deuteriumConsumed: 0,
+      produced: 100,
+      required: 40,
+      scaleBps: 10000,
+    });
+  });
+
+  test("keeps loaded top bar energy independent from background refresh errors", () => {
+    const settledState = createInitialPlayableState();
+
+    expect(topBarEnergyFor({
+      infrastructureChainState: infrastructureState({
+        energyBalance: {
+          produced: "100",
+          required: "40",
+          scaleBps: "10000",
+        },
+      }),
       isWalletConnected: true,
       settledState,
     })).toEqual({
@@ -110,7 +136,7 @@ describe("Playable MVP app display helpers", () => {
     })?.produced).toBe(36);
   });
 
-  test("does not invent top bar energy when chain state is missing or errored", () => {
+  test("does not invent top bar energy when chain state is missing", () => {
     const settledState = createInitialPlayableState();
 
     expect(topBarEnergyFor({
@@ -118,13 +144,60 @@ describe("Playable MVP app display helpers", () => {
       isWalletConnected: true,
       settledState,
     })).toBeUndefined();
+  });
 
-    expect(topBarEnergyFor({
-      infrastructureChainState: infrastructureState({ energyBalance: null }),
-      infrastructureError: "Infrastructure state could not be loaded.",
+  test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: { status: "idle" },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState(),
+      infrastructureLoading: true,
       isWalletConnected: true,
-      settledState,
+      onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
+      onChainStatus: "loading",
+      runtimeConfigStatus: "ready",
     })).toBeUndefined();
+
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: { status: "idle" },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState(),
+      infrastructureError: "Infrastructure request failed with 503.",
+      infrastructureLoading: false,
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
+      onChainStatus: "error",
+      runtimeConfigStatus: "ready",
+    })).toBeUndefined();
+  });
+
+  test("uses infrastructure loading and error reasons before the first state arrives", () => {
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: { status: "idle" },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: null,
+      infrastructureLoading: true,
+      isWalletConnected: true,
+      onChainResources: undefined,
+      onChainStatus: "loading",
+      runtimeConfigStatus: "ready",
+    })).toBe("Loading your wallet resources and building levels");
+
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: { status: "idle" },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: null,
+      infrastructureError: "Infrastructure request failed with 503.",
+      infrastructureLoading: false,
+      isWalletConnected: true,
+      onChainResources: undefined,
+      onChainStatus: "error",
+      runtimeConfigStatus: "ready",
+    })).toBe("Game state unavailable; upgrades are disabled until your wallet resources and building levels load.");
   });
 
   test("hydrates indexed planet state before requesting live settlement state", async () => {
@@ -388,7 +461,7 @@ function infrastructureState({
   energyBalance,
   source,
   stale,
-}: Pick<ChainInfrastructureState, "energyBalance" | "source" | "stale">): ChainInfrastructureState {
+}: Partial<Pick<ChainInfrastructureState, "energyBalance" | "source" | "stale">> = {}): ChainInfrastructureState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",

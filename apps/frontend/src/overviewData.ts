@@ -34,7 +34,6 @@ export function isWalletPlanetHydrated({
   isWalletConnected,
   resources,
   settlement,
-  status,
 }: {
   homeCoords: Coordinates | undefined;
   isWalletConnected: boolean;
@@ -43,8 +42,7 @@ export function isWalletPlanetHydrated({
   status: ChainLoadStatus;
 }): boolean {
   if (!isWalletConnected) return true;
-  return status === "ready"
-    && Boolean(settlement?.homePlanetId)
+  return Boolean(settlement?.homePlanetId)
     && Boolean(settlement?.planet)
     && Boolean(resources)
     && Boolean(homeCoords);
@@ -104,7 +102,9 @@ export function displayPlanetStats(
   usedFields: number,
   status: ChainLoadStatus,
 ): PlanetStatDisplay {
-  if (status === "loading") {
+  const planet = settlement?.planet;
+
+  if (status === "loading" && !planet) {
     return {
       fields: "Loading",
       temperature: "Loading",
@@ -113,7 +113,7 @@ export function displayPlanetStats(
     };
   }
 
-  if (status === "error") {
+  if (status === "error" && !planet) {
     return {
       fields: "Unavailable",
       temperature: "Unavailable",
@@ -122,7 +122,6 @@ export function displayPlanetStats(
     };
   }
 
-  const planet = settlement?.planet;
   if (!planet) {
     return {
       fields: "Unavailable",
@@ -140,7 +139,7 @@ export function displayPlanetStats(
     fields: fields === undefined ? "Unavailable" : `${integerFormatter.format(usedFields)} / ${integerFormatter.format(fields)}`,
     temperature: displayTemperatureRange(temperature),
     diameter: displayDiameterKm(fields),
-    status: active ? "Active" : "Idle",
+    status: status === "loading" ? "Syncing" : status === "error" ? "API error" : active ? "Active" : "Idle",
   };
 }
 

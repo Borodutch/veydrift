@@ -26,6 +26,21 @@ describe("Research page load-error display", () => {
     })).toBe(true);
   });
 
+  test("keeps loaded research values visible during background refreshes and refresh errors", () => {
+    expect(shouldHideResearchValues({
+      error: undefined,
+      loading: true,
+      researchState: researchState(),
+      useLocalStateFallback: false,
+    })).toBe(false);
+    expect(shouldHideResearchValues({
+      error: "Research request failed with 503",
+      loading: false,
+      researchState: researchState(),
+      useLocalStateFallback: false,
+    })).toBe(false);
+  });
+
   test("keeps disconnected local research fallback explicit", () => {
     expect(shouldHideResearchValues({
       error: undefined,
@@ -68,4 +83,17 @@ function textParts(node: ComponentChildren): string[] {
 
   const vnode = node as VNode;
   return textParts(vnode.props?.children);
+}
+
+function researchState() {
+  return {
+    wallet: "0x1111111111111111111111111111111111111111",
+    homePlanetId: "7",
+    resources: { metal: "1000", crystal: "1000", deuterium: "1000" },
+    researchLabLevel: 1,
+    researchNetworkLabLevels: [],
+    technologyLevels: {},
+    technologies: [],
+    queue: null,
+  };
 }
