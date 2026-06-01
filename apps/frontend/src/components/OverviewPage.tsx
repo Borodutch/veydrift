@@ -5,6 +5,7 @@ import {
   buildingQueueAsset,
   buildingQueueLabel,
   buildingQueuePreview,
+  defenseQueuePreview,
   displayPlanetStats,
   overviewQueueItemLabelClassName,
   overviewQueueItemRemainingClassName,
@@ -114,6 +115,7 @@ export function OverviewPage({
   const localBuildingLabel = buildingQueue
     ? buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel)
     : settledState.queue?.label;
+  const onChainDefenseQueue = defenseQueuePreview(onChainQueues?.defense);
   const showBuildingFinishAction = shouldShowOverviewBuildingFinishAction({
     isBuildingReadyToFinish,
     onFinishBuilding,
@@ -413,8 +415,9 @@ export function OverviewPage({
         >
           {onChainQueues?.defense?.active ? (
             <QueueItemDisplay
-              label={`${onChainQueues.defense.kind === "defense" ? "Defense" : onChainQueues.defense.kind}${onChainQueues.defense.quantity ? ` ×${onChainQueues.defense.quantity}` : ""}`}
+              label={onChainDefenseQueue.label}
               remaining={queueRemaining(onChainQueues.defense.readyAt, now)}
+              thumbnailSrc={onChainDefenseQueue.asset}
               indeterminate
               color="bg-rose-300"
             />

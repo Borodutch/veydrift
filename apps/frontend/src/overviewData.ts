@@ -2,6 +2,7 @@ import type { PlayerQueuesResponse, QueueStateResponse, WalletSettlementResponse
 import {
   buildingCatalog,
   buildingContractIds,
+  defenseCatalog,
   queueProgressPercent,
   type BuildingKey,
   type EnergyBalance,
@@ -169,6 +170,26 @@ export function buildingQueuePreview(queue: QueueStateResponse | null | undefine
 
   const kind = queue?.kind === "building" || !queue?.kind ? "Building" : queue.kind;
   return { label: buildingQueueLabel(kind, queue?.targetLevel) };
+}
+
+export function defenseQueuePreview(queue: QueueStateResponse | null | undefined): {
+  asset?: string | undefined;
+  label: string;
+} {
+  const defense = queue?.itemId === undefined
+    ? undefined
+    : defenseCatalog.find((item) => item.id === queue.itemId);
+  const quantity = queue?.quantity ? ` x${queue.quantity}` : "";
+
+  if (defense) {
+    return {
+      asset: defense.asset,
+      label: `${defense.label}${quantity}`,
+    };
+  }
+
+  const kind = queue?.kind === "defense" || !queue?.kind ? "Defense" : queue.kind;
+  return { label: `${kind}${quantity}` };
 }
 
 export function queueProgressBarState({

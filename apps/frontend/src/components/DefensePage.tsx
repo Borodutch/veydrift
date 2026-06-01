@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { DefenseKey, Resources } from "../playableMvp";
+import type { DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
 import type { ChainDefenseState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
@@ -74,16 +74,6 @@ export function DefensePage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {queue && (
-            <button
-              className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={!canTransact || !queueReady || actionState.status === "pending"}
-              onClick={onFinish}
-              type="button"
-            >
-              Complete queue
-            </button>
-          )}
           <button
             className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
             onClick={onRefresh}
@@ -99,9 +89,17 @@ export function DefensePage({
         defenseState={defenseState}
         error={error}
         loading={loading}
-        queue={queue}
-        queueReady={queueReady}
       />
+
+      {queue && (
+        <ActiveDefenseQueuePanel
+          actionPending={actionState.status === "pending"}
+          canTransact={canTransact}
+          onFinish={onFinish}
+          queue={queue}
+          queueReady={queueReady}
+        />
+      )}
 
       {(["kinetic", "energy", "shield", "missile"] as const).map((group) => (
         <section className="grid gap-3" key={group}>
@@ -121,7 +119,8 @@ export function DefensePage({
                 const quantity = quantities[defense.key] ?? 1;
                 const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
                 const missing = getMissingRequirements(defense, defenseState);
-                const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState);
+                const requirementStates = getDefenseRequirementStates(defense, defenseState);
+                const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
                 const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
                 const blockedReason = getBlockedReason({
                   affordable,
@@ -130,10 +129,11 @@ export function DefensePage({
                   hasPlanet: Boolean(defenseState?.homePlanetId),
                   limitReason,
                   missing,
-                  queueActive: Boolean(queue),
+                  queueBlocker: getQueueBlocker(defense.id, queue),
                   resources,
                 });
                 const disabled = Boolean(blockedReason) || actionState.status === "pending";
+                const queued = queuedDefenseCount(defense.id, queue);
 
                 return (
                   <DefenseTile
@@ -146,7 +146,9 @@ export function DefensePage({
                     onBuild={() => onBuild(defense.id, defense.key, quantity)}
                     onQuantity={(next) => setQuantities((prev) => ({ ...prev, [defense.key]: next }))}
                     owned={owned}
+                    queued={queued}
                     quantity={quantity}
+                    requirementStates={requirementStates}
                   />
                 );
               })}
@@ -162,21 +164,19 @@ function StatusPanel({
   defenseState,
   error,
   loading,
-  queue,
-  queueReady,
 }: {
   actionState: DefenseActionState;
   defenseState?: ChainDefenseState | null | undefined;
   error: string | undefined;
   loading: boolean;
-  queue: ChainDefenseState["queue"] | undefined;
-  queueReady: boolean;
 }) {
   if (loading) {
+    if (defenseState) return null;
     return <Notice tone="neutral">Reading on-chain defense state.</Notice>;
   }
 
   if (error) {
+    if (defenseState) return <Notice tone="neutral">Refreshing defense state: {error}</Notice>;
     return <Notice tone="danger">Defense state could not be loaded from the backend. Refresh or try again after deployment sync.</Notice>;
   }
 
@@ -201,16 +201,53 @@ function StatusPanel({
     return <Notice tone={tone}>{actionState.label}</Notice>;
   }
 
-  if (queue) {
-    const defense = defenseCatalog.find((item) => item.id === queue.itemId);
-    return (
-      <Notice tone={queueReady ? "success" : "neutral"}>
-        {defense?.label ?? "Defense"} production: {queue.quantity ?? 0} queued, ready {formatReady(queue.readyAt)}.
-      </Notice>
-    );
-  }
-
   return null;
+}
+
+function ActiveDefenseQueuePanel({
+  actionPending,
+  canTransact,
+  onFinish,
+  queue,
+  queueReady,
+}: {
+  actionPending: boolean;
+  canTransact: boolean;
+  onFinish: () => void;
+  queue: NonNullable<ChainDefenseState["queue"]>;
+  queueReady: boolean;
+}) {
+  const defense = defenseCatalog.find((item) => item.id === queue.itemId);
+
+  return (
+    <section className="grid gap-3 rounded border border-rose-300/20 bg-rose-300/5 p-3 sm:grid-cols-[64px_minmax(0,1fr)_auto] sm:items-center">
+      <div className="h-14 w-14 overflow-hidden rounded-md border border-white/10 bg-black/20 p-1">
+        {defense ? (
+          <OptimizedImage
+            alt=""
+            className="h-full w-full object-contain"
+            sizes="icon"
+            src={defense.asset}
+          />
+        ) : null}
+      </div>
+      <div className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-rose-200">Active queue</p>
+        <p className="mt-1 break-words text-sm font-semibold text-white">
+          {defense?.label ?? "Defense"} x{format(queue.quantity ?? 0)}
+        </p>
+        <p className="mt-1 text-xs text-slate-400">Ready {formatReady(queue.readyAt)}</p>
+      </div>
+      <button
+        className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+        disabled={!canTransact || !queueReady || actionPending}
+        onClick={onFinish}
+        type="button"
+      >
+        Complete queue
+      </button>
+    </section>
+  );
 }
 
 function DefenseTile({
@@ -222,7 +259,9 @@ function DefenseTile({
   onBuild,
   onQuantity,
   owned,
+  queued,
   quantity,
+  requirementStates,
 }: {
   blockedReason: string | undefined;
   cost: Resources | undefined;
@@ -232,9 +271,12 @@ function DefenseTile({
   onBuild: () => void;
   onQuantity: (quantity: number) => void;
   owned: number | undefined;
+  queued: number;
   quantity: number;
+  requirementStates: DefenseRequirementState[];
 }) {
   const thumbnailFrame = missileThumbnailFrames[defense.key];
+  const buttonLabel = queued > 0 ? "Add" : "Build";
 
   return (
     <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
@@ -256,10 +298,11 @@ function DefenseTile({
             </div>
             <p className="mt-0.5 text-xs text-slate-400">
               Deployed: {owned === undefined ? "unavailable" : format(owned)}
+              {queued > 0 ? ` · Queued: ${format(queued)}` : ""}
             </p>
           </div>
           <span className={missing.length === 0 ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
-            {missing.length === 0 ? "Ready" : "Locked"}
+            {queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked"}
           </span>
         </div>
 
@@ -269,9 +312,7 @@ function DefenseTile({
           <Stat label="Deut" value={cost ? format(cost.deuterium) : "-"} />
         </dl>
 
-        <div className="mt-3 min-h-10 break-words text-xs leading-5 text-slate-400">
-          {missing.length > 0 ? missing.join(", ") : "Requirements met by on-chain state."}
-        </div>
+        <RequirementChips requirements={requirementStates} />
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input
@@ -291,12 +332,36 @@ function DefenseTile({
             onClick={onBuild}
             type="button"
           >
-            Build
+            {buttonLabel}
           </button>
           {blockedReason && <span className="text-xs text-slate-500">{blockedReason}</span>}
         </div>
       </div>
     </article>
+  );
+}
+
+type DefenseRequirementState = {
+  label: string;
+  met: boolean;
+};
+
+function RequirementChips({ requirements }: { requirements: DefenseRequirementState[] }) {
+  return (
+    <div className="mt-3 flex min-h-10 flex-wrap content-start gap-1.5 text-xs">
+      {requirements.map((requirement) => (
+        <span
+          className={
+            requirement.met
+              ? "rounded border border-emerald-300/20 bg-emerald-300/10 px-2 py-1 text-emerald-200"
+              : "rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-amber-200"
+          }
+          key={requirement.label}
+        >
+          {requirement.label}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -349,14 +414,49 @@ function getMissingRequirements(
   });
 }
 
+export function getDefenseRequirementStates(
+  defense: (typeof defenseCatalog)[number],
+  defenseState?: ChainDefenseState | null | undefined,
+): DefenseRequirementState[] {
+  const levels = {
+    buildings: {
+      shipyard: defenseState?.shipyardLevel ?? 0,
+      missileSilo: defenseState?.missileSiloLevel ?? 0,
+    },
+    research: technologyLevelsByKey(defenseState?.technologyLevels),
+  };
+
+  return uniqueDefenseRequirements(defense.requirements).map((requirement) => {
+    const actual = requirement.kind === "building"
+      ? levels.buildings[requirement.key as keyof typeof levels.buildings] ?? 0
+      : levels.research[requirement.key as ResearchKey] ?? 0;
+
+    return {
+      label: `${requirement.label} ${requirement.level}`,
+      met: actual >= requirement.level,
+    };
+  });
+}
+
+function uniqueDefenseRequirements(requirements: readonly UnlockRequirement[]): UnlockRequirement[] {
+  const seen = new Set<string>();
+  return requirements.filter((requirement) => {
+    const key = `${requirement.kind}:${requirement.key ?? requirement.label}:${requirement.level}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function getDefenseLimitReason(
   key: DefenseKey,
   quantity: number,
   defenseState?: ChainDefenseState | null | undefined,
+  queue?: ChainDefenseState["queue"] | undefined,
 ): string | undefined {
   if (!defenseState) return undefined;
 
-  const count = defenseCount(defenseState, key);
+  const count = defenseCount(defenseState, key) + queuedDefenseCountByKey(key, queue);
   if ((key === "smallShieldDome" || key === "largeShieldDome") && count + quantity > 1) {
     return "One shield dome of this type per planet";
   }
@@ -366,7 +466,8 @@ function getDefenseLimitReason(
 
   const usedSlots =
     defenseCount(defenseState, "antiBallisticMissile")
-    + defenseCount(defenseState, "interplanetaryMissile") * 2;
+    + queuedDefenseCountByKey("antiBallisticMissile", queue)
+    + (defenseCount(defenseState, "interplanetaryMissile") + queuedDefenseCountByKey("interplanetaryMissile", queue)) * 2;
   const capacity = (defenseState.missileSiloLevel ?? 0) * 10;
   return usedSlots + slotsPerUnit * quantity > capacity ? "Missile Silo capacity full" : undefined;
 }
@@ -378,7 +479,7 @@ function getBlockedReason({
   hasPlanet,
   limitReason,
   missing,
-  queueActive,
+  queueBlocker,
   resources,
 }: {
   affordable: boolean;
@@ -387,19 +488,37 @@ function getBlockedReason({
   hasPlanet: boolean;
   limitReason?: string | undefined;
   missing: string[];
-  queueActive: boolean;
+  queueBlocker?: string | undefined;
   resources: Resources | undefined;
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!defenseState) return "Waiting for chain state";
   if (defenseState.productionAvailable === false) return "Defense production unavailable";
   if (!hasPlanet) return "No game planet";
-  if (queueActive) return "Queue active";
+  if (queueBlocker) return queueBlocker;
   if (missing.length > 0) return missing[0];
   if (limitReason) return limitReason;
   if (!resources) return "Resources unavailable";
   if (!affordable) return "Insufficient resources";
   return undefined;
+}
+
+export function getQueueBlocker(
+  defenseId: number,
+  queue?: ChainDefenseState["queue"] | undefined,
+): string | undefined {
+  if (!queue?.active || queue.itemId === defenseId) return undefined;
+  const activeDefense = defenseCatalog.find((item) => item.id === queue.itemId);
+  return `Active queue: ${activeDefense?.label ?? "another defense"}`;
+}
+
+function queuedDefenseCount(defenseId: number, queue?: ChainDefenseState["queue"] | undefined): number {
+  return queue?.active && queue.itemId === defenseId ? queue.quantity ?? 0 : 0;
+}
+
+function queuedDefenseCountByKey(key: DefenseKey, queue?: ChainDefenseState["queue"] | undefined): number {
+  const defense = defenseCatalog.find((item) => item.key === key);
+  return defense ? queuedDefenseCount(defense.id, queue) : 0;
 }
 
 function defenseCount(defenseState: ChainDefenseState, key: DefenseKey): number {
