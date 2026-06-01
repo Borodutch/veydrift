@@ -2,6 +2,7 @@ import type { PlayerQueuesResponse, QueueStateResponse, WalletSettlementResponse
 import {
   buildingCatalog,
   buildingContractIds,
+  queueProgressPercent,
   type BuildingKey,
   type EnergyBalance,
   type Resources,
@@ -228,21 +229,16 @@ export function queueProgressFillState({
     return { animated: false, durationMs: 0, elapsedMs: 0, progress: 0 };
   }
 
-  const durationMs = typeof readyAt === "number" && typeof startedAt === "number"
-    ? readyAt - startedAt
-    : 0;
+  const hasTimelineInputs = typeof readyAt === "number" && typeof startedAt === "number";
+  const durationMs = hasTimelineInputs ? readyAt - startedAt : 0;
   const elapsedMs = typeof startedAt === "number" ? now - startedAt : 0;
-  const hasCanonicalTimeline = durationMs > 0 && Number.isFinite(elapsedMs);
-  const timelineProgress = hasCanonicalTimeline
-    ? Math.min(1, Math.max(0, elapsedMs / durationMs))
-    : progressBar.progress;
-  const isTimelineRunning = hasCanonicalTimeline
-    && elapsedMs >= 0
-    && elapsedMs < durationMs
-    && remaining !== "Ready";
+  const hasCanonicalTimeline = hasTimelineInputs && durationMs > 0 && Number.isFinite(elapsedMs);
+  const timelineProgress = hasTimelineInputs && hasCanonicalTimeline
+    ? queueProgressPercent({ readyAt, startedAt }, now) / 100
+    : Math.round(progressBar.progress * 100) / 100;
 
   return {
-    animated: isTimelineRunning,
+    animated: false,
     durationMs: hasCanonicalTimeline ? durationMs : 0,
     elapsedMs: hasCanonicalTimeline ? Math.min(durationMs, Math.max(0, elapsedMs)) : 0,
     progress: remaining === "Ready" ? 1 : timelineProgress,
