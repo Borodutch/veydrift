@@ -19,6 +19,7 @@ import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchShipyardState,
+  fetchWalletSettlement,
   fetchWalletQueues,
   getInjectedProvider,
   isBaseSepoliaChain,
@@ -642,6 +643,9 @@ describe("walletFlow", () => {
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
       "Unlock or reconnect MetaMask"
     );
+    expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
+      "Retry in a moment"
+    );
   });
 
   test("reports unconfigured settlement when no address is present", async () => {
@@ -1151,10 +1155,17 @@ describe("walletFlow", () => {
 
   test("fetches dynamic wallet state without browser cache", async () => {
     const originalFetch = globalThis.fetch;
-    const calls: Array<{ url: string; init: unknown }> = [];
+    const calls: Array<{ url: string; init: { cache: RequestCache | undefined; headers: HeadersInit | undefined; signal: boolean } }> = [];
 
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      calls.push({ url: String(input), init });
+      calls.push({
+        url: String(input),
+        init: {
+          cache: init?.cache,
+          headers: init?.headers,
+          signal: init?.signal instanceof AbortSignal,
+        },
+      });
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "content-type": "application/json" },
         status: 200,
@@ -1162,6 +1173,7 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
+      await fetchWalletSettlement("https://api.example.test", account);
       await fetchWalletQueues("https://api.example.test///", account);
       await fetchWalletQueues("https://api.example.test///", account, "7", { source: "live" });
       await fetchInfrastructureState("https://api.example.test", account);
@@ -1178,10 +1190,19 @@ describe("walletFlow", () => {
 
     expect(calls).toEqual([
       {
+        url: `https://api.example.test/wallet/${account}/settlement`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
         url: `https://api.example.test/wallet/${account}/queues`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1189,6 +1210,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1196,6 +1218,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1203,6 +1226,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1210,6 +1234,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1217,6 +1242,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1224,6 +1250,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1231,6 +1258,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1238,6 +1266,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
       {
@@ -1245,6 +1274,7 @@ describe("walletFlow", () => {
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
+          signal: true,
         },
       },
     ]);
@@ -1336,6 +1366,7 @@ describe("walletFlow", () => {
       expect(init).toEqual({
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
       });
       return new Response(
         JSON.stringify({ error: "Alliance profile could not be decoded." }),
