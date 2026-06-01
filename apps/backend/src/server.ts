@@ -100,6 +100,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       : loaded.problems.length === 0
         ? new VeydriftGameReader(loaded.config)
         : undefined;
+  const createLiveChainReader = (): ChainReader | undefined =>
+    dependencies.chainReader
+      ? chainReader
+      : loaded.problems.length === 0
+        ? new VeydriftGameReader(loaded.config)
+        : undefined;
   const indexer =
     dependencies.indexer ??
     (isIndexableChainReader(indexerChainReader) ? new SettlementIndexer(indexerChainReader, loaded.config.indexFromBlock, {
@@ -218,7 +224,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             headers: corsHeaders
           });
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) return ready;
         return Response.json(await liveWalletRead(ready.getWalletSettlement(wallet), "wallet settlement"), {
           headers: corsHeaders
@@ -237,7 +243,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             headers: corsHeaders
           });
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) return ready;
         return Response.json(await liveWalletRead(ready.getWalletPlanets(wallet), "wallet planets"), {
           headers: corsHeaders
@@ -256,7 +262,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "player queues", indexedPlayerQueues);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "player queues", new Error("backend_not_configured"), indexedPlayerQueues)
             ?? ready;
@@ -279,7 +285,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, undefined, "fleet visibility", indexedFleetVisibility);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, undefined, "fleet visibility", new Error("backend_not_configured"), indexedFleetVisibility)
             ?? ready;
@@ -303,7 +309,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "infrastructure", indexedInfrastructureState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "infrastructure", new Error("backend_not_configured"), indexedInfrastructureState)
             ?? ready;
@@ -327,7 +333,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "moon", indexedMoonState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "moon", new Error("backend_not_configured"), indexedMoonState)
             ?? ready;
@@ -351,7 +357,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "shipyard", indexedShipyardState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "shipyard", new Error("backend_not_configured"), indexedShipyardState)
             ?? ready;
@@ -375,7 +381,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "defenses", indexedDefenseState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "defenses", new Error("backend_not_configured"), indexedDefenseState)
             ?? ready;
@@ -399,7 +405,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "research", indexedResearchState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "research", new Error("backend_not_configured"), indexedResearchState)
             ?? ready;
@@ -416,7 +422,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/alliance$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
+      const ready = requireChainReader(createLiveChainReader(), loaded.problems);
       if (ready instanceof Response) return ready;
 
       try {
@@ -438,7 +444,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "rift", indexedRiftState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(chainReader, loaded.problems);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "rift", new Error("backend_not_configured"), indexedRiftState)
             ?? ready;
@@ -455,7 +461,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(chainReader, loaded.problems);
+      const ready = requireChainReader(createLiveChainReader(), loaded.problems);
       if (ready instanceof Response) return ready;
 
       try {
@@ -553,7 +559,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           headers: corsHeaders
         });
       }
-      const ready = requireChainReader(chainReader, loaded.problems);
+      const ready = requireChainReader(createLiveChainReader(), loaded.problems);
       if (ready instanceof Response) return ready;
       return Response.json(await ready.getPlanet(planetId), {
         headers: corsHeaders
