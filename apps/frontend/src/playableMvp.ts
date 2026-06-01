@@ -158,6 +158,11 @@ export type ResearchQueueItem = {
 
 export type QueueItem = MainQueueItem | ResearchQueueItem;
 
+export type QueueTimeline = {
+  readyAt: number;
+  startedAt: number;
+};
+
 export type PlayableState = {
   resources: Resources;
   buildings: Record<BuildingKey, number>;
@@ -1587,7 +1592,7 @@ export function collectibleResourceDeltas(
   }, { metal: 0, crystal: 0, deuterium: 0 });
 }
 
-export function progress(queue: QueueItem | undefined, now = Date.now()): number {
+export function queueProgress(queue: QueueTimeline | undefined, now = Date.now()): number {
   if (!queue) {
     return 0;
   }
@@ -1599,6 +1604,14 @@ export function progress(queue: QueueItem | undefined, now = Date.now()): number
   }
 
   return Math.min(1, Math.max(0, elapsed / total));
+}
+
+export function queueProgressPercent(queue: QueueTimeline | undefined, now = Date.now()): number {
+  return Math.round(queueProgress(queue, now) * 100);
+}
+
+export function progress(queue: QueueItem | undefined, now = Date.now()): number {
+  return queueProgress(queue, now);
 }
 
 export function planetSummary() {

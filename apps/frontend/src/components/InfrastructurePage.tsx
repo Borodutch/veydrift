@@ -2,7 +2,7 @@ import { Info, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
-import { buildingCatalog, buildingEffectMetrics, isBinaryBuilding, progress, unmetBuildingRequirement } from "../playableMvp";
+import { buildingCatalog, buildingEffectMetrics, isBinaryBuilding, queueProgressPercent, unmetBuildingRequirement } from "../playableMvp";
 import {
   buildingEnergyDetail,
   buildingLevelInfoColumns,
@@ -475,7 +475,7 @@ export function ActiveBuildingQueueDetail({
 }) {
   const queueLabel = buildingQueueLabel(queue.label, queue.targetLevel);
   const remaining = formatDurationUntil(queue.readyAt, now);
-  const percent = Math.round(progress(queue, now) * 100);
+  const percent = queueProgressPercent(queue, now);
 
   return (
     <div className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-3">
