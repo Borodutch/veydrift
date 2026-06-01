@@ -639,6 +639,9 @@ describe("walletFlow", () => {
       "wallet could not read the current game contract state"
     );
     expect(walletRequestErrorMessage(new Error("execution reverted"))).toContain("game contract rejected");
+    expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
+      "Unlock or reconnect MetaMask"
+    );
   });
 
   test("reports unconfigured settlement when no address is present", async () => {
