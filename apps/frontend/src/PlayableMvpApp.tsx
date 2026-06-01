@@ -609,8 +609,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setMoonState(nextMoon);
     } catch (error) {
       console.error(error);
-      setInfrastructureChainState(null);
-      setMoonState(null);
       setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
       setMoonError(error instanceof Error ? error.message : "Moon state could not be loaded.");
     } finally {
@@ -633,7 +631,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setDefenseState(null);
         setDefenseError(error instanceof Error ? error.message : "Defense state could not be loaded.");
       })
       .finally(() => {
@@ -655,7 +652,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setAllianceState(null);
         setAllianceError(error instanceof Error ? error.message : "Alliance state could not be loaded.");
       })
       .finally(() => {
@@ -677,7 +673,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setShipyardState(null);
         setShipyardError(error instanceof Error ? error.message : "Shipyard state could not be loaded.");
       })
       .finally(() => {
@@ -699,7 +694,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setResearchState(null);
         setResearchError(error instanceof Error ? error.message : "Research state could not be loaded.");
       })
       .finally(() => {
@@ -721,7 +715,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       })
       .catch((error) => {
         console.error(error);
-        setRiftState(null);
         setRiftError(error instanceof Error ? error.message : "Rift state could not be loaded.");
       })
       .finally(() => {
@@ -765,10 +758,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setOnChainStatus("ready");
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
-      setOnChainSettlement(undefined);
-      setWalletPlanets([]);
-      setOnChainQueues(undefined);
-      setFleetVisibility(undefined);
       setOnChainStatus("error");
     }
   }, [account, activePlanetId, apiBaseUrl, isWalletConnected, selectedPlanetId]);
@@ -819,7 +808,6 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       const message = error instanceof Error ? error.message : "Failed to load completed building state.";
       setOnChainError(message);
       setOnChainStatus("error");
-      setInfrastructureChainState(null);
       setInfrastructureError(message);
       throw error;
     } finally {
