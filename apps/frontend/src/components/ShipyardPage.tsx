@@ -6,6 +6,7 @@ import type { ChainShipyardState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { CombatStatsInfoButton } from "./CombatStatsInfo";
 import { OptimizedImage } from "./OptimizedImage";
+import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -51,6 +52,7 @@ export function ShipyardPage({
   const productionAvailable = shipyardState?.productionAvailable !== false;
   const queueReady =
     queue?.readyAt ? Number(queue.readyAt) <= Math.floor(Date.now() / 1_000) : false;
+  const initialLoading = loading && !shipyardState;
 
   return (
     <div className="grid gap-4">
@@ -95,60 +97,64 @@ export function ShipyardPage({
         shipyardState={shipyardState}
       />
 
-      {(["civil", "combat", "special"] as const).map((group) => (
-        <section className="grid gap-3" key={group}>
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-              {groupLabels[group]}
-            </h3>
-            <span className="h-px flex-1 bg-white/10" />
-          </div>
-          <div className="grid gap-3 xl:grid-cols-2">
-            {shipCatalog
-              .filter((ship) => ship.group === group)
-              .map((ship) => {
-                const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
-                const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
-                const owned = productionAvailable && chainShip ? chainShip.count : undefined;
-                const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
-                const quantity = quantities[ship.key] ?? 1;
-                const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
-                const durationSeconds = baseCost
-                  ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
-                  : undefined;
-                const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
-                const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
-                const blockedReason = getBlockedReason({
-                  affordable,
-                  canTransact,
-                  hasPlanet: Boolean(shipyardState?.homePlanetId),
-                  missing,
-                  queueActive: Boolean(queue),
-                  resources,
-                  shipUnavailable,
-                  shipyardState,
-                });
-                const disabled = Boolean(blockedReason) || actionState.status === "pending";
+      {initialLoading ? (
+        <VeydriftLoader label="Syncing shipyard" />
+      ) : (
+        (["civil", "combat", "special"] as const).map((group) => (
+          <section className="grid gap-3" key={group}>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                {groupLabels[group]}
+              </h3>
+              <span className="h-px flex-1 bg-white/10" />
+            </div>
+            <div className="grid gap-3 xl:grid-cols-2">
+              {shipCatalog
+                .filter((ship) => ship.group === group)
+                .map((ship) => {
+                  const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
+                  const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
+                  const owned = productionAvailable && chainShip ? chainShip.count : undefined;
+                  const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
+                  const quantity = quantities[ship.key] ?? 1;
+                  const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+                  const durationSeconds = baseCost
+                    ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
+                    : undefined;
+                  const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
+                  const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
+                  const blockedReason = getBlockedReason({
+                    affordable,
+                    canTransact,
+                    hasPlanet: Boolean(shipyardState?.homePlanetId),
+                    missing,
+                    queueActive: Boolean(queue),
+                    resources,
+                    shipUnavailable,
+                    shipyardState,
+                  });
+                  const disabled = Boolean(blockedReason) || actionState.status === "pending";
 
-                return (
-                  <ShipTile
-                    blockedReason={blockedReason}
-                    cost={totalCost}
-                    disabled={disabled}
-                    durationSeconds={durationSeconds}
-                    key={ship.key}
-                    missing={missing}
-                    onBuild={() => onBuild(ship.id, ship.key, quantity)}
-                    onQuantity={(next) => setQuantities((prev) => ({ ...prev, [ship.key]: next }))}
-                    owned={owned}
-                    quantity={quantity}
-                    ship={ship}
-                  />
-                );
-              })}
-          </div>
-        </section>
-      ))}
+                  return (
+                    <ShipTile
+                      blockedReason={blockedReason}
+                      cost={totalCost}
+                      disabled={disabled}
+                      durationSeconds={durationSeconds}
+                      key={ship.key}
+                      missing={missing}
+                      onBuild={() => onBuild(ship.id, ship.key, quantity)}
+                      onQuantity={(next) => setQuantities((prev) => ({ ...prev, [ship.key]: next }))}
+                      owned={owned}
+                      quantity={quantity}
+                      ship={ship}
+                    />
+                  );
+                })}
+            </div>
+          </section>
+        ))
+      )}
     </div>
   );
 }
@@ -168,8 +174,12 @@ function StatusPanel({
   queueReady: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
 }) {
+  if (loading && shipyardState) {
+    return <InlineSyncIndicator label="Refreshing shipyard" />;
+  }
+
   if (loading) {
-    return <Notice tone="neutral">Reading on-chain shipyard state.</Notice>;
+    return null;
   }
 
   if (error) {

@@ -6,6 +6,7 @@ import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
 import { formatCost } from "../buildingDetails";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
+import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
@@ -56,7 +57,7 @@ export function MoonPage({
       {hasMoon && moon ? (
         <>
           {loading ? (
-            <MoonStatusPanel title="Reading lunar telemetry" body="Refreshing moon state from the game contract." />
+            <InlineSyncIndicator label="Refreshing moon state" />
           ) : error ? (
             <MoonStatusPanel title="Moon state refresh failed" body={error} tone="warning" />
           ) : null}
@@ -71,7 +72,7 @@ export function MoonPage({
           />
         </>
       ) : loading ? (
-        <MoonStatusPanel title="Reading lunar telemetry" body="Loading moon state from the game contract." />
+        <VeydriftLoader label="Reading lunar telemetry" />
       ) : error ? (
         <MoonStatusPanel title="Moon state unavailable" body={error} tone="warning" />
       ) : (
