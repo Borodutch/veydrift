@@ -119,6 +119,51 @@ describe("Infrastructure page display helpers", () => {
     ]);
   });
 
+  test("renders Terraformer modal rows with field expansion, not construction speed", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        terraformer: 1,
+      },
+    };
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Terraformer",
+      currentLevel: 1,
+      rows: buildingLevelInfoRows(state.buildings, "terraformer", undefined, 3),
+      onClose: () => undefined,
+    });
+    const text = visibleText(modal);
+
+    expect(text).toContain("Terraformer levels");
+    expect(text).toContain("Effect");
+    expect(text).toContain("+5 fields");
+    expect(text).toContain("Level 1 Current");
+    expect(text).toContain("Level 2 Next");
+    expect(text).not.toContain("construction speed");
+  });
+
+  test("shows Terraformer detail as expanded field capacity", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        terraformer: 1,
+      },
+    };
+    const effect = buildingEffectMetrics(state.buildings, "terraformer");
+    const rows = detailEffectRows(effect, buildingEnergyDetail(state.buildings, "terraformer"));
+
+    expect(rows).toEqual([
+      {
+        delta: "+5 fields",
+        label: "Expanded fields",
+        next: "10 added",
+        value: "5 added",
+      },
+    ]);
+  });
+
   test("renders storage modal rows without production or energy columns", () => {
     const modal = BuildingLevelInfoModal({
       buildingLabel: "Metal Storage",

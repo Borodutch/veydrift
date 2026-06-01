@@ -845,6 +845,13 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       next: `${formatNumber(effect.nextSupport)} Deut.`,
       value: `${formatNumber(effect.currentSupport)} Deut.`,
     });
+  } else if (effect.kind === "terraformer") {
+    rows.push({
+      delta: `${formatSigned(effect.deltaFields)} fields`,
+      label: "Expanded fields",
+      next: `${formatNumber(effect.nextAddedFields)} added`,
+      value: `${formatNumber(effect.currentAddedFields)} added`,
+    });
   } else if (effect.kind === "constructionSpeed") {
     rows.push({
       delta: `+${formatNumber(effect.relativeImprovementPercent)}% faster than current`,
@@ -926,6 +933,10 @@ function compactEffect(effect: BuildingEffectMetrics): string {
 
   if (effect.kind === "allianceDepot") {
     return `${formatNumber(effect.currentSupport)} Deut.`;
+  }
+
+  if (effect.kind === "terraformer") {
+    return `+${formatNumber(effect.currentAddedFields)} fields`;
   }
 
   if (effect.kind === "shipyard") {

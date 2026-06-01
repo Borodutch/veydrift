@@ -370,6 +370,35 @@ describe("building detail helpers", () => {
     expect(rows.map((row) => row.effect)).toEqual([undefined, undefined]);
   });
 
+  test("builds Terraformer level table rows with field expansion effect", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        terraformer: 1,
+      },
+    };
+    const rows = buildingLevelInfoRows(state.buildings, "terraformer", undefined, 3);
+
+    expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
+      deuteriumConsumed: false,
+      effect: true,
+      energyProduced: false,
+      energyRequired: false,
+      production: false,
+      storage: false,
+    });
+    expect(rows.map(({ effect, level }) => ({ effect, level }))).toEqual([
+      { effect: "+5 fields", level: 1 },
+      { effect: "+5 fields", level: 2 },
+      { effect: "+5 fields", level: 3 },
+    ]);
+    expect(rows.map((row) => row.effect)).not.toContain("construction speed");
+    expect(rows[0]).toMatchObject({ current: true, next: false });
+    expect(rows[1]).toMatchObject({ current: false, next: true });
+  });
+
   test("builds storage level table rows without production or energy columns", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
 

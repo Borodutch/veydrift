@@ -226,6 +226,12 @@ export type BuildingEffectMetrics =
       deltaSupport: number;
     }
   | {
+      kind: "terraformer";
+      currentAddedFields: number;
+      nextAddedFields: number;
+      deltaFields: number;
+    }
+  | {
       kind: "constructionSpeed";
       currentFactor: number;
       nextFactor: number;
@@ -1320,6 +1326,18 @@ export function buildingEffectMetrics(
     };
   }
 
+  if (key === "terraformer") {
+    const currentAddedFields = terraformerAddedFields(buildings.terraformer);
+    const nextAddedFields = terraformerAddedFields(nextBuildings.terraformer);
+
+    return {
+      kind: "terraformer",
+      currentAddedFields,
+      nextAddedFields,
+      deltaFields: nextAddedFields - currentAddedFields,
+    };
+  }
+
   if (key === "roboticsFactory") {
     const currentFactor = buildings.roboticsFactory + 1;
     const nextFactor = nextBuildings.roboticsFactory + 1;
@@ -1376,6 +1394,10 @@ export function missileSiloCapacity(level: number): number {
 
 export function allianceDepotSupportCapacity(level: number): number {
   return level * 20_000;
+}
+
+export function terraformerAddedFields(level: number): number {
+  return level * 5;
 }
 
 export function researchCost(

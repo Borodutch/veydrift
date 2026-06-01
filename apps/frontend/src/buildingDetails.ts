@@ -11,6 +11,7 @@ import {
   missileSiloCapacity,
   productionCapacityPerHour,
   storageCaps,
+  terraformerAddedFields,
   unmetBuildingRequirement,
   type PlanetProductionProfile,
 } from "./playableMvp";
@@ -407,6 +408,10 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
 
   if (key === "allianceDepot") {
     return `${formatNumber(allianceDepotSupportCapacity(level))} Deut. support`;
+  }
+
+  if (key === "terraformer") {
+    return `+${formatNumber(terraformerAddedFields(1))} fields`;
   }
 
   if (key === "interdimensionalRiftStabilizer") {
