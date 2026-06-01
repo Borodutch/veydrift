@@ -1,6 +1,7 @@
-import type { MainQueueItem, PlayableState, Resources } from "../playableMvp";
+import { queueProgress as queueProgressValue, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Check, Pencil, Trash2, X } from "lucide-preact";
+import { researchQueueForDisplay } from "../chainState";
 import {
   buildingQueueAsset,
   buildingQueueLabel,
@@ -115,6 +116,8 @@ export function OverviewPage({
   const localBuildingLabel = buildingQueue
     ? buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel)
     : settledState.queue?.label;
+  const onChainResearchQueue = researchQueueForDisplay(onChainQueues?.research ?? null, now);
+  const activeResearchProgress = onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress;
   const onChainDefenseQueue = defenseQueuePreview(onChainQueues?.defense);
   const showBuildingFinishAction = shouldShowOverviewBuildingFinishAction({
     isBuildingReadyToFinish,
@@ -433,7 +436,17 @@ export function OverviewPage({
           label="Research"
           tag={onChainQueues?.research?.active ? "Active" : undefined}
         >
-          {onChainQueues?.research?.active ? (
+          {onChainResearchQueue ? (
+            <QueueItemDisplay
+              label={`${onChainResearchQueue.label} Level ${onChainResearchQueue.targetLevel}`}
+              remaining={formatDurationUntil(onChainResearchQueue.readyAt, now)}
+              progress={activeResearchProgress}
+              readyAt={onChainResearchQueue.readyAt}
+              startedAt={onChainResearchQueue.startedAt}
+              color="bg-cyan-300"
+              now={now}
+            />
+          ) : onChainQueues?.research?.active ? (
             <QueueItemDisplay
               label={`${onChainQueues.research.kind === "research" ? "Research" : onChainQueues.research.kind} level ${onChainQueues.research.targetLevel}`}
               remaining={queueRemaining(onChainQueues.research.readyAt, now)}
@@ -444,7 +457,7 @@ export function OverviewPage({
             <QueueItemDisplay
               label={settledState.researchQueue.label}
               remaining={formatDurationUntil(settledState.researchQueue.readyAt, now)}
-              progress={researchProgress}
+              progress={activeResearchProgress}
               readyAt={settledState.researchQueue.readyAt}
               startedAt={settledState.researchQueue.startedAt}
               color="bg-cyan-300"

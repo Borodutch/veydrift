@@ -5,6 +5,7 @@ import {
   energyBalanceFromChain,
   infrastructurePlayableState,
   isBuildingQueueReadyToFinish,
+  researchQueueForDisplay,
 } from "./chainState";
 import type { ChainInfrastructureState, PlayerQueuesResponse, QueueStateResponse } from "./walletFlow";
 import { createInitialPlayableState, progress } from "./playableMvp";
@@ -124,6 +125,50 @@ describe("chainState", () => {
       startedAt: startedAtSeconds * 1_000,
     });
     expect(progress(queue, halfway)).toBe(0.5);
+  });
+
+  test("uses queue startedAt from the backend for active research progress", () => {
+    const startedAtSeconds = 1_700_000_000;
+    const readyAtSeconds = 1_700_000_600;
+    const halfway = (startedAtSeconds + 300) * 1_000;
+    const queue = researchQueueForDisplay({
+      active: true,
+      kind: "research",
+      itemId: 0,
+      targetLevel: 2,
+      startedAt: startedAtSeconds.toString(),
+      readyAt: readyAtSeconds.toString(),
+      cost: { metal: "0", crystal: "1600", deuterium: "800" },
+    }, halfway);
+
+    expect(queue).toMatchObject({
+      kind: "research",
+      key: "energy",
+      label: "Energy Technology",
+      readyAt: readyAtSeconds * 1_000,
+      startedAt: startedAtSeconds * 1_000,
+      targetLevel: 2,
+    });
+    expect(progress(queue, halfway)).toBe(0.5);
+  });
+
+  test("falls back to the render clock when active research startedAt is missing", () => {
+    const readyAtSeconds = 1_700_000_600;
+    const now = 1_700_000_300_000;
+    const queue = researchQueueForDisplay({
+      active: true,
+      kind: "research",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: readyAtSeconds.toString(),
+      cost: { metal: "0", crystal: "1600", deuterium: "800" },
+    }, now);
+
+    expect(queue).toMatchObject({
+      readyAt: readyAtSeconds * 1_000,
+      startedAt: now,
+    });
+    expect(progress(queue, now)).toBe(0);
   });
 
   test("uses Nanite Factory level when estimating active building queue progress without startedAt", () => {
