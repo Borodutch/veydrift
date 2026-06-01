@@ -298,6 +298,51 @@ describe("Infrastructure page display helpers", () => {
       value: "x2",
     });
   });
+
+  test("shows Terraformer level rows as field expansion, not construction speed", () => {
+    const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "terraformer", undefined, 3);
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Terraformer",
+      currentLevel: 0,
+      rows,
+      onClose: () => undefined,
+    });
+    const text = visibleText(modal);
+
+    expect(text).toContain("Terraformer levels");
+    expect(text).toContain("Effect");
+    expect(text).toContain("+5 total fields");
+    expect(text).toContain("+10 total fields");
+    expect(text).toContain("+15 total fields");
+    expect(text).not.toContain("construction speed");
+  });
+
+  test("shows Terraformer detail as current and next planet field expansion", () => {
+    const state = createInitialPlayableState(1_000);
+    const unbuiltEffect = buildingEffectMetrics(state.buildings, "terraformer");
+    const unbuiltRows = detailEffectRows(unbuiltEffect, buildingEnergyDetail(state.buildings, "terraformer"));
+
+    expect(unbuiltRows).toContainEqual({
+      delta: "+5 fields",
+      label: "Planet fields",
+      next: "+5 total fields",
+      value: "No expansion",
+    });
+
+    const terraformedBuildings = {
+      ...state.buildings,
+      terraformer: 1,
+    };
+    const builtEffect = buildingEffectMetrics(terraformedBuildings, "terraformer");
+    const builtRows = detailEffectRows(builtEffect, buildingEnergyDetail(terraformedBuildings, "terraformer"));
+
+    expect(builtRows).toContainEqual({
+      delta: "+5 fields",
+      label: "Planet fields",
+      next: "+10 total fields",
+      value: "+5 total fields",
+    });
+  });
 });
 
 function visibleText(node: ComponentChildren): string {
