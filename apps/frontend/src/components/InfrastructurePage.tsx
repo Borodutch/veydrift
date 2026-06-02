@@ -1,14 +1,21 @@
 import { Info, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { BuildingEffectMetrics, BuildingKey, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
-import { buildingCatalog, buildingEffectMetrics, isBinaryBuilding, queueProgressPercent, unmetBuildingRequirement } from "../playableMvp";
+import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
+import {
+  buildingCatalog,
+  buildingEffectMetrics,
+  buildingRequirementsFor,
+  isBinaryBuilding,
+  queueProgressPercent,
+  researchCatalog,
+  unmetBuildingRequirement,
+} from "../playableMvp";
 import {
   buildingEnergyDetail,
   buildingLevelInfoColumns,
   buildingLevelInfoRows,
   buildingUpgradeStatus,
-  formatBuildingRequirements,
   formatCost,
   formatDuration,
   formatNumber,
@@ -19,6 +26,7 @@ import { formatDurationUntil } from "../durationFormat";
 import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
 import { OptimizedImage } from "./OptimizedImage";
+import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
@@ -33,6 +41,11 @@ const fullResourceLabels: Record<keyof Resources, string> = {
 };
 
 const loadedDetailImageKeys = new Set<BuildingKey>();
+const solarPrerequisiteMineKeys = new Set<BuildingKey>([
+  "metalMine",
+  "crystalMine",
+  "deuteriumSynthesizer",
+]);
 
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
 
@@ -338,6 +351,7 @@ function BuildingDetailPanel({
   const actionLabel = binary ? "Build Rift Bridge" : `${actionVerb} Level ${status.targetLevel}`;
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
+  const requirementStates = getBuildingRequirementStates(state, building.key);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const noticeClass = actionNotice?.tone === "error"
     ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
@@ -399,7 +413,9 @@ function BuildingDetailPanel({
       </dl>
 
       <div className="mt-4 grid gap-2 border-t border-white/10 pt-4 text-sm sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-        <InfoBlock label="Requirements" value={formatBuildingRequirements(building.key)} />
+        <InfoBlock label="Requirements">
+          <RequirementFlairs requirements={requirementStates} />
+        </InfoBlock>
         {binary && built ? (
           <InfoBlock label="Rift bridge" value="Built" />
         ) : (
@@ -781,13 +797,48 @@ function ComparisonMetric({
   );
 }
 
-function InfoBlock({ label, value }: { label: string; value: string }) {
+function InfoBlock({
+  children,
+  label,
+  value,
+}: {
+  children?: ComponentChildren | undefined;
+  label: string;
+  value?: string | undefined;
+}) {
   return (
-    <p className="min-w-0">
+    <div className="min-w-0">
       <span className="block text-xs uppercase tracking-normal text-slate-500">{label}</span>
-      <span className="mt-1 block break-words text-sm font-semibold text-slate-200">{value}</span>
-    </p>
+      {children ?? <span className="mt-1 block break-words text-sm font-semibold text-slate-200">{value}</span>}
+    </div>
   );
+}
+
+export function getBuildingRequirementStates(
+  state: Pick<PlayableState, "buildings" | "research">,
+  key: BuildingKey,
+): RequirementFlair[] {
+  const frontendOnlyRequirements: RequirementFlair[] = solarPrerequisiteMineKeys.has(key)
+    ? [{ label: "Solar Plant level 1", met: state.buildings.solarPlant >= 1 }]
+    : [];
+
+  return [
+    ...frontendOnlyRequirements,
+    ...buildingRequirementsFor(key).map((requirement) => ({
+      label: formatRequirementFlair(requirement),
+      met: requirement.type === "building"
+        ? state.buildings[requirement.key] >= requirement.level
+        : state.research[requirement.key] >= requirement.level,
+    })),
+  ];
+}
+
+function formatRequirementFlair(requirement: BuildingRequirement): string {
+  const label = requirement.type === "building"
+    ? buildingCatalog.find((item) => item.key === requirement.key)?.label
+    : researchCatalog.find((item) => item.key === requirement.key)?.label;
+
+  return `${label ?? requirement.key} ${requirement.level}`;
 }
 
 export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnType<typeof buildingEnergyDetail>) {

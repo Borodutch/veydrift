@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { getBlockedReason } from "../src/components/ShipyardPage";
+import { getBlockedReason, getShipRequirementStates } from "../src/components/ShipyardPage";
+import { shipCatalog } from "../src/playableMvp";
 
 describe("Shipyard page display helpers", () => {
   test("reports a per-ship deployment mismatch without treating the whole page as unloaded", () => {
@@ -48,5 +49,35 @@ describe("Shipyard page display helpers", () => {
       shipUnavailable: false,
       shipyardState: null,
     })).toBe("Waiting for chain state");
+  });
+
+  test("returns visible met and unmet ship requirement states", () => {
+    const smallCargo = shipCatalog.find((item) => item.key === "smallCargo");
+    expect(smallCargo).toBeDefined();
+
+    expect(getShipRequirementStates(smallCargo!, {
+      wallet: "0x2222222222222222222222222222222222222222",
+      homePlanetId: "7",
+      productionAvailable: true,
+      resources: {
+        metal: "5000",
+        crystal: "5000",
+        deuterium: "5000",
+      },
+      fleetSlots: {
+        active: 0,
+        limit: 1,
+      },
+      shipyardLevel: 2,
+      naniteLevel: 0,
+      technologyLevels: {
+        "3": 1,
+      },
+      ships: [],
+      queue: null,
+    })).toEqual([
+      { label: "Shipyard 2", met: true },
+      { label: "Combustion Drive 2", met: false },
+    ]);
   });
 });

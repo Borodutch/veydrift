@@ -1,11 +1,12 @@
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { Resources, ShipKey } from "../playableMvp";
+import type { ResearchKey, Resources, ShipKey, UnlockBuildingKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { CombatStatsInfoButton } from "./CombatStatsInfo";
 import { OptimizedImage } from "./OptimizedImage";
+import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -122,6 +123,7 @@ export function ShipyardPage({
                     ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
                     : undefined;
                   const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
+                  const requirementStates = getShipRequirementStates(ship, shipyardState);
                   const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
                   const blockedReason = getBlockedReason({
                     affordable,
@@ -147,6 +149,7 @@ export function ShipyardPage({
                       onQuantity={(next) => setQuantities((prev) => ({ ...prev, [ship.key]: next }))}
                       owned={owned}
                       quantity={quantity}
+                      requirementStates={requirementStates}
                       ship={ship}
                     />
                   );
@@ -229,6 +232,7 @@ function ShipTile({
   onQuantity,
   owned,
   quantity,
+  requirementStates,
   ship,
 }: {
   blockedReason: string | undefined;
@@ -240,6 +244,7 @@ function ShipTile({
   onQuantity: (quantity: number) => void;
   owned: number | undefined;
   quantity: number;
+  requirementStates: RequirementFlair[];
   ship: (typeof shipCatalog)[number];
 }) {
   return (
@@ -273,9 +278,7 @@ function ShipTile({
           <Stat label="Build time" value={durationSeconds === undefined ? "-" : formatDuration(durationSeconds)} />
         </dl>
 
-        <div className="mt-3 min-h-10 break-words text-xs leading-5 text-slate-400">
-          {missing.length > 0 ? missing.join(", ") : "Requirements met by on-chain state."}
-        </div>
+        <RequirementFlairs className="mt-3" requirements={requirementStates} />
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input
@@ -340,6 +343,30 @@ export function getMissingRequirements(
   return missingUnlockRequirements(ship.requirements, {
     buildings: { shipyard: shipyardState?.shipyardLevel ?? 0 },
     research: technologyLevelsByKey(shipyardState?.technologyLevels),
+  });
+}
+
+export function getShipRequirementStates(
+  ship: (typeof shipCatalog)[number],
+  shipyardState?: ChainShipyardState | null | undefined,
+): RequirementFlair[] {
+  const buildingLevels: Partial<Record<UnlockBuildingKey, number>> = {
+    shipyard: shipyardState?.shipyardLevel ?? 0,
+  };
+  const levels = {
+    buildings: buildingLevels,
+    research: technologyLevelsByKey(shipyardState?.technologyLevels),
+  };
+
+  return uniqueShipRequirements(ship.requirements).map((requirement) => {
+    const actual = requirement.kind === "building"
+      ? levels.buildings[requirement.key as UnlockBuildingKey] ?? 0
+      : levels.research[requirement.key as ResearchKey] ?? 0;
+
+    return {
+      label: `${requirement.label} ${requirement.level}`,
+      met: actual >= requirement.level,
+    };
   });
 }
 
@@ -430,6 +457,16 @@ const technologyIdByKey: Partial<Record<string, number>> = {
   intergalacticResearchNetwork: 13,
   graviton: 14,
 };
+
+function uniqueShipRequirements(requirements: readonly UnlockRequirement[]): UnlockRequirement[] {
+  const seen = new Set<string>();
+  return requirements.filter((requirement) => {
+    const key = `${requirement.kind}:${requirement.key ?? requirement.label}:${requirement.level}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 function technologyLevelsByKey(levels: Record<string, number> | undefined) {
   return Object.fromEntries(

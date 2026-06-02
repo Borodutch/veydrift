@@ -4,6 +4,7 @@ import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from 
 import {
   buildingCatalog,
   canAfford,
+  energyBalance,
   researchCatalog,
   researchDurationEstimate,
   researchLabRequirementFor,
@@ -14,6 +15,7 @@ import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { OptimizedImage } from "./OptimizedImage";
+import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -399,7 +401,7 @@ function ResearchDetailPanel({
     researchState,
     state,
   });
-  const requirements = researchRequirementsFor(research.key);
+  const requirementStates = getResearchRequirementStates(state, research.key);
 
   return (
     <aside className="min-w-0 rounded-lg border border-white/10 bg-[#0f1624] p-3 xl:sticky xl:top-4">
@@ -437,7 +439,9 @@ function ResearchDetailPanel({
 
       <dl className="mt-4 grid gap-2">
         <ResearchInfoRow label="Category" value={research.lane} />
-        <ResearchInfoRow label="Requirements" value={formatResearchRequirements(requirements)} />
+        <ResearchInfoRow label="Requirements">
+          <RequirementFlairs requirements={requirementStates} />
+        </ResearchInfoRow>
         <ResearchInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
         <ResearchInfoRow
           label="Research time"
@@ -470,11 +474,19 @@ function ResearchDetailPanel({
   );
 }
 
-function ResearchInfoRow({ label, value }: { label: string; value: string }) {
+function ResearchInfoRow({
+  children,
+  label,
+  value,
+}: {
+  children?: ComponentChildren | undefined;
+  label: string;
+  value?: string | undefined;
+}) {
   return (
     <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
       <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
-      <dd className="mt-1 break-words text-sm font-semibold text-slate-200">{value}</dd>
+      <dd className="mt-1 break-words text-sm font-semibold text-slate-200">{children ?? value}</dd>
     </div>
   );
 }
@@ -620,6 +632,16 @@ export function formatResearchRequirements(requirements: ResearchRequirement[]):
   return requirements.length > 0 ? requirements.map(formatRequirement).join(", ") : "None";
 }
 
+export function getResearchRequirementStates(
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  key: ResearchKey,
+): RequirementFlair[] {
+  return researchRequirementsFor(key).map((requirement) => ({
+    label: formatRequirement(requirement),
+    met: researchRequirementMet(state, requirement),
+  }));
+}
+
 export function formatCost(cost: Resources): string {
   const parts: Array<[string, number]> = [
     ["Metal", cost.metal],
@@ -653,4 +675,23 @@ function formatRequirement(requirement: ResearchRequirement): string {
 
   const research = researchCatalog.find((item) => item.key === requirement.key);
   return `${research?.label ?? requirement.key} ${requirement.level}`;
+}
+
+function researchRequirementMet(
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  requirement: ResearchRequirement,
+): boolean {
+  if (requirement.type === "building") {
+    return state.buildings[requirement.key] >= requirement.level;
+  }
+
+  if (requirement.type === "energy") {
+    return energyBalance(
+      state.buildings,
+      state.research.energy,
+      state.ships.solarSatellite,
+    ).produced >= requirement.produced;
+  }
+
+  return state.research[requirement.key] >= requirement.level;
 }
