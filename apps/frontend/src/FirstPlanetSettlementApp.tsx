@@ -6,6 +6,7 @@ import { PlayableMvpApp } from "./PlayableMvpApp";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
+import { detectFarcasterMiniApp, hasMiniAppUrlHint } from "./farcasterReady";
 import {
   createTransactionActionGate,
   transactionAwaitingWalletLabel,
@@ -60,12 +61,29 @@ export function FirstPlanetSettlementApp() {
   const [planet, setPlanet] = useState<PlanetState>({
     kind: "idle"
   });
+  const [miniAppMode, setMiniAppMode] = useState(() => (
+    typeof window !== "undefined" ? hasMiniAppUrlHint(window.location) : false
+  ));
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
   const settlementConfig = settlementConfigState.config;
+
+  useEffect(() => {
+    let disposed = false;
+
+    void detectFarcasterMiniApp().then((detected) => {
+      if (!disposed && detected) {
+        setMiniAppMode(true);
+      }
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -494,6 +512,7 @@ export function FirstPlanetSettlementApp() {
             settlementFunding={settlementFunding}
             settlementReady={settlementContractConfigured(settlementConfig)}
             wallet={wallet}
+            miniAppMode={miniAppMode}
           />
         </div>
 
@@ -527,7 +546,8 @@ function FlowBody({
   planet,
   settlementFunding,
   settlementReady,
-  wallet
+  wallet,
+  miniAppMode
 }: {
   mode: ReturnType<typeof preSettlementMode>;
   onConnect: () => void;
@@ -537,6 +557,7 @@ function FlowBody({
   settlementFunding: SettlementFunding;
   settlementReady: boolean;
   wallet: WalletState;
+  miniAppMode: boolean;
 }) {
   if (mode === "resolving") {
     return <StateMessage tone="scanning" title="Reading wallet link" body="Checking wallet signal and first-planet settlement state." />;
@@ -546,7 +567,9 @@ function FlowBody({
     return (
       <StateMessage
         title="No pilot wallet detected"
-        body="Open the bridge with MetaMask or another injected EVM wallet."
+        body={miniAppMode
+          ? "This Farcaster client does not expose a Base wallet. Open Veydrift in a Farcaster/Base client with wallet support, or use a browser wallet."
+          : "Open the bridge with MetaMask or another injected EVM wallet."}
         action={<PrimaryButton onClick={onConnect}>Check again</PrimaryButton>}
         tone="warning"
       />
@@ -556,9 +579,9 @@ function FlowBody({
   if (mode === "connect") {
     return (
       <StateMessage
-        title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : "Link pilot wallet"}
-        body="Connect a wallet to claim your first home world."
-        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Link wallet</PrimaryButton>}
+        title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : miniAppMode ? "Link Farcaster Wallet" : "Link pilot wallet"}
+        body={miniAppMode ? "Connect Farcaster Wallet to claim your first home world." : "Connect a wallet to claim your first home world."}
+        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>{miniAppMode ? "Connect Farcaster Wallet" : "Link wallet"}</PrimaryButton>}
         tone={wallet.kind === "connecting" ? "scanning" : "ready"}
       />
     );

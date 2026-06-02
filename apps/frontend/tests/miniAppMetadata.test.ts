@@ -6,14 +6,9 @@ import {
   buildMiniAppManifest,
   productionAccountAssociation,
   productionMiniAppSurface,
+  testAccountAssociation,
   testMiniAppSurface,
 } from "../miniAppMetadata";
-
-const testAccountAssociation = {
-  header: "test-header",
-  payload: "eyJkb21haW4iOiJ0ZXN0LnZleWRyaWZ0LmNvbSJ9",
-  signature: "test-signature",
-};
 
 describe("Farcaster Mini App metadata", () => {
   test("keeps production manifest associated with veydrift.com", () => {
@@ -22,6 +17,7 @@ describe("Farcaster Mini App metadata", () => {
     expect(accountAssociationDomain(manifest.accountAssociation)).toBe("veydrift.com");
     expect(manifest.miniapp.homeUrl).toBe("https://veydrift.com");
     expect(manifest.miniapp.canonicalDomain).toBe("veydrift.com");
+    expect(manifest.miniapp.requiredChains).toEqual(["eip155:8453"]);
     expect(manifest.miniapp.noindex).toBe(false);
   });
 
@@ -33,6 +29,7 @@ describe("Farcaster Mini App metadata", () => {
     expect(manifest.miniapp.iconUrl).toBe("https://test.veydrift.com/assets/miniapp/icon.png");
     expect(manifest.miniapp.imageUrl).toBe("https://test.veydrift.com/assets/miniapp/embed.png");
     expect(manifest.miniapp.canonicalDomain).toBe("test.veydrift.com");
+    expect(manifest.miniapp.requiredChains).toEqual(["eip155:84532"]);
     expect(manifest.miniapp.requiredCapabilities).toContain("wallet.getEthereumProvider");
     expect(manifest.miniapp.noindex).toBe(true);
   });
@@ -53,7 +50,7 @@ describe("Farcaster Mini App metadata", () => {
         action: {
           type: "launch_miniapp",
           name: "Veydrift",
-          url: "https://test.veydrift.com",
+          url: "https://test.veydrift.com/?miniApp=true",
           splashImageUrl: "https://test.veydrift.com/assets/miniapp/splash.png",
           splashBackgroundColor: "#05070d",
         },

@@ -12,11 +12,13 @@ export type HtmlEnv = {
   SOCIAL_IMAGE: string;
   MINIAPP_IMAGE: string;
   MINIAPP_SPLASH: string;
+  MINIAPP_LAUNCH_URL: string;
 };
 
 export type MiniAppSurface = HtmlEnv & {
   domain: string;
   noindex: boolean;
+  requiredChains: string[];
 };
 
 export type MiniAppEmbed = {
@@ -68,6 +70,12 @@ export const productionAccountAssociation = {
   signature: "MHJZj2M8IkOKAaSCi0Tdoos8c6amwogZVNbXDuxAFjN8l3nsu3hUttRVfpwKLzvNOJJ/qW6mCXtZ3ViSVp4HkBw=",
 } satisfies AccountAssociation;
 
+export const testAccountAssociation = {
+  header: "eyJmaWQiOjEzNTYsInR5cGUiOiJjdXN0b2R5Iiwia2V5IjoiMHgyYjA5NDUwQ0MxODAxOWQyYzUwNWJCY0VDYjI3NDg1RTA0NjlCQzJjIn0",
+  payload: "eyJkb21haW4iOiJ0ZXN0LnZleWRyaWZ0LmNvbSJ9",
+  signature: "AsIOtgQPs7a4wXZAzJOYozUdm8Uqm+c+W75V2JZIw9Uq2pkBgU7MH+3SyRnawK4YQCfdGWfweh9sQNrsIr0QhBs=",
+} satisfies AccountAssociation;
+
 export const productionMiniAppSurface = {
   PUBLIC_SITE_URL: "https://veydrift.com",
   ROBOTS: "index,follow",
@@ -76,8 +84,12 @@ export const productionMiniAppSurface = {
   SOCIAL_IMAGE: "https://veydrift.com/assets/og-image.jpg",
   MINIAPP_IMAGE: "https://veydrift.com/assets/miniapp/embed.png",
   MINIAPP_SPLASH: "https://veydrift.com/assets/miniapp/splash.png",
+  MINIAPP_LAUNCH_URL: "https://veydrift.com/?miniApp=true",
   domain: "veydrift.com",
   noindex: false,
+  requiredChains: [
+    "eip155:8453",
+  ],
 } satisfies MiniAppSurface;
 
 export const testMiniAppSurface = {
@@ -88,8 +100,12 @@ export const testMiniAppSurface = {
   SOCIAL_IMAGE: "https://test.veydrift.com/assets/miniapp/og-image.jpg",
   MINIAPP_IMAGE: "https://test.veydrift.com/assets/miniapp/embed.png",
   MINIAPP_SPLASH: "https://test.veydrift.com/assets/miniapp/splash.png",
+  MINIAPP_LAUNCH_URL: "https://test.veydrift.com/?miniApp=true",
   domain: "test.veydrift.com",
   noindex: true,
+  requiredChains: [
+    "eip155:84532",
+  ],
 } satisfies MiniAppSurface;
 
 export function miniAppSurfaceForMode(mode: string): MiniAppSurface {
@@ -110,7 +126,7 @@ export function buildMiniAppEmbed(
       action: {
         type: actionType,
         name: "Veydrift",
-        url: surface.PUBLIC_SITE_URL,
+        url: surface.MINIAPP_LAUNCH_URL,
         splashImageUrl: surface.MINIAPP_SPLASH,
         splashBackgroundColor: "#05070d",
       },
@@ -150,9 +166,7 @@ export function buildMiniAppManifest(
       ogTitle: "Veydrift",
       ogDescription: "A new onchain space project is coming soon.",
       ogImageUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/og-image.jpg`,
-      requiredChains: [
-        "eip155:8453",
-      ],
+      requiredChains: surface.requiredChains,
       requiredCapabilities: [
         "wallet.getEthereumProvider",
       ],

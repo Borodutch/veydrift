@@ -101,6 +101,11 @@ describe("walletFlow", () => {
         getEthereumProvider: () => miniAppProvider,
       },
     })).resolves.toBe(miniAppProvider);
+    await expect(getAvailableWalletProvider({}, {
+      wallet: {
+        getEthereumProvider: () => ({ notAProvider: true }) as unknown as Eip1193Provider,
+      },
+    })).resolves.toBeUndefined();
     expect(getInjectedProvider({})).toBeUndefined();
   });
 

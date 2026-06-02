@@ -8,6 +8,7 @@ import {
   buildMiniAppManifest,
   miniAppSurfaceForMode,
   productionAccountAssociation,
+  testAccountAssociation,
   type AccountAssociation,
   type HtmlEnv,
   type MiniAppSurface,
@@ -53,6 +54,7 @@ function htmlEnvDefaults(env: MiniAppSurface): Plugin {
     SOCIAL_IMAGE: env.SOCIAL_IMAGE,
     MINIAPP_IMAGE: env.MINIAPP_IMAGE,
     MINIAPP_SPLASH: env.MINIAPP_SPLASH,
+    MINIAPP_LAUNCH_URL: env.MINIAPP_LAUNCH_URL,
     MINIAPP_EMBED: miniAppEmbed,
     FRAME_EMBED: frameEmbed,
   };
@@ -103,7 +105,5 @@ function accountAssociationForMode(mode: string): AccountAssociation {
     return { header, payload, signature };
   }
 
-  throw new Error(
-    "Missing signed Farcaster accountAssociation for test.veydrift.com. Set VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION as JSON, or set the HEADER, PAYLOAD, and SIGNATURE env vars from the Farcaster Mini App Manifest Tool.",
-  );
+  return testAccountAssociation;
 }
