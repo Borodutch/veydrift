@@ -33,6 +33,7 @@ export type SettlementFundingState = {
 
 export type SettlementTransactionOptions = {
   balanceRead?: "required" | "optional";
+  readProvider?: Eip1193Provider;
 };
 
 export type OnChainResources = {
@@ -469,6 +470,51 @@ export const BASE_SEPOLIA = {
     "https://sepolia.basescan.org"
   ]
 } as const;
+
+export function createJsonRpcProvider(rpcUrl: string): Eip1193Provider {
+  let nextId = 1;
+
+  return {
+    async request<T = unknown>({ method, params }: { method: string; params?: unknown[] }): Promise<T> {
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: nextId++,
+          method,
+          params: params ?? []
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`RPC HTTP ${response.status} while reading ${method}.`);
+      }
+
+      const payload = await response.json() as {
+        result?: T;
+        error?: {
+          code?: number | string;
+          message?: string;
+        };
+      };
+
+      if (payload.error) {
+        const error = new Error(payload.error.message ?? `RPC ${method} failed.`) as Error & {
+          code?: number | string;
+        };
+        if (payload.error.code !== undefined) {
+          error.code = payload.error.code;
+        }
+        throw error;
+      }
+
+      return payload.result as T;
+    }
+  };
+}
 
 const READ_SELECTORS = {
   firstPlanetOf: "0x29147f24",
@@ -1069,13 +1115,14 @@ export async function sendSettlementTransaction(
     throw new Error("Settlement contract address is not configured.");
   }
 
-  const startPrice = await readStartPrice(provider, config.address);
+  const readProvider = options.readProvider ?? provider;
+  const startPrice = await readStartPrice(readProvider, config.address);
   if (startPrice !== undefined) {
     if (config.resourceTokensConfigured === false) {
       throw new Error("Resource token reserves are not configured for this game deployment yet.");
     }
 
-    const balance = await readNativeBalanceForSettlement(provider, account, options);
+    const balance = await readNativeBalanceForSettlement(readProvider, account, options);
     if (balance !== undefined && balance < startPrice) {
       throw new Error(
         `First planet settlement costs ${formatEth(startPrice)} ETH, but this wallet only has ${formatEth(balance)} ETH on Base Sepolia.`
@@ -1117,7 +1164,8 @@ export async function readSettlementFundingState(
     throw new Error("Settlement contract address is not configured.");
   }
 
-  const startPrice = await readStartPrice(provider, config.address);
+  const readProvider = options.readProvider ?? provider;
+  const startPrice = await readStartPrice(readProvider, config.address);
   if (startPrice === undefined) {
     return {
       affordable: true,
@@ -1137,7 +1185,7 @@ export async function readSettlementFundingState(
     };
   }
 
-  const balance = await readNativeBalanceForSettlement(provider, account, options);
+  const balance = await readNativeBalanceForSettlement(readProvider, account, options);
   return {
     affordable: balance === undefined || balance >= startPrice,
     balanceWei: balance ?? null,
