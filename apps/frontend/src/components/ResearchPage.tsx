@@ -1,4 +1,4 @@
-import { useRef, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from "../playableMvp";
 import {
@@ -20,8 +20,11 @@ import {
   InspectDetailHero,
   InspectDetailImage,
   InspectDetailShell,
+  InspectPageHeader,
   InspectInfoRow,
+  InspectTwoColumnLayout,
   SingleItemQueueProgress,
+  useInspectDetailSelection,
 } from "./InspectProgressLayout";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
@@ -89,7 +92,6 @@ export function ResearchPage({
 }: ResearchPageProps) {
   const [localSelectedKey, setLocalSelectedKey] = useState<ResearchKey>("energy");
   const selectedKey = selectedResearchKey ?? localSelectedKey;
-  const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedResearch = researchCatalog.find((research) => research.key === selectedKey)
     ?? researchCatalog[0]!;
   const hideLiveValues = shouldHideResearchValues({
@@ -106,28 +108,16 @@ export function ResearchPage({
     now,
     queue,
   });
-
-  function handleSelectResearch(key: ResearchKey) {
+  const { detailPanelRef, selectInspectItem: handleSelectResearch } = useInspectDetailSelection<ResearchKey>((key) => {
     setLocalSelectedKey(key);
     onSelectResearch?.(key);
-
-    if (window.matchMedia("(max-width: 1279px)").matches) {
-      window.setTimeout(() => {
-        detailPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-      }, 0);
-    }
-  }
+  });
 
   return (
     <div className="grid gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Research</h2>
-          <p className="text-xs text-slate-400">
-            Select a technology to inspect real levels, prerequisites, cost, and on-chain action state.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <InspectPageHeader
+        actions={(
+          <>
           {completionButton && (
             <button
               className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
@@ -145,8 +135,11 @@ export function ResearchPage({
           >
             Refresh
           </button>
-        </div>
-      </div>
+          </>
+        )}
+        description="Select a technology to inspect real levels, prerequisites, cost, and on-chain action state."
+        title="Research"
+      />
 
       <ResearchStatusPanel
         actionState={actionState}
@@ -170,47 +163,45 @@ export function ResearchPage({
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
-        <div className="order-2 grid gap-4 xl:order-1">
-          {researchGroups.map((group) => {
-            const entries = researchCatalog.filter((research) => research.lane === group);
-            return (
-              <section className="grid gap-2" key={group}>
-                <h3 className="text-sm font-semibold uppercase tracking-normal text-slate-400">{group}</h3>
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-3 2xl:grid-cols-4">
-                  {entries.map((research) => {
-                    const status = researchActionStatus({
-                      actionPending: actionState.status === "pending",
-                      canTransact,
-                      chainCost: chainCostFor(researchState, research.id),
-                      error,
-                      key: research.key,
-                      loading,
-                      now,
-                      researchState,
-                      state: viewState,
-                    });
-                    return (
-                      <InspectCatalogTile
-                        asset={research.asset}
-                        currentText={`Level ${status.currentLevel}`}
-                        isDimmed={status.currentLevel === 0}
-                        isSelected={research.key === selectedResearch.key}
-                        key={research.key}
-                        label={research.label}
-                        onClick={() => handleSelectResearch(research.key)}
-                        statusText={status.tileStatus}
-                        statusTone={status.tileStatus === "Locked" ? "warning" : "accent"}
-                      />
-                    );
-                  })}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-
-        <div className="order-1 xl:order-2" ref={detailPanelRef}>
+      <InspectTwoColumnLayout
+        catalog={researchGroups.map((group) => {
+          const entries = researchCatalog.filter((research) => research.lane === group);
+          return (
+            <section className="grid gap-2" key={group}>
+              <h3 className="text-sm font-semibold uppercase tracking-normal text-slate-400">{group}</h3>
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-3 2xl:grid-cols-4">
+                {entries.map((research) => {
+                  const status = researchActionStatus({
+                    actionPending: actionState.status === "pending",
+                    canTransact,
+                    chainCost: chainCostFor(researchState, research.id),
+                    error,
+                    key: research.key,
+                    loading,
+                    now,
+                    researchState,
+                    state: viewState,
+                  });
+                  return (
+                    <InspectCatalogTile
+                      asset={research.asset}
+                      currentText={`Level ${status.currentLevel}`}
+                      isDimmed={status.currentLevel === 0}
+                      isSelected={research.key === selectedResearch.key}
+                      key={research.key}
+                      label={research.label}
+                      onClick={() => handleSelectResearch(research.key)}
+                      statusText={status.tileStatus}
+                      statusTone={status.tileStatus === "Locked" ? "warning" : "accent"}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+        catalogClassName="grid gap-4"
+        detail={(
           <ResearchDetailPanel
             actionPending={actionState.status === "pending"}
             actionPendingLabel={actionState.status === "pending" ? actionState.label : undefined}
@@ -226,8 +217,9 @@ export function ResearchPage({
             researchState={researchState}
             state={viewState}
           />
-        </div>
-      </div>
+        )}
+        detailPanelRef={detailPanelRef}
+      />
         </>
       )}
     </div>
