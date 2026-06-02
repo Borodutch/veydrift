@@ -4,9 +4,11 @@ import {
   ActiveResearchQueueDetail,
   formatCost,
   formatResearchRequirements,
+  getResearchRequirementStates,
   ResearchLoadErrorPanel,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
+import { createInitialPlayableState } from "../src/playableMvp";
 
 describe("Research page load-error display", () => {
   test("formats cumulative costs and requirements with commas", () => {
@@ -62,6 +64,25 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Research request failed with 503");
     expect(text).toContain("Levels, costs, resources, queue state, and requirement-derived values are unavailable");
     expect(text).not.toMatch(/\bLevel 0\b|Research Level 1|Research Lab 1 is required|No resource cost/);
+  });
+
+  test("returns visible met and unmet research requirement states", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        researchLab: 1,
+      },
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        energy: 1,
+      },
+    };
+
+    expect(getResearchRequirementStates(state, "laser")).toEqual([
+      { label: "Research Lab 1", met: true },
+      { label: "Energy Technology 2", met: false },
+    ]);
   });
 
   test("renders active research progress with the shared single-item queue pattern", () => {
