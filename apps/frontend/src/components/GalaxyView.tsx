@@ -37,6 +37,11 @@ const SMALL_CARGO_SHIP_ID = 0;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
 export const PUBLIC_INTEL_SUMMARY_LABEL = "Public intel";
 
+export function formatAllianceLabel(alliance: Planet["alliance"]): string {
+  if (!alliance) return "";
+  return alliance.tag ? `[${alliance.tag}] ${alliance.name}` : alliance.name;
+}
+
 type MissionResources = {
   metal?: number;
   crystal?: number;
@@ -98,7 +103,7 @@ interface Props {
   defenseState?: ChainDefenseState | null | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
-  onOpenAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
 }
@@ -115,7 +120,7 @@ export function GalaxyView({
   defenseState = null,
   shipyardState = null,
   onAction,
-  onOpenAlliance,
+  onSelectAlliance,
   onSelectPlanet,
   onNavigate,
 }: Props) {
@@ -384,7 +389,7 @@ export function GalaxyView({
                   account={account}
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
-                  onOpenAlliance={onOpenAlliance}
+                  onSelectAlliance={onSelectAlliance}
                   onAction={onAction}
                   missionSpeedPercent={missionSpeedPercent}
                   attackProtection={planet?.occupiedBy ? attackProtection[planet.occupiedBy.planetId] : undefined}
@@ -562,9 +567,9 @@ function GalaxySlot({
   shipyardState,
   missionSpeedPercent,
   onAction,
-  onOpenAlliance,
   attackProtection,
   onSelectPlanet,
+  onSelectAlliance,
 }: {
   account: string | undefined;
   actionState: GalaxyActionState;
@@ -579,9 +584,9 @@ function GalaxySlot({
   shipyardState: ChainShipyardState | null;
   missionSpeedPercent: number;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
-  onOpenAlliance: ((allianceId: string) => void) | undefined;
   attackProtection: AttackProtectionStatus | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
+  onSelectAlliance: ((allianceId: string) => void) | undefined;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -643,13 +648,13 @@ function GalaxySlot({
       : planet.ownerId
         ? shortAddress(planet.ownerId)
       : "Unclaimed";
+  const allianceLabel = formatAllianceLabel(planet.alliance);
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
   const moonChanceLabel = formatMoonChanceLabel(planet.moonChance);
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
   const attackRuleLabels = formatAttackRuleLabels(attackProtection);
-  const allianceLabel = formatAllianceLabel(planet.alliance);
 
   return (
     <div
@@ -661,15 +666,14 @@ function GalaxySlot({
     >
       <SlotNumber position={position} />
 
-      <div className="flex min-w-0 items-center gap-3 text-left">
-        <button
-          aria-label={`Inspect ${planet.name}`}
-          className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
+      <button
+        className="flex min-w-0 items-center gap-3 text-left"
+        onClick={() => onSelectPlanet(coords)}
+        type="button"
+      >
+        <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
           isHome ? "border-cyan-300/35" : "border-white/15"
-        }`}
-          onClick={() => onSelectPlanet(coords)}
-          type="button"
-        >
+        }`}>
           {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
           <OptimizedImage
             key={planet.image}
@@ -683,17 +687,13 @@ function GalaxySlot({
             sizes="icon"
             src={planet.image}
           />
-        </button>
+        </div>
 
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <button
-              className="truncate text-left text-sm font-semibold text-white group-hover:text-signal"
-              onClick={() => onSelectPlanet(coords)}
-              type="button"
-            >
+            <span className="truncate text-sm font-semibold text-white group-hover:text-signal">
               {planet.name}
-            </button>
+            </span>
             {isHome ? (
               <span className="rounded border border-cyan-300/35 bg-cyan-300/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-100">
                 Home
@@ -704,21 +704,6 @@ function GalaxySlot({
             <span>{formatGalaxyHeatLabel(planet.temperature)}</span>
             <span className="text-slate-700">/</span>
             <span>{planet.fields} fields</span>
-            {allianceLabel ? (
-              <>
-                <span className="text-slate-700">/</span>
-                <button
-                  className="max-w-full truncate rounded border border-cyan-300/25 bg-cyan-300/10 px-1.5 py-0.5 text-left text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-200/45 hover:bg-cyan-300/20"
-                  onClick={() => {
-                    if (planet.alliance) onOpenAlliance?.(planet.alliance.allianceId);
-                  }}
-                  title={`Open ${allianceLabel}`}
-                  type="button"
-                >
-                  {allianceLabel}
-                </button>
-              </>
-            ) : null}
             {planet.hasMoon ? (
               <>
                 <span className="text-slate-700">/</span>
@@ -751,10 +736,21 @@ function GalaxySlot({
             ) : null}
           </div>
         </div>
-      </div>
+      </button>
 
-      <div className={`hidden justify-self-end text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
-        {ownerLabel}
+      <div className={`hidden justify-self-end text-right text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
+        <div>{ownerLabel}</div>
+        {planet.alliance ? (
+          <button
+            className="mt-1 text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
+            disabled={!onSelectAlliance}
+            onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
+            title={`Open ${allianceLabel}`}
+            type="button"
+          >
+            {allianceLabel}
+          </button>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap justify-end gap-1.5">
@@ -862,14 +858,6 @@ export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string 
   if (moonChance.status === "moon_destroyed") return "Moon destroyed";
   if (moonChance.status === "moon_survived") return "Moon survived";
   return "Existing moon skipped";
-}
-
-export function formatAllianceLabel(alliance: Planet["alliance"]): string | null {
-  if (!alliance) return null;
-  if (alliance.tag && alliance.name) return `[${alliance.tag}] ${alliance.name}`;
-  if (alliance.tag) return `[${alliance.tag}]`;
-  if (alliance.name) return alliance.name;
-  return `Alliance #${alliance.allianceId}`;
 }
 
 function formatMissionClock(timestamp: number): string {
