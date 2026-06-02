@@ -5,8 +5,13 @@ import {
   loadWalletPlanetSyncSnapshot,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
+  researchStartTransactionLabel,
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
+import {
+  infrastructureFinishButtonLabel,
+  infrastructureUpgradeButtonLabel,
+} from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { ChainInfrastructureState } from "../src/walletFlow";
 
@@ -16,6 +21,30 @@ describe("Playable MVP app display helpers", () => {
       status: "pending",
       label: "Waiting for wallet confirmation",
     })).toBeUndefined();
+  });
+
+  test("keeps pending infrastructure copy out of unavailable and button labels", () => {
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: {
+        status: "pending",
+        label: "Building completion: awaiting wallet",
+      },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState(),
+      infrastructureLoading: false,
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
+      onChainStatus: "ready",
+      runtimeConfigStatus: "ready",
+    })).toBeUndefined();
+
+    expect(infrastructureUpgradeButtonLabel({
+      binary: false,
+      defaultLabel: "Upgrade Level 2",
+      statusDisabled: true,
+    })).toBe("Upgrade Level 2");
+    expect(infrastructureFinishButtonLabel(undefined, false)).toBe("Finish upgrade");
   });
 
   test("keeps terminal infrastructure action notices visible", () => {
@@ -146,6 +175,21 @@ describe("Playable MVP app display helpers", () => {
       isWalletConnected: true,
       settledState,
     })).toBeUndefined();
+  });
+
+  test("names research start confirmations with technology label and target level", () => {
+    expect(researchStartTransactionLabel(0, "energy", {
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      resources: { metal: "1000", crystal: "2000", deuterium: "1000" },
+      researchLabLevel: 1,
+      researchNetworkLabLevels: [],
+      technologyLevels: { "0": 1 },
+      technologies: [
+        { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
+      ],
+      queue: null,
+    })).toBe("Energy Technology level 2 research");
   });
 
   test("does not replace loaded infrastructure action reasons while background refreshes run", () => {

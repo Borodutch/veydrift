@@ -18,6 +18,7 @@ import {
   fetchHighscores,
   fetchInfrastructureState,
   fetchMoonState,
+  fetchResearchState,
   fetchShipyardState,
   fetchWalletSettlement,
   fetchWalletQueues,
@@ -1327,6 +1328,8 @@ describe("walletFlow", () => {
       await fetchMoonState("https://api.example.test", account, "7");
       await fetchMoonState("https://api.example.test", account, "7", { source: "live" });
       await fetchMoonState("https://api.example.test", account, "8:37:9");
+      await fetchResearchState("https://api.example.test", account, "7");
+      await fetchResearchState("https://api.example.test", account, "7", { source: "live" });
       await fetchFleetMissionVisibility("https://api.example.test", account, { source: "live" });
       await fetchShipyardState("https://api.example.test", account, "4");
       await fetchShipyardState("https://api.example.test", account, "8:37:9");
@@ -1393,6 +1396,22 @@ describe("walletFlow", () => {
       },
       {
         url: `https://api.example.test/wallet/${account}/moon`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/research?planetId=7`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/research?planetId=7&source=live`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },

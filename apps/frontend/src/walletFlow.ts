@@ -2187,8 +2187,8 @@ export async function fetchDefenseState(apiUrl: string, wallet: string, planetId
   return fetchWalletJson<ChainDefenseState>(apiUrl, wallet, withPlanetId("defenses", planetId), "Defenses");
 }
 
-export async function fetchResearchState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainResearchState> {
-  return fetchWalletJson<ChainResearchState>(apiUrl, wallet, withPlanetId("research", planetId), "Research");
+export async function fetchResearchState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainResearchState> {
+  return fetchWalletJson<ChainResearchState>(apiUrl, wallet, withWalletReadOptions("research", planetId, options), "Research");
 }
 
 export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainRiftState> {
