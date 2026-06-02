@@ -512,6 +512,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/highscores") {
+      const startedAt = Date.now();
       try {
         const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 250);
         let planetsByOwner: Map<string, SettledPlanetEvent[]>;
@@ -519,7 +520,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         let source: "contract-state-indexer" | "live-chain-reader";
 
         if (indexer) {
-          await ensurePlanetIndex(indexer);
+          const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
+          if (indexNotReady) return indexNotReady;
           planetsByOwner = indexer.settledPlanetsByOwner();
           entries = indexer.highscoreEntriesForOwners(planetsByOwner);
           source = "contract-state-indexer";
@@ -538,6 +540,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return Response.json(
           {
             generatedAt: new Date().toISOString(),
+            durationMs: Date.now() - startedAt,
             formula: highscoreFormula,
             rankings,
             source
@@ -1335,6 +1338,26 @@ function highscoreFailureResponse(error: unknown): Response {
   }
 
   return errorResponse(error, 400);
+}
+
+function highscoreIndexNotReadyResponse(indexer: SettlementIndexer, startedAt: number): Response | null {
+  const snapshot = indexer.snapshot();
+  if (snapshot.indexedState === "healthy" && snapshot.lastRebuiltAt) return null;
+
+  return Response.json(
+    {
+      error: "highscores_index_not_ready",
+      detail: "Rankings are warming from indexed game state.",
+      durationMs: Date.now() - startedAt,
+      indexer: snapshot,
+      retryable: true,
+      source: "contract-state-indexer"
+    },
+    {
+      headers: corsHeaders,
+      status: 503
+    }
+  );
 }
 
 function isRpcTransportError(error: unknown): boolean {

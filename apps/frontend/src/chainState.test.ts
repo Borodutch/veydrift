@@ -152,7 +152,7 @@ describe("chainState", () => {
     expect(progress(queue, halfway)).toBe(0.5);
   });
 
-  test("falls back to the render clock when active research startedAt is missing", () => {
+  test("does not synthesize active research progress when startedAt is missing", () => {
     const readyAtSeconds = 1_700_000_600;
     const now = 1_700_000_300_000;
     const queue = researchQueueForDisplay({
@@ -164,11 +164,7 @@ describe("chainState", () => {
       cost: { metal: "0", crystal: "1600", deuterium: "800" },
     }, now);
 
-    expect(queue).toMatchObject({
-      readyAt: readyAtSeconds * 1_000,
-      startedAt: now,
-    });
-    expect(progress(queue, now)).toBe(0);
+    expect(queue).toBeUndefined();
   });
 
   test("uses Nanite Factory level when estimating active building queue progress without startedAt", () => {

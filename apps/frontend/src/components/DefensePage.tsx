@@ -138,7 +138,8 @@ export function DefensePage({
                       queueBlocker: getQueueBlocker(defense.id, queue),
                       resources,
                     });
-                    const disabled = Boolean(blockedReason) || actionState.status === "pending";
+                    const actionPending = actionState.status === "pending";
+                    const disabled = Boolean(blockedReason) || actionPending;
                     const queued = queuedDefenseCount(defense.id, queue);
 
                     return (
@@ -147,6 +148,7 @@ export function DefensePage({
                         cost={totalCost}
                         defense={defense}
                         disabled={disabled}
+                        buttonLabel={actionPending ? "Pending" : undefined}
                         key={defense.key}
                         missing={missing}
                         onBuild={() => onBuild(defense.id, defense.key, quantity)}
@@ -263,6 +265,7 @@ function ActiveDefenseQueuePanel({
 
 function DefenseTile({
   blockedReason,
+  buttonLabel,
   cost,
   defense,
   disabled,
@@ -275,6 +278,7 @@ function DefenseTile({
   requirementStates,
 }: {
   blockedReason: string | undefined;
+  buttonLabel?: string | undefined;
   cost: Resources | undefined;
   defense: (typeof defenseCatalog)[number];
   disabled: boolean;
@@ -287,7 +291,7 @@ function DefenseTile({
   requirementStates: DefenseRequirementState[];
 }) {
   const thumbnailFrame = missileThumbnailFrames[defense.key];
-  const buttonLabel = queued > 0 ? "Add" : "Build";
+  const resolvedButtonLabel = buttonLabel ?? (queued > 0 ? "Add" : "Build");
 
   return (
     <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
@@ -343,7 +347,7 @@ function DefenseTile({
             onClick={onBuild}
             type="button"
           >
-            {buttonLabel}
+            {resolvedButtonLabel}
           </button>
           {blockedReason && <span className="text-xs text-slate-500">{blockedReason}</span>}
         </div>
