@@ -13,6 +13,11 @@ const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 export type ProductionRequirementState = RequirementFlair;
 
+export type ProductionDetailStat = {
+  label: string;
+  value: string;
+};
+
 export type ProductionCatalogItem<Key extends string = string> = {
   key: Key;
   id: number;
@@ -34,6 +39,8 @@ export type ProductionCatalogItem<Key extends string = string> = {
   disabled: boolean;
   actionLabel: string;
   detailNote: string;
+  description?: string | undefined;
+  detailStats?: ProductionDetailStat[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
 
@@ -268,6 +275,21 @@ function SelectedProductionPanel<Key extends string>({
           <p className="mt-1 text-xs text-slate-400">{item.detailNote}</p>
         </div>
       </div>
+
+      {item.description ? (
+        <p className="text-sm leading-6 text-slate-300">{item.description}</p>
+      ) : null}
+
+      {item.detailStats?.length ? (
+        <div className="grid gap-2">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Ship specs</h4>
+          <dl className="grid grid-cols-2 gap-2 text-xs">
+            {item.detailStats.map((stat) => (
+              <Stat label={stat.label} value={stat.value} key={stat.label} />
+            ))}
+          </dl>
+        </div>
+      ) : null}
 
       <dl className="grid grid-cols-2 gap-2 text-xs">
         <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />

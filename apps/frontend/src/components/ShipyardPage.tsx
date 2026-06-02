@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
-import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate } from "../playableMvp";
+import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
 import {
   Notice,
@@ -228,6 +228,8 @@ export function shipProductionItems({
       countLabel: "Owned",
       countValue: owned,
       detailNote: stats || "Production unit",
+      description: ship.description,
+      detailStats: shipSpecRows(ship),
       disabled,
       durationSeconds,
       group: ship.group,
