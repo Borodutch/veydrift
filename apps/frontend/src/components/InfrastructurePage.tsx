@@ -1,6 +1,6 @@
 import { Info, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
   buildingCatalog,
@@ -29,7 +29,10 @@ import {
   InspectDetailImage,
   InspectDetailShell,
   InspectInfoBlock,
+  InspectPageHeader,
+  InspectTwoColumnLayout,
   SingleItemQueueProgress,
+  useInspectDetailSelection,
 } from "./InspectProgressLayout";
 import { OptimizedImage } from "./OptimizedImage";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
@@ -77,6 +80,7 @@ interface InfrastructurePageProps {
   actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
+  hasLoadedInfrastructureState?: boolean | undefined;
   isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   loadError?: string | undefined;
@@ -96,6 +100,7 @@ export function InfrastructurePage({
   actionPendingLabel,
   actionUnavailableReason,
   chainCosts,
+  hasLoadedInfrastructureState = false,
   isActionPending = false,
   isBuildingReadyToFinish,
   loadError,
@@ -110,47 +115,36 @@ export function InfrastructurePage({
 }: InfrastructurePageProps) {
   const [localSelectedKey, setLocalSelectedKey] = useState<BuildingKey>("metalMine");
   const selectedKey = selectedBuildingKey ?? localSelectedKey;
-  const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedBuilding = buildingCatalog.find((building) => building.key === selectedKey)
     ?? buildingCatalog[0]!;
+  const showInitialLoadError = shouldShowInfrastructureInitialLoadError({
+    hasLoadedInfrastructureState,
+    loadError,
+  });
+  const initialLoadError = showInitialLoadError ? loadError : undefined;
 
-  function handleSelectBuilding(key: BuildingKey) {
+  const { detailPanelRef, selectInspectItem: handleSelectBuilding } = useInspectDetailSelection<BuildingKey>((key) => {
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
+  });
 
-    if (window.matchMedia("(max-width: 1279px)").matches) {
-      window.setTimeout(() => {
-        detailPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-      }, 0);
-    }
-  }
-
-  if (loadError) {
+  if (initialLoadError) {
     return (
       <div className="grid gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-white">Infrastructure</h2>
-            <p className="text-xs text-slate-400">
-              Building levels and production are hidden until live infrastructure state loads.
-            </p>
-          </div>
-        </div>
-        <InfrastructureLoadErrorPanel reason={loadError} />
+        <InspectPageHeader
+          description="Building levels and production are hidden until live infrastructure state loads."
+          title="Infrastructure"
+        />
+        <InfrastructureLoadErrorPanel reason={initialLoadError} />
       </div>
     );
   }
 
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-white">Infrastructure</h2>
-          <p className="text-xs text-slate-400">
-            Select a building to inspect real production, power, cost, and upgrade timing.
-          </p>
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <InspectPageHeader
+        actions={(
+          <>
           {settledState.queue?.kind === "building" ? (
             <ActiveBuildingBadge
               asset={buildingQueueAsset(settledState.queue.key)}
@@ -167,35 +161,37 @@ export function InfrastructurePage({
               Finish upgrade
             </button>
           ) : null}
-        </div>
-      </div>
+          </>
+        )}
+        description="Select a building to inspect real production, power, cost, and upgrade timing."
+        title="Infrastructure"
+      />
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
-        <div className="order-2 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:order-1 xl:grid-cols-3 2xl:grid-cols-4">
-          {buildingCatalog.map((building) => {
-            const currentLevel = settledState.buildings[building.key];
-            const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
-            const isSelected = building.key === selectedBuilding.key;
-            const missingRequirement = unmetBuildingRequirement(settledState, building.key);
-            const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
+      {loadError ? <InfrastructureRefreshErrorPanel reason={loadError} /> : null}
 
-            return (
-              <InspectCatalogTile
-                asset={building.asset}
-                currentText={buildingStatusText(building.label, currentLevel)}
-                isDimmed={currentLevel === 0}
-                isSelected={isSelected}
-                key={building.key}
-                label={building.label}
-                statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : compactEffect(effect)}
-                statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
-                onClick={() => handleSelectBuilding(building.key)}
-              />
-            );
-          })}
-        </div>
+      <InspectTwoColumnLayout
+        catalog={buildingCatalog.map((building) => {
+          const currentLevel = settledState.buildings[building.key];
+          const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
+          const isSelected = building.key === selectedBuilding.key;
+          const missingRequirement = unmetBuildingRequirement(settledState, building.key);
+          const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
 
-        <div className="order-1 xl:order-2" ref={detailPanelRef}>
+          return (
+            <InspectCatalogTile
+              asset={building.asset}
+              currentText={buildingStatusText(building.label, currentLevel)}
+              isDimmed={currentLevel === 0}
+              isSelected={isSelected}
+              key={building.key}
+              label={building.label}
+              statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : compactEffect(effect)}
+              statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
+              onClick={() => handleSelectBuilding(building.key)}
+            />
+          );
+        })}
+        detail={(
           <BuildingDetailPanel
             actionNotice={actionNoticeForBuilding(actionNotice, selectedBuilding.key)}
             actionPendingLabel={actionPendingLabel}
@@ -211,10 +207,21 @@ export function InfrastructurePage({
             planetProductionProfile={planetProductionProfile}
             state={settledState}
           />
-        </div>
-      </div>
+        )}
+        detailPanelRef={detailPanelRef}
+      />
     </div>
   );
+}
+
+export function shouldShowInfrastructureInitialLoadError({
+  hasLoadedInfrastructureState,
+  loadError,
+}: {
+  hasLoadedInfrastructureState: boolean;
+  loadError?: string | undefined;
+}): boolean {
+  return Boolean(loadError && !hasLoadedInfrastructureState);
 }
 
 export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
@@ -226,6 +233,17 @@ export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
       </p>
       <p className="mt-3 text-xs text-rose-100/70">
         Levels, costs, production effects, storage caps, and upgrade values are unavailable until the live state request succeeds.
+      </p>
+    </div>
+  );
+}
+
+export function InfrastructureRefreshErrorPanel({ reason }: { reason: string }) {
+  return (
+    <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+      <p className="font-semibold">Infrastructure refresh failed.</p>
+      <p className="mt-1 text-amber-100/80">
+        Showing the last loaded building data. {reason}
       </p>
     </div>
   );

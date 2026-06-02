@@ -89,6 +89,12 @@ describe("Shipyard page display helpers", () => {
       actionLabel: "Build",
       countLabel: "Owned",
       countValue: 4,
+      description: expect.stringContaining("freighter"),
+      detailStats: expect.arrayContaining([
+        { label: "Structure", value: "400" },
+        { label: "Cargo", value: "5,000" },
+        { label: "Fuel use", value: "10" },
+      ]),
       quantity: 3,
       status: "ready",
     });
