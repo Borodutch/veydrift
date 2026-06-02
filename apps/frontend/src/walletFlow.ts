@@ -374,6 +374,11 @@ export type ChainAllianceState = {
     allianceId: string;
     requester: string;
     requesterDisplayName?: string | null;
+    requesterMembership?: {
+      allianceId: string;
+      role: AllianceRole;
+      joinedAt: string;
+    };
     requestedAt: string;
   }>;
   members: Array<{
@@ -671,6 +676,22 @@ export function validatePlayerDisplayName(value: string): string | undefined {
 
 export function playerDisplayLabel(profile: PlayerProfile | null | undefined, wallet: string | null | undefined): string {
   return profile?.displayName ?? profile?.fallbackName ?? (wallet ? shortAddress(wallet) : "Unnamed player");
+}
+
+export function mergePlayerProfile(
+  current: PlayerProfile | undefined,
+  next: PlayerProfile | undefined
+): PlayerProfile | undefined {
+  if (!next) return current;
+  if (!current?.displayName) return next;
+  if (current.wallet.toLowerCase() !== next.wallet.toLowerCase()) return next;
+  if (next.displayName?.trim()) return next;
+
+  return {
+    ...next,
+    displayName: current.displayName,
+    updatedAt: current.updatedAt ?? next.updatedAt,
+  };
 }
 
 export function settlementContractConfigured(config: SettlementConfig): config is SettlementConfig & { address: string } {

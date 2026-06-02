@@ -18,6 +18,7 @@ import {
   fetchHighscores,
   fetchInfrastructureState,
   fetchMoonState,
+  fetchPlayerProfile,
   fetchResearchState,
   fetchShipyardState,
   fetchWalletSettlement,
@@ -25,6 +26,7 @@ import {
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
+  mergePlayerProfile,
   parseRiftTokenAmount,
   readSettlementFundingState,
   readSettlementState,
@@ -87,6 +89,39 @@ describe("walletFlow", () => {
 
     expect(getInjectedProvider({ ethereum: provider })).toBe(provider);
     expect(getInjectedProvider({})).toBeUndefined();
+  });
+
+  test("keeps a known commander name over fallback-only profile refreshes for the same wallet", () => {
+    expect(mergePlayerProfile({
+      wallet: account,
+      displayName: "Nova Prime",
+      fallbackName: "0x1111...1111",
+      updatedAt: "2026-06-02T00:00:00.000Z"
+    }, {
+      wallet: account.toUpperCase(),
+      displayName: null,
+      fallbackName: "0x1111...1111",
+      updatedAt: null
+    })).toEqual({
+      wallet: account.toUpperCase(),
+      displayName: "Nova Prime",
+      fallbackName: "0x1111...1111",
+      updatedAt: "2026-06-02T00:00:00.000Z"
+    });
+  });
+
+  test("allows unnamed commander fallback when no display name is known", () => {
+    expect(mergePlayerProfile(undefined, {
+      wallet: account,
+      displayName: null,
+      fallbackName: "0x1111...1111",
+      updatedAt: null
+    })).toEqual({
+      wallet: account,
+      displayName: null,
+      fallbackName: "0x1111...1111",
+      updatedAt: null
+    });
   });
 
   test("encodes address calls and settle transaction data", () => {
@@ -1460,6 +1495,35 @@ describe("walletFlow", () => {
       await expect(fetchShipyardState("https://api.example.test", account, "4")).rejects.toThrow(
         "Shipyard API failed: 400: planetId must be a positive integer."
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches the canonical player profile for a wallet", async () => {
+    const originalFetch = globalThis.fetch;
+    const profile = {
+      wallet: account.toLowerCase(),
+      displayName: "borodutch",
+      fallbackName: "0x1111...1111",
+      updatedAt: "2026-06-02T13:00:00.000Z",
+    };
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe(`https://api.example.test/wallet/${account}/profile`);
+      expect(init).toEqual({
+        cache: "no-store",
+        headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
+      });
+      return new Response(JSON.stringify(profile), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchPlayerProfile("https://api.example.test///", account)).resolves.toEqual(profile);
     } finally {
       globalThis.fetch = originalFetch;
     }

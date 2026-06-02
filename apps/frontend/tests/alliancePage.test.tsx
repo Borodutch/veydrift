@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allianceJoinRequestApprovalState,
   hasAllianceMembership,
   shouldShowAllianceInitialLoader,
   shouldShowAllianceRefreshIndicator,
@@ -59,6 +60,53 @@ describe("AlliancePage loading display", () => {
   test("detects active alliance membership", () => {
     expect(hasAllianceMembership(memberAllianceState())).toBe(true);
   });
+
+  test("keeps valid join applicants approvable while blocking stale ineligible applicants", () => {
+    const state = memberAllianceState();
+    const validRequest = joinRequest("0x3333333333333333333333333333333333333333", {
+      allianceId: "0",
+      role: "none",
+      joinedAt: "0",
+    });
+    const alreadyJoinedElsewhere = joinRequest("0x4444444444444444444444444444444444444444", {
+      allianceId: "8",
+      role: "member",
+      joinedAt: "1770000010",
+    });
+    const alreadyInRoster = joinRequest("0x2222222222222222222222222222222222222222", {
+      allianceId: "7",
+      role: "owner",
+      joinedAt: "1770000000",
+    });
+
+    expect(allianceJoinRequestApprovalState(state, validRequest)).toEqual({
+      canApprove: true,
+      reason: null,
+    });
+    expect(allianceJoinRequestApprovalState(state, alreadyJoinedElsewhere)).toEqual({
+      canApprove: false,
+      reason: "Applicant already joined another alliance.",
+    });
+    expect(allianceJoinRequestApprovalState(state, alreadyInRoster)).toEqual({
+      canApprove: false,
+      reason: "Applicant is already in this alliance.",
+    });
+  });
+
+  test("blocks join approvals for non-officer viewers", () => {
+    const state = memberAllianceState({
+      membership: {
+        allianceId: "7",
+        joinedAt: "1770000000",
+        role: "member",
+      },
+    });
+
+    expect(allianceJoinRequestApprovalState(state, joinRequest("0x3333333333333333333333333333333333333333"))).toEqual({
+      canApprove: false,
+      reason: "Only officers and owners can approve applications.",
+    });
+  });
 });
 
 function unaffiliatedAllianceState(): ChainAllianceState {
@@ -72,7 +120,7 @@ function unaffiliatedAllianceState(): ChainAllianceState {
   });
 }
 
-function memberAllianceState(): ChainAllianceState {
+function memberAllianceState(overrides: Partial<ChainAllianceState> = {}): ChainAllianceState {
   return allianceState({
     membership: {
       allianceId: "7",
@@ -100,7 +148,24 @@ function memberAllianceState(): ChainAllianceState {
         role: "owner",
       },
     ],
+    ...overrides,
   });
+}
+
+function joinRequest(
+  requester: string,
+  requesterMembership = {
+    allianceId: "0",
+    role: "none" as const,
+    joinedAt: "0",
+  }
+): ChainAllianceState["allianceJoinRequests"][number] {
+  return {
+    allianceId: "7",
+    requester,
+    requesterMembership,
+    requestedAt: "1770000001",
+  };
 }
 
 function allianceState(overrides: Partial<ChainAllianceState> = {}): ChainAllianceState {
