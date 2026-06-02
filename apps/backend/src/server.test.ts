@@ -681,6 +681,14 @@ describe("Veydrift backend", () => {
         gameContractConfigured: false
       },
       configured: false,
+      readiness: {
+        ready: false,
+        configurationReady: false,
+        chainSyncConnected: null,
+        subscribedToLogs: null,
+        indexedState: null,
+        safeToServeIndexedState: null
+      },
       chainSync: null,
       indexer: null,
       missionResolution: null,
