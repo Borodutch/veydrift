@@ -29,6 +29,8 @@ import {
 import {
   planetRecordStatusLabel,
   publicCommanderRows,
+  publicPlanetDataRows,
+  publicProductionRows,
   publicSignalRows
 } from "../src/components/PlanetDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
@@ -232,7 +234,7 @@ describe("tester universe display data", () => {
     })).toBe(false);
   });
 
-  test("planet detail public records replace indexed-universe jargon", () => {
+  test("planet detail public records show useful public planet data", () => {
     const [planet] = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
@@ -272,13 +274,28 @@ describe("tester universe display data", () => {
       "Player: 0x2222...2222",
       "Planet ID: #7",
     ]);
-    expect(publicSignalRows(planet).map((row) => `${row.label}: ${row.value}`)).toContain("Debris: 40,000 metal / 15,000 crystal");
-    expect(publicSignalRows(planet).map((row) => `${row.label}: ${row.value}`)).toContain("Moon signal: Moon chance 15% pending");
+    expect(publicPlanetDataRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual([
+      "Coordinates: [2:44:8]",
+      "Type: Cold Tundra",
+      "Fields: 211",
+      "Diameter: 15,192 km",
+      "Temperature: -28°C to 12°C",
+      "Debris: 40,000 metal / 15,000 crystal",
+      "Moon signal: Moon chance 15% pending",
+    ]);
+    expect(publicSignalRows(planet)).toEqual(publicPlanetDataRows(planet));
+    expect(publicProductionRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual([
+      "Metal: 100%",
+      "Crystal: 100%",
+      "Deuterium: 100%",
+      "Solar satellite: 25 energy",
+    ]);
 
     const copy = [
       planetRecordStatusLabel(planet, "api", false),
       ...publicCommanderRows(planet, false).map((row) => row.value),
-      ...publicSignalRows(planet).map((row) => row.value),
+      ...publicPlanetDataRows(planet).map((row) => row.value),
+      ...publicProductionRows(planet).map((row) => row.value),
     ].join(" ");
     expect(copy).not.toMatch(/\b(indexed|indexer|backend|universe data|OGame|ogame)\b/i);
   });

@@ -27,17 +27,9 @@ describe("Infrastructure page display helpers", () => {
   });
 
   test("keeps loaded infrastructure values visible when a background refresh fails", () => {
-    const loadedState = {
-      ...createInitialPlayableState(1_000),
-      buildings: {
-        ...createInitialPlayableState(1_000).buildings,
-        metalMine: 1,
-      },
-    };
-
     expect(shouldShowInfrastructureInitialLoadError({
+      hasLoadedInfrastructureState: true,
       loadError: "Infrastructure request failed with 503",
-      state: loadedState,
     })).toBe(false);
 
     const panel = InfrastructureRefreshErrorPanel({
@@ -52,8 +44,8 @@ describe("Infrastructure page display helpers", () => {
 
   test("keeps initial infrastructure load failures in the full load-error state", () => {
     expect(shouldShowInfrastructureInitialLoadError({
+      hasLoadedInfrastructureState: false,
       loadError: "Infrastructure request failed with 503",
-      state: createInitialPlayableState(1_000),
     })).toBe(true);
   });
 

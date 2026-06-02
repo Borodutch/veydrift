@@ -287,7 +287,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (hasWarmPlanetIndex(indexer)) {
+        if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
           return Response.json(withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet), {
             headers: corsHeaders
           });
@@ -306,7 +306,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (hasWarmPlanetIndex(indexer)) {
+        if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
           return Response.json(withPlayerProfile(indexer.walletPlanets(wallet), indexer, wallet), {
             headers: corsHeaders
           });

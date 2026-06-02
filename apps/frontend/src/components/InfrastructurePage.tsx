@@ -77,6 +77,7 @@ interface InfrastructurePageProps {
   actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
+  hasLoadedInfrastructureState?: boolean | undefined;
   isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   loadError?: string | undefined;
@@ -96,6 +97,7 @@ export function InfrastructurePage({
   actionPendingLabel,
   actionUnavailableReason,
   chainCosts,
+  hasLoadedInfrastructureState = false,
   isActionPending = false,
   isBuildingReadyToFinish,
   loadError,
@@ -114,8 +116,8 @@ export function InfrastructurePage({
   const selectedBuilding = buildingCatalog.find((building) => building.key === selectedKey)
     ?? buildingCatalog[0]!;
   const showInitialLoadError = shouldShowInfrastructureInitialLoadError({
+    hasLoadedInfrastructureState,
     loadError,
-    state: settledState,
   });
   const initialLoadError = showInitialLoadError ? loadError : undefined;
 
@@ -225,18 +227,13 @@ export function InfrastructurePage({
 }
 
 export function shouldShowInfrastructureInitialLoadError({
+  hasLoadedInfrastructureState,
   loadError,
-  state,
 }: {
+  hasLoadedInfrastructureState: boolean;
   loadError?: string | undefined;
-  state: PlayableState;
 }): boolean {
-  return Boolean(loadError && !hasVisibleInfrastructureState(state));
-}
-
-function hasVisibleInfrastructureState(state: PlayableState): boolean {
-  return state.queue?.kind === "building"
-    || Object.values(state.buildings).some((level) => level > 0);
+  return Boolean(loadError && !hasLoadedInfrastructureState);
 }
 
 export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
