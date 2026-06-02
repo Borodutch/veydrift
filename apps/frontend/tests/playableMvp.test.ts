@@ -23,6 +23,7 @@ import {
   shipDurationEstimate,
   shipCatalog,
   shipCombatStats,
+  shipSpecRows,
   storageCaps,
   unmetResearchRequirement,
 } from "../src/playableMvp";
@@ -186,6 +187,22 @@ describe("playable MVP contract display helpers", () => {
       expect.objectContaining({ label: "Cargo", value: 1_500 }),
     ]);
     expect(shipCombatStats(solarSatellite).notes[0]).toContain("Cannot be assigned to fleet missions");
+  });
+
+  test("derives classic ship spec rows for Shipyard display", () => {
+    const recycler = shipCatalog.find((ship) => ship.key === "recycler")!;
+    const solarSatellite = shipCatalog.find((ship) => ship.key === "solarSatellite")!;
+
+    expect(shipSpecRows(recycler)).toEqual([
+      { label: "Structure", value: "1,600" },
+      { label: "Shield", value: "10" },
+      { label: "Attack", value: "1" },
+      { label: "Cargo", value: "20,000" },
+      { label: "Base speed", value: "2,000" },
+      { label: "Fuel use", value: "300" },
+    ]);
+    expect(shipSpecRows(solarSatellite)).toContainEqual({ label: "Base speed", value: "Stationary" });
+    expect(shipSpecRows(solarSatellite)).toContainEqual({ label: "Fuel use", value: "None" });
   });
 
   test("maps the Solidity defense catalog for Defenses display", () => {
