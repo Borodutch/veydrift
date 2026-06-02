@@ -99,6 +99,8 @@ import {
   fetchWalletPlanets,
   fetchFleetMissionVisibility,
   fetchAllianceState,
+  fetchPlayerProfile,
+  mergePlayerProfile,
   sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
@@ -606,7 +608,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [page, setPage] = useState<Page>("overview");
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
   const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
-  const [playerProfileOverride, setPlayerProfileOverride] = useState<PlayerProfile | undefined>();
+  const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
   const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
@@ -707,12 +709,29 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
-  const playerProfile = playerProfileOverride ?? onChainSettlement?.player;
 
   useEffect(() => {
-    setPlayerProfileOverride(undefined);
+    setPlayerProfile(undefined);
     setPlayerProfileAction({ status: "idle" });
   }, [account]);
+
+  const refreshPlayerProfile = useCallback(async () => {
+    if (!apiBaseUrl || !account) {
+      setPlayerProfile(undefined);
+      return;
+    }
+
+    try {
+      const profile = await fetchPlayerProfile(apiBaseUrl, account);
+      setPlayerProfile((current) => mergePlayerProfile(current, profile));
+    } catch (error) {
+      console.error(error);
+    }
+  }, [account, apiBaseUrl]);
+
+  useEffect(() => {
+    void refreshPlayerProfile();
+  }, [refreshPlayerProfile]);
 
   const onChainResources = useMemo(() => {
     if (!onChainSettlement?.planet) return undefined;
@@ -918,17 +937,19 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         : await waitForHydratedWalletPlanet(loadSnapshot, activePlanetId);
       const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
       const planets = planetsResponse.planets;
-      setWalletPlanets(planets);
-      if (!selectedPlanetId && selectedPlanet?.planetId) {
-        setSelectedPlanetId(selectedPlanet.planetId);
-      }
-      setOnChainSettlement(selectedPlanet
+      const nextSettlement = selectedPlanet
         ? {
             ...settlement,
             homePlanetId: selectedPlanet.planetId,
             planet: selectedPlanet,
           }
-        : settlement);
+        : settlement;
+      setWalletPlanets(planets);
+      if (!selectedPlanetId && selectedPlanet?.planetId) {
+        setSelectedPlanetId(selectedPlanet.planetId);
+      }
+      setOnChainSettlement(nextSettlement);
+      setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
       setOnChainQueues(queues);
       setFleetVisibility(fleetVisibility);
       setOnChainError(undefined);
@@ -2228,9 +2249,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     setPlayerProfileAction({ status: "pending", label: "Waiting for wallet signature" });
     void updatePlayerDisplayName(apiBaseUrl, provider, account, displayName)
-      .then((profile) => {
-        setPlayerProfileOverride(profile);
+      .then(async (profile) => {
+        setPlayerProfile((current) => mergePlayerProfile(current, profile));
         setOnChainSettlement((current) => current ? { ...current, player: profile } : current);
+        try {
+          const refreshedProfile = await fetchPlayerProfile(apiBaseUrl, account);
+          setPlayerProfile((current) => mergePlayerProfile(current, refreshedProfile));
+          setOnChainSettlement((current) => current ? { ...current, player: refreshedProfile } : current);
+        } catch (error) {
+          console.error(error);
+        }
         setPlayerProfileAction({ status: "success", label: "Display name saved." });
         if (page === "alliance") refreshAllianceState();
       })
