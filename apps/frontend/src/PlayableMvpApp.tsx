@@ -368,8 +368,7 @@ export function infrastructureLoadErrorFor({
   infrastructureError?: string | undefined;
   isWalletConnected: boolean;
 }): string | undefined {
-  if (!isWalletConnected || infrastructureChainState || !infrastructureError) return undefined;
-  if (activeBuildingQueue?.active) return undefined;
+  if (!isWalletConnected || !infrastructureError) return undefined;
   return infrastructureError;
 }
 
@@ -2951,6 +2950,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
+          hasLoadedInfrastructureState={Boolean(onChainResources && onChainSettlement?.homePlanetId && infrastructureChainState)}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={infrastructureLoadErrorFor({
