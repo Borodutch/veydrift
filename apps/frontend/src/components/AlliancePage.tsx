@@ -29,6 +29,8 @@ interface AlliancePageProps {
   onKick: (playerAddress: string) => void;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  selectedAllianceId?: string | undefined;
+  onSelectAlliance?: (allianceId: string | undefined) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
 }
 
@@ -47,6 +49,8 @@ export function AlliancePage({
   onKick,
   onRefresh,
   onSetRole,
+  selectedAllianceId,
+  onSelectAlliance,
   onUpdateProfile,
 }: AlliancePageProps) {
   const [tag, setTag] = useState("");
@@ -66,6 +70,9 @@ export function AlliancePage({
   const officers = allianceState?.members.filter((member) => member.role === "owner" || member.role === "officer") ?? [];
   const members = allianceState?.members.filter((member) => member.role === "member") ?? [];
   const currentAllianceId = allianceState?.membership.allianceId ?? "0";
+  const selectedAlliance = selectedAllianceId
+    ? allianceState?.directory.find((alliance) => alliance.allianceId === selectedAllianceId)
+    : undefined;
   const initialLoading = shouldShowAllianceInitialLoader({ allianceState, loading });
   const backgroundRefresh = shouldShowAllianceRefreshIndicator({ allianceState, loading });
   const headerSubtitle = initialLoading
@@ -118,6 +125,12 @@ export function AlliancePage({
             {!isMember ? (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="space-y-4">
+                  <SelectedAlliancePanel
+                    alliance={selectedAlliance}
+                    selectedAllianceId={selectedAllianceId}
+                    onClear={() => onSelectAlliance?.(undefined)}
+                  />
+
                   <Panel title="Create Alliance">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <TextField label="Tag" value={tag} onInput={setTag} placeholder="VDFT" />
@@ -140,6 +153,8 @@ export function AlliancePage({
                     alliances={allianceState?.directory ?? []}
                     disabled={disabled}
                     isMember={false}
+                    onSelectAlliance={onSelectAlliance}
+                    selectedAllianceId={selectedAllianceId}
                     pendingJoinRequests={allianceState?.pendingJoinRequests ?? []}
                     onCancelJoinRequest={onCancelJoinRequest}
                     onJoinRequest={onJoinRequest}
@@ -156,6 +171,12 @@ export function AlliancePage({
             ) : (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="space-y-4">
+                  <SelectedAlliancePanel
+                    alliance={selectedAlliance}
+                    selectedAllianceId={selectedAllianceId}
+                    onClear={() => onSelectAlliance?.(undefined)}
+                  />
+
                   {profile ? (
                     <Panel title="Alliance Info">
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -206,6 +227,8 @@ export function AlliancePage({
                     alliances={allianceState?.directory ?? []}
                     disabled={disabled}
                     isMember
+                    onSelectAlliance={onSelectAlliance}
+                    selectedAllianceId={selectedAllianceId}
                     pendingJoinRequests={[]}
                     onCancelJoinRequest={onCancelJoinRequest}
                     onJoinRequest={onJoinRequest}
@@ -276,10 +299,56 @@ export function hasAllianceMembership(allianceState: ChainAllianceState | null):
   return Boolean(allianceState?.profile && allianceState.membership.allianceId !== "0");
 }
 
+function SelectedAlliancePanel({
+  alliance,
+  selectedAllianceId,
+  onClear,
+}: {
+  alliance: DirectoryEntry | undefined;
+  selectedAllianceId: string | undefined;
+  onClear: () => void;
+}) {
+  if (!selectedAllianceId) return null;
+
+  if (!alliance) {
+    return (
+      <Panel title="Alliance Details">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-400">Alliance #{selectedAllianceId} is not in the current public directory.</p>
+          <button className="rounded border border-white/10 px-3 py-2 text-xs font-semibold text-slate-200" onClick={onClear} type="button">
+            Clear
+          </button>
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel title="Alliance Details">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-base font-semibold text-white">{alliance.tag} - {alliance.name}</p>
+          <p className="mt-1 text-sm text-slate-400">{alliance.description || "No public description."}</p>
+        </div>
+        <button className="rounded border border-white/10 px-3 py-2 text-xs font-semibold text-slate-200" onClick={onClear} type="button">
+          Clear
+        </button>
+      </div>
+      <div className="mt-4 grid gap-2 text-xs uppercase tracking-[0.14em] text-slate-500 sm:grid-cols-3">
+        <span>ID {alliance.allianceId}</span>
+        <span>{alliance.memberCount} members</span>
+        <span>Owner {playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
+      </div>
+    </Panel>
+  );
+}
+
 function AllianceDirectory({
   alliances,
   disabled,
   isMember,
+  onSelectAlliance,
+  selectedAllianceId,
   pendingJoinRequests,
   onCancelJoinRequest,
   onJoinRequest,
@@ -287,6 +356,8 @@ function AllianceDirectory({
   alliances: DirectoryEntry[];
   disabled: boolean;
   isMember: boolean;
+  onSelectAlliance: ((allianceId: string | undefined) => void) | undefined;
+  selectedAllianceId: string | undefined;
   pendingJoinRequests: ChainAllianceState["pendingJoinRequests"];
   onCancelJoinRequest: (allianceId: string) => void;
   onJoinRequest: (allianceId: string) => void;
@@ -299,11 +370,18 @@ function AllianceDirectory({
         <div className="grid gap-3">
           {alliances.map((alliance) => {
             const pending = pendingIds.has(alliance.allianceId);
+            const selected = selectedAllianceId === alliance.allianceId;
             return (
-              <div className="rounded border border-white/10 bg-black/20 p-3" key={alliance.allianceId}>
+              <div className={`rounded border bg-black/20 p-3 ${selected ? "border-cyan-300/35" : "border-white/10"}`} key={alliance.allianceId}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-white">{alliance.tag} - {alliance.name}</p>
+                    <button
+                      className="text-left text-sm font-semibold text-white transition hover:text-cyan-100"
+                      onClick={() => onSelectAlliance?.(alliance.allianceId)}
+                      type="button"
+                    >
+                      {alliance.tag} - {alliance.name}
+                    </button>
                     <p className="mt-1 text-sm text-slate-400">{alliance.description || "No public description."}</p>
                   </div>
                   {!isMember ? (

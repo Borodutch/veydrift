@@ -538,6 +538,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [allianceLoading, setAllianceLoading] = useState(false);
   const [allianceError, setAllianceError] = useState<string | undefined>();
   const [allianceAction, setAllianceAction] = useState<AllianceActionState>({ status: "idle" });
+  const [selectedAllianceId, setSelectedAllianceId] = useState<string | undefined>();
   const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
@@ -2259,6 +2260,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     setSelectedCoords(undefined);
   }, []);
 
+  const handleOpenAlliance = useCallback((allianceId: string) => {
+    setSelectedAllianceId(allianceId);
+    setSelectedCoords(undefined);
+    setPage("alliance");
+  }, []);
+
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
     setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
@@ -2335,6 +2342,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           shipyardState={shipyardState}
           onAction={handleGalaxyAction}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
+          onOpenAlliance={handleOpenAlliance}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
         />
@@ -2458,6 +2466,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onInvite={handleInviteAllianceMember}
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}
+          selectedAllianceId={selectedAllianceId}
+          onSelectAlliance={setSelectedAllianceId}
           onUpdateProfile={handleUpdateAllianceProfile}
         />
       );
