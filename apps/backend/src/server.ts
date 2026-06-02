@@ -5,6 +5,7 @@ import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import {
   assertAddress,
+  type AllianceState,
   type ChainReader,
   type DefenseState,
   type FleetMissionVisibility,
@@ -22,6 +23,11 @@ import {
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
+import {
+  validatePlayerDisplayName,
+  verifyPlayerDisplayNameSignature,
+  type PlayerProfile
+} from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
@@ -215,18 +221,68 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       });
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/profile$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer) return playerProfilesUnavailableResponse();
+        return Response.json(indexer.playerProfile(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/profile\/display-name$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer) return playerProfilesUnavailableResponse();
+        const body = await readJsonBody(request);
+        const validation = validatePlayerDisplayName(body?.displayName);
+        if (!validation.ok) {
+          return Response.json({ error: "invalid_display_name", message: validation.error }, {
+            headers: corsHeaders,
+            status: 400
+          });
+        }
+
+        const verified = await verifyPlayerDisplayNameSignature({
+          displayName: validation.displayName,
+          signature: body?.signature,
+          wallet
+        });
+        if (!verified) {
+          return Response.json({
+            error: "invalid_signature",
+            message: "Sign the Veydrift display-name message with the connected wallet."
+          }, {
+            headers: corsHeaders,
+            status: 401
+          });
+        }
+
+        return Response.json(indexer.upsertPlayerDisplayName(wallet, validation.displayName), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/settlement$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
         if (hasWarmPlanetIndex(indexer)) {
-          return Response.json(indexer.walletSettlement(wallet), {
+          return Response.json(withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet), {
             headers: corsHeaders
           });
         }
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) return ready;
-        return Response.json(await liveWalletRead(ready.getWalletSettlement(wallet), "wallet settlement"), {
+        return Response.json(withPlayerProfile(await liveWalletRead(ready.getWalletSettlement(wallet), "wallet settlement"), indexer, wallet), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -239,13 +295,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         if (hasWarmPlanetIndex(indexer)) {
-          return Response.json(indexer.walletPlanets(wallet), {
+          return Response.json(withPlayerProfile(indexer.walletPlanets(wallet), indexer, wallet), {
             headers: corsHeaders
           });
         }
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) return ready;
-        return Response.json(await liveWalletRead(ready.getWalletPlanets(wallet), "wallet planets"), {
+        return Response.json(withPlayerProfile(await liveWalletRead(ready.getWalletPlanets(wallet), "wallet planets"), indexer, wallet), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -427,7 +483,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(await liveWalletRead(ready.getAllianceState(wallet), "alliance"), {
+        return Response.json(enrichAllianceState(await liveWalletRead(ready.getAllianceState(wallet), "alliance"), indexer), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -535,7 +591,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           source = "live-chain-reader";
         }
 
-        const rankings = highscoreRankings(entries, limit, planetsByOwner);
+        const profiles = indexer?.playerProfiles(planetsByOwner.keys()) ?? new Map<string, PlayerProfile>();
+        const rankings = highscoreRankings(entries, limit, planetsByOwner, profiles);
 
         return Response.json(
           {
@@ -615,7 +672,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             system
           ).map((planet) => ({
             ...planet,
-            occupiedBy: occupiedPlanetRef(occupied.get(planet.position)),
+            occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer),
             debrisField: debrisFieldRef(debris.get(planet.position)),
             moonChance: moonChanceReportRef(moonChance.get(planet.position))
           }))
@@ -677,7 +734,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   system
                 ).map((planet) => ({
                   ...planet,
-                  occupiedBy: occupiedPlanetRef(occupied.get(planet.position)),
+                  occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer),
                   debrisField: debrisFieldRef(debris.get(planet.position)),
                   moonChance: moonChanceReportRef(moonChance.get(planet.position))
                 }))
@@ -820,6 +877,87 @@ async function ensurePlanetIndex(indexer: SettlementIndexer): Promise<void> {
 function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
   if (!indexer) return false;
   return indexer.snapshot().indexedPlanets > 0;
+}
+
+async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
+  const body = await request.json().catch(() => null);
+  return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
+}
+
+function playerProfilesUnavailableResponse(): Response {
+  return Response.json(
+    {
+      error: "player_profiles_unavailable",
+      message: "Player profiles are unavailable until the indexed backend database is configured."
+    },
+    {
+      headers: corsHeaders,
+      status: 503
+    }
+  );
+}
+
+function withPlayerProfile<T extends { wallet: `0x${string}` }>(
+  body: T,
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}` = body.wallet
+): T & { player: PlayerProfile } {
+  return {
+    ...body,
+    player: indexer?.playerProfile(wallet) ?? fallbackPlayerProfile(wallet)
+  };
+}
+
+function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
+  const normalizedWallet = wallet.toLowerCase() as `0x${string}`;
+  return {
+    wallet: normalizedWallet,
+    displayName: null,
+    fallbackName: `${normalizedWallet.slice(0, 6)}...${normalizedWallet.slice(-4)}`,
+    updatedAt: null
+  };
+}
+
+function enrichAllianceState(
+  state: AllianceState,
+  indexer: SettlementIndexer | undefined
+): AllianceState {
+  if (!indexer) return state;
+
+  const displayNameField = <Key extends string>(key: Key, wallet: `0x${string}`): Record<Key, string> | Record<string, never> => {
+    const displayName = indexer.playerProfile(wallet).displayName;
+    return displayName ? { [key]: displayName } as Record<Key, string> : {};
+  };
+
+  return {
+    ...state,
+    profile: state.profile
+      ? {
+          ...state.profile,
+          ...displayNameField("ownerDisplayName", state.profile.owner)
+        }
+      : null,
+    directory: state.directory.map((alliance) => ({
+      ...alliance,
+      ...displayNameField("ownerDisplayName", alliance.owner)
+    })),
+    pendingInvites: state.pendingInvites.map((invite) => ({
+      ...invite,
+      ...displayNameField("inviterDisplayName", invite.inviter)
+    })),
+    pendingJoinRequests: state.pendingJoinRequests.map((request) => ({
+      ...request,
+      ...displayNameField("requesterDisplayName", request.requester)
+    })),
+    allianceJoinRequests: state.allianceJoinRequests.map((request) => ({
+      ...request,
+      ...displayNameField("requesterDisplayName", request.requester)
+    })),
+    members: state.members.map((member) => ({
+      ...member,
+      ...displayNameField("displayName", member.address)
+    }))
+  };
 }
 
 type IndexedDegradedBody<T extends object> = T & {
@@ -1198,8 +1336,17 @@ function includeOccupiedPlanets(
   return Array.from(byPosition.values()).sort((left, right) => left.position - right.position);
 }
 
-function occupiedPlanetRef(planet: SettledPlanetEvent | undefined): { planetId: string; owner: string } | null {
-  return planet ? { planetId: planet.planetId, owner: planet.owner } : null;
+function occupiedPlanetRef(
+  planet: SettledPlanetEvent | undefined,
+  indexer: SettlementIndexer | undefined
+): { planetId: string; owner: string; ownerDisplayName: string | null } | null {
+  return planet
+    ? {
+        planetId: planet.planetId,
+        owner: planet.owner,
+        ownerDisplayName: indexer?.playerProfile(planet.owner).displayName ?? null
+      }
+    : null;
 }
 
 function debrisFieldRef(field: IndexedDebrisFieldEvent | undefined): { metal: string; crystal: string } | null {
@@ -1369,6 +1516,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 type RankedHighscoreEntry = HighscoreEntry & {
+  displayName: string | null;
   homePlanet: RankedHighscorePlanet | null;
   rank: number;
 };
@@ -1389,10 +1537,11 @@ type HighscoreCategory = keyof ScoreBreakdown;
 function highscoreRankings(
   entries: HighscoreEntry[],
   limit: number,
-  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
+  profiles: ReadonlyMap<string, PlayerProfile> = new Map()
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
   return Object.fromEntries(
-    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner)])
+    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner, profiles)])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
 
@@ -1400,7 +1549,8 @@ function rankHighscores(
   entries: HighscoreEntry[],
   category: HighscoreCategory,
   limit: number,
-  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
+  profiles: ReadonlyMap<string, PlayerProfile>
 ): RankedHighscoreEntry[] {
   return [...entries]
     .sort((left, right) => {
@@ -1411,6 +1561,7 @@ function rankHighscores(
     .slice(0, limit)
     .map((entry, index) => ({
       ...entry,
+      displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
       homePlanet: rankedHighscoreHomePlanet(entry, planetsByOwner),
       rank: index + 1
     }));

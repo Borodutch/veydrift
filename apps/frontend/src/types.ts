@@ -23,6 +23,7 @@ export interface Planet {
 export interface OccupiedPlanet {
   planetId: string;
   owner: string;
+  ownerDisplayName?: string | null;
 }
 
 export interface DebrisField {

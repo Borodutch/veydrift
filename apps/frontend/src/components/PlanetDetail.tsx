@@ -273,7 +273,7 @@ export function publicCommanderRows(planet: Planet, isHome: boolean): PlanetReco
   if (isHome) {
     return [
       { label: "Settlement", value: "Your home world", tone: "accent" },
-      ...(planet.ownerId ? [{ label: "Wallet", value: shortAddress(planet.ownerId) }] : []),
+      ...(planet.ownerId ? [{ label: "Player", value: planet.occupiedBy?.ownerDisplayName ?? shortAddress(planet.ownerId) }] : []),
       ...(planet.occupiedBy?.planetId ? [{ label: "Planet ID", value: `#${planet.occupiedBy.planetId}` }] : []),
     ];
   }
@@ -281,7 +281,7 @@ export function publicCommanderRows(planet: Planet, isHome: boolean): PlanetReco
   if (planet.occupiedBy) {
     return [
       { label: "Settlement", value: "Occupied", tone: "accent" },
-      { label: "Wallet", value: shortAddress(planet.occupiedBy.owner) },
+      { label: "Player", value: planet.occupiedBy.ownerDisplayName ?? shortAddress(planet.occupiedBy.owner) },
       { label: "Planet ID", value: `#${planet.occupiedBy.planetId}` },
     ];
   }

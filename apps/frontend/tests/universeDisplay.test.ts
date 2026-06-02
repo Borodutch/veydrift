@@ -176,7 +176,7 @@ describe("tester universe display data", () => {
     expect(planetRecordStatusLabel(planet, "api", false)).toBe("Occupied public world");
     expect(publicCommanderRows(planet, false).map((row) => `${row.label}: ${row.value}`)).toEqual([
       "Settlement: Occupied",
-      "Wallet: 0x2222...2222",
+      "Player: 0x2222...2222",
       "Planet ID: #7",
     ]);
     expect(publicSignalRows(planet).map((row) => `${row.label}: ${row.value}`)).toContain("Debris: 40,000 metal / 15,000 crystal");
