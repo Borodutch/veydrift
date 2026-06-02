@@ -201,15 +201,26 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               </div>
             </div>
 
-            {/* Public signals */}
+            {/* Public planet data */}
             <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Public Signals
+                Public Planet Data
               </h3>
-              <PublicRecordRows rows={publicSignalRows(planet)} columns />
+              <PublicRecordRows rows={publicPlanetDataRows(planet)} columns />
             </div>
 
-            {/* Resources */}
+            {/* Production modifiers */}
+            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Production Modifiers
+              </h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {publicProductionRows(planet).map((row) => (
+                  <ProductionMetric key={row.label} {...row} />
+                ))}
+              </div>
+            </div>
+
             <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Public Resources
@@ -292,14 +303,74 @@ export function publicCommanderRows(planet: Planet, isHome: boolean): PlanetReco
   ];
 }
 
-export function publicSignalRows(planet: Planet): PlanetRecordRow[] {
+export function publicPlanetDataRows(planet: Planet): PlanetRecordRow[] {
   return [
     { label: "Coordinates", value: `[${planet.galaxy}:${planet.system}:${planet.position}]` },
     { label: "Type", value: formatPlanetType(planet.type) },
     { label: "Fields", value: planet.fields.toLocaleString() },
+    { label: "Diameter", value: `${planet.diameter.toLocaleString()} km` },
+    { label: "Temperature", value: `${planet.temperature.min}°C to ${planet.temperature.max}°C` },
     { label: "Debris", value: debrisFieldLabel(planet), tone: planet.debrisField ? "accent" : "muted" },
     { label: "Moon signal", value: moonSignalLabel(planet), tone: planet.moonChance || planet.hasMoon ? "accent" : "muted" },
   ];
+}
+
+export const publicSignalRows = publicPlanetDataRows;
+
+type ProductionMetricRow = {
+  label: string;
+  value: string;
+  fillPercent: number;
+  color: string;
+};
+
+export function publicProductionRows(planet: Planet): ProductionMetricRow[] {
+  return [
+    {
+      label: "Metal",
+      value: formatProductionMultiplier(planet.resources.metal),
+      fillPercent: productionFillPercent(planet.resources.metal),
+      color: "bg-slate-400",
+    },
+    {
+      label: "Crystal",
+      value: formatProductionMultiplier(planet.resources.crystal),
+      fillPercent: productionFillPercent(planet.resources.crystal),
+      color: "bg-signal",
+    },
+    {
+      label: "Deuterium",
+      value: formatProductionMultiplier(planet.resources.deuterium),
+      fillPercent: productionFillPercent(planet.resources.deuterium),
+      color: "bg-blue-400",
+    },
+    {
+      label: "Solar satellite",
+      value: formatSolarSatelliteEnergy(planet.temperature.max),
+      fillPercent: solarSatelliteFillPercent(planet.temperature.max),
+      color: "bg-ember",
+    },
+  ];
+}
+
+function formatProductionMultiplier(resourceIndex: number): string {
+  return `${(resourceIndex / 2).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+}
+
+function productionFillPercent(resourceIndex: number): number {
+  return Math.min(100, Math.max(0, resourceIndex / 2));
+}
+
+function formatSolarSatelliteEnergy(maxTemperature: number): string {
+  return `${solarSatelliteEnergy(maxTemperature).toLocaleString()} energy`;
+}
+
+function solarSatelliteEnergy(maxTemperature: number): number {
+  return Math.max(0, Math.floor((maxTemperature + 140) / 6));
+}
+
+function solarSatelliteFillPercent(maxTemperature: number): number {
+  return Math.min(100, Math.max(0, solarSatelliteEnergy(maxTemperature) / 50 * 100));
 }
 
 function debrisFieldLabel(planet: Planet): string {
@@ -473,6 +544,33 @@ function ResourceBar({
         <div
           className={`h-full rounded-full ${color}`}
           style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ProductionMetric({
+  label,
+  value,
+  fillPercent,
+  color,
+}: {
+  label: string;
+  value: string;
+  fillPercent: number;
+  color: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-slate-500">{label}</span>
+        <span className="text-xs font-medium text-slate-300">{value}</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`h-full rounded-full ${color}`}
+          style={{ width: `${fillPercent}%` }}
         />
       </div>
     </div>
