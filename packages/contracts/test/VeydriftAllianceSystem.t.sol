@@ -230,9 +230,7 @@ contract VeydriftAllianceSystemTest is Test {
 
         vm.prank(enemy);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftAllianceSystem.NotAuthorized.selector, enemy, allianceId
-            )
+            abi.encodeWithSelector(VeydriftAllianceSystem.NotAuthorized.selector, enemy, allianceId)
         );
         alliances.approveJoinRequest(allianceId, member);
     }
