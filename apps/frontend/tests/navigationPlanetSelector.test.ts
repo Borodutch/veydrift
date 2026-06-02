@@ -41,4 +41,11 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(overviewSource).toContain("canAbandonPlanet");
     expect(overviewSource).not.toContain("Rename\n                </button>");
   });
+
+  test("keeps the planet rename action as a compact pencil icon", () => {
+    expect(overviewSource).toContain('className="grid h-7 w-7 place-items-center');
+    expect(overviewSource).toContain('<Pencil aria-hidden="true" size={13} strokeWidth={2} />');
+    expect(overviewSource).toContain('title="Rename planet"');
+    expect(overviewSource).not.toContain("Rename planet\n                  </button>");
+  });
 });
