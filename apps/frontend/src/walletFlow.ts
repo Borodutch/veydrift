@@ -55,10 +55,18 @@ export type PlanetSummary = {
   source: "chain" | "transaction";
 };
 
+export type PlayerProfile = {
+  wallet: string;
+  displayName: string | null;
+  fallbackName: string;
+  updatedAt: string | null;
+};
+
 export type WalletSettlementResponse = {
   wallet: string;
   hasFirstPlanet: boolean;
   homePlanetId: string | null;
+  player?: PlayerProfile | undefined;
   planet: {
     planetId: string;
     owner: string;
@@ -104,6 +112,7 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
 export type WalletPlanetsResponse = {
   wallet: string;
   homePlanetId: string | null;
+  player?: PlayerProfile | undefined;
   planets: ManagedPlanetResponse[];
 };
 
@@ -333,6 +342,7 @@ export type ChainAllianceState = {
     name: string;
     description: string;
     owner: string;
+    ownerDisplayName?: string | null;
     createdAt: string;
     memberCount: number;
   } | null;
@@ -343,26 +353,31 @@ export type ChainAllianceState = {
     name: string;
     description: string;
     owner: string;
+    ownerDisplayName?: string | null;
     createdAt: string;
     memberCount: number;
   }>;
   pendingInvites: Array<{
     allianceId: string;
     inviter: string;
+    inviterDisplayName?: string | null;
     invitedAt: string;
   }>;
   pendingJoinRequests: Array<{
     allianceId: string;
     requester: string;
+    requesterDisplayName?: string | null;
     requestedAt: string;
   }>;
   allianceJoinRequests: Array<{
     allianceId: string;
     requester: string;
+    requesterDisplayName?: string | null;
     requestedAt: string;
   }>;
   members: Array<{
     address: string;
+    displayName?: string | null;
     role: AllianceRole;
     joinedAt: string;
   }>;
@@ -383,6 +398,7 @@ export type HighscoreCategory =
 export type HighscoreEntry = {
   rank: number;
   wallet: string;
+  displayName?: string | null;
   homePlanetId: string | null;
   homePlanet: HighscorePlanet | null;
   planetCount: number;
@@ -402,6 +418,7 @@ export type HighscorePlanet = {
 
 export type HighscoreResponse = {
   generatedAt: string;
+  durationMs?: number;
   formula: {
     pointsDivisor: string;
     summary: string;
@@ -533,6 +550,44 @@ export function walletRequestErrorMessage(error: unknown): string {
   return message;
 }
 
+const buildingUpgradeRevertReasons: Record<string, string> = {
+  "0xcec62bc2": "Another building is already upgrading. Finish the active building queue before starting a new upgrade.",
+  "0x7e787175": "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.",
+  "0x4499d03a": "The active building upgrade is not ready to finish yet. Refresh infrastructure state and retry.",
+  "0x2ab0f96f": "Not enough on-chain resources are available for this building upgrade. Refresh infrastructure state and retry.",
+  "0xb8f7e9ba": "This building upgrade is missing an on-chain prerequisite.",
+  "0x359b57cf": "This planet has no free fields for another building upgrade.",
+  "0x1aca3780": "This building is already at its maximum supported level.",
+  "0x9a3d4eb9": "No planet exists for this building upgrade.",
+  "0xab2bcfd3": "This wallet does not own the selected planet.",
+  "0xdfa1a408": "The selected building is not supported by the current game contract.",
+  "0x78e10c67": "Building upgrades are not supported by the current game contract deployment.",
+};
+
+function revertSelector(error: unknown): string | undefined {
+  const data = errorData(error);
+  return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
+    ? data.slice(0, 10).toLowerCase()
+    : undefined;
+}
+
+async function assertBuildingUpgradeCallSucceeds(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+): Promise<void> {
+  try {
+    await provider.request({
+      method: "eth_call",
+      params: [{ from, to, data }, "latest"],
+    });
+  } catch (error) {
+    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
+    throw new Error(reason ?? walletRequestErrorMessage(error));
+  }
+}
+
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
   if (typeof chainId === "string") {
     return chainId.toLowerCase() === BASE_SEPOLIA.chainIdHex;
@@ -543,6 +598,33 @@ export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
 
 export function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+export const playerDisplayNameMaxLength = 32;
+
+export function playerDisplayNameMessage(wallet: string, displayName: string): string {
+  return [
+    "Veydrift player display name",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Display name: ${displayName}`,
+    "Only sign this message if you want this public name shown in Veydrift."
+  ].join("\n");
+}
+
+export function validatePlayerDisplayName(value: string): string | undefined {
+  const displayName = value.trim().replace(/ {2,}/g, " ");
+  if (!displayName) return "Enter a display name.";
+  if (Array.from(displayName).length > playerDisplayNameMaxLength) {
+    return `Display names can be at most ${playerDisplayNameMaxLength} characters.`;
+  }
+  if (/[\p{Cc}\p{Cf}]/u.test(displayName)) {
+    return "Display names cannot include control or formatting characters.";
+  }
+  return undefined;
+}
+
+export function playerDisplayLabel(profile: PlayerProfile | null | undefined, wallet: string | null | undefined): string {
+  return profile?.displayName ?? profile?.fallbackName ?? (wallet ? shortAddress(wallet) : "Unnamed player");
 }
 
 export function settlementContractConfigured(config: SettlementConfig): config is SettlementConfig & { address: string } {
@@ -1247,15 +1329,18 @@ export async function sendStartBuildingUpgradeTransaction(
   planetId: string,
   buildingId: number
 ): Promise<string> {
+  const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
+  const transaction = {
+    from: account,
+    to: contractAddress,
+    data
+  };
+
+  await assertBuildingUpgradeCallSucceeds(provider, account, contractAddress, data);
+
   return provider.request<string>({
     method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId])
-      }
-    ]
+    params: [transaction]
   });
 }
 
@@ -1321,15 +1406,18 @@ export async function sendFinishBuildingUpgradeTransaction(
   contractAddress: string,
   planetId: string
 ): Promise<string> {
+  const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
+  const transaction = {
+    from: account,
+    to: contractAddress,
+    data
+  };
+
+  await assertBuildingUpgradeCallSucceeds(provider, account, contractAddress, data);
+
   return provider.request<string>({
     method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId])
-      }
-    ]
+    params: [transaction]
   });
 }
 
@@ -2002,6 +2090,18 @@ function errorCode(error: unknown): unknown {
     : undefined;
 }
 
+function errorData(error: unknown): unknown {
+  if (typeof error !== "object" || error === null) return undefined;
+  if ("data" in error) return (error as { data: unknown }).data;
+  if ("error" in error) {
+    const nested = (error as { error: unknown }).error;
+    if (typeof nested === "object" && nested !== null && "data" in nested) {
+      return (nested as { data: unknown }).data;
+    }
+  }
+  return undefined;
+}
+
 export async function fetchWalletSettlement(apiUrl: string, wallet: string): Promise<WalletSettlementResponse> {
   return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, "settlement", "Settlement");
 }
@@ -2050,6 +2150,36 @@ export async function fetchAllianceState(apiUrl: string, wallet: string): Promis
   return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance", "Alliance");
 }
 
+export async function fetchPlayerProfile(apiUrl: string, wallet: string): Promise<PlayerProfile> {
+  return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile");
+}
+
+export async function updatePlayerDisplayName(
+  apiUrl: string,
+  provider: Eip1193Provider,
+  account: string,
+  displayName: string
+): Promise<PlayerProfile> {
+  const message = playerDisplayNameMessage(account, displayName);
+  const signature = await provider.request<string>({
+    method: "personal_sign",
+    params: [message, account]
+  });
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile/display-name`, {
+    body: JSON.stringify({ displayName, signature }),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await apiErrorMessage(response, "Player profile"));
+  }
+  return response.json() as Promise<PlayerProfile>;
+}
+
 export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {
   let response: Response;
 
@@ -2081,6 +2211,10 @@ async function highscoreHttpFailureMessage(response: Response): Promise<string> 
 
   if (response.status === 503 && errorCode === "highscores_unavailable") {
     return "Rankings are temporarily unavailable because the game API could not read current chain data. Retry in a moment.";
+  }
+
+  if (response.status === 503 && errorCode === "highscores_index_not_ready") {
+    return "Rankings are warming from indexed game state. Retry in a moment.";
   }
 
   if (response.status >= 500) {

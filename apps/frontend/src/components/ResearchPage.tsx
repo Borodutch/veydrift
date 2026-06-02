@@ -14,7 +14,14 @@ import {
 import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
-import { OptimizedImage } from "./OptimizedImage";
+import {
+  InspectCatalogTile,
+  InspectDetailHero,
+  InspectDetailImage,
+  InspectDetailShell,
+  InspectInfoRow,
+  SingleItemQueueProgress,
+} from "./InspectProgressLayout";
 import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
@@ -167,15 +174,16 @@ export function ResearchPage({
                       state: viewState,
                     });
                     return (
-                      <ResearchSelectorTile
+                      <InspectCatalogTile
                         asset={research.asset}
-                        currentLevel={status.currentLevel}
+                        currentText={`Level ${status.currentLevel}`}
+                        isDimmed={status.currentLevel === 0}
                         isSelected={research.key === selectedResearch.key}
-                        isUnresearched={status.currentLevel === 0}
                         key={research.key}
                         label={research.label}
                         onClick={() => handleSelectResearch(research.key)}
-                        status={status.tileStatus}
+                        statusText={status.tileStatus}
+                        statusTone={status.tileStatus === "Locked" ? "warning" : "accent"}
                       />
                     );
                   })}
@@ -188,10 +196,13 @@ export function ResearchPage({
         <div className="order-1 xl:order-2" ref={detailPanelRef}>
           <ResearchDetailPanel
             actionPending={actionState.status === "pending"}
+            actionPendingLabel={actionState.status === "pending" ? actionState.label : undefined}
             canTransact={canTransact}
             error={error}
             loading={loading}
+            now={now}
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
+            queue={queue}
             research={selectedResearch}
             researchState={researchState}
             state={viewState}
@@ -324,75 +335,34 @@ function Notice({
   );
 }
 
-function ResearchSelectorTile({
-  asset,
-  currentLevel,
-  isSelected,
-  isUnresearched,
-  label,
-  onClick,
-  status,
-}: {
-  asset: string;
-  currentLevel: number;
-  isSelected: boolean;
-  isUnresearched: boolean;
-  label: string;
-  onClick: () => void;
-  status: string;
-}) {
-  return (
-    <button
-      aria-pressed={isSelected}
-      className={`group min-w-0 rounded-md border bg-[#101624] p-2 text-left transition hover:border-cyan-300/50 hover:bg-[#141d30] ${
-        isSelected ? "border-cyan-300/70 ring-1 ring-cyan-300/40" : "border-white/10"
-      } ${isUnresearched ? "opacity-60 grayscale" : ""}`}
-      onClick={onClick}
-      type="button"
-    >
-      <span className="block aspect-square overflow-hidden rounded border border-white/10 bg-black/20">
-        <OptimizedImage
-          alt=""
-          className="h-full w-full object-cover transition group-hover:scale-[1.03]"
-          height={256}
-          loading="lazy"
-          sizes="112px"
-          src={asset}
-          width={256}
-        />
-      </span>
-      <span className="mt-2 block min-w-0">
-        <span className="block truncate text-sm font-semibold text-white">{label}</span>
-        <span className="mt-0.5 flex items-center justify-between gap-2 text-xs">
-          <span className={isUnresearched ? "text-slate-500" : "text-slate-300"}>Level {currentLevel}</span>
-          <span className="truncate text-right text-cyan-200">{status}</span>
-        </span>
-      </span>
-    </button>
-  );
-}
-
 function ResearchDetailPanel({
   actionPending,
+  actionPendingLabel,
   canTransact,
   error,
   loading,
+  now,
   onResearch,
+  queue,
   research,
   researchState,
   state,
 }: {
   actionPending: boolean;
+  actionPendingLabel?: string | undefined;
   canTransact: boolean;
   error: string | undefined;
   loading: boolean;
+  now: number;
   onResearch: () => void;
+  queue: ReturnType<typeof researchQueueForDisplay>;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
   state: PlayableState;
 }) {
   const status = researchActionStatus({
     actionPending,
+    actionPendingLabel,
     canTransact,
     chainCost: chainCostFor(researchState, research.id),
     error,
@@ -402,48 +372,43 @@ function ResearchDetailPanel({
     state,
   });
   const requirementStates = getResearchRequirementStates(state, research.key);
+  const isSelectedResearchQueued = queue?.key === research.key;
 
   return (
-    <aside className="min-w-0 rounded-lg border border-white/10 bg-[#0f1624] p-3 xl:sticky xl:top-4">
-      <div className="grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)] xl:grid-cols-1">
-        <div className={`aspect-square overflow-hidden rounded-md border border-white/10 bg-black/20 ${status.currentLevel === 0 ? "opacity-70 grayscale" : ""}`}>
-          <OptimizedImage
-            alt=""
-            className="h-full w-full object-cover"
-            height={512}
-            loading="lazy"
-            sizes="(min-width: 1280px) 400px, (min-width: 640px) 144px, 100vw"
-            src={research.asset}
-            width={512}
+    <InspectDetailShell>
+      <InspectDetailHero
+        image={(
+          <InspectDetailImage
+            asset={research.asset}
+            cacheKey={`research:${research.key}`}
+            isDimmed={status.currentLevel === 0}
           />
-        </div>
-
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h3 className="break-words text-lg font-semibold text-white">{research.label}</h3>
-              <p className="mt-1 text-sm text-slate-400">
-                Level {status.currentLevel} to {status.targetLevel}
-              </p>
-            </div>
-            <span className={`rounded px-2 py-1 text-xs font-semibold ${status.disabled ? "bg-white/5 text-slate-400" : "bg-emerald-300/10 text-emerald-200"}`}>
-              {status.badge}
-            </span>
+        )}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="break-words text-lg font-semibold text-white">{research.label}</h3>
+            <p className="mt-1 text-sm text-slate-400">
+              Level {status.currentLevel} to {status.targetLevel}
+            </p>
           </div>
-
-          <p className="mt-3 text-sm leading-6 text-slate-300">
-            {researchDescriptions[research.key] ?? "Expands the empire research model for future technologies and unlock paths."}
-          </p>
+          <span className={`rounded px-2 py-1 text-xs font-semibold ${status.disabled ? "bg-white/5 text-slate-400" : "bg-emerald-300/10 text-emerald-200"}`}>
+            {status.badge}
+          </span>
         </div>
-      </div>
+
+        <p className="mt-3 text-sm leading-6 text-slate-300">
+          {researchDescriptions[research.key] ?? "Expands the empire research model for future technologies and unlock paths."}
+        </p>
+      </InspectDetailHero>
 
       <dl className="mt-4 grid gap-2">
-        <ResearchInfoRow label="Category" value={research.lane} />
-        <ResearchInfoRow label="Requirements">
+        <InspectInfoRow label="Category" value={research.lane} />
+        <InspectInfoRow label="Requirements">
           <RequirementFlairs requirements={requirementStates} />
-        </ResearchInfoRow>
-        <ResearchInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
-        <ResearchInfoRow
+        </InspectInfoRow>
+        <InspectInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
+        <InspectInfoRow
           label="Research time"
           value={
             status.durationSeconds
@@ -461,6 +426,14 @@ function ResearchDetailPanel({
         </p>
       </div>
 
+      {queue && (
+        <ActiveResearchQueueDetail
+          isSelectedResearch={Boolean(isSelectedResearchQueued)}
+          now={now}
+          queue={queue}
+        />
+      )}
+
       <button
         aria-label={`Research ${research.label} to Level ${status.targetLevel}`}
         className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
@@ -470,29 +443,34 @@ function ResearchDetailPanel({
       >
         {status.actionLabel}
       </button>
-    </aside>
+    </InspectDetailShell>
   );
 }
 
-function ResearchInfoRow({
-  children,
-  label,
-  value,
+export function ActiveResearchQueueDetail({
+  isSelectedResearch,
+  now,
+  queue,
 }: {
-  children?: ComponentChildren | undefined;
-  label: string;
-  value?: string | undefined;
+  isSelectedResearch: boolean;
+  now: number;
+  queue: NonNullable<ReturnType<typeof researchQueueForDisplay>>;
 }) {
-  return (
-    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
-      <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
-      <dd className="mt-1 break-words text-sm font-semibold text-slate-200">{children ?? value}</dd>
-    </div>
-  );
+  return SingleItemQueueProgress({
+    isPrimaryItem: isSelectedResearch,
+    label: `${queue.label} Level ${queue.targetLevel} is researching.`,
+    now,
+    queue,
+    title: {
+      active: "Research in progress",
+      context: "Active research",
+    },
+  });
 }
 
 function researchActionStatus({
   actionPending,
+  actionPendingLabel,
   canTransact,
   chainCost,
   error,
@@ -502,6 +480,7 @@ function researchActionStatus({
   state,
 }: {
   actionPending: boolean;
+  actionPendingLabel?: string | undefined;
   canTransact: boolean;
   chainCost: Resources | undefined;
   error: string | undefined;
@@ -528,7 +507,7 @@ function researchActionStatus({
     : undefined;
 
   const reason = actionPending
-    ? "Waiting for wallet confirmation"
+    ? actionPendingLabel ?? "Awaiting wallet"
     : loading
       ? "Reading on-chain research state"
       : error
@@ -557,7 +536,7 @@ function researchActionStatus({
   const badge = active ? "In progress" : disabled ? "Locked" : "Available";
 
   return {
-    actionLabel: active ? "In progress" : `Research Level ${targetLevel}`,
+    actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : active ? "In progress" : `Research Level ${targetLevel}`,
     badge,
     cost,
     currentLevel,

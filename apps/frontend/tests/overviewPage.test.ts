@@ -3,7 +3,10 @@ import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
 } from "../src/overviewHeroImage";
-import { shouldShowOverviewBuildingFinishAction } from "../src/components/OverviewPage";
+import {
+  overviewDefenseFinishAction,
+  shouldShowOverviewBuildingFinishAction,
+} from "../src/components/OverviewPage";
 import {
   overviewQueueItemLabelClassName,
   overviewQueueItemRemainingClassName,
@@ -212,5 +215,66 @@ describe("overview queue progress display", () => {
     expect(shouldShowOverviewBuildingFinishAction({
       isBuildingReadyToFinish: true,
     })).toBe(false);
+  });
+
+  test("shows and invokes the ready defense completion action on Overview", () => {
+    let calls = 0;
+    const action = overviewDefenseFinishAction({
+      now: 1_700_000_000_000,
+      onFinishDefense: () => {
+        calls += 1;
+      },
+      queue: {
+        active: true,
+        cost: { metal: "2000", crystal: "0", deuterium: "0" },
+        itemId: 0,
+        kind: "defense",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(false);
+    action.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("keeps not-ready defense queues passive on Overview", () => {
+    const action = overviewDefenseFinishAction({
+      now: 1_699_999_000_000,
+      onFinishDefense: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "2000", crystal: "0", deuterium: "0" },
+        itemId: 0,
+        kind: "defense",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(false);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("disables ready defense completion while a defense transaction is pending", () => {
+    const action = overviewDefenseFinishAction({
+      actionPending: true,
+      now: 1_700_000_000_000,
+      onFinishDefense: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "2000", crystal: "0", deuterium: "0" },
+        itemId: 0,
+        kind: "defense",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
   });
 });

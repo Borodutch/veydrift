@@ -12,7 +12,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@veydrift/universe": "workspace:*"
+    "@veydrift/universe": "workspace:*",
+    "viem": "^2.52.0"
   },
   "devDependencies": {
     "@types/bun": "^1.2.23",

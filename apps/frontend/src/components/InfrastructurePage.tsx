@@ -1,13 +1,12 @@
 import { Info, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
   buildingCatalog,
   buildingEffectMetrics,
   buildingRequirementsFor,
   isBinaryBuilding,
-  queueProgressPercent,
   researchCatalog,
   unmetBuildingRequirement,
 } from "../playableMvp";
@@ -22,9 +21,16 @@ import {
   formatSigned,
   mineSolarPlantPrerequisiteFor,
 } from "../buildingDetails";
-import { formatDurationUntil } from "../durationFormat";
 import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
+import {
+  InspectCatalogTile,
+  InspectDetailHero,
+  InspectDetailImage,
+  InspectDetailShell,
+  InspectInfoBlock,
+  SingleItemQueueProgress,
+} from "./InspectProgressLayout";
 import { OptimizedImage } from "./OptimizedImage";
 import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
 
@@ -40,13 +46,11 @@ const fullResourceLabels: Record<keyof Resources, string> = {
   deuterium: "Deuterium",
 };
 
-const loadedDetailImageKeys = new Set<BuildingKey>();
 const solarPrerequisiteMineKeys = new Set<BuildingKey>([
   "metalMine",
   "crystalMine",
   "deuteriumSynthesizer",
 ]);
-
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
 
 const buildingDescriptions: Record<BuildingKey, string> = {
@@ -163,15 +167,15 @@ export function InfrastructurePage({
             const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
 
             return (
-              <BuildingSelectorTile
+              <InspectCatalogTile
                 asset={building.asset}
-                currentLevel={currentLevel}
-                effect={effect}
+                currentText={buildingStatusText(building.label, currentLevel)}
+                isDimmed={currentLevel === 0}
                 isSelected={isSelected}
-                isUnbuilt={currentLevel === 0}
                 key={building.key}
                 label={building.label}
-                statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : undefined}
+                statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : compactEffect(effect)}
+                statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
                 onClick={() => handleSelectBuilding(building.key)}
               />
             );
@@ -211,16 +215,6 @@ export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
   );
 }
 
-function formatQueueReadyAt(readyAtMs: number): string {
-  if (!Number.isFinite(readyAtMs)) return "Unknown";
-  return new Date(readyAtMs).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function ActiveBuildingBadge({ asset, label }: { asset?: string | undefined; label: string }) {
   return (
     <span className="inline-flex min-w-0 items-center gap-2 rounded border border-amber-300/20 bg-amber-300/10 py-1 pl-1 pr-2.5 text-xs text-amber-300">
@@ -237,62 +231,6 @@ function ActiveBuildingBadge({ asset, label }: { asset?: string | undefined; lab
       ) : null}
       <span className="min-w-0 truncate">Building: {label}</span>
     </span>
-  );
-}
-
-function BuildingSelectorTile({
-  asset,
-  currentLevel,
-  effect,
-  isSelected,
-  isUnbuilt,
-  label,
-  onClick,
-  statusText,
-}: {
-  asset: string;
-  currentLevel: number;
-  effect: BuildingEffectMetrics;
-  isSelected: boolean;
-  isUnbuilt: boolean;
-  label: string;
-  onClick: () => void;
-  statusText?: string | undefined;
-}) {
-  const effectView = compactEffect(effect);
-
-  return (
-    <button
-      aria-pressed={isSelected}
-      className={`group min-w-0 rounded-md border bg-[#101624] p-2 text-left transition hover:border-signal/50 hover:bg-[#141d30] ${
-        isSelected ? "border-signal/70 ring-1 ring-signal/40" : "border-white/10"
-      } ${isUnbuilt ? "opacity-60 grayscale" : ""}`}
-      onClick={onClick}
-      type="button"
-    >
-      <span className="block aspect-square overflow-hidden rounded border border-white/10 bg-black/20">
-        <OptimizedImage
-          alt=""
-          className="h-full w-full object-cover transition group-hover:scale-[1.03]"
-          height={256}
-          loading="lazy"
-          sizes="112px"
-          src={asset}
-          width={256}
-        />
-      </span>
-      <span className="mt-2 block min-w-0">
-        <span className="block truncate text-sm font-semibold text-white">{label}</span>
-        <span className="mt-0.5 flex items-center justify-between gap-2 text-xs">
-          <span className={isUnbuilt ? "text-slate-500" : "text-slate-300"}>
-            {buildingStatusText(label, currentLevel)}
-          </span>
-          <span className={`truncate text-right ${statusText ? "text-amber-300" : "text-signal"}`}>
-            {statusText ?? effectView}
-          </span>
-        </span>
-      </span>
-    </button>
   );
 }
 
@@ -348,7 +286,9 @@ function BuildingDetailPanel({
   const binary = isBinaryBuilding(building.key);
   const built = currentLevel > 0;
   const actionVerb = currentLevel === 0 || binary ? "Build" : "Upgrade";
-  const actionLabel = binary ? "Build Rift Bridge" : `${actionVerb} Level ${status.targetLevel}`;
+  const actionLabel = status.disabled && actionUnavailableReason
+    ? actionUnavailableReason
+    : binary ? "Build Rift Bridge" : `${actionVerb} Level ${status.targetLevel}`;
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key);
@@ -360,15 +300,16 @@ function BuildingDetailPanel({
       : "border-signal/20 bg-signal/10 text-signal";
 
   return (
-    <aside className="min-w-0 rounded-lg border border-white/10 bg-[#0f1624] p-3 xl:sticky xl:top-4">
-      <div className="grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)] xl:grid-cols-1">
-        <BuildingDetailImage
-          asset={building.asset}
-          imageKey={building.key}
-          isUnbuilt={currentLevel === 0}
-        />
-
-        <div className="min-w-0">
+    <InspectDetailShell>
+      <InspectDetailHero
+        image={(
+          <InspectDetailImage
+            asset={building.asset}
+            cacheKey={`building:${building.key}`}
+            isDimmed={currentLevel === 0}
+          />
+        )}
+      >
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
               <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
@@ -396,8 +337,7 @@ function BuildingDetailPanel({
           <p className="mt-3 text-sm leading-6 text-slate-300">
             {buildingDescriptions[building.key]}
           </p>
-        </div>
-      </div>
+      </InspectDetailHero>
 
       <dl className="mt-4 grid gap-2">
         {effectRows.map((row) => (
@@ -413,15 +353,15 @@ function BuildingDetailPanel({
       </dl>
 
       <div className="mt-4 grid gap-2 border-t border-white/10 pt-4 text-sm sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-        <InfoBlock label="Requirements">
+        <InspectInfoBlock label="Requirements">
           <RequirementFlairs requirements={requirementStates} />
-        </InfoBlock>
+        </InspectInfoBlock>
         {binary && built ? (
-          <InfoBlock label="Rift bridge" value="Built" />
+          <InspectInfoBlock label="Rift bridge" value="Built" />
         ) : (
           <>
-            <InfoBlock label={binary ? "Build cost" : "Upgrade cost"} value={formatCost(status.cost)} />
-            <InfoBlock label={binary ? "Build time" : "Upgrade time"} value={formatDuration(status.durationSeconds)} />
+            <InspectInfoBlock label={binary ? "Build cost" : "Upgrade cost"} value={formatCost(status.cost)} />
+            <InspectInfoBlock label={binary ? "Build time" : "Upgrade time"} value={formatDuration(status.durationSeconds)} />
           </>
         )}
       </div>
@@ -448,11 +388,12 @@ function BuildingDetailPanel({
 
       {isBuildingReadyToFinish && onFinishBuilding && (
         <button
-          className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+          className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          disabled={Boolean(actionUnavailableReason)}
           onClick={onFinishBuilding}
           type="button"
         >
-          {binary ? "Finish build" : "Finish upgrade"}
+          {actionUnavailableReason ?? (binary ? "Finish build" : "Finish upgrade")}
         </button>
       )}
 
@@ -476,7 +417,7 @@ function BuildingDetailPanel({
           onClose={() => setIsInfoOpen(false)}
         />
       )}
-    </aside>
+    </InspectDetailShell>
   );
 }
 
@@ -490,44 +431,17 @@ export function ActiveBuildingQueueDetail({
   queue: BuildingQueueItem;
 }) {
   const queueLabel = buildingQueueLabel(queue.label, queue.targetLevel);
-  const remaining = formatDurationUntil(queue.readyAt, now);
-  const percent = queueProgressPercent(queue, now);
 
-  return (
-    <div className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-amber-100">
-            {isSelectedBuilding ? "Construction in progress" : "Active construction"}
-          </p>
-          <p className="mt-1 text-xs leading-5 text-amber-200/85">
-            {queueLabel} is upgrading.
-          </p>
-        </div>
-        <span className="shrink-0 rounded bg-black/20 px-2 py-1 text-xs font-semibold text-amber-100">
-          {percent}%
-        </span>
-      </div>
-
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/25">
-        <div
-          className="h-full rounded-full bg-amber-300 transition-[width]"
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-
-      <div className="mt-3 grid gap-2 text-xs text-amber-100 sm:grid-cols-2">
-        <p className="min-w-0">
-          <span className="block uppercase tracking-normal text-amber-200/70">Time remaining</span>
-          <span className="mt-1 block font-semibold">{remaining}</span>
-        </p>
-        <p className="min-w-0">
-          <span className="block uppercase tracking-normal text-amber-200/70">Ready at</span>
-          <span className="mt-1 block font-semibold">{formatQueueReadyAt(queue.readyAt)}</span>
-        </p>
-      </div>
-    </div>
-  );
+  return SingleItemQueueProgress({
+    isPrimaryItem: isSelectedBuilding,
+    label: `${queueLabel} is upgrading.`,
+    now,
+    queue,
+    title: {
+      active: "Construction in progress",
+      context: "Active construction",
+    },
+  });
 }
 
 export function BuildingLevelInfoButton({
@@ -702,69 +616,6 @@ function LevelPill({ children, tone }: { children: string; tone: "current" | "ne
   );
 }
 
-function BuildingDetailImage({
-  asset,
-  imageKey,
-  isUnbuilt,
-}: {
-  asset: string;
-  imageKey: BuildingKey;
-  isUnbuilt: boolean;
-}) {
-  const currentImageKeyRef = useRef(imageKey);
-  const imageElementRef = useRef<HTMLImageElement | null>(null);
-  const [loadedImageKey, setLoadedImageKey] = useState<BuildingKey | null>(() => (
-    loadedDetailImageKeys.has(imageKey) ? imageKey : null
-  ));
-  const isLoaded = loadedImageKey === imageKey;
-
-  currentImageKeyRef.current = imageKey;
-
-  useLayoutEffect(() => {
-    const image = imageElementRef.current;
-    const isCached = Boolean(image?.complete && image.naturalWidth > 0);
-
-    if (loadedDetailImageKeys.has(imageKey) || isCached) {
-      loadedDetailImageKeys.add(imageKey);
-      setLoadedImageKey(imageKey);
-      return;
-    }
-
-    setLoadedImageKey(null);
-  }, [imageKey]);
-
-  return (
-    <div
-      aria-busy={!isLoaded}
-      className={`relative aspect-square overflow-hidden rounded-md border border-white/10 bg-black/20 ${
-        isUnbuilt ? "opacity-70 grayscale" : ""
-      }`}
-    >
-      {!isLoaded && (
-        <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-white/10 via-white/[0.04] to-white/[0.08]" />
-      )}
-      <OptimizedImage
-        alt=""
-        className={`h-full w-full object-cover transition-opacity duration-150 ${
-          isLoaded ? "opacity-100" : "opacity-0"
-        }`}
-        height={512}
-        imageRef={imageElementRef}
-        key={imageKey}
-        loading="lazy"
-        onLoad={() => {
-          if (imageKey !== currentImageKeyRef.current) return;
-          loadedDetailImageKeys.add(imageKey);
-          setLoadedImageKey(imageKey);
-        }}
-        sizes="(min-width: 1280px) 400px, (min-width: 640px) 144px, 100vw"
-        src={asset}
-        width={512}
-      />
-    </div>
-  );
-}
-
 function ComparisonMetric({
   delta,
   label,
@@ -793,23 +644,6 @@ function ComparisonMetric({
         <span className="min-w-0 break-words text-signal">{next}</span>
       </dd>
       {delta && <dd className={`mt-1 text-xs font-medium ${deltaClass}`}>{delta}</dd>}
-    </div>
-  );
-}
-
-function InfoBlock({
-  children,
-  label,
-  value,
-}: {
-  children?: ComponentChildren | undefined;
-  label: string;
-  value?: string | undefined;
-}) {
-  return (
-    <div className="min-w-0">
-      <span className="block text-xs uppercase tracking-normal text-slate-500">{label}</span>
-      {children ?? <span className="mt-1 block break-words text-sm font-semibold text-slate-200">{value}</span>}
     </div>
   );
 }
