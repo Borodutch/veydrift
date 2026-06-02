@@ -235,7 +235,6 @@ export function infrastructureUnavailableReasonFor({
   runtimeConfigStatus: RuntimeConfigState["status"];
 }): string | undefined {
   if (!isWalletConnected) return "Connect a wallet to load your infrastructure.";
-  if (buildingAction.status === "pending") return buildingAction.label;
 
   const hasLoadedInfrastructureState = Boolean(onChainResources && homePlanetId && infrastructureChainState);
   if (
@@ -1190,6 +1189,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     runtimeConfig.status,
   ]);
   const infrastructureActionNotice = infrastructureActionNoticeFor(buildingAction);
+  const infrastructureActionPendingLabel = buildingAction.status === "pending" ? buildingAction.label : undefined;
   const topBarEnergy = useMemo(() => {
     return topBarEnergyFor({
       infrastructureChainState,
@@ -2366,8 +2366,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return (
         <InfrastructurePage
           actionNotice={infrastructureActionNotice}
+          actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
+          isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={isWalletConnected && !infrastructureChainState ? infrastructureError : undefined}
           now={now}
@@ -2536,6 +2538,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         playerProfileAction={playerProfileAction}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
+        isBuildingActionPending={buildingAction.status === "pending"}
         isBuildingReadyToFinish={isBuildingReadyToFinish}
         planet={planet}
         queueProgress={queueProgress}

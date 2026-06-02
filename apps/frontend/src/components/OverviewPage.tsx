@@ -61,6 +61,7 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
+  isBuildingActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
   isDefenseActionPending?: boolean | undefined;
@@ -99,6 +100,7 @@ export function OverviewPage({
   planet,
   homePlanet,
   isWalletConnected,
+  isBuildingActionPending = false,
   isBuildingReadyToFinish,
   onFinishBuilding,
   isDefenseActionPending = false,
@@ -531,6 +533,7 @@ export function OverviewPage({
                 />
               )}
               <OverviewBuildingFinishButton
+                disabled={isBuildingActionPending}
                 onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
               />
             </div>
@@ -546,6 +549,7 @@ export function OverviewPage({
                 now={now}
               />
               <OverviewBuildingFinishButton
+                disabled={isBuildingActionPending}
                 onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
               />
             </div>
@@ -695,15 +699,18 @@ export function overviewDefenseFinishAction({
 }
 
 function OverviewBuildingFinishButton({
+  disabled = false,
   onFinishBuilding,
 }: {
+  disabled?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
 }) {
   if (!onFinishBuilding) return null;
 
   return (
     <button
-      className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+      className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      disabled={disabled}
       onClick={onFinishBuilding}
       type="button"
     >

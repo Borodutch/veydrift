@@ -5,6 +5,10 @@ import {
   loadWalletPlanetSyncSnapshot,
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
+import {
+  infrastructureFinishButtonLabel,
+  infrastructureUpgradeButtonLabel,
+} from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { ChainInfrastructureState } from "../src/walletFlow";
 
@@ -14,6 +18,30 @@ describe("Playable MVP app display helpers", () => {
       status: "pending",
       label: "Waiting for wallet confirmation",
     })).toBeUndefined();
+  });
+
+  test("keeps pending infrastructure copy out of unavailable and button labels", () => {
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: {
+        status: "pending",
+        label: "Building completion: awaiting wallet",
+      },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState(),
+      infrastructureLoading: false,
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
+      onChainStatus: "ready",
+      runtimeConfigStatus: "ready",
+    })).toBeUndefined();
+
+    expect(infrastructureUpgradeButtonLabel({
+      binary: false,
+      defaultLabel: "Upgrade Level 2",
+      statusDisabled: true,
+    })).toBe("Upgrade Level 2");
+    expect(infrastructureFinishButtonLabel(undefined, false)).toBe("Finish upgrade");
   });
 
   test("keeps terminal infrastructure action notices visible", () => {
