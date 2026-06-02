@@ -2295,12 +2295,12 @@ function errorData(error: unknown): unknown {
   return undefined;
 }
 
-export async function fetchWalletSettlement(apiUrl: string, wallet: string): Promise<WalletSettlementResponse> {
-  return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, "settlement", "Settlement");
+export async function fetchWalletSettlement(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
+  return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, withWalletReadOptions("settlement", undefined, options), "Settlement");
 }
 
-export async function fetchWalletPlanets(apiUrl: string, wallet: string): Promise<WalletPlanetsResponse> {
-  return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, "planets", "Planets");
+export async function fetchWalletPlanets(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {
+  return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, withWalletReadOptions("planets", undefined, options), "Planets");
 }
 
 type WalletReadOptions = {
