@@ -157,6 +157,7 @@ import {
   type PlayerProfile,
   type RiftResourceState,
   type PlayerQueuesResponse,
+  type WalletPlanetsResponse,
   type WalletSettlementResponse,
 } from "./walletFlow";
 import {
@@ -528,7 +529,7 @@ export async function loadWalletPlanetSyncSnapshot(
       account,
       indexedSettlement.homePlanetId,
       activePlanetId,
-      planetsResult.status === "fulfilled" ? planetsResult.value.planets : undefined,
+      planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
     );
     return walletPlanetSyncSnapshotFromResults(
       account,
@@ -624,8 +625,9 @@ function playerQueuesFromIndexedPlanet(
   wallet: string,
   homePlanetId: string | null,
   activePlanetId: string | undefined,
-  planets: ManagedPlanetResponse[] | undefined,
+  planetsResponse: WalletPlanetsResponse | undefined,
 ): PlayerQueuesResponse {
+  const planets = planetsResponse?.planets;
   const queuePlanetId = activePlanetId ?? homePlanetId;
   const selectedPlanet = planets?.find((planet) => planet.planetId === queuePlanetId)
     ?? planets?.find((planet) => planet.planetId === homePlanetId || planet.isHomePlanet)
@@ -635,6 +637,7 @@ function playerQueuesFromIndexedPlanet(
     building: selectedPlanet?.queues.building ?? null,
     defense: selectedPlanet?.queues.defense ?? null,
     ship: selectedPlanet?.queues.ship ?? null,
+    research: planetsResponse?.queues?.research ?? null,
   };
 }
 

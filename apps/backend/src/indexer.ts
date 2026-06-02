@@ -362,6 +362,9 @@ export class SettlementIndexer {
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
+      queues: {
+        research: this.researchQueue(wallet)
+      },
       planets
     };
   }
