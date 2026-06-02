@@ -770,6 +770,20 @@ function GalaxySlot({
           planet={planet}
         />
       </div>
+
+      {planet.alliance ? (
+        <div className="col-span-2 col-start-2 -mt-1 min-w-0 sm:hidden">
+          <button
+            className="max-w-full truncate text-xs font-medium text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
+            disabled={!onSelectAlliance}
+            onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
+            title={`Open ${allianceLabel}`}
+            type="button"
+          >
+            {allianceLabel}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
