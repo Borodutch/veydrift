@@ -545,11 +545,11 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/timed out reading .* from the game api/i.test(message)) {
-    return `${message} Retry in a moment.`;
+    return `${message} The game API may be temporarily unavailable; the app will retry when state sync resumes.`;
   }
 
   if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
-    return "The wallet could not read the current game contract state. Retry in a moment, or switch to Base Sepolia and reconnect your wallet.";
+    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
   }
 
   if (/execution reverted/i.test(message)) {
@@ -2352,7 +2352,7 @@ async function fetchWalletJson<T>(
         ? controller.signal.reason
         : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`);
     }
-    throw error;
+    throw new Error(walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
   }
@@ -2388,10 +2388,33 @@ async function apiErrorMessage(response: Response, label: string): Promise<strin
   const fallback = `${label} API failed: ${response.status}`;
   try {
     const body = await response.clone().json() as { error?: unknown };
-    return typeof body.error === "string" && body.error.trim()
-      ? `${fallback}: ${body.error}`
-      : fallback;
+    const error = typeof body.error === "string" ? body.error.trim() : "";
+
+    if (response.status === 503 && error === "backend_not_configured") {
+      return `${label} API is temporarily unavailable while backend readiness is restored. The app will retry instead of requiring a wallet reconnect.`;
+    }
+
+    if (response.status >= 500) {
+      return error
+        ? `${label} API is temporarily unavailable (${response.status}: ${error}). The app will retry when game state sync recovers.`
+        : `${label} API is temporarily unavailable (${response.status}). The app will retry when game state sync recovers.`;
+    }
+
+    return error ? `${fallback}: ${error}` : fallback;
   } catch {
+    if (response.status >= 500) {
+      return `${label} API is temporarily unavailable (${response.status}). The app will retry when game state sync recovers.`;
+    }
+
     return fallback;
   }
+}
+
+function walletApiNetworkFailureMessage(label: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/failed to fetch|load failed|network|err_http2/i.test(message)) {
+    return `${label} API could not be reached from this browser. Keeping the last known game state and retrying when the backend connection recovers.`;
+  }
+
+  return message || `${label} API could not be reached.`;
 }
