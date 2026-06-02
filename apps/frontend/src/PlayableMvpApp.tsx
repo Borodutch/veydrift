@@ -180,6 +180,53 @@ export function researchStartTransactionLabel(
   return `${label} level ${currentLevel + 1} research`;
 }
 
+export function researchCompletionUnavailableReasonFor({
+  canTransact,
+  now = Date.now(),
+  researchState,
+}: {
+  canTransact: boolean;
+  now?: number;
+  researchState: ChainResearchState | null;
+}): string | undefined {
+  if (!canTransact) {
+    return "Wallet or game contract is unavailable.";
+  }
+
+  const queue = researchState?.queue;
+  if (!queue?.active) {
+    return "No active research queue is available to complete.";
+  }
+
+  const readyAt = Number(queue.readyAt) * 1_000;
+  if (!Number.isFinite(readyAt) || readyAt <= 0) {
+    return "Research completion time is unavailable. Refresh research state before completing.";
+  }
+
+  if (readyAt > now) {
+    return "Research is not ready to complete yet.";
+  }
+
+  return undefined;
+}
+
+export async function researchStateForCompletionRevalidation({
+  account,
+  activePlanetId,
+  apiBaseUrl,
+  fallback,
+  loadResearchState = fetchResearchState,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  apiBaseUrl: string | undefined;
+  fallback: ChainResearchState | null;
+  loadResearchState?: typeof fetchResearchState;
+}): Promise<ChainResearchState | null> {
+  if (!apiBaseUrl || !account) return fallback;
+  return loadResearchState(apiBaseUrl, account, activePlanetId, { source: "live" });
+}
+
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
   account?: string | undefined;
@@ -2113,21 +2160,56 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [account, gameContract, provider, refreshStartedResearchState, researchState, runResearchTransaction]);
 
   const handleFinishResearch = useCallback(() => {
-    if (!provider || !account || !gameContract) {
-      setResearchAction({ status: "error", label: "Wallet or game contract is unavailable." });
+    const unavailableReason = researchCompletionUnavailableReasonFor({
+      canTransact: Boolean(provider && account && gameContract),
+      researchState,
+    });
+    if (unavailableReason) {
+      setResearchAction({ status: "error", label: unavailableReason });
       return;
     }
+    if (!provider || !account || !gameContract) return;
 
     const expectation = {
       itemId: researchState?.queue?.itemId,
       targetLevel: researchState?.queue?.targetLevel,
     };
-    void runResearchTransaction("Research completion", () => sendFinishResearchTransaction(
-      provider,
-      account,
-      gameContract,
-    ), () => refreshFinishedResearchState(expectation));
-  }, [account, gameContract, provider, refreshFinishedResearchState, researchState?.queue, runResearchTransaction]);
+    void runResearchTransaction("Research completion", async () => {
+      const latestResearchState = await researchStateForCompletionRevalidation({
+        account,
+        activePlanetId,
+        apiBaseUrl,
+        fallback: researchState,
+      });
+      if (latestResearchState) {
+        setResearchState(latestResearchState);
+        setResearchError(undefined);
+      }
+
+      const latestUnavailableReason = researchCompletionUnavailableReasonFor({
+        canTransact: Boolean(provider && account && gameContract),
+        researchState: latestResearchState,
+      });
+      if (latestUnavailableReason) {
+        throw new Error(latestUnavailableReason);
+      }
+
+      return sendFinishResearchTransaction(
+        provider,
+        account,
+        gameContract,
+      );
+    }, () => refreshFinishedResearchState(expectation));
+  }, [
+    account,
+    activePlanetId,
+    apiBaseUrl,
+    gameContract,
+    provider,
+    refreshFinishedResearchState,
+    researchState,
+    runResearchTransaction,
+  ]);
 
   const handleApproveRiftResource = useCallback((resource: RiftResourceState, amount: string) => {
     if (!provider || !account || !gameContract || !resource.tokenAddress) {
