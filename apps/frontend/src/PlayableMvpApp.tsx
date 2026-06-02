@@ -1710,7 +1710,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
-    if (!provider || !account || !gameContract || !shipyardState?.homePlanetId) {
+    const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
+    if (!provider || !account || !gameContract || !planetId) {
       setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
@@ -1719,25 +1720,26 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       provider,
       account,
       gameContract,
-      shipyardState.homePlanetId ?? "0",
+      planetId,
       shipId,
       quantity,
     ));
-  }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
+  }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId, shipyardState?.planetId]);
 
   const handleFinishShipProduction = useCallback(() => {
-    if (!provider || !account || !gameContract || !shipyardState?.homePlanetId) {
+    const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
+    if (!provider || !account || !gameContract || !planetId) {
       setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
-    void runShipyardTransaction("Ship completion", `shipyard:finish:${shipyardState.homePlanetId ?? "0"}`, () => sendFinishShipProductionTransaction(
+    void runShipyardTransaction("Ship completion", `shipyard:finish:${planetId}`, () => sendFinishShipProductionTransaction(
       provider,
       account,
       gameContract,
-      shipyardState.homePlanetId ?? "0",
+      planetId,
     ));
-  }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId]);
+  }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId, shipyardState?.planetId]);
 
   const handleBuildDefense = useCallback((defenseId: number, _key: DefenseKey, quantity: number) => {
     if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {

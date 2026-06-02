@@ -1303,6 +1303,41 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
     }
 
+    function testFreshlyCompletedShipCanImmediatelyLaunchAttack() public {
+        address defender = address(0xDEF);
+        vm.deal(defender, 1 ether);
+
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(defender);
+        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+
+        _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+        VeydriftGameStorage.ShipQueue memory queue = game.shipQueue(originPlanetId);
+        vm.warp(queue.readyAt);
+        vm.prank(player);
+        game.finishShipProduction(originPlanetId);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
+    }
+
     function testColonyAndTransportMutateState() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();

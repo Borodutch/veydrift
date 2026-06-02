@@ -187,6 +187,7 @@ export type ResolvableFleetMission = Pick<
 export type ShipyardState = {
   wallet: Address;
   homePlanetId: string | null;
+  planetId: string | null;
   productionAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
@@ -1168,6 +1169,7 @@ export class VeydriftGameReader implements ChainReader {
       return {
         wallet,
         homePlanetId: null,
+        planetId: null,
         productionAvailable: false,
         unavailableReason:
           "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
@@ -1185,6 +1187,7 @@ export class VeydriftGameReader implements ChainReader {
       return {
         wallet,
         homePlanetId: null,
+        planetId: null,
         productionAvailable: true,
         resources: null,
         fleetSlots: { active: 0, limit: 1 },
@@ -1214,6 +1217,7 @@ export class VeydriftGameReader implements ChainReader {
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
+      planetId: settlement.homePlanetId,
       productionAvailable: true,
       resources,
       fleetSlots: {

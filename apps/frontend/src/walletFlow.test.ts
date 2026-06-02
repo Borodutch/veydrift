@@ -161,9 +161,14 @@ describe("walletFlow", () => {
       speedPercent: 40,
     });
     const requests: unknown[] = [];
+    let transactionCount = 0;
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      return `0xgalaxy${requests.length}`;
+      if (method === "eth_sendTransaction") {
+        transactionCount += 1;
+        return `0xgalaxy${transactionCount}`;
+      }
+      return "0x";
     });
 
     await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
@@ -205,6 +210,14 @@ describe("walletFlow", () => {
     expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");
     expect(requests).toEqual([
       {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: missionData,
+        }, "latest"],
+      },
+      {
         method: "eth_sendTransaction",
         params: [{
           from: account,
@@ -235,6 +248,56 @@ describe("walletFlow", () => {
           to: contract,
           data: encodeGameCall("0xa72cd29a", [7, 9, 0, 1]),
         }],
+      },
+    ]);
+  });
+
+  test("preflights fleet launches and reports stale ship counts before opening wallet submit", async () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") {
+        throw { code: 3, message: "execution reverted", data: "0x705f508b" };
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    })).rejects.toThrow("Selected origin planet does not have the requested ships");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeLaunchFleetMissionCall({
+            originPlanetId: 7,
+            targetPlanetId: 9,
+            missionType: 3,
+            ships,
+          }),
+        }, "latest"],
       },
     ]);
   });
