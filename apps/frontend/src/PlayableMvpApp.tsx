@@ -2453,7 +2453,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onCounterplay={handleCounterplay}
         onJoinAttack={handleJoinAttack}
+        isDefenseActionPending={defenseAction.status === "pending"}
         onFinishBuilding={handleFinishBuildingUpgrade}
+        onFinishDefense={handleFinishDefenseProduction}
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
         onResolveMission={handleResolveMission}

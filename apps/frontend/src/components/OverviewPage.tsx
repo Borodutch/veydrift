@@ -55,6 +55,8 @@ interface OverviewPageProps {
   isWalletConnected: boolean;
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
+  isDefenseActionPending?: boolean | undefined;
+  onFinishDefense?: (() => void) | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
   onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
@@ -87,6 +89,8 @@ export function OverviewPage({
   isWalletConnected,
   isBuildingReadyToFinish,
   onFinishBuilding,
+  isDefenseActionPending = false,
+  onFinishDefense,
   onNavigate,
   onCounterplay,
   onJoinAttack,
@@ -120,6 +124,16 @@ export function OverviewPage({
   const onChainResearchQueue = researchQueueForDisplay(onChainQueues?.research ?? null, now);
   const activeResearchProgress = onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress;
   const onChainDefenseQueue = defenseQueuePreview(onChainQueues?.defense);
+  const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
+  const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt);
+  const defenseHasCanonicalTimeline =
+    defenseReadyAt !== undefined && defenseStartedAt !== undefined && defenseStartedAt < defenseReadyAt;
+  const defenseFinishAction = overviewDefenseFinishAction({
+    actionPending: isDefenseActionPending,
+    now,
+    onFinishDefense,
+    queue: onChainQueues?.defense,
+  });
   const showBuildingFinishAction = shouldShowOverviewBuildingFinishAction({
     isBuildingReadyToFinish,
     onFinishBuilding,
@@ -232,7 +246,7 @@ export function OverviewPage({
                   <button
                     aria-expanded={renamePanelOpen}
                     aria-label="Rename planet"
-                    className="-my-1 grid h-8 w-8 place-items-center rounded text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+                    className="grid h-8 w-8 place-items-center rounded text-slate-100/90 transition hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
                     disabled={renameBusy}
                     onClick={() => {
                       setRenamePanelOpen((open) => !open);
@@ -242,7 +256,7 @@ export function OverviewPage({
                     title="Rename planet"
                     type="button"
                   >
-                    <Pencil aria-hidden="true" size={12} strokeWidth={2} />
+                    <Pencil aria-hidden="true" size={11} strokeWidth={2} />
                   </button>
                 )}
                 {showAbandonAction && (
@@ -418,13 +432,19 @@ export function OverviewPage({
           tag={onChainQueues?.defense?.active ? "Active" : undefined}
         >
           {onChainQueues?.defense?.active ? (
-            <QueueItemDisplay
-              label={onChainDefenseQueue.label}
-              remaining={queueRemaining(onChainQueues.defense.readyAt, now)}
-              thumbnailSrc={onChainDefenseQueue.asset}
-              indeterminate
-              color="bg-rose-300"
-            />
+            <div className="grid gap-2">
+              <QueueItemDisplay
+                label={onChainDefenseQueue.label}
+                remaining={queueRemaining(onChainQueues.defense.readyAt, now)}
+                progress={defenseHasCanonicalTimeline ? 0 : undefined}
+                readyAt={defenseReadyAt}
+                startedAt={defenseHasCanonicalTimeline ? defenseStartedAt : undefined}
+                thumbnailSrc={onChainDefenseQueue.asset}
+                color="bg-rose-300"
+                now={now}
+              />
+              <OverviewDefenseFinishButton action={defenseFinishAction} />
+            </div>
           ) : (
             <EmptyQueue action={<QuickLink onClick={() => onNavigate("defenses")}>Defenses</QuickLink>}>
               No active defense production.
@@ -520,6 +540,30 @@ export function shouldShowOverviewBuildingFinishAction({
   return Boolean(isBuildingReadyToFinish && onFinishBuilding);
 }
 
+export function overviewDefenseFinishAction({
+  actionPending,
+  now,
+  onFinishDefense,
+  queue,
+}: {
+  actionPending?: boolean | undefined;
+  now: number;
+  onFinishDefense?: (() => void) | undefined;
+  queue?: PlayerQueuesResponse["defense"] | undefined;
+}): {
+  disabled: boolean;
+  onFinish?: (() => void) | undefined;
+  visible: boolean;
+} {
+  const ready = Boolean(queue?.active && queue.readyAt && Number(queue.readyAt) * 1_000 <= now);
+  const visible = Boolean(ready && onFinishDefense);
+  return {
+    disabled: Boolean(actionPending),
+    onFinish: visible && !actionPending ? onFinishDefense : undefined,
+    visible,
+  };
+}
+
 function OverviewBuildingFinishButton({
   onFinishBuilding,
 }: {
@@ -534,6 +578,25 @@ function OverviewBuildingFinishButton({
       type="button"
     >
       Finish upgrade
+    </button>
+  );
+}
+
+function OverviewDefenseFinishButton({
+  action,
+}: {
+  action: ReturnType<typeof overviewDefenseFinishAction>;
+}) {
+  if (!action.visible) return null;
+
+  return (
+    <button
+      className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-rose-300/40 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      disabled={action.disabled}
+      onClick={action.onFinish}
+      type="button"
+    >
+      Complete queue
     </button>
   );
 }
@@ -682,9 +745,9 @@ function QueueItemDisplay({
 }: {
   label: string;
   remaining: string;
-  progress?: number;
+  progress?: number | undefined;
   readyAt?: number | undefined;
-  indeterminate?: boolean;
+  indeterminate?: boolean | undefined;
   color?: string;
   thumbnailSrc?: string | undefined;
   now?: number | undefined;
@@ -732,6 +795,13 @@ function QueueItemDisplay({
       </div>
     </div>
   );
+}
+
+function queueTimestampMs(timestamp: string | null | undefined): number | undefined {
+  if (!timestamp) return undefined;
+  const seconds = Number(timestamp);
+  if (!Number.isFinite(seconds)) return undefined;
+  return seconds * 1_000;
 }
 
 function EmptyQueue({

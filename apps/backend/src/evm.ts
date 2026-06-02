@@ -1824,6 +1824,8 @@ export class VeydriftGameReader implements ChainReader {
 
     if (kind === "building" && active) {
       queue.startedAt = await this.readBuildingStartedAt(planetId, queue);
+    } else if (kind === "defense" && active) {
+      queue.startedAt = await this.readDefenseStartedAt(planetId, queue);
     }
 
     return queue;
@@ -1864,6 +1866,41 @@ export class VeydriftGameReader implements ChainReader {
         .slice()
         .reverse()
         .find((log) => isMatchingBuildingStartedLog(log, queue));
+      if (!matchingLog) return null;
+
+      const block = await this.transport.request<RpcBlock>("eth_getBlockByNumber", [
+        matchingLog.blockNumber,
+        false
+      ]);
+      return decodeUint(block.timestamp).toString();
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  }
+
+  private async readDefenseStartedAt(planetId: bigint, queue: QueueState): Promise<string | null> {
+    if (!queue.active || queue.itemId === undefined || queue.quantity === undefined || !queue.readyAt) {
+      return null;
+    }
+
+    try {
+      const logs = await this.getLogs(
+        {
+          address: this.gameContractAddress,
+          fromBlock: toQuantity(this.indexFromBlock),
+          toBlock: "latest",
+          topics: [
+            defenseQueuedTopic,
+            toTopic(planetId),
+            toTopic(BigInt(queue.itemId))
+          ]
+        }
+      );
+      const matchingLog = logs
+        .slice()
+        .reverse()
+        .find((log) => isMatchingDefenseQueuedLog(log, queue));
       if (!matchingLog) return null;
 
       const block = await this.transport.request<RpcBlock>("eth_getBlockByNumber", [
@@ -3309,6 +3346,19 @@ function isMatchingBuildingStartedLog(log: RpcLog, queue: QueueState): boolean {
   try {
     const words = splitWords(log.data);
     return Number(decodeUintWord(wordAt(words, 0))) === queue.targetLevel
+      && decodeUintWord(wordAt(words, 1)).toString() === queue.readyAt
+      && decodeUintWord(wordAt(words, 2)).toString() === queue.cost.metal
+      && decodeUintWord(wordAt(words, 3)).toString() === queue.cost.crystal
+      && decodeUintWord(wordAt(words, 4)).toString() === queue.cost.deuterium;
+  } catch {
+    return false;
+  }
+}
+
+function isMatchingDefenseQueuedLog(log: RpcLog, queue: QueueState): boolean {
+  try {
+    const words = splitWords(log.data);
+    return Number(decodeUintWord(wordAt(words, 0))) === queue.quantity
       && decodeUintWord(wordAt(words, 1)).toString() === queue.readyAt
       && decodeUintWord(wordAt(words, 2)).toString() === queue.cost.metal
       && decodeUintWord(wordAt(words, 3)).toString() === queue.cost.crystal

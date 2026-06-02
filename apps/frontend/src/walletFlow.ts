@@ -402,6 +402,7 @@ export type HighscorePlanet = {
 
 export type HighscoreResponse = {
   generatedAt: string;
+  durationMs?: number;
   formula: {
     pointsDivisor: string;
     summary: string;
@@ -2081,6 +2082,10 @@ async function highscoreHttpFailureMessage(response: Response): Promise<string> 
 
   if (response.status === 503 && errorCode === "highscores_unavailable") {
     return "Rankings are temporarily unavailable because the game API could not read current chain data. Retry in a moment.";
+  }
+
+  if (response.status === 503 && errorCode === "highscores_index_not_ready") {
+    return "Rankings are warming from indexed game state. Retry in a moment.";
   }
 
   if (response.status >= 500) {
