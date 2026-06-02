@@ -23,7 +23,13 @@ import {
   VeydriftGameReader
 } from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
-import { SettlementIndexer, type IndexedDebrisFieldEvent, type IndexedMoonChanceReportEvent, type IndexedRpcLog } from "./indexer";
+import {
+  SettlementIndexer,
+  type IndexedDebrisFieldEvent,
+  type IndexedMoonChanceReportEvent,
+  type IndexedRpcLog,
+  type IndexerSnapshot
+} from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import {
   validatePlayerDisplayName,
@@ -1519,7 +1525,7 @@ function highscoreFailureResponse(error: unknown): Response {
 
 function highscoreIndexNotReadyResponse(indexer: SettlementIndexer, startedAt: number): Response | null {
   const snapshot = indexer.snapshot();
-  if (snapshot.indexedState === "healthy" && snapshot.lastRebuiltAt) return null;
+  if (highscoreIndexCanServe(snapshot)) return null;
 
   return Response.json(
     {
@@ -1535,6 +1541,12 @@ function highscoreIndexNotReadyResponse(indexer: SettlementIndexer, startedAt: n
       status: 503
     }
   );
+}
+
+function highscoreIndexCanServe(snapshot: IndexerSnapshot): boolean {
+  if (snapshot.indexedState === "healthy" && snapshot.lastRebuiltAt) return true;
+
+  return Boolean(snapshot.lastRebuiltAt && snapshot.lastReconciledAt && snapshot.indexedPlanets > 0);
 }
 
 function isRpcTransportError(error: unknown): boolean {
