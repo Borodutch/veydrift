@@ -58,7 +58,7 @@ export function AlliancePage({
 
   const profile = allianceState?.profile;
   const role = allianceState?.membership.role ?? "none";
-  const isMember = Boolean(profile && allianceState?.membership.allianceId !== "0");
+  const isMember = hasAllianceMembership(allianceState);
   const isOwner = role === "owner";
   const canManageMembers = role === "owner" || role === "officer";
   const disabled = !canTransact || loading || actionState.status === "pending";
@@ -93,11 +93,13 @@ export function AlliancePage({
         ) : null}
         {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
 
-        <div className="grid gap-3 md:grid-cols-3">
-          <Metric icon={Users} label="Members" value={profile ? String(profile.memberCount) : "0"} />
-          <Metric icon={Crown} label="Role" value={roleLabel(role)} />
-          <Metric icon={UserCog} label="Officers" value={String(officers.length)} />
-        </div>
+        {isMember ? (
+          <div className="grid gap-3 md:grid-cols-3">
+            <Metric icon={Users} label="Members" value={profile ? String(profile.memberCount) : "0"} />
+            <Metric icon={Crown} label="Role" value={roleLabel(role)} />
+            <Metric icon={UserCog} label="Officers" value={String(officers.length)} />
+          </div>
+        ) : null}
 
         {!isMember ? (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -232,6 +234,10 @@ export function AlliancePage({
       </div>
     </section>
   );
+}
+
+export function hasAllianceMembership(allianceState: ChainAllianceState | null): boolean {
+  return Boolean(allianceState?.profile && allianceState.membership.allianceId !== "0");
 }
 
 function AllianceDirectory({
