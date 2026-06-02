@@ -163,15 +163,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
+      const chainSyncSnapshot = chainSync?.snapshot() ?? null;
+      const missionResolutionSnapshot = missionResolver?.snapshot() ?? null;
+      const indexerSnapshot = indexer?.snapshot() ?? null;
       return Response.json(
         {
           ok: true,
           service: "veydrift-backend",
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
-          chainSync: chainSync?.snapshot() ?? null,
-          missionResolution: missionResolver?.snapshot() ?? null,
-          indexer: indexer?.snapshot() ?? null,
+          readiness: backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot),
+          chainSync: chainSyncSnapshot,
+          missionResolution: missionResolutionSnapshot,
+          indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
         {
@@ -1645,6 +1649,49 @@ function unavailableResponse(problems: ConfigProblem[]): Response {
       status: 503
     }
   );
+}
+
+function backendReadiness(
+  problems: ConfigProblem[],
+  chainSyncSnapshot: unknown,
+  indexerSnapshot: unknown,
+): {
+  ready: boolean;
+  configurationReady: boolean;
+  chainSyncConnected: boolean | null;
+  subscribedToLogs: boolean | null;
+  indexedState: string | null;
+  safeToServeIndexedState: boolean | null;
+} {
+  const chainSyncConnected = booleanSnapshotField(chainSyncSnapshot, "connected");
+  const subscribedToLogs = booleanSnapshotField(chainSyncSnapshot, "subscribedToLogs");
+  const indexedState = stringSnapshotField(indexerSnapshot, "indexedState");
+  const safeToServeIndexedState = booleanSnapshotField(indexerSnapshot, "safeToServeIndexedState");
+  const configurationReady = problems.length === 0;
+
+  return {
+    ready: configurationReady
+      && chainSyncConnected !== false
+      && subscribedToLogs !== false
+      && safeToServeIndexedState !== false,
+    configurationReady,
+    chainSyncConnected,
+    subscribedToLogs,
+    indexedState,
+    safeToServeIndexedState,
+  };
+}
+
+function booleanSnapshotField(snapshot: unknown, key: string): boolean | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const value = (snapshot as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function stringSnapshotField(snapshot: unknown, key: string): string | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const value = (snapshot as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
 }
 
 function errorResponse(error: unknown, status: number): Response {

@@ -743,7 +743,7 @@ describe("walletFlow", () => {
       "Unlock or reconnect MetaMask"
     );
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
-      "Retry in a moment"
+      "game API may be temporarily unavailable"
     );
   });
 
@@ -1494,6 +1494,36 @@ describe("walletFlow", () => {
     try {
       await expect(fetchShipyardState("https://api.example.test", account, "4")).rejects.toThrow(
         "Shipyard API failed: 400: planetId must be a positive integer."
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("explains transient wallet API transport and backend readiness failures", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    try {
+      await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
+        "Keeping the last known game state"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ error: "backend_not_configured" }),
+      {
+        headers: { "content-type": "application/json" },
+        status: 503,
+      }
+    )) as unknown as typeof fetch;
+    try {
+      await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
+        "backend readiness is restored"
       );
     } finally {
       globalThis.fetch = originalFetch;

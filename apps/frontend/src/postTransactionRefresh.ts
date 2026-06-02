@@ -203,11 +203,17 @@ export async function waitForFinishedBuildingState(
   const intervalMs = options.intervalMs ?? 1_500;
   const delay = options.delay ?? defaultDelay;
   let latest: FinishedBuildingSnapshot | undefined;
+  let lastError: unknown;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    latest = await load();
-    if (isFinishedBuildingStateVisible(latest, expectation)) {
-      return latest;
+    try {
+      latest = await load();
+      lastError = undefined;
+      if (isFinishedBuildingStateVisible(latest, expectation)) {
+        return latest;
+      }
+    } catch (error) {
+      lastError = error;
     }
 
     if (attempt < attempts - 1) {
@@ -215,7 +221,7 @@ export async function waitForFinishedBuildingState(
     }
   }
 
-  throw new Error(finishedBuildingTimeoutMessage(latest, expectation));
+  throw new Error(finishedBuildingTimeoutMessage(latest, expectation, lastError));
 }
 
 export async function waitForStartedDefenseProductionState(
@@ -299,11 +305,17 @@ export async function waitForCollectedResourcesState(
   const intervalMs = options.intervalMs ?? 1_500;
   const delay = options.delay ?? defaultDelay;
   let latest: CollectedResourcesSnapshot | undefined;
+  let lastError: unknown;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    latest = await load();
-    if (isCollectedResourcesStateVisible(latest, expectation)) {
-      return latest;
+    try {
+      latest = await load();
+      lastError = undefined;
+      if (isCollectedResourcesStateVisible(latest, expectation)) {
+        return latest;
+      }
+    } catch (error) {
+      lastError = error;
     }
 
     if (attempt < attempts - 1) {
@@ -311,7 +323,7 @@ export async function waitForCollectedResourcesState(
     }
   }
 
-  throw new Error(collectedResourcesTimeoutMessage(latest, expectation));
+  throw new Error(collectedResourcesTimeoutMessage(latest, expectation, lastError));
 }
 
 export async function waitForHydratedWalletPlanet(
@@ -375,7 +387,11 @@ export async function waitForRenamedWalletPlanet(
 function collectedResourcesTimeoutMessage(
   snapshot: CollectedResourcesSnapshot | undefined,
   expectation: CollectedResourcesExpectation,
+  lastError?: unknown,
 ): string {
+  const recovery = transientGameStateReadFailureMessage(lastError);
+  if (recovery) return recovery;
+
   const lastSettledAt = snapshot?.settlement.planet?.lastSettledAt ?? "unavailable";
   const hasInfrastructureResources = Boolean(snapshot?.infrastructure.resources);
   return `Collect transaction confirmed, but indexed wallet resources for planet ${expectation.planetId} are still syncing. Last settledAt: ${lastSettledAt}; infrastructure resources loaded: ${hasInfrastructureResources}. Try refreshing in a few seconds.`;
@@ -384,7 +400,11 @@ function collectedResourcesTimeoutMessage(
 function finishedBuildingTimeoutMessage(
   snapshot: FinishedBuildingSnapshot | undefined,
   expectation: FinishedBuildingExpectation,
+  lastError?: unknown,
 ): string {
+  const recovery = transientGameStateReadFailureMessage(lastError);
+  if (recovery) return recovery;
+
   const queueActive = Boolean(snapshot?.queues.building?.active || snapshot?.infrastructure.queue?.active);
   const buildingLevel = expectation.itemId === undefined
     ? undefined
@@ -400,6 +420,17 @@ function finishedBuildingTimeoutMessage(
   }
 
   return "Building transaction confirmed, but the completed building state is still syncing. Try refreshing the game state in a few seconds.";
+}
+
+function transientGameStateReadFailureMessage(error: unknown): string | undefined {
+  if (!isTransientGameStateReadFailure(error)) return undefined;
+
+  return "The game API or RPC is temporarily unavailable while the confirmed transaction state is being checked. Keeping the last known game state and retrying from live sync; this is not a wallet network mismatch.";
+}
+
+export function isTransientGameStateReadFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /failed to fetch|load failed|network|err_http2|timed out reading .+ from the game api|api failed: 5\d\d|backend_not_configured|rpc http|rate limit|too many requests/i.test(message);
 }
 
 function startedDefenseProductionTimeoutMessage(
