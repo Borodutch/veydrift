@@ -24,6 +24,7 @@ export type MiniAppSurface = HtmlEnv & {
 export type MiniAppEmbed = {
   version: "1";
   imageUrl: string;
+  aspectRatio: "3:2";
   button: {
     title: string;
     action: {
@@ -43,8 +44,6 @@ export type MiniAppManifest = {
     name: string;
     homeUrl: string;
     iconUrl: string;
-    imageUrl: string;
-    buttonTitle: string;
     splashImageUrl: string;
     splashBackgroundColor: string;
     subtitle: string;
@@ -121,6 +120,7 @@ export function buildMiniAppEmbed(
   return {
     version: "1",
     imageUrl: surface.MINIAPP_IMAGE,
+    aspectRatio: "3:2",
     button: {
       title: "Join the testers",
       action: {
@@ -145,8 +145,6 @@ export function buildMiniAppManifest(
       name: "Veydrift",
       homeUrl: surface.PUBLIC_SITE_URL,
       iconUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/icon.png`,
-      imageUrl: surface.MINIAPP_IMAGE,
-      buttonTitle: "Join testers",
       splashImageUrl: surface.MINIAPP_SPLASH,
       splashBackgroundColor: "#05070d",
       subtitle: "Onchain space awaits",

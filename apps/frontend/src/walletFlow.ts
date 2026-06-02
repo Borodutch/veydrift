@@ -36,6 +36,10 @@ export type SettlementTransactionOptions = {
   readProvider?: Eip1193Provider;
 };
 
+export type TransactionPreflightOptions = {
+  readProvider?: Eip1193Provider | undefined;
+};
+
 export type OnChainResources = {
   metal: string;
   crystal: string;
@@ -1488,7 +1492,8 @@ export async function sendStartBuildingUpgradeTransaction(
   account: string,
   contractAddress: string,
   planetId: string,
-  buildingId: number
+  buildingId: number,
+  options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
   const transaction = {
@@ -1497,7 +1502,7 @@ export async function sendStartBuildingUpgradeTransaction(
     data
   };
 
-  await assertBuildingUpgradeCallSucceeds(provider, account, contractAddress, data);
+  await assertBuildingUpgradeCallSucceeds(options.readProvider ?? provider, account, contractAddress, data);
 
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -1565,7 +1570,8 @@ export async function sendFinishBuildingUpgradeTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  planetId: string
+  planetId: string,
+  options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
   const transaction = {
@@ -1574,7 +1580,7 @@ export async function sendFinishBuildingUpgradeTransaction(
     data
   };
 
-  await assertBuildingUpgradeCallSucceeds(provider, account, contractAddress, data);
+  await assertBuildingUpgradeCallSucceeds(options.readProvider ?? provider, account, contractAddress, data);
 
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -1735,10 +1741,11 @@ export async function sendLaunchFleetMissionTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
+  params: Parameters<typeof encodeLaunchFleetMissionCall>[0],
+  options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
-  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data);
+  await assertFleetMissionCallSucceeds(options.readProvider ?? provider, account, contractAddress, data);
 
   return provider.request<string>({
     method: "eth_sendTransaction",
