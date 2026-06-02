@@ -43,9 +43,17 @@ export function formatAllianceLabel(alliance: Planet["alliance"]): string {
   return alliance.tag ? `[${alliance.tag}] ${alliance.name}` : alliance.name;
 }
 
-export function formatGalaxyCommanderLabel(planet: Planet): string {
-  if (planet.occupiedBy?.ownerDisplayName) return planet.occupiedBy.ownerDisplayName;
-  if (planet.ownerId) return shortAddress(planet.ownerId);
+export type GalaxyCommanderNames = Readonly<Record<string, string>>;
+
+export function formatGalaxyCommanderLabel(planet: Planet, commanderNames: GalaxyCommanderNames = {}): string {
+  const displayName = planet.occupiedBy?.ownerDisplayName?.trim();
+  if (displayName) return displayName;
+
+  const owner = planet.occupiedBy?.owner ?? planet.ownerId;
+  const knownCommanderName = owner ? commanderNames[owner.toLowerCase()]?.trim() : undefined;
+  if (knownCommanderName) return knownCommanderName;
+
+  if (owner) return shortAddress(owner);
   return "Unclaimed";
 }
 
@@ -106,6 +114,7 @@ export type GalaxyActionState =
 interface Props {
   account?: string | undefined;
   actionState?: GalaxyActionState | undefined;
+  commanderNames?: GalaxyCommanderNames | undefined;
   galaxy: number;
   system: number;
   apiBaseUrl?: string | undefined;
@@ -123,6 +132,7 @@ interface Props {
 export function GalaxyView({
   account,
   actionState = { status: "idle" },
+  commanderNames,
   galaxy,
   system,
   apiBaseUrl = playableApiUrl,
@@ -400,6 +410,7 @@ export function GalaxyView({
                   key={pos}
                   account={account}
                   actionState={actionState}
+                  commanderNames={commanderNames}
                   onSelectPlanet={onSelectPlanet}
                   onSelectAlliance={onSelectAlliance}
                   onAction={onAction}
@@ -568,6 +579,7 @@ export function galaxyMissionFuelCost(origin: Coordinates, target: Coordinates, 
 function GalaxySlot({
   account,
   actionState,
+  commanderNames,
   galaxy,
   system,
   position,
@@ -585,6 +597,7 @@ function GalaxySlot({
 }: {
   account: string | undefined;
   actionState: GalaxyActionState;
+  commanderNames: GalaxyCommanderNames | undefined;
   galaxy: number;
   system: number;
   position: number;
@@ -653,7 +666,7 @@ function GalaxySlot({
     );
   }
 
-  const commanderLabel = formatGalaxyCommanderLabel(planet);
+  const commanderLabel = formatGalaxyCommanderLabel(planet, commanderNames);
   const allianceLabel = formatGalaxyAllianceIdentityLabel(planet.alliance);
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`

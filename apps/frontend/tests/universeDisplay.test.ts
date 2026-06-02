@@ -165,6 +165,35 @@ describe("tester universe display data", () => {
     expect(formatGalaxyCommanderLabel(planet!)).toBe("0x2222...2222");
   });
 
+  test("galaxy row uses known commander names before wallet fallbacks", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          archetype: "cold-tundra",
+          fields: 211,
+          galaxy: 2,
+          key: "2:44:8",
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          occupiedBy: {
+            owner: "0x2222222222222222222222222222222222222222",
+            planetId: "7",
+          },
+          position: 8,
+          system: 44,
+          temperature: -8,
+        },
+      ],
+    });
+
+    expect(formatGalaxyCommanderLabel(planet!, {
+      "0x2222222222222222222222222222222222222222": "Nova Prime",
+    })).toBe("Nova Prime");
+  });
+
   test("galaxy row commander and alliance copy stays explicit", () => {
     const [planet] = planetsFromSystemResponse({
       galaxy: 2,

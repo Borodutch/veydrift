@@ -714,6 +714,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
     return { galaxy: 1, system: 1 };
   });
+  const galaxyCommanderNames = useMemo(() => {
+    const displayName = playerProfile?.displayName?.trim();
+    const wallet = playerProfile?.wallet ?? account;
+    if (!displayName || !wallet) return undefined;
+
+    return { [wallet.toLowerCase()]: displayName };
+  }, [account, playerProfile?.displayName, playerProfile?.wallet]);
 
   const fallbackHomeCoords = useMemo<Coordinates | undefined>(() => {
     if (!planet?.coordinates) return undefined;
@@ -2732,6 +2739,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           account={account}
           actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
+          commanderNames={galaxyCommanderNames}
           galaxy={galaxyNav.galaxy}
           homeCoords={activePlanetCoords}
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
