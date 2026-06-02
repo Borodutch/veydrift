@@ -550,6 +550,44 @@ export function walletRequestErrorMessage(error: unknown): string {
   return message;
 }
 
+const buildingUpgradeRevertReasons: Record<string, string> = {
+  "0xcec62bc2": "Another building is already upgrading. Finish the active building queue before starting a new upgrade.",
+  "0x7e787175": "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.",
+  "0x4499d03a": "The active building upgrade is not ready to finish yet. Refresh infrastructure state and retry.",
+  "0x2ab0f96f": "Not enough on-chain resources are available for this building upgrade. Refresh infrastructure state and retry.",
+  "0xb8f7e9ba": "This building upgrade is missing an on-chain prerequisite.",
+  "0x359b57cf": "This planet has no free fields for another building upgrade.",
+  "0x1aca3780": "This building is already at its maximum supported level.",
+  "0x9a3d4eb9": "No planet exists for this building upgrade.",
+  "0xab2bcfd3": "This wallet does not own the selected planet.",
+  "0xdfa1a408": "The selected building is not supported by the current game contract.",
+  "0x78e10c67": "Building upgrades are not supported by the current game contract deployment.",
+};
+
+function revertSelector(error: unknown): string | undefined {
+  const data = errorData(error);
+  return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
+    ? data.slice(0, 10).toLowerCase()
+    : undefined;
+}
+
+async function assertBuildingUpgradeCallSucceeds(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+): Promise<void> {
+  try {
+    await provider.request({
+      method: "eth_call",
+      params: [{ from, to, data }, "latest"],
+    });
+  } catch (error) {
+    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
+    throw new Error(reason ?? walletRequestErrorMessage(error));
+  }
+}
+
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
   if (typeof chainId === "string") {
     return chainId.toLowerCase() === BASE_SEPOLIA.chainIdHex;
@@ -1291,15 +1329,18 @@ export async function sendStartBuildingUpgradeTransaction(
   planetId: string,
   buildingId: number
 ): Promise<string> {
+  const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
+  const transaction = {
+    from: account,
+    to: contractAddress,
+    data
+  };
+
+  await assertBuildingUpgradeCallSucceeds(provider, account, contractAddress, data);
+
   return provider.request<string>({
     method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId])
-      }
-    ]
+    params: [transaction]
   });
 }
 
@@ -1365,15 +1406,18 @@ export async function sendFinishBuildingUpgradeTransaction(
   contractAddress: string,
   planetId: string
 ): Promise<string> {
+  const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
+  const transaction = {
+    from: account,
+    to: contractAddress,
+    data
+  };
+
+  await assertBuildingUpgradeCallSucceeds(provider, account, contractAddress, data);
+
   return provider.request<string>({
     method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId])
-      }
-    ]
+    params: [transaction]
   });
 }
 
@@ -2044,6 +2088,18 @@ function errorCode(error: unknown): unknown {
   return typeof error === "object" && error !== null && "code" in error
     ? (error as { code: unknown }).code
     : undefined;
+}
+
+function errorData(error: unknown): unknown {
+  if (typeof error !== "object" || error === null) return undefined;
+  if ("data" in error) return (error as { data: unknown }).data;
+  if ("error" in error) {
+    const nested = (error as { error: unknown }).error;
+    if (typeof nested === "object" && nested !== null && "data" in nested) {
+      return (nested as { data: unknown }).data;
+    }
+  }
+  return undefined;
 }
 
 export async function fetchWalletSettlement(apiUrl: string, wallet: string): Promise<WalletSettlementResponse> {
