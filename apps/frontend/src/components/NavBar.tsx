@@ -63,15 +63,15 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
   return (
     <>
       {/* Desktop sidebar */}
-      <nav className="hidden w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:flex">
-        <div className="flex min-h-[calc(100dvh-52px)] flex-col gap-4 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] p-3 shadow-[inset_-1px_0_rgba(255,255,255,0.04)]">
+      <nav className="hidden h-[calc(100dvh-52px)] w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-[52px] md:flex">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] p-3 shadow-[inset_-1px_0_rgba(255,255,255,0.04)]">
           <div className="border-b border-white/10 px-2 pb-3">
             <p className="text-sm font-semibold text-white">
               Veydrift
             </p>
           </div>
 
-          <div className="grid gap-1">
+          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
             {pages.map((page) => (
               <NavItem
                 active={active === page.key || (active === "planet" && page.key === "galaxy")}
@@ -83,20 +83,23 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
             ))}
           </div>
 
-          <div className="mt-auto rounded-md border border-white/10 bg-black/20 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Home Planet
-            </p>
-            <p className="mt-1 font-mono text-sm text-slate-100">
-              {coordinates ?? "--:--:--"}
-            </p>
-            <div className="mt-3 h-px bg-white/10" />
-            <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Wallet
-            </p>
-            <p className="mt-1 truncate font-mono text-xs text-slate-300">
-              {account ? shortAddress(account) : "Disconnected"}
-            </p>
+          <div className="sticky bottom-3 shrink-0 rounded-md border border-white/10 bg-[#07101d]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur" aria-label="Sidebar account summary">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase text-slate-500">
+                Home
+              </span>
+              <span className="truncate font-mono text-xs text-slate-100">
+                {coordinates ?? "--:--:--"}
+              </span>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/10 pt-1.5">
+              <span className="text-[10px] font-semibold uppercase text-slate-500">
+                Wallet
+              </span>
+              <span className="truncate font-mono text-xs text-slate-300">
+                {account ? shortAddress(account) : "Disconnected"}
+              </span>
+            </div>
           </div>
         </div>
       </nav>
