@@ -548,10 +548,15 @@ async function getFarcasterEthereumProvider(
   farcasterClient: FarcasterWalletClient,
 ): Promise<Eip1193Provider | undefined> {
   try {
-    return await farcasterClient.wallet?.getEthereumProvider?.();
+    const provider = await farcasterClient.wallet?.getEthereumProvider?.();
+    return isEip1193Provider(provider) ? provider : undefined;
   } catch {
     return undefined;
   }
+}
+
+function isEip1193Provider(provider: unknown): provider is Eip1193Provider {
+  return Boolean(provider && typeof provider === "object" && typeof (provider as Eip1193Provider).request === "function");
 }
 
 export function isUserRejected(error: unknown): boolean {

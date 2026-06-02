@@ -209,7 +209,13 @@ The frontend also publishes Farcaster Mini App metadata at
 generate the signed `accountAssociation` for `veydrift.com` with the owning
 Farcaster/Base account and replace the manifest values. The production build
 emits `veydrift.com` manifest URLs, while the test build emits
-`test.veydrift.com` manifest URLs.
+`test.veydrift.com` manifest URLs with the signed test-domain association.
+If the test-domain signature rotates, set
+`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION` or the split
+`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_HEADER` /
+`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_PAYLOAD` /
+`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_SIGNATURE` values in the
+`veydrift/frontend-test` deploy environment.
 
 ### Test App
 
