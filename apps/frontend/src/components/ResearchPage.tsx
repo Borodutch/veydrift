@@ -58,6 +58,7 @@ interface ResearchPageProps {
   canTransact: boolean;
   error: string | undefined;
   loading: boolean;
+  now?: number | undefined;
   onFinish: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
@@ -75,6 +76,7 @@ export function ResearchPage({
   canTransact,
   error,
   loading,
+  now = Date.now(),
   onFinish,
   onOpenRequirement,
   onRefresh,
@@ -96,10 +98,14 @@ export function ResearchPage({
     researchState,
     useLocalStateFallback,
   });
-  const now = Date.now();
   const viewState = researchViewState(settledState, researchState, useLocalStateFallback, now);
   const queue = hideLiveValues ? undefined : researchQueueForDisplay(researchState, viewState, now);
-  const queueReady = queue?.readyAt ? queue.readyAt <= now : false;
+  const completionButton = researchCompletionButtonState({
+    actionPending: actionState.status === "pending",
+    canTransact,
+    now,
+    queue,
+  });
 
   function handleSelectResearch(key: ResearchKey) {
     setLocalSelectedKey(key);
@@ -122,14 +128,14 @@ export function ResearchPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {queue && (
+          {completionButton && (
             <button
               className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={!canTransact || actionState.status === "pending" || !queueReady}
+              disabled={completionButton.disabled}
               onClick={onFinish}
               type="button"
             >
-              {queueReady ? "Complete research" : `Ready ${formatReady(queue.readyAt)}`}
+              {completionButton.label}
             </button>
           )}
           <button
@@ -146,6 +152,7 @@ export function ResearchPage({
         actionState={actionState}
         error={error}
         loading={loading}
+        now={now}
         queue={queue}
         researchState={researchState}
       />
@@ -225,6 +232,26 @@ export function ResearchPage({
   );
 }
 
+export function researchCompletionButtonState({
+  actionPending,
+  canTransact,
+  now,
+  queue,
+}: {
+  actionPending: boolean;
+  canTransact: boolean;
+  now: number;
+  queue: ReturnType<typeof researchQueueForDisplay>;
+}): { disabled: boolean; label: string } | undefined {
+  if (!queue) return undefined;
+
+  const queueReady = queue.readyAt ? queue.readyAt <= now : false;
+  return {
+    disabled: !canTransact || actionPending || !queueReady,
+    label: queueReady ? "Complete research" : `Ready ${formatReady(queue.readyAt, now)}`,
+  };
+}
+
 export function shouldHideResearchValues({
   researchState,
   useLocalStateFallback,
@@ -268,12 +295,14 @@ function ResearchStatusPanel({
   actionState,
   error,
   loading,
+  now,
   queue,
   researchState,
 }: {
   actionState: ResearchActionState;
   error: string | undefined;
   loading: boolean;
+  now: number;
   queue: ReturnType<typeof researchQueueForDisplay>;
   researchState: ChainResearchState | null;
 }) {
@@ -316,8 +345,8 @@ function ResearchStatusPanel({
 
   if (queue) {
     return (
-      <Notice tone={queue.readyAt <= Date.now() ? "success" : "neutral"}>
-        {queue.label} to Level {queue.targetLevel} is queued, ready {formatReady(queue.readyAt)}.
+      <Notice tone={queue.readyAt <= now ? "success" : "neutral"}>
+        {queue.label} to Level {queue.targetLevel} is queued, ready {formatReady(queue.readyAt, now)}.
       </Notice>
     );
   }
@@ -658,8 +687,8 @@ function format(value: number): string {
   return formatter.format(Math.floor(value));
 }
 
-function formatReady(readyAt: number): string {
-  const remaining = formatDurationUntil(readyAt);
+function formatReady(readyAt: number, now: number): string {
+  const remaining = formatDurationUntil(readyAt, now);
   const timestamp = formatUserTimestamp(readyAt);
   return remaining === "Ready" ? `now (${timestamp})` : `in ${remaining} (${timestamp})`;
 }

@@ -6,6 +6,7 @@ import {
   formatResearchRequirements,
   getResearchRequirementStates,
   ResearchLoadErrorPanel,
+  researchCompletionButtonState,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
 import { RequirementFlairs } from "../src/components/RequirementFlairs";
@@ -123,6 +124,37 @@ describe("Research page load-error display", () => {
     expect(text).toContain("50 %");
     expect(text).toContain("Time remaining");
     expect(text).toContain("Ready at");
+  });
+
+  test("enables research completion from the app clock once the queue is ready", () => {
+    const queue = {
+      kind: "research",
+      key: "energy",
+      label: "Energy Technology",
+      readyAt: 1_700_000_120_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 1,
+    } as const;
+
+    expect(researchCompletionButtonState({
+      actionPending: false,
+      canTransact: true,
+      now: 1_700_000_119_000,
+      queue,
+    })).toMatchObject({
+      disabled: true,
+      label: expect.stringContaining("Ready in 1s"),
+    });
+
+    expect(researchCompletionButtonState({
+      actionPending: false,
+      canTransact: true,
+      now: 1_700_000_120_000,
+      queue,
+    })).toEqual({
+      disabled: false,
+      label: "Complete research",
+    });
   });
 });
 

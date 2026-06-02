@@ -2875,6 +2875,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           canTransact={Boolean(provider && account && gameContract)}
           error={researchError}
           loading={researchLoading}
+          now={now}
           onFinish={handleFinishResearch}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshResearchState}
