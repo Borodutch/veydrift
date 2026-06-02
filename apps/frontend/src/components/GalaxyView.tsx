@@ -24,6 +24,7 @@ import {
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
 import type { ChainDefenseState, ChainShipyardState } from "../walletFlow";
+import { formatUserTimestamp } from "../timestampFormat";
 import {
   galaxyActionsForSlot,
   type GalaxyAction,
@@ -889,10 +890,7 @@ export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string 
 }
 
 function formatMissionClock(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
+  return formatUserTimestamp(timestamp);
 }
 
 function formatCompactResource(value: number): string {

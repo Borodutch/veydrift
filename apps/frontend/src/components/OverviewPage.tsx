@@ -29,6 +29,7 @@ import {
   type WalletSettlementResponse
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
@@ -785,7 +786,7 @@ function MissionPanel({
                 {mission.originPlanetId} {"->"} {mission.targetPlanetId}
               </p>
               <p className="mt-1 text-[11px] text-slate-400">
-                Arrival {formatDurationUntil(Number(mission.arrivalAt) * 1_000, now)} · Return {formatDurationUntil(Number(mission.returnAt) * 1_000, now)}
+                Arrival {formatMissionSnapshotTime(mission.arrivalAt, now)} · Return {formatMissionSnapshotTime(mission.returnAt, now)}
               </p>
               {mission.attackGroupId ? (
                 <p className="mt-1 text-[11px] text-cyan-100/70">
@@ -942,6 +943,12 @@ function queueTimestampMs(timestamp: string | null | undefined): number | undefi
   const seconds = Number(timestamp);
   if (!Number.isFinite(seconds)) return undefined;
   return seconds * 1_000;
+}
+
+function formatMissionSnapshotTime(value: string, now: number): string {
+  const timestamp = timestampToMs(value);
+  if (timestamp === undefined) return "Unknown";
+  return `${formatDurationUntil(timestamp, now)} (${formatUserTimestamp(timestamp)})`;
 }
 
 function EmptyQueue({

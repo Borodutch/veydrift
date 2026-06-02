@@ -2,6 +2,7 @@ import { Crown, Info, RefreshCw, Search, Shield, UserRound, Users, X } from "luc
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
@@ -512,7 +513,7 @@ function DirectorySection({
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                     <span>{alliance.memberCount} members</span>
                     <span>Owner {playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
-                    <span>Created {alliance.createdAt}</span>
+                    <span>Created {formatUserTimestamp(alliance.createdAt)}</span>
                   </div>
                 </button>
                 <div className="flex flex-wrap gap-2 md:justify-end">
@@ -670,7 +671,7 @@ function JoinRequests({
               <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
                 {playerLabel(request.requesterDisplayName, request.requester)}
               </button>
-              <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {request.requestedAt}</p>
+              <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {formatUserTimestamp(request.requestedAt)}</p>
               <button
                 className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={disabled}
@@ -823,7 +824,7 @@ function MemberRow({
           </span>
           {isViewer ? <span className="text-xs text-cyan-100">You</span> : null}
         </div>
-        <p className="mt-1 text-xs text-slate-500">Joined {member.joinedAt}</p>
+        <p className="mt-1 text-xs text-slate-500">Joined {formatUserTimestamp(member.joinedAt)}</p>
       </button>
       {canManageMembers ? (
         <div className="flex flex-wrap gap-2 md:justify-end">

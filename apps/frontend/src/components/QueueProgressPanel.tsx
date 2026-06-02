@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { formatDurationUntil } from "../durationFormat";
 import { queueProgressPercent } from "../playableMvp";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
 
 type QueueTimestamp = number | string | null | undefined;
@@ -149,20 +150,11 @@ export function QueueProgressPanel({
 }
 
 export function queueTimestampToMs(value: QueueTimestamp): number | undefined {
-  if (value === null || value === undefined || value === "") return undefined;
-  const numeric = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numeric)) return undefined;
-  return numeric < 10_000_000_000 ? numeric * 1_000 : numeric;
+  return timestampToMs(value);
 }
 
 function formatQueueReadyAt(readyAtMs: number | undefined): string {
-  if (readyAtMs === undefined) return "Unknown";
-  return new Date(readyAtMs).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatUserTimestamp(readyAtMs);
 }
 
 function formatQuantity(quantity: number): string {

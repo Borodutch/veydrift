@@ -1,6 +1,7 @@
 import { EyeOff, RefreshCw, Route, ShieldAlert, TimerReset } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import type { FleetMissionSummary, FleetMissionVisibilityResponse, OnChainResources } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
@@ -401,8 +402,8 @@ function MissionCard({
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <MissionDatum label="Arrival" value={formatDurationUntil(Number(mission.arrivalAt) * 1_000, now)} />
-        <MissionDatum label="Return" value={formatDurationUntil(Number(mission.returnAt) * 1_000, now)} />
+        <MissionDatum label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
+        <MissionDatum label="Return" value={formatMissionTime(mission.returnAt, now)} />
         <MissionDatum label="Cargo" value={formatCargo(mission.cargo)} />
         <MissionDatum label="Ships" value={formatShips(mission.ships)} />
       </dl>
@@ -468,9 +469,15 @@ function MissionDatum({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</dt>
-      <dd className="mt-0.5 truncate text-slate-300">{value}</dd>
+      <dd className="mt-0.5 whitespace-pre-line break-words text-slate-300">{value}</dd>
     </div>
   );
+}
+
+export function formatMissionTime(value: string, now: number): string {
+  const timestamp = timestampToMs(value);
+  if (timestamp === undefined) return "Unknown";
+  return `${formatDurationUntil(timestamp, now)}\n${formatUserTimestamp(timestamp)}`;
 }
 
 function CapabilityPanel({
