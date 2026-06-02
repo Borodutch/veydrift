@@ -434,22 +434,25 @@ function CoordinateInput({
   onCommit: (value: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
+  const focusedRef = useRef(false);
+  const skipBlurCommitRef = useRef(false);
 
   useEffect(() => {
-    setDraft(String(value));
+    setDraft((currentDraft) => coordinateDraftAfterExternalValueChange(currentDraft, value, focusedRef.current));
   }, [value]);
 
   const commitDraft = () => {
-    const parsed = Number.parseInt(draft, 10);
+    focusedRef.current = false;
 
-    if (!Number.isFinite(parsed)) {
+    if (skipBlurCommitRef.current) {
+      skipBlurCommitRef.current = false;
       setDraft(String(value));
       return;
     }
 
-    const nextValue = clampInteger(parsed, 1, max);
-    setDraft(String(nextValue));
-    if (nextValue !== value) onCommit(nextValue);
+    const commit = commitCoordinateDraft(draft, value, max);
+    setDraft(commit.draft);
+    if (commit.value !== null) onCommit(commit.value);
   };
 
   return (
@@ -460,12 +463,16 @@ function CoordinateInput({
         inputMode="numeric"
         maxLength={String(max).length}
         onBlur={commitDraft}
-        onChange={(event) => setDraft((event.currentTarget as HTMLInputElement).value.replace(/\D/g, ""))}
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onInput={(event) => setDraft(sanitizeCoordinateDraft((event.currentTarget as HTMLInputElement).value))}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             (event.currentTarget as HTMLInputElement).blur();
           }
           if (event.key === "Escape") {
+            skipBlurCommitRef.current = true;
             setDraft(String(value));
             (event.currentTarget as HTMLInputElement).blur();
           }
@@ -476,6 +483,41 @@ function CoordinateInput({
       />
     </label>
   );
+}
+
+export function sanitizeCoordinateDraft(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+export function parseCoordinateDraft(value: string): number | null {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function commitCoordinateDraft(
+  draft: string,
+  currentValue: number,
+  max: number
+): { draft: string; value: number | null } {
+  const parsed = parseCoordinateDraft(draft);
+
+  if (parsed === null) {
+    return { draft: String(currentValue), value: null };
+  }
+
+  const nextValue = clampInteger(parsed, 1, max);
+  return {
+    draft: String(nextValue),
+    value: nextValue === currentValue ? null : nextValue,
+  };
+}
+
+export function coordinateDraftAfterExternalValueChange(
+  currentDraft: string,
+  externalValue: number,
+  focused: boolean
+): string {
+  return focused ? currentDraft : String(externalValue);
 }
 
 function clampInteger(value: number, min: number, max: number): number {
