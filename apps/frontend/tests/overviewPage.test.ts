@@ -6,6 +6,7 @@ import {
 import {
   isOverviewResearchReadyToFinish,
   overviewDefenseFinishAction,
+  overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
   shouldShowOverviewBuildingFinishAction,
 } from "../src/components/OverviewPage";
@@ -343,5 +344,28 @@ describe("overview queue progress display", () => {
     expect(action.visible).toBe(true);
     expect(action.disabled).toBe(true);
     expect(action.onFinish).toBeUndefined();
+  });
+
+  test("keeps research completion success copy out of the compact Overview card", () => {
+    expect(overviewResearchActionNoticeFor({
+      status: "success",
+      label: "Research completion confirmed.",
+    })).toBeUndefined();
+
+    expect(overviewResearchActionNoticeFor({
+      status: "pending",
+      label: "Research completion: awaiting wallet",
+    })).toEqual({
+      label: "Research completion: awaiting wallet",
+      tone: "pending",
+    });
+
+    expect(overviewResearchActionNoticeFor({
+      status: "error",
+      label: "Research completion failed.",
+    })).toEqual({
+      label: "Research completion failed.",
+      tone: "error",
+    });
   });
 });

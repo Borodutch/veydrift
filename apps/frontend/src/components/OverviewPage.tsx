@@ -827,18 +827,27 @@ function OverviewResearchActionNotice({
 }: {
   actionState: OverviewResearchActionState;
 }) {
-  if (actionState.status === "idle") return null;
-  const className = actionState.status === "error"
+  const notice = overviewResearchActionNoticeFor(actionState);
+  if (!notice) return null;
+  const className = notice.tone === "error"
     ? "border-rose-300/20 bg-rose-300/5 text-rose-100"
-    : actionState.status === "success"
-      ? "border-emerald-300/20 bg-emerald-300/5 text-emerald-100"
-      : "border-white/10 bg-white/5 text-slate-200";
+    : "border-white/10 bg-white/5 text-slate-200";
 
   return (
     <div className={`rounded-md border px-3 py-2 text-xs ${className}`}>
-      {actionState.label}
+      {notice.label}
     </div>
   );
+}
+
+export function overviewResearchActionNoticeFor(
+  actionState: OverviewResearchActionState,
+): { label: string; tone: "error" | "pending" } | undefined {
+  if (actionState.status === "idle" || actionState.status === "success") return undefined;
+  return {
+    label: actionState.label,
+    tone: actionState.status === "error" ? "error" : "pending",
+  };
 }
 
 type MissionList = FleetMissionVisibilityResponse["incoming"];
