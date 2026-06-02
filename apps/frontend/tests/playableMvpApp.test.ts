@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   infrastructureActionNoticeFor,
+  infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
   refreshedInfrastructureUnavailableReasonFor,
@@ -244,6 +245,32 @@ describe("Playable MVP app display helpers", () => {
       onChainStatus: "error",
       runtimeConfigStatus: "ready",
     })).toBe("Game state unavailable; upgrades are disabled until your wallet resources and building levels load.");
+  });
+
+  test("keeps active construction visible when reload has a queue but infrastructure details fail", () => {
+    const activeBuilding = {
+      active: true,
+      kind: "building",
+      itemId: 3,
+      targetLevel: 9,
+      readyAt: "1770000600",
+      startedAt: "1770000000",
+      cost: { metal: "300", crystal: "120", deuterium: "0" },
+    };
+
+    expect(infrastructureLoadErrorFor({
+      activeBuildingQueue: activeBuilding,
+      infrastructureChainState: null,
+      infrastructureError: "Infrastructure request failed with 503.",
+      isWalletConnected: true,
+    })).toBeUndefined();
+
+    expect(infrastructureLoadErrorFor({
+      activeBuildingQueue: null,
+      infrastructureChainState: null,
+      infrastructureError: "Infrastructure request failed with 503.",
+      isWalletConnected: true,
+    })).toBe("Infrastructure request failed with 503.");
   });
 
   test("allows building transactions from refreshed live infrastructure resources", () => {

@@ -157,6 +157,7 @@ import {
   type PlayerProfile,
   type RiftResourceState,
   type PlayerQueuesResponse,
+  type QueueStateResponse,
   type WalletSettlementResponse,
 } from "./walletFlow";
 import {
@@ -280,6 +281,22 @@ export function infrastructureUnavailableReasonFor({
   }
   if (!infrastructureChainState) return "Infrastructure state unavailable.";
   return undefined;
+}
+
+export function infrastructureLoadErrorFor({
+  activeBuildingQueue,
+  infrastructureChainState,
+  infrastructureError,
+  isWalletConnected,
+}: {
+  activeBuildingQueue?: QueueStateResponse | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  infrastructureError?: string | undefined;
+  isWalletConnected: boolean;
+}): string | undefined {
+  if (!isWalletConnected || infrastructureChainState || !infrastructureError) return undefined;
+  if (activeBuildingQueue?.active) return undefined;
+  return infrastructureError;
 }
 
 export function refreshedInfrastructureUnavailableReasonFor({
@@ -2684,7 +2701,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           chainCosts={chainBuildingCosts}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
-          loadError={isWalletConnected && !infrastructureChainState ? infrastructureError : undefined}
+          loadError={infrastructureLoadErrorFor({
+            activeBuildingQueue,
+            infrastructureChainState,
+            infrastructureError,
+            isWalletConnected,
+          })}
           now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onOpenRequirement={handleOpenRequirement}
