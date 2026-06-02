@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { InspectCatalogTile, SingleItemQueueProgress } from "../src/components/InspectProgressLayout";
+import {
+  InspectCatalogTile,
+  InspectPageHeader,
+  InspectTwoColumnLayout,
+  SingleItemQueueProgress,
+} from "../src/components/InspectProgressLayout";
 
 describe("shared inspect/progress layout primitives", () => {
   test("renders a selectable catalog tile with shared selected and locked semantics", () => {
@@ -45,6 +50,26 @@ describe("shared inspect/progress layout primitives", () => {
     expect(text).toContain("Time remaining");
     expect(text).toContain("1m");
     expect(text).toContain("Ready at");
+  });
+
+  test("renders shared page header and two-column inspect layout wrappers", () => {
+    const header = InspectPageHeader({
+      actions: <button type="button">Refresh</button>,
+      description: "Select an item to inspect live state.",
+      title: "Research",
+    });
+    const layout = InspectTwoColumnLayout({
+      catalog: <span>Catalog tiles</span>,
+      catalogClassName: "grid gap-4",
+      detail: <span>Detail panel</span>,
+    });
+
+    expect(visibleText(header)).toContain("Research");
+    expect(visibleText(header)).toContain("Select an item to inspect live state");
+    expect(visibleText(header)).toContain("Refresh");
+    expect(visibleText(layout)).toContain("Catalog tiles");
+    expect(visibleText(layout)).toContain("Detail panel");
+    expect((layout.props.children as VNode[])[0]!.props.className).toContain("grid gap-4");
   });
 });
 
