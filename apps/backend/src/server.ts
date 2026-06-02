@@ -1190,6 +1190,7 @@ function indexedShipyardState(
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
+    planetId: planet?.planetId ?? settlement.homePlanetId,
     productionAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,

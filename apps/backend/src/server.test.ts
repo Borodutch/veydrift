@@ -318,6 +318,7 @@ class MockChainReader implements ChainReader {
     return {
       wallet,
       homePlanetId: planet.planetId,
+      planetId: planet.planetId,
       productionAvailable: true,
       resources: planet.resources,
       fleetSlots: {
@@ -2565,6 +2566,63 @@ describe("Veydrift backend", () => {
       expect(typeof body.liveReadSkippedAt).toBe("string");
     }
     expect(liveReads).toEqual([]);
+  });
+
+  test("keeps selected planet id in warm indexed shipyard responses", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getShipyardState = async () => {
+      throw new Error("warm selected shipyard should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm selected shipyard should not rebuild from chain");
+    };
+    const selectedPlanet = {
+      ...planet,
+      planetId: "8",
+      position: 10,
+      name: "Nyx"
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhome",
+      blockNumber: "123"
+    });
+    indexer.applyEvent({
+      ...selectedPlanet,
+      eventName: "ColonyCreated",
+      transactionHash: "0xcolony",
+      blockNumber: "124"
+    });
+    indexer.applyLog({
+      blockNumber: "0x7d",
+      transactionHash: "0xship",
+      logIndex: "0x0",
+      topics: [
+        planetShipCountChangedTopic,
+        topic(8n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=8`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(body.homePlanetId).toBe("8");
+    expect(body.planetId).toBe("8");
+    expect(body.ships).toContainEqual(expect.objectContaining({
+      id: 0,
+      count: 1
+    }));
   });
 
   test("allows explicit live wallet reads to bypass indexed warm state", async () => {
