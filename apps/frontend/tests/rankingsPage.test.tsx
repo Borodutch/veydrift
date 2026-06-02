@@ -37,6 +37,69 @@ describe("RankingsPage", () => {
     expect(text).toContain("1,500");
   });
 
+  test("highlights the current wallet row with a non-color-only marker", () => {
+    const table = RankingsTable({
+      currentWallet: "0x1111111111111111111111111111111111111111".toUpperCase(),
+      entries: [rankingEntry({ displayName: "Renamed Commander" })],
+      loading: false,
+    });
+    const row = rowWithWallet(table, "0x1111111111111111111111111111111111111111");
+
+    expect(row?.props?.["aria-current"]).toBe("true");
+    expect(row?.props?.className).toContain("bg-cyan-300");
+    expect(visibleText(row)).toContain("You");
+  });
+
+  test("renders canonical alliance tags before commander names and opens alliance details", () => {
+    const selectedAlliances: string[] = [];
+    const table = RankingsTable({
+      entries: [rankingEntry({
+        alliance: {
+          allianceId: "3",
+          name: "Veydrift Union",
+          tag: "VDFT",
+        },
+        displayName: "Nova Prime",
+      })],
+      loading: false,
+      onSelectAlliance: (allianceId) => selectedAlliances.push(allianceId),
+    });
+    const text = visibleText(table);
+    const allianceButton = buttonWithTitle(table, "Open alliance VDFT");
+
+    expect(text).toContain("[VDFT] Nova Prime");
+    expect(allianceButton).toBeTruthy();
+    allianceButton?.props?.onClick?.();
+    expect(selectedAlliances).toEqual(["3"]);
+  });
+
+  test("uses a softer same-alliance treatment without overriding the current player highlight", () => {
+    const self = rankingEntry({
+      alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
+      wallet: "0x1111111111111111111111111111111111111111",
+    });
+    const ally = rankingEntry({
+      alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
+      rank: 2,
+      wallet: "0x2222222222222222222222222222222222222222",
+    });
+    const other = rankingEntry({
+      alliance: { allianceId: "4", name: "Other Union", tag: "OTHR" },
+      rank: 3,
+      wallet: "0x3333333333333333333333333333333333333333",
+    });
+    const table = RankingsTable({
+      currentAllianceId: "3",
+      currentWallet: self.wallet,
+      entries: [self, ally, other],
+      loading: false,
+    });
+
+    expect(rowWithWallet(table, self.wallet)?.props?.className).toContain("bg-cyan-300");
+    expect(rowWithWallet(table, ally.wallet)?.props?.className).toContain("bg-emerald-300");
+    expect(rowWithWallet(table, other.wallet)?.props?.className).toContain("border-white/5");
+  });
+
   test("opens the ranked commander's public home planet when available", () => {
     const selected: Coordinates[] = [];
     const table = RankingsTable({
@@ -77,8 +140,9 @@ describe("RankingsPage", () => {
   });
 });
 
-function rankingEntry(): HighscoreEntry {
+function rankingEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
   return {
+    alliance: null,
     homePlanet: {
       archetype: "temperate-ocean",
       coordinates: {
@@ -103,6 +167,7 @@ function rankingEntry(): HighscoreEntry {
       total: "1500",
     },
     wallet: "0x1111111111111111111111111111111111111111",
+    ...overrides,
   };
 }
 
@@ -135,6 +200,10 @@ function textParts(node: ComponentChildren): string[] {
 
 function buttonWithTitle(node: ComponentChildren, title: string): VNode | undefined {
   return elementNodes(node).find((item) => item.type === "button" && item.props?.title === title);
+}
+
+function rowWithWallet(node: ComponentChildren, wallet: string): VNode | undefined {
+  return elementNodes(node).find((item) => item.props?.["data-ranking-wallet"] === wallet.toLowerCase());
 }
 
 function elementNodes(node: ComponentChildren): VNode[] {

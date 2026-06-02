@@ -7,6 +7,9 @@ import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type RankingsPageProps = {
   apiBaseUrl: string | undefined;
+  currentAllianceId?: string | null | undefined;
+  currentWallet?: string | undefined;
+  onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 };
 
@@ -27,7 +30,7 @@ export function primaryRankingEntries(data: HighscoreResponse | null): Highscore
   return data?.rankings.total ?? [];
 }
 
-export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) {
+export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -104,7 +107,15 @@ export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) 
         ))}
       </div>
 
-      <RankingsTable active={active} entries={entries} loading={loading} onSelectPlanet={onSelectPlanet} />
+      <RankingsTable
+        active={active}
+        currentAllianceId={currentAllianceId}
+        currentWallet={currentWallet}
+        entries={entries}
+        loading={loading}
+        onSelectAlliance={onSelectAlliance}
+        onSelectPlanet={onSelectPlanet}
+      />
 
       {data ? (
         <p className="text-xs leading-5 text-slate-500">
@@ -117,13 +128,19 @@ export function RankingsPage({ apiBaseUrl, onSelectPlanet }: RankingsPageProps) 
 
 export function RankingsTable({
   active = "total",
+  currentAllianceId,
+  currentWallet,
   entries,
   loading,
+  onSelectAlliance,
   onSelectPlanet,
 }: {
   active?: HighscoreCategory;
+  currentAllianceId?: string | null | undefined;
+  currentWallet?: string | undefined;
   entries: HighscoreEntry[];
   loading: boolean;
+  onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   return (
@@ -143,7 +160,15 @@ export function RankingsTable({
         <RankingsMessage label="No settled commanders indexed yet" />
       ) : (
         entries.map((entry) => (
-          <RankingRow active={active} entry={entry} key={`${active}-${entry.wallet}`} onSelectPlanet={onSelectPlanet} />
+          <RankingRow
+            active={active}
+            currentAllianceId={currentAllianceId}
+            currentWallet={currentWallet}
+            entry={entry}
+            key={`${active}-${entry.wallet}`}
+            onSelectAlliance={onSelectAlliance}
+            onSelectPlanet={onSelectPlanet}
+          />
         ))
       )}
     </div>
@@ -152,25 +177,55 @@ export function RankingsTable({
 
 function RankingRow({
   active,
+  currentAllianceId,
+  currentWallet,
   entry,
+  onSelectAlliance,
   onSelectPlanet,
 }: {
   active: HighscoreCategory;
+  currentAllianceId?: string | null | undefined;
+  currentWallet?: string | undefined;
   entry: HighscoreEntry;
+  onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   const homePlanet = entry.homePlanet ?? null;
   const canOpenHomePlanet = Boolean(homePlanet && onSelectPlanet);
   const commanderLabel = entry.displayName?.trim() || shortAddress(entry.wallet);
+  const normalizedWallet = entry.wallet.toLowerCase();
+  const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
+  const alliance = entry.alliance ?? null;
+  const isSameAlliance = Boolean(
+    !isCurrentPlayer
+      && alliance
+      && currentAllianceId
+      && currentAllianceId !== "0"
+      && alliance.allianceId === currentAllianceId
+  );
+  const rowTone = isCurrentPlayer
+    ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
+    : isSameAlliance
+      ? "border-emerald-300/20 bg-emerald-300/[0.055] shadow-[inset_3px_0_0_rgba(110,231,183,0.55)]"
+      : "border-white/5";
 
   const openHomePlanet = () => {
     if (!homePlanet || !onSelectPlanet) return;
     onSelectPlanet(homePlanet.coordinates);
   };
 
+  const openAlliance = () => {
+    if (!alliance || !onSelectAlliance) return;
+    onSelectAlliance(alliance.allianceId);
+  };
+
   return (
-    <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] items-center border-b border-white/5 px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px_120px]">
-      <span className="font-mono text-slate-400">#{entry.rank}</span>
+    <div
+      aria-current={isCurrentPlayer ? "true" : undefined}
+      className={`grid grid-cols-[52px_minmax(0,1fr)_72px_88px] items-center border-b px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px_120px] ${rowTone}`}
+      data-ranking-wallet={normalizedWallet}
+    >
+      <span className={`font-mono ${isCurrentPlayer ? "text-cyan-100" : isSameAlliance ? "text-emerald-100" : "text-slate-400"}`}>#{entry.rank}</span>
       <span className="flex min-w-0 items-center gap-2">
         {homePlanet ? (
           <button
@@ -188,19 +243,39 @@ function RankingRow({
             />
           </button>
         ) : null}
-        <button
-          className={`min-w-0 text-left ${canOpenHomePlanet ? "cursor-pointer" : "cursor-default"}`}
-          disabled={!canOpenHomePlanet}
-          onClick={openHomePlanet}
-          type="button"
-        >
-          <span className={`block truncate font-mono ${canOpenHomePlanet ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
-            {commanderLabel}
+        <span className="min-w-0 text-left">
+          <span className="flex min-w-0 items-center gap-1.5">
+            {alliance ? (
+              <button
+                className="shrink-0 rounded border border-cyan-300/20 bg-cyan-300/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none text-cyan-100 transition hover:border-cyan-200/50 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+                disabled={!onSelectAlliance}
+                onClick={openAlliance}
+                title={`Open alliance ${alliance.tag}`}
+                type="button"
+              >
+                {`[${alliance.tag}]`}
+              </button>
+            ) : null}
+            <button
+              className={`min-w-0 text-left ${canOpenHomePlanet ? "cursor-pointer" : "cursor-default"}`}
+              disabled={!canOpenHomePlanet}
+              onClick={openHomePlanet}
+              type="button"
+            >
+              <span className={`block truncate font-mono ${canOpenHomePlanet ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
+                {commanderLabel}
+              </span>
+            </button>
+            {isCurrentPlayer ? (
+              <span className="shrink-0 rounded border border-cyan-200/30 bg-cyan-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-cyan-100">
+                You
+              </span>
+            ) : null}
           </span>
           {homePlanet ? (
             <span className="block truncate text-xs text-slate-500">{homePlanetLabel(homePlanet)}</span>
           ) : null}
-        </button>
+        </span>
       </span>
       <span className="text-right font-mono text-slate-300">{entry.planetCount}</span>
       <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>

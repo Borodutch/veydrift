@@ -2922,6 +2922,41 @@ describe("Veydrift backend", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
   });
 
+  test("adds canonical alliance identity to highscore rows when available", async () => {
+    const chainReader = new class extends MockChainReader {
+      async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+        expect(wallets).toContain(player);
+        return new Map([
+          [player, {
+            allianceId: "3",
+            name: "Veydrift Union",
+            tag: "VDFT"
+          }]
+        ]);
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: {
+        ...configuredTestConfig,
+        allianceContractAddress: "0x4444444444444444444444444444444444444444"
+      },
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total[0].alliance).toMatchObject({
+      allianceId: "3",
+      name: "Veydrift Union",
+      tag: "VDFT"
+    });
+  });
+
   test("serves empty highscore rankings as a successful payload", async () => {
     const chainReader = new MockChainReader();
     chainReader.listSettledPlanetEvents = async () => [];

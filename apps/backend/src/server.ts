@@ -604,7 +604,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         }
 
         const profiles = indexer?.playerProfiles(planetsByOwner.keys()) ?? new Map<string, PlayerProfile>();
-        const rankings = highscoreRankings(entries, limit, planetsByOwner, profiles);
+        const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), chainReader);
+        const rankings = highscoreRankings(entries, limit, planetsByOwner, profiles, allianceIntel);
 
         return Response.json(
           {
@@ -1376,11 +1377,18 @@ async function allianceIntelForOccupiedPlanets(
   planets: readonly SettledPlanetEvent[],
   chainReader: ChainReader | undefined
 ): Promise<Map<string, AllianceIdentity>> {
+  return allianceIntelForPlayers(planets.map((planet) => planet.owner), chainReader);
+}
+
+async function allianceIntelForPlayers(
+  wallets: readonly string[],
+  chainReader: ChainReader | undefined
+): Promise<Map<string, AllianceIdentity>> {
   const result = new Map<string, AllianceIdentity>();
-  if (!chainReader?.getAllianceIntelForPlayers || planets.length === 0) return result;
+  if (!chainReader?.getAllianceIntelForPlayers || wallets.length === 0) return result;
 
   try {
-    const owners = Array.from(new Set(planets.map((planet) => planet.owner.toLowerCase() as Address)));
+    const owners = Array.from(new Set(wallets.map((wallet) => wallet.toLowerCase() as Address)));
     const intel = await chainReader.getAllianceIntelForPlayers(owners);
     for (const [owner, alliance] of intel) result.set(owner.toLowerCase(), alliance);
   } catch (error) {
@@ -1563,6 +1571,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 type RankedHighscoreEntry = HighscoreEntry & {
+  alliance: AllianceIdentity | null;
   displayName: string | null;
   homePlanet: RankedHighscorePlanet | null;
   rank: number;
@@ -1585,10 +1594,11 @@ function highscoreRankings(
   entries: HighscoreEntry[],
   limit: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-  profiles: ReadonlyMap<string, PlayerProfile> = new Map()
+  profiles: ReadonlyMap<string, PlayerProfile> = new Map(),
+  allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map()
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
   return Object.fromEntries(
-    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner, profiles)])
+    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner, profiles, allianceIntel)])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
 
@@ -1597,7 +1607,8 @@ function rankHighscores(
   category: HighscoreCategory,
   limit: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-  profiles: ReadonlyMap<string, PlayerProfile>
+  profiles: ReadonlyMap<string, PlayerProfile>,
+  allianceIntel: ReadonlyMap<string, AllianceIdentity>
 ): RankedHighscoreEntry[] {
   return [...entries]
     .sort((left, right) => {
@@ -1608,6 +1619,7 @@ function rankHighscores(
     .slice(0, limit)
     .map((entry, index) => ({
       ...entry,
+      alliance: allianceIntel.get(entry.wallet.toLowerCase()) ?? null,
       displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
       homePlanet: rankedHighscoreHomePlanet(entry, planetsByOwner),
       rank: index + 1
