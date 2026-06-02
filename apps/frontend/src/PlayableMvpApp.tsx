@@ -549,11 +549,16 @@ export async function loadWalletPlanetSyncSnapshot(
       activePlanetId,
       planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
     );
+    const queuesResult = indexedPlanetsExposeResearchQueue(planetsResult)
+      ? { status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>
+      : await settlePromise(fetchWalletQueues(apiBaseUrl, account, activePlanetId));
     return walletPlanetSyncSnapshotFromResults(
       account,
       indexedSettlement,
       planetsResult,
-      { status: "fulfilled", value: indexedQueues },
+      queuesResult.status === "fulfilled"
+        ? { status: "fulfilled", value: mergeIndexedPlayerQueues(indexedQueues, queuesResult.value) }
+        : { status: "fulfilled", value: indexedQueues },
       { status: "fulfilled", value: emptyFleetVisibility(account, indexedSettlement.homePlanetId) },
     );
   }
@@ -636,6 +641,28 @@ function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQ
     defense: null,
     ship: null,
     research: null,
+  };
+}
+
+function indexedPlanetsExposeResearchQueue(
+  planetsResult: PromiseSettledResult<WalletPlanetsResponse>,
+): boolean {
+  return planetsResult.status === "fulfilled"
+    && planetsResult.value.queues !== undefined
+    && "research" in planetsResult.value.queues;
+}
+
+function mergeIndexedPlayerQueues(
+  indexedQueues: PlayerQueuesResponse,
+  fetchedQueues: PlayerQueuesResponse,
+): PlayerQueuesResponse {
+  return {
+    ...indexedQueues,
+    ...fetchedQueues,
+    building: fetchedQueues.building ?? indexedQueues.building,
+    defense: fetchedQueues.defense ?? indexedQueues.defense,
+    ship: fetchedQueues.ship ?? indexedQueues.ship,
+    research: fetchedQueues.research ?? indexedQueues.research,
   };
 }
 
