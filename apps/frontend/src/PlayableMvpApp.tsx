@@ -2858,6 +2858,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         <MissionControlPage
           actionState={missionAction}
           canTransact={Boolean(provider && account && gameContract)}
+          currentResources={infrastructureChainState?.resources}
           fleetVisibility={fleetVisibility}
           loading={isWalletConnected && onChainStatus === "loading"}
           now={now}
@@ -2880,6 +2881,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           canTransact={Boolean(provider && account && gameContract)}
           error={researchError}
           loading={researchLoading}
+          now={now}
           onFinish={handleFinishResearch}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshResearchState}
