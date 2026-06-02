@@ -42,6 +42,17 @@ export function formatAllianceLabel(alliance: Planet["alliance"]): string {
   return alliance.tag ? `[${alliance.tag}] ${alliance.name}` : alliance.name;
 }
 
+export function formatGalaxyCommanderLabel(planet: Planet): string {
+  if (planet.occupiedBy?.ownerDisplayName) return planet.occupiedBy.ownerDisplayName;
+  if (planet.ownerId) return shortAddress(planet.ownerId);
+  return "Unclaimed";
+}
+
+export function formatGalaxyAllianceIdentityLabel(alliance: Planet["alliance"]): string {
+  if (!alliance) return "No alliance";
+  return alliance.tag ? `[${alliance.tag}]` : alliance.name;
+}
+
 type MissionResources = {
   metal?: number;
   crystal?: number;
@@ -641,14 +652,8 @@ function GalaxySlot({
     );
   }
 
-  const ownerLabel = isHome
-    ? "Settled home"
-    : planet.occupiedBy?.ownerDisplayName
-      ? planet.occupiedBy.ownerDisplayName
-      : planet.ownerId
-        ? shortAddress(planet.ownerId)
-      : "Unclaimed";
-  const allianceLabel = formatAllianceLabel(planet.alliance);
+  const commanderLabel = formatGalaxyCommanderLabel(planet);
+  const allianceLabel = formatGalaxyAllianceIdentityLabel(planet.alliance);
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
@@ -738,8 +743,10 @@ function GalaxySlot({
         </div>
       </button>
 
-      <div className={`hidden justify-self-end text-right text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
-        <div>{ownerLabel}</div>
+      <div className={`hidden min-w-32 justify-self-end text-right text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
+        <div className="min-w-0">
+          <span className="break-words">{commanderLabel}</span>
+        </div>
         {planet.alliance ? (
           <button
             className="mt-1 text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
@@ -750,7 +757,9 @@ function GalaxySlot({
           >
             {allianceLabel}
           </button>
-        ) : null}
+        ) : (
+          <div className="mt-1 text-slate-600">{allianceLabel}</div>
+        )}
       </div>
 
       <div className="flex flex-wrap justify-end gap-1.5">
@@ -771,10 +780,13 @@ function GalaxySlot({
         />
       </div>
 
-      {planet.alliance ? (
-        <div className="col-span-2 col-start-2 -mt-1 min-w-0 sm:hidden">
+      <div className="col-span-2 col-start-2 -mt-1 min-w-0 text-xs font-medium sm:hidden">
+        <div className={isHome ? "text-cyan-100" : "text-slate-500"}>
+          <span className="break-words">{commanderLabel}</span>
+        </div>
+        {planet.alliance ? (
           <button
-            className="max-w-full truncate text-xs font-medium text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
+            className="mt-1 max-w-full truncate text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
             disabled={!onSelectAlliance}
             onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
             title={`Open ${allianceLabel}`}
@@ -782,8 +794,10 @@ function GalaxySlot({
           >
             {allianceLabel}
           </button>
-        </div>
-      ) : null}
+        ) : (
+          <div className="mt-1 text-slate-600">{allianceLabel}</div>
+        )}
+      </div>
     </div>
   );
 }
