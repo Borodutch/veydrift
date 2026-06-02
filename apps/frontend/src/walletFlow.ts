@@ -407,6 +407,11 @@ export type HighscoreCategory =
 export type HighscoreEntry = {
   rank: number;
   wallet: string;
+  alliance?: {
+    allianceId: string;
+    tag: string;
+    name: string;
+  } | null;
   displayName?: string | null;
   homePlanetId: string | null;
   homePlanet: HighscorePlanet | null;
