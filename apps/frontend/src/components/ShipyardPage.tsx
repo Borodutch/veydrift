@@ -1,16 +1,14 @@
 import { useState } from "preact/hooks";
-import type { ComponentChildren } from "preact";
-import type { ResearchKey, Resources, ShipKey, UnlockBuildingKey, UnlockRequirement } from "../playableMvp";
+import type { Resources, ShipKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
-import { formatDurationUntil } from "../durationFormat";
-import { CombatStatsInfoButton } from "./CombatStatsInfo";
-import { OptimizedImage } from "./OptimizedImage";
-import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
-import { QueueProgressPanel } from "./QueueProgressPanel";
+import {
+  Notice,
+  ProductionCatalog,
+  type ProductionCatalogItem,
+  productionQueueViewModel,
+} from "./ProductionCatalog";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
-
-const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 type ShipyardActionState =
   | { status: "idle" }
@@ -48,12 +46,11 @@ export function ShipyardPage({
   shipyardState,
 }: ShipyardPageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [selectedKey, setSelectedKey] = useState<ShipKey>("smallCargo");
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
   const resources = toResources(shipyardState?.resources);
   const queue = shipyardState?.queue?.active ? shipyardState.queue : undefined;
   const productionAvailable = shipyardState?.productionAvailable !== false;
-  const queueReady =
-    queue?.readyAt ? Number(queue.readyAt) <= Math.floor(Date.now() / 1_000) : false;
   const initialLoading = loading && !shipyardState;
 
   return (
@@ -90,77 +87,28 @@ export function ShipyardPage({
       {initialLoading ? (
         <VeydriftLoader label="Syncing shipyard" />
       ) : (
-        <>
-          {queue ? (
-            <ActiveShipyardQueuePanel
-              actionPending={actionState.status === "pending"}
-              canTransact={canTransact}
-              onCollect={onCollect}
-              onFinish={onFinish}
-              queue={queue}
-              queueReady={queueReady}
-            />
-          ) : null}
-
-          {(["civil", "combat", "special"] as const).map((group) => (
-            <section className="grid gap-3" key={group}>
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  {groupLabels[group]}
-                </h3>
-                <span className="h-px flex-1 bg-white/10" />
-              </div>
-              <div className="grid gap-3 xl:grid-cols-2">
-                {shipCatalog
-                  .filter((ship) => ship.group === group)
-                  .map((ship) => {
-                    const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
-                    const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
-                    const owned = productionAvailable && chainShip ? chainShip.count : undefined;
-                    const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
-                    const quantity = quantities[ship.key] ?? 1;
-                    const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
-                    const durationSeconds = baseCost
-                      ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
-                      : undefined;
-                    const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
-                    const requirementStates = getShipRequirementStates(ship, shipyardState);
-                    const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
-                    const blockedReason = getBlockedReason({
-                      affordable,
-                      canTransact,
-                      hasPlanet: Boolean(shipyardState?.homePlanetId),
-                      missing,
-                      queueActive: Boolean(queue),
-                      resources,
-                      shipUnavailable,
-                      shipyardState,
-                    });
-                    const actionPending = actionState.status === "pending";
-                    const disabled = Boolean(blockedReason) || actionPending;
-
-                    return (
-                      <ShipTile
-                        blockedReason={blockedReason}
-                        buttonLabel={actionPending ? "Pending" : "Build"}
-                        cost={totalCost}
-                        disabled={disabled}
-                        durationSeconds={durationSeconds}
-                        key={ship.key}
-                        missing={missing}
-                        onBuild={() => onBuild(ship.id, ship.key, quantity)}
-                        onQuantity={(next) => setQuantities((prev) => ({ ...prev, [ship.key]: next }))}
-                        owned={owned}
-                        quantity={quantity}
-                        requirementStates={requirementStates}
-                        ship={ship}
-                      />
-                    );
-                  })}
-              </div>
-            </section>
-          ))}
-        </>
+        <ProductionCatalog
+          actionPending={actionState.status === "pending"}
+          canTransact={canTransact}
+          emptyLabel="Select a ship to review costs, requirements, and production controls."
+          items={shipProductionItems({
+            actionPending: actionState.status === "pending",
+            canTransact,
+            productionAvailable,
+            quantities,
+            queue,
+            resources,
+            shipyardLevel,
+            shipyardState,
+          })}
+          onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
+          onFinishQueue={onFinish}
+          onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
+          onRefreshQueue={onCollect}
+          onSelect={setSelectedKey}
+          queue={productionQueueViewModel(queue, shipCatalog)}
+          selectedKey={selectedKey}
+        />
       )}
     </div>
   );
@@ -213,157 +161,75 @@ function StatusPanel({
   return null;
 }
 
-function ActiveShipyardQueuePanel({
+export function shipProductionItems({
   actionPending,
   canTransact,
-  onCollect,
-  onFinish,
+  productionAvailable,
+  quantities,
   queue,
-  queueReady,
+  resources,
+  shipyardLevel,
+  shipyardState,
 }: {
   actionPending: boolean;
   canTransact: boolean;
-  onCollect: () => void;
-  onFinish: () => void;
-  queue: NonNullable<ChainShipyardState["queue"]>;
-  queueReady: boolean;
-}) {
-  const ship = shipCatalog.find((item) => item.id === queue.itemId);
+  productionAvailable: boolean;
+  quantities: Record<string, number>;
+  queue?: ChainShipyardState["queue"] | undefined;
+  resources: Resources | undefined;
+  shipyardLevel: number;
+  shipyardState: ChainShipyardState | null;
+}): ProductionCatalogItem<ShipKey>[] {
+  return shipCatalog.map((ship) => {
+    const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
+    const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
+    const owned = productionAvailable && chainShip ? chainShip.count : undefined;
+    const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
+    const quantity = quantities[ship.key] ?? 1;
+    const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+    const durationSeconds = baseCost
+      ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
+      : undefined;
+    const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
+    const requirements = getShipRequirementStates(ship, shipyardState);
+    const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
+    const queued = queue?.active && queue.itemId === ship.id ? queue.quantity ?? 0 : 0;
+    const blockedReason = getBlockedReason({
+      affordable,
+      canTransact,
+      hasPlanet: Boolean(shipyardState?.homePlanetId),
+      missing,
+      queueActive: Boolean(queue),
+      resources,
+      shipUnavailable,
+      shipyardState,
+    });
+    const disabled = Boolean(blockedReason) || actionPending;
+    const stats = shipCombatStats(ship).rows.slice(0, 3).map((row) => `${row.label} ${row.value}`).join(" · ");
 
-  return (
-    <QueueProgressPanel
-      action={{
-        disabled: !canTransact || actionPending,
-        label: queueReady ? "Complete queue" : "Refresh queue",
-        onClick: queueReady ? onFinish : onCollect,
-      }}
-      asset={ship?.asset}
-      label={ship?.label ?? "Ship"}
-      quantity={queue.quantity ?? 0}
-      readyAt={queue.readyAt}
-      startedAt={queue.startedAt}
-      title="Shipyard queue"
-      tone="sky"
-    >
-      Ready {formatReady(queue.readyAt)}.
-    </QueueProgressPanel>
-  );
-}
-
-function ShipTile({
-  blockedReason,
-  buttonLabel,
-  cost,
-  disabled,
-  durationSeconds,
-  missing,
-  onBuild,
-  onQuantity,
-  owned,
-  quantity,
-  requirementStates,
-  ship,
-}: {
-  blockedReason: string | undefined;
-  buttonLabel: string;
-  cost: Resources | undefined;
-  disabled: boolean;
-  durationSeconds: number | undefined;
-  missing: string[];
-  onBuild: () => void;
-  onQuantity: (quantity: number) => void;
-  owned: number | undefined;
-  quantity: number;
-  requirementStates: RequirementFlair[];
-  ship: (typeof shipCatalog)[number];
-}) {
-  return (
-    <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
-      <OptimizedImage
-        alt=""
-        className="aspect-square w-full rounded bg-black/20 object-contain p-1"
-        sizes="shipThumbnail"
-        src={ship.asset}
-      />
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-semibold text-white">{ship.label}</h4>
-              <CombatStatsInfoButton label={ship.label} stats={shipCombatStats(ship)} />
-            </div>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Owned: {owned === undefined ? "unavailable" : format(owned)}
-            </p>
-          </div>
-          <span className={missing.length === 0 ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
-            {missing.length === 0 ? "Ready" : "Locked"}
-          </span>
-        </div>
-
-        <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-          <Stat label="Metal" value={cost ? format(cost.metal) : "-"} />
-          <Stat label="Crystal" value={cost ? format(cost.crystal) : "-"} />
-          <Stat label="Deut" value={cost ? format(cost.deuterium) : "-"} />
-          <Stat label="Build time" value={durationSeconds === undefined ? "-" : formatDuration(durationSeconds)} />
-        </dl>
-
-        <RequirementFlairs className="mt-3" requirements={requirementStates} />
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
-            aria-label={`${ship.label} quantity`}
-            className="h-9 w-20 rounded border border-white/10 bg-black/20 px-2 text-sm text-white outline-none focus:border-signal/60"
-            min={1}
-            onInput={(event) => {
-              const value = Number((event.currentTarget as HTMLInputElement).value);
-              onQuantity(Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1);
-            }}
-            type="number"
-            value={quantity}
-          />
-          <button
-            className="h-9 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-            disabled={disabled}
-            onClick={onBuild}
-            type="button"
-          >
-            {buttonLabel}
-          </button>
-          {blockedReason && <span className="text-xs text-slate-500">{blockedReason}</span>}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function Notice({
-  children,
-  tone,
-}: {
-  children: ComponentChildren;
-  tone: "danger" | "neutral" | "success";
-}) {
-  const classes = {
-    danger: "border-rose-300/20 bg-rose-300/5 text-rose-200",
-    neutral: "border-sky-300/20 bg-sky-300/5 text-sky-200",
-    success: "border-emerald-300/20 bg-emerald-300/5 text-emerald-200",
-  } as const;
-
-  return (
-    <div className={`rounded border p-3 text-sm ${classes[tone]}`}>
-      {children}
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
-      <dt className="text-[10px] uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="truncate text-slate-200">{value}</dd>
-    </div>
-  );
+    return {
+      actionLabel: "Build",
+      asset: ship.asset,
+      blockedReason,
+      cost: totalCost,
+      countLabel: "Owned",
+      countValue: owned,
+      detailNote: stats || "Production unit",
+      disabled,
+      durationSeconds,
+      group: ship.group,
+      groupLabel: groupLabels[ship.group],
+      id: ship.id,
+      key: ship.key,
+      label: ship.label,
+      missing,
+      quantity,
+      queued,
+      requirements,
+      status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
+      statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
+    };
+  });
 }
 
 export function getMissingRequirements(
@@ -379,24 +245,31 @@ export function getMissingRequirements(
 export function getShipRequirementStates(
   ship: (typeof shipCatalog)[number],
   shipyardState?: ChainShipyardState | null | undefined,
-): RequirementFlair[] {
-  const buildingLevels: Partial<Record<UnlockBuildingKey, number>> = {
-    shipyard: shipyardState?.shipyardLevel ?? 0,
-  };
+) {
   const levels = {
-    buildings: buildingLevels,
+    buildings: { shipyard: shipyardState?.shipyardLevel ?? 0 },
     research: technologyLevelsByKey(shipyardState?.technologyLevels),
   };
 
-  return uniqueShipRequirements(ship.requirements).map((requirement) => {
+  return uniqueRequirements(ship.requirements).map((requirement) => {
     const actual = requirement.kind === "building"
-      ? levels.buildings[requirement.key as UnlockBuildingKey] ?? 0
-      : levels.research[requirement.key as ResearchKey] ?? 0;
+      ? levels.buildings[requirement.key as keyof typeof levels.buildings] ?? 0
+      : levels.research[requirement.key as string] ?? 0;
 
     return {
       label: `${requirement.label} ${requirement.level}`,
       met: actual >= requirement.level,
     };
+  });
+}
+
+function uniqueRequirements(requirements: readonly UnlockRequirement[]): UnlockRequirement[] {
+  const seen = new Set<string>();
+  return requirements.filter((requirement) => {
+    const key = `${requirement.kind}:${requirement.key ?? requirement.label}:${requirement.level}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 
@@ -448,28 +321,6 @@ function multiply(resources: Resources, quantity: number): Resources {
   };
 }
 
-function formatReady(readyAt: string | null): string {
-  if (!readyAt) return "unknown";
-  const remaining = formatDurationUntil(Number(readyAt) * 1_000);
-  return remaining === "Ready" ? "now" : `in ${remaining}`;
-}
-
-function format(value: number): string {
-  return formatter.format(Math.floor(value));
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 3_600) {
-    return `${Math.ceil(seconds / 60)}m`;
-  }
-
-  if (seconds < 86_400) {
-    return `${Math.floor(seconds / 3_600)}h ${Math.ceil((seconds % 3_600) / 60)}m`;
-  }
-
-  return `${Math.floor(seconds / 86_400)}d ${Math.ceil((seconds % 86_400) / 3_600)}h`;
-}
-
 const technologyIdByKey: Partial<Record<string, number>> = {
   energy: 0,
   laser: 1,
@@ -487,16 +338,6 @@ const technologyIdByKey: Partial<Record<string, number>> = {
   intergalacticResearchNetwork: 13,
   graviton: 14,
 };
-
-function uniqueShipRequirements(requirements: readonly UnlockRequirement[]): UnlockRequirement[] {
-  const seen = new Set<string>();
-  return requirements.filter((requirement) => {
-    const key = `${requirement.kind}:${requirement.key ?? requirement.label}:${requirement.level}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
 
 function technologyLevelsByKey(levels: Record<string, number> | undefined) {
   return Object.fromEntries(
