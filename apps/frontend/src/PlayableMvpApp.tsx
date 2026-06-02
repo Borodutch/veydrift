@@ -36,6 +36,7 @@ import {
   hasCollectableResources,
   productionPerHour,
   progress,
+  researchCatalog,
   storageCaps,
   type BuildingKey,
   type DefenseKey,
@@ -161,6 +162,20 @@ import {
   transactionConfirmingLabel,
   transactionSyncingLabel,
 } from "./transactionActionGate";
+
+export function researchStartTransactionLabel(
+  technologyId: number,
+  key: ResearchKey,
+  researchState: ChainResearchState | null,
+): string {
+  const catalogEntry = researchCatalog.find((research) => research.id === technologyId || research.key === key);
+  const label = catalogEntry?.label ?? "Research";
+  const currentLevel = researchState?.technologies.find((technology) => technology.id === technologyId)?.level
+    ?? researchState?.technologyLevels[technologyId.toString()]
+    ?? 0;
+
+  return `${label} level ${currentLevel + 1} research`;
+}
 
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
@@ -2016,7 +2031,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
-  const handleResearch = useCallback((technologyId: number, _key: ResearchKey) => {
+  const handleResearch = useCallback((technologyId: number, key: ResearchKey) => {
     if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
       setResearchAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
@@ -2025,7 +2040,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     const currentLevel = researchState.technologies.find((technology) => technology.id === technologyId)?.level
       ?? researchState.technologyLevels[technologyId.toString()]
       ?? 0;
-    void runResearchTransaction(`Research ${technologyId}`, () => sendStartResearchTransaction(
+    void runResearchTransaction(researchStartTransactionLabel(technologyId, key, researchState), () => sendStartResearchTransaction(
       provider,
       account,
       gameContract,
