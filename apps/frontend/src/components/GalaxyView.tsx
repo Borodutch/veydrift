@@ -98,6 +98,7 @@ interface Props {
   defenseState?: ChainDefenseState | null | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
+  onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
 }
@@ -114,6 +115,7 @@ export function GalaxyView({
   defenseState = null,
   shipyardState = null,
   onAction,
+  onSelectAlliance,
   onSelectPlanet,
   onNavigate,
 }: Props) {
@@ -382,6 +384,7 @@ export function GalaxyView({
                   account={account}
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
+                  onSelectAlliance={onSelectAlliance}
                   onAction={onAction}
                   missionSpeedPercent={missionSpeedPercent}
                   attackProtection={planet?.occupiedBy ? attackProtection[planet.occupiedBy.planetId] : undefined}
@@ -561,6 +564,7 @@ function GalaxySlot({
   onAction,
   attackProtection,
   onSelectPlanet,
+  onSelectAlliance,
 }: {
   account: string | undefined;
   actionState: GalaxyActionState;
@@ -577,6 +581,7 @@ function GalaxySlot({
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
   attackProtection: AttackProtectionStatus | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
+  onSelectAlliance: ((allianceId: string) => void) | undefined;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -727,8 +732,18 @@ function GalaxySlot({
         </div>
       </button>
 
-      <div className={`hidden justify-self-end text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
-        {ownerLabel}
+      <div className={`hidden justify-self-end text-right text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
+        <div>{ownerLabel}</div>
+        {planet.alliance ? (
+          <button
+            className="mt-1 text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
+            disabled={!onSelectAlliance}
+            onClick={() => onSelectAlliance?.(planet.alliance ?? "")}
+            type="button"
+          >
+            {planet.alliance}
+          </button>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap justify-end gap-1.5">
