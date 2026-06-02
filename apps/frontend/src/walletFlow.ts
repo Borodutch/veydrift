@@ -55,10 +55,18 @@ export type PlanetSummary = {
   source: "chain" | "transaction";
 };
 
+export type PlayerProfile = {
+  wallet: string;
+  displayName: string | null;
+  fallbackName: string;
+  updatedAt: string | null;
+};
+
 export type WalletSettlementResponse = {
   wallet: string;
   hasFirstPlanet: boolean;
   homePlanetId: string | null;
+  player?: PlayerProfile | undefined;
   planet: {
     planetId: string;
     owner: string;
@@ -104,6 +112,7 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
 export type WalletPlanetsResponse = {
   wallet: string;
   homePlanetId: string | null;
+  player?: PlayerProfile | undefined;
   planets: ManagedPlanetResponse[];
 };
 
@@ -333,6 +342,7 @@ export type ChainAllianceState = {
     name: string;
     description: string;
     owner: string;
+    ownerDisplayName?: string | null;
     createdAt: string;
     memberCount: number;
   } | null;
@@ -343,26 +353,31 @@ export type ChainAllianceState = {
     name: string;
     description: string;
     owner: string;
+    ownerDisplayName?: string | null;
     createdAt: string;
     memberCount: number;
   }>;
   pendingInvites: Array<{
     allianceId: string;
     inviter: string;
+    inviterDisplayName?: string | null;
     invitedAt: string;
   }>;
   pendingJoinRequests: Array<{
     allianceId: string;
     requester: string;
+    requesterDisplayName?: string | null;
     requestedAt: string;
   }>;
   allianceJoinRequests: Array<{
     allianceId: string;
     requester: string;
+    requesterDisplayName?: string | null;
     requestedAt: string;
   }>;
   members: Array<{
     address: string;
+    displayName?: string | null;
     role: AllianceRole;
     joinedAt: string;
   }>;
@@ -383,6 +398,7 @@ export type HighscoreCategory =
 export type HighscoreEntry = {
   rank: number;
   wallet: string;
+  displayName?: string | null;
   homePlanetId: string | null;
   homePlanet: HighscorePlanet | null;
   planetCount: number;
@@ -543,6 +559,33 @@ export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
 
 export function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+export const playerDisplayNameMaxLength = 32;
+
+export function playerDisplayNameMessage(wallet: string, displayName: string): string {
+  return [
+    "Veydrift player display name",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Display name: ${displayName}`,
+    "Only sign this message if you want this public name shown in Veydrift."
+  ].join("\n");
+}
+
+export function validatePlayerDisplayName(value: string): string | undefined {
+  const displayName = value.trim().replace(/ {2,}/g, " ");
+  if (!displayName) return "Enter a display name.";
+  if (Array.from(displayName).length > playerDisplayNameMaxLength) {
+    return `Display names can be at most ${playerDisplayNameMaxLength} characters.`;
+  }
+  if (/[\p{Cc}\p{Cf}]/u.test(displayName)) {
+    return "Display names cannot include control or formatting characters.";
+  }
+  return undefined;
+}
+
+export function playerDisplayLabel(profile: PlayerProfile | null | undefined, wallet: string | null | undefined): string {
+  return profile?.displayName ?? profile?.fallbackName ?? (wallet ? shortAddress(wallet) : "Unnamed player");
 }
 
 export function settlementContractConfigured(config: SettlementConfig): config is SettlementConfig & { address: string } {
@@ -2048,6 +2091,36 @@ export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: 
 
 export async function fetchAllianceState(apiUrl: string, wallet: string): Promise<ChainAllianceState> {
   return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance", "Alliance");
+}
+
+export async function fetchPlayerProfile(apiUrl: string, wallet: string): Promise<PlayerProfile> {
+  return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile");
+}
+
+export async function updatePlayerDisplayName(
+  apiUrl: string,
+  provider: Eip1193Provider,
+  account: string,
+  displayName: string
+): Promise<PlayerProfile> {
+  const message = playerDisplayNameMessage(account, displayName);
+  const signature = await provider.request<string>({
+    method: "personal_sign",
+    params: [message, account]
+  });
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile/display-name`, {
+    body: JSON.stringify({ displayName, signature }),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await apiErrorMessage(response, "Player profile"));
+  }
+  return response.json() as Promise<PlayerProfile>;
 }
 
 export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {

@@ -129,6 +129,7 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
+  updatePlayerDisplayName,
   waitForReceipt,
   type ChainDefenseState,
   type ChainAllianceState,
@@ -143,6 +144,7 @@ import {
   type PendingWithdrawal,
   type ManagedPlanetResponse,
   type PlanetSummary,
+  type PlayerProfile,
   type RiftResourceState,
   type PlayerQueuesResponse,
   type WalletSettlementResponse,
@@ -508,6 +510,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [page, setPage] = useState<Page>("overview");
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
   const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
+  const [playerProfileOverride, setPlayerProfileOverride] = useState<PlayerProfile | undefined>();
   const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
@@ -545,6 +548,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
   const [planetManagementAction, setPlanetManagementAction] = useState<PlanetManagementActionState>({ status: "idle" });
   const [planetRenameAction, setPlanetRenameAction] = useState<PlanetRenameActionState>({ status: "idle" });
+  const [playerProfileAction, setPlayerProfileAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
@@ -605,6 +609,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
+  const playerProfile = playerProfileOverride ?? onChainSettlement?.player;
+
+  useEffect(() => {
+    setPlayerProfileOverride(undefined);
+    setPlayerProfileAction({ status: "idle" });
+  }, [account]);
 
   const onChainResources = useMemo(() => {
     if (!onChainSettlement?.planet) return undefined;
@@ -1919,6 +1929,29 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       });
   }, [account, activePlanetId, gameContract, provider, refreshOnChainState]);
 
+  const handleUpdatePlayerDisplayName = useCallback((displayName: string) => {
+    if (!provider || !account || !apiBaseUrl) {
+      setPlayerProfileAction({ status: "error", label: "Wallet or game API is unavailable." });
+      return;
+    }
+
+    setPlayerProfileAction({ status: "pending", label: "Waiting for wallet signature" });
+    void updatePlayerDisplayName(apiBaseUrl, provider, account, displayName)
+      .then((profile) => {
+        setPlayerProfileOverride(profile);
+        setOnChainSettlement((current) => current ? { ...current, player: profile } : current);
+        setPlayerProfileAction({ status: "success", label: "Display name saved." });
+        if (page === "alliance") refreshAllianceState();
+      })
+      .catch((error) => {
+        console.error(error);
+        setPlayerProfileAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Display name update failed.",
+        });
+      });
+  }, [account, apiBaseUrl, page, provider, refreshAllianceState]);
+
   const handleAbandonPlanet = useCallback(() => {
     if (!provider || !account || !gameContract || !activePlanetId || selectedManagedPlanet?.isHomePlanet) {
       setPlanetManagementAction({ status: "error", label: "Only non-home colonies can be abandoned." });
@@ -2458,7 +2491,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onFinishDefense={handleFinishDefenseProduction}
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
+        onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
         onResolveMission={handleResolveMission}
+        playerProfile={playerProfile}
+        playerProfileAction={playerProfileAction}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
         isBuildingReadyToFinish={isBuildingReadyToFinish}
@@ -2470,6 +2506,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         shipProgress={shipProgress}
         state={state}
         canRenamePlanet={Boolean(provider && account && gameContract && activePlanetId)}
+        canEditPlayerProfile={Boolean(provider && account && apiBaseUrl)}
         planetRenameAction={planetRenameAction}
         canAbandonPlanet={selectedManagedPlanet
           ? shouldShowAbandonPlanetButton(selectedManagedPlanet, Boolean(provider && account && gameContract), planetManagementAction)

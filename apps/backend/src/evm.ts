@@ -342,6 +342,7 @@ export type AllianceState = {
     name: string;
     description: string;
     owner: Address;
+    ownerDisplayName?: string | null;
     createdAt: string;
     memberCount: number;
   } | null;
@@ -352,26 +353,31 @@ export type AllianceState = {
     name: string;
     description: string;
     owner: Address;
+    ownerDisplayName?: string | null;
     createdAt: string;
     memberCount: number;
   }>;
   pendingInvites: Array<{
     allianceId: string;
     inviter: Address;
+    inviterDisplayName?: string | null;
     invitedAt: string;
   }>;
   pendingJoinRequests: Array<{
     allianceId: string;
     requester: Address;
+    requesterDisplayName?: string | null;
     requestedAt: string;
   }>;
   allianceJoinRequests: Array<{
     allianceId: string;
     requester: Address;
+    requesterDisplayName?: string | null;
     requestedAt: string;
   }>;
   members: Array<{
     address: Address;
+    displayName?: string | null;
     role: AllianceRoleName;
     joinedAt: string;
   }>;

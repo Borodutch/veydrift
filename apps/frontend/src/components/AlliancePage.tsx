@@ -146,7 +146,7 @@ export function AlliancePage({
                     <Readout label="Tag" value={profile.tag} />
                     <Readout label="Name" value={profile.name} />
                     <Readout label="Alliance ID" value={currentAllianceId} />
-                    <Readout label="Owner" value={shortAddress(profile.owner)} />
+                    <Readout label="Owner" value={playerLabel(profile.ownerDisplayName, profile.owner)} />
                     <Readout label="Created" value={profile.createdAt} />
                   </div>
                   <div className="mt-4">
@@ -278,7 +278,7 @@ function AllianceDirectory({
                 <div className="mt-3 grid gap-2 text-xs uppercase tracking-[0.14em] text-slate-500 sm:grid-cols-3">
                   <span>ID {alliance.allianceId}</span>
                   <span>{alliance.memberCount} members</span>
-                  <span>Owner {shortAddress(alliance.owner)}</span>
+                  <span>Owner {playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
                 </div>
               </div>
             );
@@ -311,7 +311,7 @@ function PendingInvites({
             return (
               <div className="rounded border border-white/10 bg-black/20 p-3" key={invite.allianceId}>
                 <p className="text-sm font-semibold text-white">{alliance ? `${alliance.tag} - ${alliance.name}` : `Alliance #${invite.allianceId}`}</p>
-                <p className="mt-1 text-sm text-slate-400">Invited by {shortAddress(invite.inviter)}</p>
+                <p className="mt-1 text-sm text-slate-400">Invited by {playerLabel(invite.inviterDisplayName, invite.inviter)}</p>
                 <button
                   className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={disabled}
@@ -346,7 +346,10 @@ function JoinRequests({
         <div className="space-y-3">
           {requests.map((request) => (
             <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
-              <p className="font-mono text-sm text-white">{shortAddress(request.requester)}</p>
+              <p className="text-sm font-semibold text-white">{playerLabel(request.requesterDisplayName, request.requester)}</p>
+              {request.requesterDisplayName ? (
+                <p className="mt-1 font-mono text-xs text-slate-500">{shortAddress(request.requester)}</p>
+              ) : null}
               <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {request.requestedAt}</p>
               <button
                 className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -453,7 +456,12 @@ function RosterTable({
                 const ownerCanChangeRole = isOwner && member.role !== "owner";
                 return (
                   <tr key={member.address}>
-                    <td className="py-2 pr-3 font-mono">{shortAddress(member.address)}</td>
+                    <td className="py-2 pr-3">
+                      <span className="block font-semibold text-slate-100">{playerLabel(member.displayName, member.address)}</span>
+                      {member.displayName ? (
+                        <span className="block font-mono text-xs text-slate-500">{shortAddress(member.address)}</span>
+                      ) : null}
+                    </td>
                     <td className="py-2 pr-3 capitalize">{roleLabel(member.role)}</td>
                     <td className="py-2 pr-3 font-mono text-slate-400">{member.joinedAt}</td>
                     {canManageMembers ? (
@@ -507,6 +515,10 @@ function roleLabel(role: AllianceRole): string {
   if (role === "officer") return "officer";
   if (role === "member") return "member";
   return "none";
+}
+
+function playerLabel(displayName: string | null | undefined, wallet: string): string {
+  return displayName?.trim() || shortAddress(wallet);
 }
 
 function Panel({ children, title }: { children: ComponentChildren; title: string }) {

@@ -633,8 +633,10 @@ function GalaxySlot({
 
   const ownerLabel = isHome
     ? "Settled home"
-    : planet.ownerId
-      ? shortAddress(planet.ownerId)
+    : planet.occupiedBy?.ownerDisplayName
+      ? planet.occupiedBy.ownerDisplayName
+      : planet.ownerId
+        ? shortAddress(planet.ownerId)
       : "Unclaimed";
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`

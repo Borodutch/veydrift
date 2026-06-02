@@ -161,6 +161,7 @@ function RankingRow({
 }) {
   const homePlanet = entry.homePlanet ?? null;
   const canOpenHomePlanet = Boolean(homePlanet && onSelectPlanet);
+  const commanderLabel = entry.displayName?.trim() || shortAddress(entry.wallet);
 
   const openHomePlanet = () => {
     if (!homePlanet || !onSelectPlanet) return;
@@ -194,7 +195,7 @@ function RankingRow({
           type="button"
         >
           <span className={`block truncate font-mono ${canOpenHomePlanet ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
-            {shortAddress(entry.wallet)}
+            {commanderLabel}
           </span>
           {homePlanet ? (
             <span className="block truncate text-xs text-slate-500">{homePlanetLabel(homePlanet)}</span>

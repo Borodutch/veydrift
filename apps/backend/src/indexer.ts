@@ -31,6 +31,7 @@ import {
   isSettledPlanetLog,
   isShipCountChangedLog,
   type ChainReader,
+  type Address,
   type DebrisFieldEvent,
   type DefenseState,
   type FleetMissionVisibility,
@@ -65,6 +66,7 @@ import {
   zeroResources
 } from "./readModels";
 import type { HighscoreEntry } from "./highscores";
+import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -159,6 +161,12 @@ type ResourceColumns = {
   metal: string;
   crystal: string;
   deuterium: string;
+};
+
+type PlayerProfileRow = {
+  display_name: string | null;
+  updated_at: string | null;
+  wallet: string;
 };
 
 export type IndexedRpcLog = RpcLog & {
@@ -283,6 +291,40 @@ export class SettlementIndexer {
   planet(planetId: string): SettledPlanetEvent | null {
     const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
     return row ? parseEvent<SettledPlanetEvent>(row.event_json) : null;
+  }
+
+  playerProfile(wallet: string): PlayerProfile {
+    const normalizedWallet = wallet.toLowerCase() as Address;
+    const row = this.db.query(`
+      SELECT wallet, display_name, updated_at
+      FROM player_profiles
+      WHERE wallet = lower(?)
+    `).get(wallet) as PlayerProfileRow | null;
+
+    return {
+      wallet: normalizedWallet,
+      displayName: row?.display_name ?? null,
+      fallbackName: playerFallbackName(normalizedWallet),
+      updatedAt: row?.updated_at ?? null
+    };
+  }
+
+  playerProfiles(wallets: Iterable<string>): Map<string, PlayerProfile> {
+    const uniqueWallets = [...new Set([...wallets].map((wallet) => wallet.toLowerCase()))];
+    return new Map(uniqueWallets.map((wallet) => [wallet, this.playerProfile(wallet)]));
+  }
+
+  upsertPlayerDisplayName(wallet: Address, displayName: string): PlayerProfile {
+    const updatedAt = new Date().toISOString();
+    this.db.query(`
+      INSERT INTO player_profiles (wallet, display_name, updated_at)
+      VALUES (lower(?), ?, ?)
+      ON CONFLICT(wallet) DO UPDATE SET
+        display_name = excluded.display_name,
+        updated_at = excluded.updated_at
+    `).run(wallet, displayName, updatedAt);
+
+    return this.playerProfile(wallet);
   }
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
@@ -705,6 +747,11 @@ export class SettlementIndexer {
       CREATE TABLE IF NOT EXISTS indexer_metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS player_profiles (
+        wallet TEXT PRIMARY KEY,
+        display_name TEXT,
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS indexed_planets (
         planet_id TEXT PRIMARY KEY,
