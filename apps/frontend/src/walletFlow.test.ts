@@ -1715,6 +1715,50 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("uses a readonly provider for Mini App building preflight when the wallet only supports sends", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = mockProvider(async ({ method, params }) => {
+      walletRequests.push({ method, params });
+      if (method === "eth_sendTransaction") return "0xtx1";
+      throw { code: 4200, message: "The provider does not support the requested method." };
+    });
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      return "0x";
+    });
+
+    await expect(
+      sendStartBuildingUpgradeTransaction(walletProvider, account, contract, "7", 0, { readProvider })
+    ).resolves.toBe("0xtx1");
+
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 0])
+          },
+          "latest"
+        ]
+      }
+    ]);
+    expect(walletRequests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 0])
+          }
+        ]
+      }
+    ]);
+  });
+
   test("includes backend wallet API validation messages in shipyard errors", async () => {
     const originalFetch = globalThis.fetch;
 

@@ -409,7 +409,7 @@ export function FirstPlanetSettlementApp() {
           label: transactionConfirmingLabel(label, txHash),
           txHash
         });
-        await waitForReceipt(provider, txHash);
+        await waitForReceipt(settlementReadProvider(miniAppMode) ?? provider, txHash);
         setPlanet({
           kind: "pending",
           label: transactionSyncingLabel(label),
@@ -491,7 +491,9 @@ export function FirstPlanetSettlementApp() {
     return (
       <PlayableMvpApp
         provider={provider}
+        readProvider={settlementReadProvider(miniAppMode)}
         account={account}
+        miniAppMode={miniAppMode}
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
       />
     );

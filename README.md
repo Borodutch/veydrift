@@ -210,6 +210,9 @@ generate the signed `accountAssociation` for `veydrift.com` with the owning
 Farcaster/Base account and replace the manifest values. The production build
 emits `veydrift.com` manifest URLs, while the test build emits
 `test.veydrift.com` manifest URLs with the signed test-domain association.
+Share card image and button metadata live in the page-level `fc:miniapp` and
+backward-compatible `fc:frame` tags; do not re-add the deprecated manifest
+`imageUrl` or `buttonTitle` fields.
 If the test-domain signature rotates, set
 `VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION` or the split
 `VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_HEADER` /

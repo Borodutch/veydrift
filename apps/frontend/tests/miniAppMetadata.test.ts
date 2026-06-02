@@ -27,7 +27,8 @@ describe("Farcaster Mini App metadata", () => {
     expect(accountAssociationDomain(manifest.accountAssociation)).toBe("test.veydrift.com");
     expect(manifest.miniapp.homeUrl).toBe("https://test.veydrift.com");
     expect(manifest.miniapp.iconUrl).toBe("https://test.veydrift.com/assets/miniapp/icon.png");
-    expect(manifest.miniapp.imageUrl).toBe("https://test.veydrift.com/assets/miniapp/embed.png");
+    expect("imageUrl" in manifest.miniapp).toBe(false);
+    expect("buttonTitle" in manifest.miniapp).toBe(false);
     expect(manifest.miniapp.canonicalDomain).toBe("test.veydrift.com");
     expect(manifest.miniapp.requiredChains).toEqual(["eip155:84532"]);
     expect(manifest.miniapp.requiredCapabilities).toEqual([
@@ -48,6 +49,7 @@ describe("Farcaster Mini App metadata", () => {
     expect(embed).toEqual({
       version: "1",
       imageUrl: "https://test.veydrift.com/assets/miniapp/embed.png",
+      aspectRatio: "3:2",
       button: {
         title: "Join the testers",
         action: {
