@@ -112,6 +112,48 @@ describe("planet identity", () => {
     expect(formatPlanetType(identity.type)).toBe("Frozen Ice");
   });
 
+  test("keeps canonical commander and alliance identity when settlement data refreshes galaxy rows", () => {
+    const [systemPlanet] = planetsFromSystemResponse({
+      galaxy: 6,
+      system: 407,
+      planets: [
+        {
+          key: "6:407:15",
+          galaxy: 6,
+          system: 407,
+          position: 15,
+          fields: 214,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          temperature: -100,
+          occupiedBy: {
+            alliance: {
+              allianceId: "3",
+              name: "Eggs",
+              tag: "$EGGS",
+            },
+            owner: settlementPlanet.owner,
+            ownerDisplayName: "borodutch",
+            planetId: "2",
+          },
+        },
+      ],
+    });
+
+    const identity = mergePlanetWithSettlement(systemPlanet!, settlementPlanet);
+
+    expect(identity.occupiedBy).toMatchObject({
+      owner: settlementPlanet.owner,
+      ownerDisplayName: "borodutch",
+      alliance: {
+        allianceId: "3",
+        tag: "$EGGS",
+      },
+    });
+    expect(identity.alliance?.tag).toBe("$EGGS");
+  });
+
   test("replaces the generated galaxy row with the authoritative home planet", () => {
     const generated = planetsFromSystemResponse({
       galaxy: 6,

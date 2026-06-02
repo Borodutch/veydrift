@@ -197,6 +197,10 @@ export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Pl
 
 export function mergePlanetWithSettlement(planet: Planet, settlement: SettlementPlanetIdentity): Planet {
   const type = planetTypeFromTemperature(settlement.temperature);
+  const existingOccupant = planet.occupiedBy?.owner.toLowerCase() === settlement.owner.toLowerCase()
+    ? planet.occupiedBy
+    : null;
+  const alliance = existingOccupant?.alliance ?? planet.alliance ?? null;
 
   return {
     ...planet,
@@ -207,7 +211,10 @@ export function mergePlanetWithSettlement(planet: Planet, settlement: Settlement
     occupiedBy: {
       planetId: settlement.planetId,
       owner: settlement.owner,
+      ownerDisplayName: existingOccupant?.ownerDisplayName ?? null,
+      alliance,
     },
+    alliance,
     fields: settlement.fields,
     temperature: { min: settlement.temperature - 20, max: settlement.temperature + 20 },
     diameter: Math.max(5_000, Math.round(Math.sqrt(settlement.fields) * 1_000)),

@@ -944,6 +944,7 @@ describe("Veydrift backend", () => {
       transactionHash: "0xabc",
       blockNumber: "123"
     });
+    indexer.upsertPlayerDisplayName(player, "borodutch");
 
     const response = await createRequestHandler({
       config: {
@@ -963,6 +964,7 @@ describe("Veydrift backend", () => {
         tag: "VDFT"
       },
       owner: player,
+      ownerDisplayName: "borodutch",
       planetId: "7"
     });
   });
