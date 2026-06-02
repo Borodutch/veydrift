@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate } from "../playableMvp";
+import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
 import {
   Notice,
@@ -29,6 +30,7 @@ interface ShipyardPageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectShip?: ((key: ShipKey) => void) | undefined;
+  overviewQueue?: ChainShipyardState["queue"] | undefined;
   selectedShipKey?: ShipKey | undefined;
   shipyardState: ChainShipyardState | null;
 }
@@ -50,6 +52,7 @@ export function ShipyardPage({
   onOpenRequirement,
   onRefresh,
   onSelectShip,
+  overviewQueue,
   selectedShipKey,
   shipyardState,
 }: ShipyardPageProps) {
@@ -58,7 +61,7 @@ export function ShipyardPage({
   const selectedKey = selectedShipKey ?? localSelectedKey;
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
   const resources = toResources(shipyardState?.resources);
-  const queue = shipyardState?.queue?.active ? shipyardState.queue : undefined;
+  const queue = activeProductionQueue(shipyardState?.queue, overviewQueue, "ship");
   const productionAvailable = shipyardState?.productionAvailable !== false;
   const initialLoading = loading && !shipyardState;
 
