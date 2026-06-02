@@ -1326,7 +1326,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     if (!apiBaseUrl) {
-      setHomePlanetIdentity(namedSettlementPlanet(settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined, settlementPlanet?.name));
+      setHomePlanetIdentity(namedSettlementPlanet(
+        settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined,
+        settlementPlanet?.name,
+        playerProfile?.displayName,
+      ));
       return;
     }
 
@@ -1346,7 +1350,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         const mergedPlanet = basePlanet && settlementPlanet
           ? mergePlanetWithSettlement(basePlanet, settlementPlanet)
           : basePlanet;
-        setHomePlanetIdentity(namedSettlementPlanet(mergedPlanet, settlementPlanet?.name));
+        setHomePlanetIdentity(namedSettlementPlanet(mergedPlanet, settlementPlanet?.name, playerProfile?.displayName));
       })
       .catch((error) => {
         if (!abortController.signal.aborted) {
@@ -1354,12 +1358,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           setHomePlanetIdentity(namedSettlementPlanet(
             settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined,
             settlementPlanet?.name,
+            playerProfile?.displayName,
           ));
         }
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, homeCoords, onChainSettlement?.planet]);
+  }, [apiBaseUrl, homeCoords, onChainSettlement?.planet, playerProfile?.displayName]);
 
   useEffect(() => {
     void refreshOnChainState();
@@ -3198,9 +3203,25 @@ function planetImage(planet: ManagedPlanetResponse): string {
   return planetImageForType(planetTypeFromTemperature(planet.temperature));
 }
 
-function namedSettlementPlanet(planet: Planet | undefined, name: string | null | undefined): Planet | undefined {
+function namedSettlementPlanet(
+  planet: Planet | undefined,
+  name: string | null | undefined,
+  ownerDisplayName?: string | null | undefined
+): Planet | undefined {
   const trimmedName = name?.trim();
-  return planet && trimmedName ? { ...planet, name: trimmedName } : planet;
+  const trimmedOwnerDisplayName = ownerDisplayName?.trim();
+  if (!planet) return undefined;
+
+  const named = trimmedName ? { ...planet, name: trimmedName } : planet;
+  if (!trimmedOwnerDisplayName || !named.occupiedBy) return named;
+
+  return {
+    ...named,
+    occupiedBy: {
+      ...named.occupiedBy,
+      ownerDisplayName: trimmedOwnerDisplayName,
+    },
+  };
 }
 
 function HydratingPlanetState({
