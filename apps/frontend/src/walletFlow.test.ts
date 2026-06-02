@@ -14,6 +14,7 @@ import {
   encodeUintCall,
   ensureBaseSepoliaNetwork,
   fetchAllianceState,
+  fetchDefenseState,
   fetchFleetMissionVisibility,
   fetchHighscores,
   fetchInfrastructureState,
@@ -1394,7 +1395,9 @@ describe("walletFlow", () => {
       await fetchResearchState("https://api.example.test", account, "7", { source: "live" });
       await fetchFleetMissionVisibility("https://api.example.test", account, { source: "live" });
       await fetchShipyardState("https://api.example.test", account, "4");
+      await fetchShipyardState("https://api.example.test", account, "4", { source: "live" });
       await fetchShipyardState("https://api.example.test", account, "8:37:9");
+      await fetchDefenseState("https://api.example.test", account, "4", { source: "live" });
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1497,7 +1500,23 @@ describe("walletFlow", () => {
         },
       },
       {
+        url: `https://api.example.test/wallet/${account}/shipyard?planetId=4&source=live`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
         url: `https://api.example.test/wallet/${account}/shipyard`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/defenses?planetId=4&source=live`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },

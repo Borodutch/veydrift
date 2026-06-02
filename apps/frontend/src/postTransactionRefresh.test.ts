@@ -5,17 +5,20 @@ import {
   isFinishedBuildingStateVisible,
   isFinishedResearchStateVisible,
   isStartedDefenseProductionVisible,
+  isStartedShipProductionVisible,
   isStartedResearchStateVisible,
   waitForCollectedResourcesState,
   waitForFinishedResearchState,
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
+  waitForStartedShipProductionState,
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
   waitForRenamedWalletPlanet,
   type CollectedResourcesSnapshot,
   type FinishedResearchSnapshot,
   type StartedDefenseProductionSnapshot,
+  type StartedShipProductionSnapshot,
   type StartedResearchSnapshot,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingSnapshot,
@@ -132,6 +135,36 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.defense.queue?.quantity).toBe(2);
     expect(result.queues.defense?.itemId).toBe(0);
     expect(result.queues.defense?.quantity).toBe(2);
+  });
+
+  test("polls until started ship production is visible on Shipyard and Overview state", async () => {
+    expect(isStartedShipProductionVisible(staleShipProductionSnapshot(), {
+      itemId: 0,
+      planetId: "7",
+      quantity: 3,
+    })).toBe(false);
+
+    const snapshots = [
+      staleShipProductionSnapshot(),
+      startedShipProductionSnapshot(),
+    ];
+    const loads: StartedShipProductionSnapshot[] = [];
+
+    const result = await waitForStartedShipProductionState(
+      async () => {
+        const snapshot = snapshots.shift() ?? startedShipProductionSnapshot();
+        loads.push(snapshot);
+        return snapshot;
+      },
+      { itemId: 0, planetId: "7", quantity: 3 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.shipyard.queue?.itemId).toBe(0);
+    expect(result.shipyard.queue?.quantity).toBe(3);
+    expect(result.queues.ship?.itemId).toBe(0);
+    expect(result.queues.ship?.quantity).toBe(3);
   });
 
   test("polls until started research is visible on Research and Overview state", async () => {
@@ -392,6 +425,56 @@ function startedDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
     queues: {
       ...staleDefenseProductionSnapshot().queues,
       defense: defenseQueue,
+    },
+  };
+}
+
+function staleShipProductionSnapshot(): StartedShipProductionSnapshot {
+  return {
+    shipyard: {
+      wallet,
+      homePlanetId: "7",
+      planetId: "7",
+      productionAvailable: true,
+      resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+      fleetSlots: { active: 0, limit: 1 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [
+        { id: 0, count: 0, cost: { metal: "2000", crystal: "2000", deuterium: "0" } },
+      ],
+      queue: null,
+    },
+    queues: {
+      wallet,
+      homePlanetId: "7",
+      building: null,
+      defense: null,
+      ship: null,
+      research: null,
+    },
+  };
+}
+
+function startedShipProductionSnapshot(): StartedShipProductionSnapshot {
+  const shipQueue = {
+    active: true,
+    kind: "ship" as const,
+    itemId: 0,
+    quantity: 3,
+    readyAt: "1770000060",
+    cost: { metal: "6000", crystal: "6000", deuterium: "0" },
+  };
+
+  return {
+    shipyard: {
+      ...staleShipProductionSnapshot().shipyard,
+      queue: shipQueue,
+    },
+    queues: {
+      ...staleShipProductionSnapshot().queues,
+      ship: shipQueue,
     },
   };
 }

@@ -2240,12 +2240,12 @@ export async function fetchMoonState(apiUrl: string, wallet: string, planetId?: 
   return fetchWalletJson<ChainMoonState>(apiUrl, wallet, withWalletReadOptions("moon", planetId, options), "Moon");
 }
 
-export async function fetchShipyardState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainShipyardState> {
-  return fetchWalletJson<ChainShipyardState>(apiUrl, wallet, withPlanetId("shipyard", planetId), "Shipyard");
+export async function fetchShipyardState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainShipyardState> {
+  return fetchWalletJson<ChainShipyardState>(apiUrl, wallet, withWalletReadOptions("shipyard", planetId, options), "Shipyard");
 }
 
-export async function fetchDefenseState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainDefenseState> {
-  return fetchWalletJson<ChainDefenseState>(apiUrl, wallet, withPlanetId("defenses", planetId), "Defenses");
+export async function fetchDefenseState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainDefenseState> {
+  return fetchWalletJson<ChainDefenseState>(apiUrl, wallet, withWalletReadOptions("defenses", planetId, options), "Defenses");
 }
 
 export async function fetchResearchState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainResearchState> {

@@ -69,12 +69,14 @@ import {
   waitForFinishedResearchState,
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
+  waitForStartedShipProductionState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForRenamedWalletPlanet,
   type CollectedResourcesExpectation,
   type FinishedResearchExpectation,
   type StartedDefenseProductionExpectation,
+  type StartedShipProductionExpectation,
   type StartedResearchExpectation,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
@@ -1206,7 +1208,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       const snapshot = await waitForStartedDefenseProductionState(
         async () => {
           const [defense, queues] = await Promise.all([
-            fetchDefenseState(apiBaseUrl, account, activePlanetId),
+            fetchDefenseState(apiBaseUrl, account, activePlanetId, { source: "live" }),
             fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
 
@@ -1230,6 +1232,46 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       setDefenseLoading(false);
     }
   }, [account, activePlanetId, apiBaseUrl, refreshDefenseState, refreshOnChainState]);
+
+  const refreshStartedShipProductionState = useCallback(async (expectation: StartedShipProductionExpectation) => {
+    if (!apiBaseUrl || !account) {
+      refreshShipyardState();
+      void refreshOnChainState();
+      return;
+    }
+
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setShipyardLoading(true);
+    setShipyardError(undefined);
+
+    try {
+      const snapshot = await waitForStartedShipProductionState(
+        async () => {
+          const [shipyard, queues] = await Promise.all([
+            fetchShipyardState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+          ]);
+
+          return { shipyard, queues };
+        },
+        expectation,
+      );
+
+      setShipyardState(snapshot.shipyard);
+      setShipyardError(undefined);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load started ship production state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setShipyardError(message);
+      throw error;
+    } finally {
+      setShipyardLoading(false);
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshShipyardState]);
 
   const refreshStartedResearchState = useCallback(async (expectation: StartedResearchExpectation) => {
     if (!apiBaseUrl || !account) {
@@ -1997,6 +2039,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return;
     }
 
+    const currentQueuedQuantity =
+      shipyardState?.queue?.active && shipyardState.queue.itemId === shipId
+        ? shipyardState.queue.quantity ?? 0
+        : 0;
+    const expectedQuantity = currentQueuedQuantity + quantity;
+
     void runShipyardTransaction("Ship production", `shipyard:start:${shipId}`, () => sendStartShipProductionTransaction(
       provider,
       account,
@@ -2004,8 +2052,21 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       planetId,
       shipId,
       quantity,
-    ));
-  }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId, shipyardState?.planetId]);
+    ), () => refreshStartedShipProductionState({
+      itemId: shipId,
+      planetId,
+      quantity: expectedQuantity,
+    }));
+  }, [
+    account,
+    gameContract,
+    provider,
+    refreshStartedShipProductionState,
+    runShipyardTransaction,
+    shipyardState?.homePlanetId,
+    shipyardState?.planetId,
+    shipyardState?.queue,
+  ]);
 
   const handleFinishShipProduction = useCallback(() => {
     const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;

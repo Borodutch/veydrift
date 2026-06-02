@@ -1,5 +1,6 @@
 import type {
   ChainDefenseState,
+  ChainShipyardState,
   ChainResearchState,
   FleetMissionVisibilityResponse,
   ChainInfrastructureState,
@@ -39,6 +40,17 @@ export type StartedDefenseProductionExpectation = {
 export type StartedDefenseProductionSnapshot = {
   defense: ChainDefenseState;
   queues: PlayerQueuesResponse;
+};
+
+export type StartedShipProductionExpectation = {
+  itemId: number;
+  planetId?: string | undefined;
+  quantity: number;
+};
+
+export type StartedShipProductionSnapshot = {
+  queues: PlayerQueuesResponse;
+  shipyard: ChainShipyardState;
 };
 
 export type StartedResearchExpectation = {
@@ -147,6 +159,16 @@ export function isStartedDefenseProductionVisible(
     && defenseQueueMatches(snapshot.queues.defense, expectation);
 }
 
+export function isStartedShipProductionVisible(
+  snapshot: StartedShipProductionSnapshot,
+  expectation: StartedShipProductionExpectation,
+): boolean {
+  if (expectation.planetId && (snapshot.shipyard.planetId ?? snapshot.shipyard.homePlanetId) !== expectation.planetId) return false;
+
+  return shipQueueMatches(snapshot.shipyard.queue, expectation)
+    && shipQueueMatches(snapshot.queues.ship, expectation);
+}
+
 export function isStartedResearchStateVisible(
   snapshot: StartedResearchSnapshot,
   expectation: StartedResearchExpectation,
@@ -175,6 +197,17 @@ export function isFinishedResearchStateVisible(
 function defenseQueueMatches(
   queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
   expectation: StartedDefenseProductionExpectation,
+): boolean {
+  return Boolean(
+    queue?.active
+    && queue.itemId === expectation.itemId
+    && (queue.quantity ?? 0) >= expectation.quantity,
+  );
+}
+
+function shipQueueMatches(
+  queue: ChainShipyardState["queue"] | PlayerQueuesResponse["ship"],
+  expectation: StartedShipProductionExpectation,
 ): boolean {
   return Boolean(
     queue?.active
@@ -246,6 +279,30 @@ export async function waitForStartedDefenseProductionState(
   }
 
   throw new Error(startedDefenseProductionTimeoutMessage(latest, expectation));
+}
+
+export async function waitForStartedShipProductionState(
+  load: () => Promise<StartedShipProductionSnapshot>,
+  expectation: StartedShipProductionExpectation,
+  options: WaitOptions = {},
+): Promise<StartedShipProductionSnapshot> {
+  const attempts = options.attempts ?? 8;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: StartedShipProductionSnapshot | undefined;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    latest = await load();
+    if (isStartedShipProductionVisible(latest, expectation)) {
+      return latest;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(startedShipProductionTimeoutMessage(latest, expectation));
 }
 
 export async function waitForStartedResearchState(
@@ -447,6 +504,22 @@ function startedDefenseProductionTimeoutMessage(
     : 0;
 
   return `Defense production transaction confirmed, but indexed defense queue state is still syncing. Expected item ${expectation.itemId} x${expectation.quantity}; Defenses page queue x${defenseQuantity}; Overview queue x${overviewQuantity}. Try refreshing in a few seconds.`;
+}
+
+function startedShipProductionTimeoutMessage(
+  snapshot: StartedShipProductionSnapshot | undefined,
+  expectation: StartedShipProductionExpectation,
+): string {
+  const shipyardQueue = snapshot?.shipyard.queue;
+  const overviewQueue = snapshot?.queues.ship;
+  const shipyardQuantity = shipyardQueue?.active && shipyardQueue.itemId === expectation.itemId
+    ? shipyardQueue.quantity ?? 0
+    : 0;
+  const overviewQuantity = overviewQueue?.active && overviewQueue.itemId === expectation.itemId
+    ? overviewQueue.quantity ?? 0
+    : 0;
+
+  return `Ship production transaction confirmed, but indexed shipyard queue state is still syncing. Expected item ${expectation.itemId} x${expectation.quantity}; Shipyard page queue x${shipyardQuantity}; Overview queue x${overviewQuantity}. Try refreshing in a few seconds.`;
 }
 
 function startedResearchTimeoutMessage(
