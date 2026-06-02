@@ -63,8 +63,8 @@ describe("Shipyard page display helpers", () => {
         "3": 1,
       },
     }))).toEqual([
-      { label: "Shipyard 2", met: true },
-      { label: "Combustion Drive 2", met: false },
+      { label: "Shipyard 2", met: true, target: { kind: "building", key: "shipyard" } },
+      { label: "Combustion Drive 2", met: false, target: { kind: "research", key: "combustionDrive" } },
     ]);
   });
 

@@ -46,9 +46,9 @@ describe("Defense page display helpers", () => {
         "1": 2,
       },
     }))).toEqual([
-      { label: "Shipyard 2", met: true },
-      { label: "Energy 1", met: true },
-      { label: "Laser 3", met: false },
+      { label: "Shipyard 2", met: true, target: { kind: "building", key: "shipyard" } },
+      { label: "Energy 1", met: true, target: { kind: "research", key: "energy" } },
+      { label: "Laser 3", met: false, target: { kind: "research", key: "laser" } },
     ]);
   });
 

@@ -8,6 +8,7 @@ import {
   ResearchLoadErrorPanel,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
+import { RequirementFlairs } from "../src/components/RequirementFlairs";
 import { createInitialPlayableState } from "../src/playableMvp";
 
 describe("Research page load-error display", () => {
@@ -80,9 +81,26 @@ describe("Research page load-error display", () => {
     };
 
     expect(getResearchRequirementStates(state, "laser")).toEqual([
-      { label: "Research Lab 1", met: true },
-      { label: "Energy Technology 2", met: false },
+      { label: "Research Lab 1", met: true, target: { kind: "building", key: "researchLab" } },
+      { label: "Energy Technology 2", met: false, target: { kind: "research", key: "energy" } },
     ]);
+  });
+
+  test("renders concrete requirement states as accessible navigation buttons", () => {
+    const flairs = RequirementFlairs({
+      onOpenRequirement: () => undefined,
+      requirements: [
+        { label: "Energy Technology 2", met: false, target: { kind: "research", key: "energy" } },
+        { label: "Energy production 300,000", met: false },
+      ],
+    }) as VNode;
+    const children = flairs.props.children as VNode[];
+    const clickableChip = (children[0]!.type as (props: Record<string, unknown>) => VNode)(children[0]!.props);
+    const infoChip = (children[1]!.type as (props: Record<string, unknown>) => VNode)(children[1]!.props);
+
+    expect(clickableChip.type).toBe("button");
+    expect(clickableChip.props["aria-label"]).toBe("Open Energy Technology 2 requirement");
+    expect(infoChip.type).toBe("span");
   });
 
   test("renders active research progress with the shared single-item queue pattern", () => {
