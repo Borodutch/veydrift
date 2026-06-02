@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  hasAllianceMembership,
   shouldShowAllianceInitialLoader,
   shouldShowAllianceRefreshIndicator,
 } from "../src/components/AlliancePage";
@@ -49,6 +50,15 @@ describe("AlliancePage loading display", () => {
       loading: false,
     })).toBe(false);
   });
+
+  test("treats a player with no alliance as outside member-only panels", () => {
+    expect(hasAllianceMembership(unaffiliatedAllianceState())).toBe(false);
+    expect(hasAllianceMembership(null)).toBe(false);
+  });
+
+  test("detects active alliance membership", () => {
+    expect(hasAllianceMembership(memberAllianceState())).toBe(true);
+  });
 });
 
 function unaffiliatedAllianceState(): ChainAllianceState {
@@ -67,7 +77,7 @@ function memberAllianceState(): ChainAllianceState {
     membership: {
       allianceId: "7",
       joinedAt: "1770000000",
-      role: "member",
+      role: "officer",
     },
     profile: {
       active: true,
@@ -82,7 +92,7 @@ function memberAllianceState(): ChainAllianceState {
       {
         address: "0x1111111111111111111111111111111111111111",
         joinedAt: "1770000000",
-        role: "member",
+        role: "officer",
       },
       {
         address: "0x2222222222222222222222222222222222222222",
