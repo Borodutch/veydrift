@@ -4,6 +4,8 @@ import {
   buildingDurationEstimate,
   createInitialPlayableState,
   researchCatalog,
+  researchDurationEstimate,
+  researchLabRequirementFor,
   type BuildingKey,
   type EnergyBalance,
   type PlayableState,
@@ -168,6 +170,11 @@ export function buildingQueueItemForDisplay(
 export function researchQueueForDisplay(
   queue: QueueStateResponse | null,
   now = Date.now(),
+  options: {
+    buildings?: PlayableState["buildings"] | undefined;
+    research?: PlayableState["research"] | undefined;
+    researchNetworkLabLevels?: readonly number[] | undefined;
+  } = {},
 ): PlayableState["researchQueue"] {
   if (!queue?.active || queue.itemId === undefined) return undefined;
   const research = researchCatalog.find((item) => item.id === queue.itemId);
@@ -175,16 +182,45 @@ export function researchQueueForDisplay(
 
   const readyAt = queueTimestampMs(queue.readyAt) ?? now;
   const chainStartedAt = queueTimestampMs(queue.startedAt);
-  if (chainStartedAt === undefined || chainStartedAt >= readyAt) return undefined;
+  const estimatedStartedAt = estimateResearchStartedAt(queue, research.key, readyAt, options);
+  const startedAt = chainStartedAt !== undefined && chainStartedAt < readyAt
+    ? chainStartedAt
+    : estimatedStartedAt;
+  if (startedAt === undefined || startedAt >= readyAt) return undefined;
 
   return {
     kind: "research",
     key: research.key,
     label: research.label,
     readyAt,
-    startedAt: chainStartedAt,
+    startedAt,
     targetLevel: queue.targetLevel ?? 0,
   };
+}
+
+function estimateResearchStartedAt(
+  queue: QueueStateResponse,
+  key: (typeof researchCatalog)[number]["key"],
+  readyAt: number,
+  options: {
+    buildings?: PlayableState["buildings"] | undefined;
+    research?: PlayableState["research"] | undefined;
+    researchNetworkLabLevels?: readonly number[] | undefined;
+  },
+): number | undefined {
+  if (!options.buildings || !options.research) return undefined;
+  const cost = toResources(queue.cost);
+  if (!cost) return undefined;
+
+  const durationSeconds = researchDurationEstimate(options.buildings, cost, {
+    networkLevel: options.research.intergalacticResearchNetwork,
+    requiredLabLevel: researchLabRequirementFor(key),
+    researchNetworkLabLevels: options.researchNetworkLabLevels,
+  });
+  const durationMs = durationSeconds * 1_000;
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return undefined;
+
+  return readyAt - durationMs;
 }
 
 function zeroResearchLevels(): PlayableState["research"] {

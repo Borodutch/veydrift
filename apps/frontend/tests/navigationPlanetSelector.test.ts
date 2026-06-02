@@ -26,6 +26,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("ring-inset");
   });
 
+  test("keeps the desktop sidebar footer compact and sticky", () => {
+    expect(navSource).toContain("md:sticky md:top-[52px]");
+    expect(navSource).toContain("min-h-0 flex-1 space-y-1 overflow-y-auto");
+    expect(navSource).toContain('aria-label="Sidebar account summary"');
+    expect(navSource).toContain("sticky bottom-3 shrink-0");
+    expect(navSource).not.toContain("Home Planet");
+    expect(navSource).not.toContain("tracking-[0.16em]");
+  });
+
   test("moves rename and abandon actions into the overview hero", () => {
     expect(overviewSource).toContain('aria-label="Rename planet"');
     expect(overviewSource).toContain('aria-label="Abandon planet"');

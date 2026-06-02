@@ -19,6 +19,7 @@ import {
   infrastructureActionNoticeFor,
   type BuildingActionState,
 } from "./buildingActionNotice";
+import { buildingUpgradeStatus } from "./buildingDetails";
 
 export { infrastructureActionNoticeFor } from "./buildingActionNotice";
 import {
@@ -35,6 +36,7 @@ import {
   hasCollectableResources,
   productionPerHour,
   progress,
+  researchCatalog,
   storageCaps,
   type BuildingKey,
   type DefenseKey,
@@ -52,6 +54,7 @@ import {
   energyBalanceFromChain,
   infrastructurePlayableState,
   isBuildingQueueReadyToFinish,
+  resourcesFromChain,
 } from "./chainState";
 import {
   isWalletPlanetHydrated,
@@ -61,12 +64,16 @@ import {
 } from "./overviewData";
 import {
   waitForCollectedResourcesState,
+  waitForFinishedResearchState,
+  waitForStartedResearchState,
   waitForStartedDefenseProductionState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForRenamedWalletPlanet,
   type CollectedResourcesExpectation,
+  type FinishedResearchExpectation,
   type StartedDefenseProductionExpectation,
+  type StartedResearchExpectation,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
@@ -156,6 +163,20 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 
+export function researchStartTransactionLabel(
+  technologyId: number,
+  key: ResearchKey,
+  researchState: ChainResearchState | null,
+): string {
+  const catalogEntry = researchCatalog.find((research) => research.id === technologyId || research.key === key);
+  const label = catalogEntry?.label ?? "Research";
+  const currentLevel = researchState?.technologies.find((technology) => technology.id === technologyId)?.level
+    ?? researchState?.technologyLevels[technologyId.toString()]
+    ?? 0;
+
+  return `${label} level ${currentLevel + 1} research`;
+}
+
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
   account?: string | undefined;
@@ -235,7 +256,6 @@ export function infrastructureUnavailableReasonFor({
   runtimeConfigStatus: RuntimeConfigState["status"];
 }): string | undefined {
   if (!isWalletConnected) return "Connect a wallet to load your infrastructure.";
-  if (buildingAction.status === "pending") return buildingAction.label;
 
   const hasLoadedInfrastructureState = Boolean(onChainResources && homePlanetId && infrastructureChainState);
   if (
@@ -257,6 +277,76 @@ export function infrastructureUnavailableReasonFor({
   }
   if (!infrastructureChainState) return "Infrastructure state unavailable.";
   return undefined;
+}
+
+export function refreshedInfrastructureUnavailableReasonFor({
+  gameContract,
+  homePlanetId,
+  infrastructureChainState,
+  isWalletConnected,
+  onChainResources,
+  runtimeConfigStatus,
+}: {
+  gameContract?: string | undefined;
+  homePlanetId?: string | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  isWalletConnected: boolean;
+  onChainResources?: PlayableState["resources"] | undefined;
+  runtimeConfigStatus: RuntimeConfigState["status"];
+}): string | undefined {
+  return infrastructureUnavailableReasonFor({
+    buildingAction: { status: "idle" },
+    gameContract,
+    homePlanetId,
+    infrastructureChainState,
+    infrastructureLoading: false,
+    isWalletConnected,
+    onChainResources: resourcesFromChain(infrastructureChainState?.resources ?? null) ?? onChainResources,
+    onChainStatus: "ready",
+    runtimeConfigStatus,
+  });
+}
+
+export function refreshedInfrastructureUpgradeUnavailableReasonFor({
+  buildingKey,
+  gameContract,
+  homePlanetId,
+  infrastructureChainState,
+  isWalletConnected,
+  onChainResources,
+  runtimeConfigStatus,
+}: {
+  buildingKey: BuildingKey;
+  gameContract?: string | undefined;
+  homePlanetId?: string | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  isWalletConnected: boolean;
+  onChainResources?: PlayableState["resources"] | undefined;
+  runtimeConfigStatus: RuntimeConfigState["status"];
+}): string | undefined {
+  const unavailableReason = refreshedInfrastructureUnavailableReasonFor({
+    gameContract,
+    homePlanetId,
+    infrastructureChainState,
+    isWalletConnected,
+    onChainResources,
+    runtimeConfigStatus,
+  });
+  if (unavailableReason) return unavailableReason;
+  if (!infrastructureChainState) return "Infrastructure state unavailable.";
+
+  const refreshedState = infrastructurePlayableState(infrastructureChainState);
+  const refreshedResources = resourcesFromChain(infrastructureChainState.resources);
+  const status = buildingUpgradeStatus(
+    {
+      ...refreshedState,
+      resources: refreshedResources ?? onChainResources ?? refreshedState.resources,
+    },
+    buildingKey,
+    { chainCost: buildingCosts(infrastructureChainState)[buildingKey] },
+  );
+
+  return status.disabled ? status.reason : undefined;
 }
 
 function resourceAmountIsZero(value: string): boolean {
@@ -683,6 +773,27 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [account, activePlanetId, apiBaseUrl]);
 
+  const refreshLiveInfrastructureState = useCallback(async () => {
+    if (!apiBaseUrl || !account) {
+      setInfrastructureChainState(null);
+      return null;
+    }
+
+    setInfrastructureLoading(true);
+    setInfrastructureError(undefined);
+    try {
+      const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" });
+      setInfrastructureChainState(nextInfrastructure);
+      return nextInfrastructure;
+    } catch (error) {
+      console.error(error);
+      setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
+      throw error;
+    } finally {
+      setInfrastructureLoading(false);
+    }
+  }, [account, activePlanetId, apiBaseUrl]);
+
   const refreshDefenseState = useCallback(() => {
     if (!apiBaseUrl || !account) {
       setDefenseState(null);
@@ -961,6 +1072,86 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [account, activePlanetId, apiBaseUrl, refreshDefenseState, refreshOnChainState]);
 
+  const refreshStartedResearchState = useCallback(async (expectation: StartedResearchExpectation) => {
+    if (!apiBaseUrl || !account) {
+      refreshResearchState();
+      void refreshOnChainState();
+      return;
+    }
+
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setResearchLoading(true);
+    setResearchError(undefined);
+
+    try {
+      const snapshot = await waitForStartedResearchState(
+        async () => {
+          const [research, queues] = await Promise.all([
+            fetchResearchState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+          ]);
+
+          return { research, queues };
+        },
+        expectation,
+      );
+
+      setResearchState(snapshot.research);
+      setResearchError(undefined);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load started research state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setResearchError(message);
+      throw error;
+    } finally {
+      setResearchLoading(false);
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshResearchState]);
+
+  const refreshFinishedResearchState = useCallback(async (expectation: FinishedResearchExpectation) => {
+    if (!apiBaseUrl || !account) {
+      refreshResearchState();
+      void refreshOnChainState();
+      return;
+    }
+
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setResearchLoading(true);
+    setResearchError(undefined);
+
+    try {
+      const snapshot = await waitForFinishedResearchState(
+        async () => {
+          const [research, queues] = await Promise.all([
+            fetchResearchState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+          ]);
+
+          return { research, queues };
+        },
+        expectation,
+      );
+
+      setResearchState(snapshot.research);
+      setResearchError(undefined);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load finished research state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setResearchError(message);
+      throw error;
+    } finally {
+      setResearchLoading(false);
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshResearchState]);
+
   useEffect(() => {
     if (homeCoords) {
       setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
@@ -1190,6 +1381,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     runtimeConfig.status,
   ]);
   const infrastructureActionNotice = infrastructureActionNoticeFor(buildingAction);
+  const infrastructureActionPendingLabel = buildingAction.status === "pending" ? buildingAction.label : undefined;
   const topBarEnergy = useMemo(() => {
     return topBarEnergyFor({
       infrastructureChainState,
@@ -1269,25 +1461,42 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const runBuildingTransaction = useCallback(async (key: BuildingKey) => {
     await transactionActionGate.run(`building:start:${key}`, async () => {
-      if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId || infrastructureUnavailableReason) {
+      const planetId = activePlanetId ?? onChainSettlement?.homePlanetId;
+      if (!provider || !account || !gameContract || !planetId || !apiBaseUrl) {
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: infrastructureUnavailableReason ?? "Wallet, game contract, or home planet is unavailable.",
+          label: infrastructureUnavailableReason ?? "Wallet, game contract, active planet, or game API is unavailable.",
         });
         return;
       }
 
       const building = buildingContractIds[key];
       const label = "Building upgrade";
-      setBuildingAction({ status: "pending", buildingKey: key, label: transactionAwaitingWalletLabel(label) });
+      setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
 
       try {
+        const liveInfrastructure = await refreshLiveInfrastructureState();
+        const unavailableReason = refreshedInfrastructureUpgradeUnavailableReasonFor({
+          buildingKey: key,
+          gameContract,
+          homePlanetId: planetId,
+          infrastructureChainState: liveInfrastructure,
+          isWalletConnected,
+          onChainResources,
+          runtimeConfigStatus: runtimeConfig.status,
+        });
+        if (unavailableReason) {
+          setBuildingAction({ status: "error", buildingKey: key, label: unavailableReason });
+          return;
+        }
+
+        setBuildingAction({ status: "pending", buildingKey: key, label: transactionAwaitingWalletLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
           account,
           gameContract,
-          onChainSettlement.homePlanetId,
+          planetId,
           building,
         );
         setBuildingAction({
@@ -1311,12 +1520,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     });
   }, [
     account,
+    activePlanetId,
+    apiBaseUrl,
     gameContract,
     infrastructureUnavailableReason,
+    isWalletConnected,
+    onChainResources,
     onChainSettlement?.homePlanetId,
     provider,
+    refreshLiveInfrastructureState,
     refreshInfrastructureState,
     refreshOnChainState,
+    runtimeConfig.status,
     transactionActionGate,
   ]);
 
@@ -1479,7 +1694,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshAllianceState]);
 
-  const runResearchTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+  const runResearchTransaction = useCallback(async (
+    label: string,
+    send: () => Promise<string>,
+    afterReceipt?: (() => Promise<void>) | undefined,
+  ) => {
     await transactionActionGate.run(`research:${label}`, async () => {
       setResearchAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
 
@@ -1490,9 +1709,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           await waitForReceipt(provider, txHash);
         }
         setResearchAction({ status: "pending", label: transactionSyncingLabel(label) });
-        refreshResearchState();
-        void refreshOnChainState();
-        refreshInfrastructureState();
+        if (afterReceipt) {
+          await afterReceipt();
+        } else {
+          refreshResearchState();
+          void refreshOnChainState();
+          refreshInfrastructureState();
+        }
         setResearchAction({ status: "success", label: `${label} confirmed.` });
       } catch (error) {
         console.error(error);
@@ -1808,20 +2031,26 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
-  const handleResearch = useCallback((technologyId: number, _key: ResearchKey) => {
+  const handleResearch = useCallback((technologyId: number, key: ResearchKey) => {
     if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
       setResearchAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
-    void runResearchTransaction(`Research ${technologyId}`, () => sendStartResearchTransaction(
+    const currentLevel = researchState.technologies.find((technology) => technology.id === technologyId)?.level
+      ?? researchState.technologyLevels[technologyId.toString()]
+      ?? 0;
+    void runResearchTransaction(researchStartTransactionLabel(technologyId, key, researchState), () => sendStartResearchTransaction(
       provider,
       account,
       gameContract,
       researchState.homePlanetId ?? "0",
       technologyId,
-    ));
-  }, [account, gameContract, provider, researchState?.homePlanetId, runResearchTransaction]);
+    ), () => refreshStartedResearchState({
+      itemId: technologyId,
+      targetLevel: currentLevel + 1,
+    }));
+  }, [account, gameContract, provider, refreshStartedResearchState, researchState, runResearchTransaction]);
 
   const handleFinishResearch = useCallback(() => {
     if (!provider || !account || !gameContract) {
@@ -1829,12 +2058,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return;
     }
 
+    const expectation = {
+      itemId: researchState?.queue?.itemId,
+      targetLevel: researchState?.queue?.targetLevel,
+    };
     void runResearchTransaction("Research completion", () => sendFinishResearchTransaction(
       provider,
       account,
       gameContract,
-    ));
-  }, [account, gameContract, provider, runResearchTransaction]);
+    ), () => refreshFinishedResearchState(expectation));
+  }, [account, gameContract, provider, refreshFinishedResearchState, researchState?.queue, runResearchTransaction]);
 
   const handleApproveRiftResource = useCallback((resource: RiftResourceState, amount: string) => {
     if (!provider || !account || !gameContract || !resource.tokenAddress) {
@@ -2366,8 +2599,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return (
         <InfrastructurePage
           actionNotice={infrastructureActionNotice}
+          actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
+          isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={isWalletConnected && !infrastructureChainState ? infrastructureError : undefined}
           now={now}
@@ -2536,6 +2771,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         playerProfileAction={playerProfileAction}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
+        isBuildingActionPending={buildingAction.status === "pending"}
         isBuildingReadyToFinish={isBuildingReadyToFinish}
         planet={planet}
         queueProgress={queueProgress}
