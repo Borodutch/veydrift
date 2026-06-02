@@ -163,15 +163,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
+      const chainSyncSnapshot = chainSync?.snapshot() ?? null;
+      const missionResolutionSnapshot = missionResolver?.snapshot() ?? null;
+      const indexerSnapshot = indexer?.snapshot() ?? null;
       return Response.json(
         {
           ok: true,
           service: "veydrift-backend",
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
-          chainSync: chainSync?.snapshot() ?? null,
-          missionResolution: missionResolver?.snapshot() ?? null,
-          indexer: indexer?.snapshot() ?? null,
+          readiness: backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot),
+          chainSync: chainSyncSnapshot,
+          missionResolution: missionResolutionSnapshot,
+          indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
         {
@@ -600,7 +604,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         }
 
         const profiles = indexer?.playerProfiles(planetsByOwner.keys()) ?? new Map<string, PlayerProfile>();
-        const rankings = highscoreRankings(entries, limit, planetsByOwner, profiles);
+        const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), chainReader);
+        const rankings = highscoreRankings(entries, limit, planetsByOwner, profiles, allianceIntel);
 
         return Response.json(
           {
@@ -1190,6 +1195,7 @@ function indexedShipyardState(
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
+    planetId: planet?.planetId ?? settlement.homePlanetId,
     productionAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
@@ -1371,11 +1377,18 @@ async function allianceIntelForOccupiedPlanets(
   planets: readonly SettledPlanetEvent[],
   chainReader: ChainReader | undefined
 ): Promise<Map<string, AllianceIdentity>> {
+  return allianceIntelForPlayers(planets.map((planet) => planet.owner), chainReader);
+}
+
+async function allianceIntelForPlayers(
+  wallets: readonly string[],
+  chainReader: ChainReader | undefined
+): Promise<Map<string, AllianceIdentity>> {
   const result = new Map<string, AllianceIdentity>();
-  if (!chainReader?.getAllianceIntelForPlayers || planets.length === 0) return result;
+  if (!chainReader?.getAllianceIntelForPlayers || wallets.length === 0) return result;
 
   try {
-    const owners = Array.from(new Set(planets.map((planet) => planet.owner.toLowerCase() as Address)));
+    const owners = Array.from(new Set(wallets.map((wallet) => wallet.toLowerCase() as Address)));
     const intel = await chainReader.getAllianceIntelForPlayers(owners);
     for (const [owner, alliance] of intel) result.set(owner.toLowerCase(), alliance);
   } catch (error) {
@@ -1558,6 +1571,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 type RankedHighscoreEntry = HighscoreEntry & {
+  alliance: AllianceIdentity | null;
   displayName: string | null;
   homePlanet: RankedHighscorePlanet | null;
   rank: number;
@@ -1580,10 +1594,11 @@ function highscoreRankings(
   entries: HighscoreEntry[],
   limit: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-  profiles: ReadonlyMap<string, PlayerProfile> = new Map()
+  profiles: ReadonlyMap<string, PlayerProfile> = new Map(),
+  allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map()
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
   return Object.fromEntries(
-    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner, profiles)])
+    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner, profiles, allianceIntel)])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
 
@@ -1592,7 +1607,8 @@ function rankHighscores(
   category: HighscoreCategory,
   limit: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-  profiles: ReadonlyMap<string, PlayerProfile>
+  profiles: ReadonlyMap<string, PlayerProfile>,
+  allianceIntel: ReadonlyMap<string, AllianceIdentity>
 ): RankedHighscoreEntry[] {
   return [...entries]
     .sort((left, right) => {
@@ -1603,6 +1619,7 @@ function rankHighscores(
     .slice(0, limit)
     .map((entry, index) => ({
       ...entry,
+      alliance: allianceIntel.get(entry.wallet.toLowerCase()) ?? null,
       displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
       homePlanet: rankedHighscoreHomePlanet(entry, planetsByOwner),
       rank: index + 1
@@ -1644,6 +1661,49 @@ function unavailableResponse(problems: ConfigProblem[]): Response {
       status: 503
     }
   );
+}
+
+function backendReadiness(
+  problems: ConfigProblem[],
+  chainSyncSnapshot: unknown,
+  indexerSnapshot: unknown,
+): {
+  ready: boolean;
+  configurationReady: boolean;
+  chainSyncConnected: boolean | null;
+  subscribedToLogs: boolean | null;
+  indexedState: string | null;
+  safeToServeIndexedState: boolean | null;
+} {
+  const chainSyncConnected = booleanSnapshotField(chainSyncSnapshot, "connected");
+  const subscribedToLogs = booleanSnapshotField(chainSyncSnapshot, "subscribedToLogs");
+  const indexedState = stringSnapshotField(indexerSnapshot, "indexedState");
+  const safeToServeIndexedState = booleanSnapshotField(indexerSnapshot, "safeToServeIndexedState");
+  const configurationReady = problems.length === 0;
+
+  return {
+    ready: configurationReady
+      && chainSyncConnected !== false
+      && subscribedToLogs !== false
+      && safeToServeIndexedState !== false,
+    configurationReady,
+    chainSyncConnected,
+    subscribedToLogs,
+    indexedState,
+    safeToServeIndexedState,
+  };
+}
+
+function booleanSnapshotField(snapshot: unknown, key: string): boolean | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const value = (snapshot as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function stringSnapshotField(snapshot: unknown, key: string): string | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const value = (snapshot as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
 }
 
 function errorResponse(error: unknown, status: number): Response {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isTransientGameStateReadFailure,
   isCollectedResourcesStateVisible,
   isFinishedBuildingStateVisible,
   isFinishedResearchStateVisible,
@@ -63,6 +64,36 @@ describe("post-transaction refresh reconciliation", () => {
       crystal: "30",
       deuterium: "0",
     });
+  });
+
+  test("recovers from a transient post-finish game-state read failure", async () => {
+    let attempts = 0;
+
+    const result = await waitForFinishedBuildingState(
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("Failed to fetch");
+        }
+        return finishedSolarPlantSnapshot();
+      },
+      { itemId: 3, targetLevel: 2 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(attempts).toBe(2);
+    expect(result.infrastructure.queue).toBeNull();
+    expect(result.infrastructure.buildings.find((building) => building.id === 3)?.level).toBe(2);
+  });
+
+  test("reports transient backend recovery instead of wallet/network blame when post-finish reads stay down", async () => {
+    await expect(waitForFinishedBuildingState(
+      async () => {
+        throw new Error("Infrastructure API is temporarily unavailable (503: RPC HTTP 503).");
+      },
+      { itemId: 3, targetLevel: 2 },
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    )).rejects.toThrow("temporarily unavailable");
   });
 
   test("does not report success when every post-finish snapshot is still stale", async () => {
@@ -229,6 +260,12 @@ describe("post-transaction refresh reconciliation", () => {
 
     expect(attempts).toBe(2);
     expect(result.selectedPlanet.planetId).toBe("7");
+  });
+
+  test("classifies browser/backend transport failures as transient game-state read failures", () => {
+    expect(isTransientGameStateReadFailure(new Error("Failed to fetch"))).toBe(true);
+    expect(isTransientGameStateReadFailure(new Error("Infrastructure API failed: 503"))).toBe(true);
+    expect(isTransientGameStateReadFailure(new Error("Internal JSON-RPC error."))).toBe(false);
   });
 
   test("polls past hydrated but stale planet names after rename confirmation", async () => {

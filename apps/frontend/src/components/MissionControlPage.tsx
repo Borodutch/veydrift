@@ -1,6 +1,7 @@
 import { EyeOff, RefreshCw, Route, ShieldAlert, TimerReset } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import type { FleetMissionSummary, FleetMissionVisibilityResponse, OnChainResources } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
@@ -25,6 +26,7 @@ interface MissionControlPageProps {
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   loading: boolean;
   now: number;
+  currentResources?: OnChainResources | null | undefined;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
   onNavigateGalaxy: () => void;
@@ -41,6 +43,7 @@ export function MissionControlPage({
   fleetVisibility,
   loading,
   now,
+  currentResources,
   onCompleteReturn,
   onCounterplay,
   onNavigateGalaxy,
@@ -108,6 +111,7 @@ export function MissionControlPage({
           </div>
 
           <RaidProtectionPanel
+            currentResources={currentResources}
             protectedResources={protectedResources}
             raidableResources={raidableResources}
           />
@@ -317,26 +321,67 @@ function MissionSection({
 }
 
 function RaidProtectionPanel({
+  currentResources,
   protectedResources,
   raidableResources,
 }: {
+  currentResources?: OnChainResources | null | undefined;
   protectedResources?: OnChainResources | null | undefined;
   raidableResources?: OnChainResources | null | undefined;
 }) {
   if (!protectedResources && !raidableResources) return null;
 
+  const derivedRaidableResources = deriveRaidExposedResources(currentResources, protectedResources);
+  const displayedRaidableResources = derivedRaidableResources ?? raidableResources;
+  const zeroProtection = protectedResources ? resourcesAreZero(protectedResources) : false;
+
   return (
-    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <ResourceSummaryBlock
-        label="Protected storage"
-        resources={protectedResources}
-      />
-      <ResourceSummaryBlock
-        label="Raid-exposed resources"
-        resources={raidableResources}
-      />
+    <section className="grid gap-3 rounded-lg border border-white/10 bg-[#101624] p-3">
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <ResourceSummaryBlock
+          label="Protected storage"
+          resources={protectedResources}
+        />
+        <ResourceSummaryBlock
+          label="Raid-exposed resources"
+          resources={displayedRaidableResources}
+        />
+      </div>
+      <p className="text-xs leading-5 text-slate-500">
+        {zeroProtection
+          ? "Contract raid protection is currently 0%, so all current resources remain exposed."
+          : "Raid-exposed resources are current resources minus protected storage, floored at zero."}
+      </p>
     </section>
   );
+}
+
+export function deriveRaidExposedResources(
+  currentResources?: OnChainResources | null | undefined,
+  protectedResources?: OnChainResources | null | undefined,
+): OnChainResources | undefined {
+  if (!currentResources || !protectedResources) return undefined;
+
+  const metal = subtractResourceAmount(currentResources.metal, protectedResources.metal);
+  const crystal = subtractResourceAmount(currentResources.crystal, protectedResources.crystal);
+  const deuterium = subtractResourceAmount(currentResources.deuterium, protectedResources.deuterium);
+  if (metal === undefined || crystal === undefined || deuterium === undefined) return undefined;
+
+  return { metal, crystal, deuterium };
+}
+
+function subtractResourceAmount(current: string, protectedAmount: string): string | undefined {
+  try {
+    const currentValue = BigInt(current);
+    const protectedValue = BigInt(protectedAmount);
+    return (currentValue > protectedValue ? currentValue - protectedValue : 0n).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function resourcesAreZero(resources: OnChainResources): boolean {
+  return resources.metal === "0" && resources.crystal === "0" && resources.deuterium === "0";
 }
 
 function ResourceSummaryBlock({
@@ -401,8 +446,8 @@ function MissionCard({
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <MissionDatum label="Arrival" value={formatDurationUntil(Number(mission.arrivalAt) * 1_000, now)} />
-        <MissionDatum label="Return" value={formatDurationUntil(Number(mission.returnAt) * 1_000, now)} />
+        <MissionDatum label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
+        <MissionDatum label="Return" value={formatMissionTime(mission.returnAt, now)} />
         <MissionDatum label="Cargo" value={formatCargo(mission.cargo)} />
         <MissionDatum label="Ships" value={formatShips(mission.ships)} />
       </dl>
@@ -468,9 +513,15 @@ function MissionDatum({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</dt>
-      <dd className="mt-0.5 truncate text-slate-300">{value}</dd>
+      <dd className="mt-0.5 whitespace-pre-line break-words text-slate-300">{value}</dd>
     </div>
   );
+}
+
+export function formatMissionTime(value: string, now: number): string {
+  const timestamp = timestampToMs(value);
+  if (timestamp === undefined) return "Unknown";
+  return `${formatDurationUntil(timestamp, now)}\n${formatUserTimestamp(timestamp)}`;
 }
 
 function CapabilityPanel({

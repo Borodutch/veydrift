@@ -58,6 +58,9 @@ export type ManagedPlanet = PlanetState & {
 export type WalletPlanets = {
   wallet: Address;
   homePlanetId: string | null;
+  queues?: {
+    research: QueueState | null;
+  };
   planets: ManagedPlanet[];
 };
 
@@ -188,6 +191,7 @@ export type ResolvableFleetMission = Pick<
 export type ShipyardState = {
   wallet: Address;
   homePlanetId: string | null;
+  planetId: string | null;
   productionAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
@@ -374,6 +378,11 @@ export type AllianceState = {
     allianceId: string;
     requester: Address;
     requesterDisplayName?: string | null;
+    requesterMembership?: {
+      allianceId: string;
+      role: AllianceRoleName;
+      joinedAt: string;
+    };
     requestedAt: string;
   }>;
   members: Array<{
@@ -921,9 +930,12 @@ export class VeydriftGameReader implements ChainReader {
       return Number(BigInt(left.planetId) - BigInt(right.planetId));
     });
 
+    const research = await this.readResearchQueue(wallet);
+
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
+      queues: { research },
       planets
     };
   }
@@ -1169,6 +1181,7 @@ export class VeydriftGameReader implements ChainReader {
       return {
         wallet,
         homePlanetId: null,
+        planetId: null,
         productionAvailable: false,
         unavailableReason:
           "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
@@ -1186,6 +1199,7 @@ export class VeydriftGameReader implements ChainReader {
       return {
         wallet,
         homePlanetId: null,
+        planetId: null,
         productionAvailable: true,
         resources: null,
         fleetSlots: { active: 0, limit: 1 },
@@ -1215,6 +1229,7 @@ export class VeydriftGameReader implements ChainReader {
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
+      planetId: settlement.homePlanetId,
       productionAvailable: true,
       resources,
       fleetSlots: {
@@ -1503,7 +1518,7 @@ export class VeydriftGameReader implements ChainReader {
     const joinRequestAddresses = decodeAddressArray(
       await this.callContract(this.allianceContractAddress, "0x2953e5ce", [encodeUint(allianceId)])
     );
-    const [memberMemberships, joinRequestResults] = await Promise.all([
+    const [memberMemberships, joinRequestResults, joinRequestMemberships] = await Promise.all([
       this.batchCallContract(
         this.allianceContractAddress,
         memberAddresses.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
@@ -1511,17 +1526,27 @@ export class VeydriftGameReader implements ChainReader {
       this.batchCallContract(
         this.allianceContractAddress,
         joinRequestAddresses.map((address) => ({ selector: "0xdb132ffb", args: [encodeAddress(address), encodeUint(allianceId)] }))
+      ),
+      this.batchCallContract(
+        this.allianceContractAddress,
+        joinRequestAddresses.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
       )
     ]);
     const allianceJoinRequests = joinRequestAddresses.flatMap((address, index) => {
       const words = splitWords(joinRequestResults[index] ?? "0x");
-      return decodeBoolWord(wordAt(words, 0))
-        ? [{
-          allianceId: allianceId.toString(),
-          requester: address,
-          requestedAt: decodeUintWord(wordAt(words, 3)).toString()
-        }]
-        : [];
+      if (!decodeBoolWord(wordAt(words, 0))) return [];
+
+      const membershipWords = splitWords(joinRequestMemberships[index] ?? "0x");
+      return [{
+        allianceId: allianceId.toString(),
+        requester: address,
+        requesterMembership: {
+          allianceId: decodeUintWord(wordAt(membershipWords, 0)).toString(),
+          role: allianceRoleName(Number(decodeUintWord(wordAt(membershipWords, 1)))),
+          joinedAt: decodeUintWord(wordAt(membershipWords, 2)).toString()
+        },
+        requestedAt: decodeUintWord(wordAt(words, 3)).toString()
+      }];
     });
 
     return {

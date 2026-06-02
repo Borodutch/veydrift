@@ -318,6 +318,7 @@ class MockChainReader implements ChainReader {
     return {
       wallet,
       homePlanetId: planet.planetId,
+      planetId: planet.planetId,
       productionAvailable: true,
       resources: planet.resources,
       fleetSlots: {
@@ -680,6 +681,14 @@ describe("Veydrift backend", () => {
         gameContractConfigured: false
       },
       configured: false,
+      readiness: {
+        ready: false,
+        configurationReady: false,
+        chainSyncConnected: null,
+        subscribedToLogs: null,
+        indexedState: null,
+        safeToServeIndexedState: null
+      },
       chainSync: null,
       indexer: null,
       missionResolution: null,
@@ -935,6 +944,7 @@ describe("Veydrift backend", () => {
       transactionHash: "0xabc",
       blockNumber: "123"
     });
+    indexer.upsertPlayerDisplayName(player, "borodutch");
 
     const response = await createRequestHandler({
       config: {
@@ -954,6 +964,7 @@ describe("Veydrift backend", () => {
         tag: "VDFT"
       },
       owner: player,
+      ownerDisplayName: "borodutch",
       planetId: "7"
     });
   });
@@ -1003,6 +1014,9 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({
       wallet: player,
       homePlanetId: "7",
+      queues: {
+        research: null
+      },
       planets: [
         {
           planetId: "7",
@@ -2567,6 +2581,63 @@ describe("Veydrift backend", () => {
     expect(liveReads).toEqual([]);
   });
 
+  test("keeps selected planet id in warm indexed shipyard responses", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getShipyardState = async () => {
+      throw new Error("warm selected shipyard should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm selected shipyard should not rebuild from chain");
+    };
+    const selectedPlanet = {
+      ...planet,
+      planetId: "8",
+      position: 10,
+      name: "Nyx"
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhome",
+      blockNumber: "123"
+    });
+    indexer.applyEvent({
+      ...selectedPlanet,
+      eventName: "ColonyCreated",
+      transactionHash: "0xcolony",
+      blockNumber: "124"
+    });
+    indexer.applyLog({
+      blockNumber: "0x7d",
+      transactionHash: "0xship",
+      logIndex: "0x0",
+      topics: [
+        planetShipCountChangedTopic,
+        topic(8n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=8`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(body.homePlanetId).toBe("8");
+    expect(body.planetId).toBe("8");
+    expect(body.ships).toContainEqual(expect.objectContaining({
+      id: 0,
+      count: 1
+    }));
+  });
+
   test("allows explicit live wallet reads to bypass indexed warm state", async () => {
     const baseReader = new MockChainReader();
     const chainReader = new MockChainReader();
@@ -2849,6 +2920,41 @@ describe("Veydrift backend", () => {
     });
     expect(body.source).toBe("contract-state-indexer");
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+  });
+
+  test("adds canonical alliance identity to highscore rows when available", async () => {
+    const chainReader = new class extends MockChainReader {
+      async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+        expect(wallets).toContain(player);
+        return new Map([
+          [player, {
+            allianceId: "3",
+            name: "Veydrift Union",
+            tag: "VDFT"
+          }]
+        ]);
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: {
+        ...configuredTestConfig,
+        allianceContractAddress: "0x4444444444444444444444444444444444444444"
+      },
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total[0].alliance).toMatchObject({
+      allianceId: "3",
+      name: "Veydrift Union",
+      tag: "VDFT"
+    });
   });
 
   test("serves empty highscore rankings as a successful payload", async () => {

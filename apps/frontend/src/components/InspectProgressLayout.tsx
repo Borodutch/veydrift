@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { formatDurationUntil } from "../durationFormat";
 import { queueProgressPercent, type QueueTimeline } from "../playableMvp";
+import { formatUserTimestamp } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
 
 const loadedDetailImageKeys = new Set<string>();
@@ -236,11 +237,5 @@ export function SingleItemQueueProgress({
 }
 
 function formatQueueReadyAt(readyAtMs: number): string {
-  if (!Number.isFinite(readyAtMs)) return "Unknown";
-  return new Date(readyAtMs).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatUserTimestamp(readyAtMs);
 }

@@ -1,13 +1,15 @@
 import { useState } from "preact/hooks";
-import type { Resources, ShipKey, UnlockRequirement } from "../playableMvp";
+import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate } from "../playableMvp";
 import type { ChainShipyardState } from "../walletFlow";
 import {
   Notice,
   ProductionCatalog,
   type ProductionCatalogItem,
+  type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
+import type { RequirementTarget } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type ShipyardActionState =
@@ -24,7 +26,10 @@ interface ShipyardPageProps {
   onBuild: (shipId: number, key: ShipKey, quantity: number) => void;
   onCollect: () => void;
   onFinish: () => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
+  onSelectShip?: ((key: ShipKey) => void) | undefined;
+  selectedShipKey?: ShipKey | undefined;
   shipyardState: ChainShipyardState | null;
 }
 
@@ -42,11 +47,15 @@ export function ShipyardPage({
   onBuild,
   onCollect,
   onFinish,
+  onOpenRequirement,
   onRefresh,
+  onSelectShip,
+  selectedShipKey,
   shipyardState,
 }: ShipyardPageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [selectedKey, setSelectedKey] = useState<ShipKey>("smallCargo");
+  const [localSelectedKey, setLocalSelectedKey] = useState<ShipKey>("smallCargo");
+  const selectedKey = selectedShipKey ?? localSelectedKey;
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
   const resources = toResources(shipyardState?.resources);
   const queue = shipyardState?.queue?.active ? shipyardState.queue : undefined;
@@ -60,7 +69,7 @@ export function ShipyardPage({
           <h2 className="text-lg font-semibold text-white">Shipyard</h2>
           <p className="mt-1 text-xs text-slate-400">
             {shipyardState?.homePlanetId
-              ? `Planet #${shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
+              ? `Planet #${shipyardState.planetId ?? shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
               : productionAvailable
                 ? "On-chain VeydriftGame planet required for ship production"
                 : "Ship production contract unavailable on this deployment"}
@@ -103,9 +112,13 @@ export function ShipyardPage({
           })}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
           onFinishQueue={onFinish}
+          onOpenRequirement={onOpenRequirement}
           onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
           onRefreshQueue={onCollect}
-          onSelect={setSelectedKey}
+          onSelect={(key) => {
+            setLocalSelectedKey(key);
+            onSelectShip?.(key);
+          }}
           queue={productionQueueViewModel(queue, shipCatalog)}
           selectedKey={selectedKey}
         />
@@ -245,7 +258,7 @@ export function getMissingRequirements(
 export function getShipRequirementStates(
   ship: (typeof shipCatalog)[number],
   shipyardState?: ChainShipyardState | null | undefined,
-) {
+): ProductionRequirementState[] {
   const levels = {
     buildings: { shipyard: shipyardState?.shipyardLevel ?? 0 },
     research: technologyLevelsByKey(shipyardState?.technologyLevels),
@@ -259,6 +272,11 @@ export function getShipRequirementStates(
     return {
       label: `${requirement.label} ${requirement.level}`,
       met: actual >= requirement.level,
+      target: requirement.key
+        ? requirement.kind === "building"
+          ? { kind: "building" as const, key: requirement.key as BuildingKey }
+          : { kind: "research" as const, key: requirement.key as ResearchKey }
+        : undefined,
     };
   });
 }

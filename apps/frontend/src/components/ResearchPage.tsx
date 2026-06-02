@@ -14,6 +14,7 @@ import {
 import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
+import { formatUserTimestamp } from "../timestampFormat";
 import {
   InspectCatalogTile,
   InspectDetailHero,
@@ -22,7 +23,7 @@ import {
   InspectInfoRow,
   SingleItemQueueProgress,
 } from "./InspectProgressLayout";
-import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
+import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -57,10 +58,14 @@ interface ResearchPageProps {
   canTransact: boolean;
   error: string | undefined;
   loading: boolean;
+  now?: number | undefined;
   onFinish: () => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onResearch: (technologyId: number, key: ResearchKey) => void;
+  onSelectResearch?: ((key: ResearchKey) => void) | undefined;
   researchState: ChainResearchState | null;
+  selectedResearchKey?: ResearchKey | undefined;
   settledState: PlayableState;
   state: PlayableState;
   useLocalStateFallback?: boolean | undefined;
@@ -71,14 +76,19 @@ export function ResearchPage({
   canTransact,
   error,
   loading,
+  now = Date.now(),
   onFinish,
+  onOpenRequirement,
   onRefresh,
   onResearch,
+  onSelectResearch,
   researchState,
+  selectedResearchKey,
   settledState,
   useLocalStateFallback = false,
 }: ResearchPageProps) {
-  const [selectedKey, setSelectedKey] = useState<ResearchKey>("energy");
+  const [localSelectedKey, setLocalSelectedKey] = useState<ResearchKey>("energy");
+  const selectedKey = selectedResearchKey ?? localSelectedKey;
   const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedResearch = researchCatalog.find((research) => research.key === selectedKey)
     ?? researchCatalog[0]!;
@@ -88,13 +98,18 @@ export function ResearchPage({
     researchState,
     useLocalStateFallback,
   });
-  const now = Date.now();
   const viewState = researchViewState(settledState, researchState, useLocalStateFallback, now);
   const queue = hideLiveValues ? undefined : researchQueueForDisplay(researchState, viewState, now);
-  const queueReady = queue?.readyAt ? queue.readyAt <= now : false;
+  const completionButton = researchCompletionButtonState({
+    actionPending: actionState.status === "pending",
+    canTransact,
+    now,
+    queue,
+  });
 
   function handleSelectResearch(key: ResearchKey) {
-    setSelectedKey(key);
+    setLocalSelectedKey(key);
+    onSelectResearch?.(key);
 
     if (window.matchMedia("(max-width: 1279px)").matches) {
       window.setTimeout(() => {
@@ -113,14 +128,14 @@ export function ResearchPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {queue && (
+          {completionButton && (
             <button
               className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={!canTransact || actionState.status === "pending" || !queueReady}
+              disabled={completionButton.disabled}
               onClick={onFinish}
               type="button"
             >
-              {queueReady ? "Complete research" : `Ready ${formatReady(queue.readyAt)}`}
+              {completionButton.label}
             </button>
           )}
           <button
@@ -137,6 +152,7 @@ export function ResearchPage({
         actionState={actionState}
         error={error}
         loading={loading}
+        now={now}
         queue={queue}
         researchState={researchState}
       />
@@ -170,6 +186,7 @@ export function ResearchPage({
                       error,
                       key: research.key,
                       loading,
+                      now,
                       researchState,
                       state: viewState,
                     });
@@ -201,7 +218,9 @@ export function ResearchPage({
             error={error}
             loading={loading}
             now={now}
+            onFinish={onFinish}
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
+            onOpenRequirement={onOpenRequirement}
             queue={queue}
             research={selectedResearch}
             researchState={researchState}
@@ -213,6 +232,26 @@ export function ResearchPage({
       )}
     </div>
   );
+}
+
+export function researchCompletionButtonState({
+  actionPending,
+  canTransact,
+  now,
+  queue,
+}: {
+  actionPending: boolean;
+  canTransact: boolean;
+  now: number;
+  queue: ReturnType<typeof researchQueueForDisplay>;
+}): { disabled: boolean; label: string } | undefined {
+  if (!queue) return undefined;
+
+  const queueReady = queue.readyAt ? queue.readyAt <= now : false;
+  return {
+    disabled: !canTransact || actionPending || !queueReady,
+    label: queueReady ? "Complete research" : `Ready ${formatReady(queue.readyAt, now)}`,
+  };
 }
 
 export function shouldHideResearchValues({
@@ -258,12 +297,14 @@ function ResearchStatusPanel({
   actionState,
   error,
   loading,
+  now,
   queue,
   researchState,
 }: {
   actionState: ResearchActionState;
   error: string | undefined;
   loading: boolean;
+  now: number;
   queue: ReturnType<typeof researchQueueForDisplay>;
   researchState: ChainResearchState | null;
 }) {
@@ -306,8 +347,8 @@ function ResearchStatusPanel({
 
   if (queue) {
     return (
-      <Notice tone={queue.readyAt <= Date.now() ? "success" : "neutral"}>
-        {queue.label} to Level {queue.targetLevel} is queued, ready {formatReady(queue.readyAt)}.
+      <Notice tone={queue.readyAt <= now ? "success" : "neutral"}>
+        {queue.label} to Level {queue.targetLevel} is queued, ready {formatReady(queue.readyAt, now)}.
       </Notice>
     );
   }
@@ -342,7 +383,9 @@ function ResearchDetailPanel({
   error,
   loading,
   now,
+  onFinish,
   onResearch,
+  onOpenRequirement,
   queue,
   research,
   researchState,
@@ -354,7 +397,9 @@ function ResearchDetailPanel({
   error: string | undefined;
   loading: boolean;
   now: number;
+  onFinish: () => void;
   onResearch: () => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   queue: ReturnType<typeof researchQueueForDisplay>;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
@@ -368,6 +413,7 @@ function ResearchDetailPanel({
     error,
     key: research.key,
     loading,
+    now,
     researchState,
     state,
   });
@@ -405,7 +451,7 @@ function ResearchDetailPanel({
       <dl className="mt-4 grid gap-2">
         <InspectInfoRow label="Category" value={research.lane} />
         <InspectInfoRow label="Requirements">
-          <RequirementFlairs requirements={requirementStates} />
+          <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={requirementStates} />
         </InspectInfoRow>
         <InspectInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
         <InspectInfoRow
@@ -435,10 +481,10 @@ function ResearchDetailPanel({
       )}
 
       <button
-        aria-label={`Research ${research.label} to Level ${status.targetLevel}`}
+        aria-label={status.completionReady ? `Complete ${research.label} Level ${status.targetLevel}` : `Research ${research.label} to Level ${status.targetLevel}`}
         className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
         disabled={status.disabled}
-        onClick={onResearch}
+        onClick={status.completionReady ? onFinish : onResearch}
         type="button"
       >
         {status.actionLabel}
@@ -468,7 +514,7 @@ export function ActiveResearchQueueDetail({
   });
 }
 
-function researchActionStatus({
+export function researchActionStatus({
   actionPending,
   actionPendingLabel,
   canTransact,
@@ -476,6 +522,7 @@ function researchActionStatus({
   error,
   key,
   loading,
+  now,
   researchState,
   state,
 }: {
@@ -486,16 +533,18 @@ function researchActionStatus({
   error: string | undefined;
   key: ResearchKey;
   loading: boolean;
+  now: number;
   researchState: ChainResearchState | null;
   state: PlayableState;
 }) {
   const cost = chainCost;
   const currentLevel = state.research[key];
-  const targetLevel = currentLevel + 1;
   const missingRequirement = unmetResearchRequirement(state, key);
   const resourcesAvailable = Boolean(researchState?.resources);
   const affordable = cost ? canAfford(state.resources, cost) : false;
   const active = state.researchQueue?.key === key;
+  const targetLevel = active ? state.researchQueue?.targetLevel ?? currentLevel + 1 : currentLevel + 1;
+  const activeReady = active && Boolean(state.researchQueue?.readyAt && state.researchQueue.readyAt <= now);
   const queueOccupied = Boolean(state.researchQueue) && !active;
   const labMissing = state.buildings.researchLab === 0;
   const durationSeconds = !labMissing && cost
@@ -520,6 +569,8 @@ function researchActionStatus({
             ? "No VeydriftGame home planet"
             : !canTransact
               ? "Wallet or game contract unavailable"
+              : activeReady
+                ? `Ready to complete Level ${targetLevel}`
               : active
                 ? `Research to Level ${state.researchQueue?.targetLevel ?? targetLevel} in progress`
                 : queueOccupied
@@ -532,12 +583,15 @@ function researchActionStatus({
                         ? "Insufficient resources"
                         : `Ready for Level ${targetLevel}`;
 
-  const disabled = reason !== `Ready for Level ${targetLevel}`;
-  const badge = active ? "In progress" : disabled ? "Locked" : "Available";
+  const completionReady = reason === `Ready to complete Level ${targetLevel}`;
+  const researchReady = reason === `Ready for Level ${targetLevel}`;
+  const disabled = !completionReady && !researchReady;
+  const badge = completionReady ? "Ready" : active ? "In progress" : disabled ? "Locked" : "Available";
 
   return {
-    actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : active ? "In progress" : `Research Level ${targetLevel}`,
+    actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : completionReady ? "Complete research" : active ? "In progress" : `Research Level ${targetLevel}`,
     badge,
+    completionReady,
     cost,
     currentLevel,
     disabled,
@@ -545,7 +599,7 @@ function researchActionStatus({
     hasMissingRequirement: Boolean(missingRequirement),
     reason,
     targetLevel,
-    tileStatus: active ? "Active" : disabled ? "Locked" : "Ready",
+    tileStatus: completionReady ? "Ready" : active ? "Active" : disabled ? "Locked" : "Ready",
   };
 }
 
@@ -622,6 +676,11 @@ export function getResearchRequirementStates(
   return researchRequirementsFor(key).map((requirement) => ({
     label: formatRequirement(requirement),
     met: researchRequirementMet(state, requirement),
+    target: requirement.type === "building"
+      ? { kind: "building", key: requirement.key }
+      : requirement.type === "research"
+        ? { kind: "research", key: requirement.key }
+        : undefined,
   }));
 }
 
@@ -641,9 +700,10 @@ function format(value: number): string {
   return formatter.format(Math.floor(value));
 }
 
-function formatReady(readyAt: number): string {
-  const remaining = formatDurationUntil(readyAt);
-  return remaining === "Ready" ? "now" : `in ${remaining}`;
+function formatReady(readyAt: number, now: number): string {
+  const remaining = formatDurationUntil(readyAt, now);
+  const timestamp = formatUserTimestamp(readyAt);
+  return remaining === "Ready" ? `now (${timestamp})` : `in ${remaining} (${timestamp})`;
 }
 
 function formatRequirement(requirement: ResearchRequirement): string {

@@ -113,6 +113,9 @@ export type WalletPlanetsResponse = {
   wallet: string;
   homePlanetId: string | null;
   player?: PlayerProfile | undefined;
+  queues?: {
+    research: QueueStateResponse | null;
+  } | undefined;
   planets: ManagedPlanetResponse[];
 };
 
@@ -168,6 +171,7 @@ export type FleetMissionVisibilityResponse = {
 export type ChainShipyardState = {
   wallet: string;
   homePlanetId: string | null;
+  planetId?: string | null;
   productionAvailable?: boolean;
   unavailableReason?: string;
   resources: OnChainResources | null;
@@ -373,6 +377,11 @@ export type ChainAllianceState = {
     allianceId: string;
     requester: string;
     requesterDisplayName?: string | null;
+    requesterMembership?: {
+      allianceId: string;
+      role: AllianceRole;
+      joinedAt: string;
+    };
     requestedAt: string;
   }>;
   members: Array<{
@@ -398,6 +407,11 @@ export type HighscoreCategory =
 export type HighscoreEntry = {
   rank: number;
   wallet: string;
+  alliance?: {
+    allianceId: string;
+    tag: string;
+    name: string;
+  } | null;
   displayName?: string | null;
   homePlanetId: string | null;
   homePlanet: HighscorePlanet | null;
@@ -536,11 +550,11 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/timed out reading .* from the game api/i.test(message)) {
-    return `${message} Retry in a moment.`;
+    return `${message} The game API may be temporarily unavailable; the app will retry when state sync resumes.`;
   }
 
   if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
-    return "The wallet could not read the current game contract state. Retry in a moment, or switch to Base Sepolia and reconnect your wallet.";
+    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
   }
 
   if (/execution reverted/i.test(message)) {
@@ -564,11 +578,39 @@ const buildingUpgradeRevertReasons: Record<string, string> = {
   "0x78e10c67": "Building upgrades are not supported by the current game contract deployment.",
 };
 
+const fleetMissionRevertReasons: Record<string, string> = {
+  "0x705f508b": "Selected origin planet does not have the requested ships. Refresh shipyard state and retry.",
+  "0x2ab0f96f": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and retry.",
+  "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Reduce cargo or add cargo ships.",
+  "0x57aab7e3": "All fleet slots are already in use. Wait for a fleet to return, then retry.",
+  "0x400d5197": "You cannot attack your own planet.",
+  "0xbb3f9d15": "Choose a target planet that is different from the origin planet.",
+  "0x9a3d4eb9": "The selected target planet no longer exists. Refresh galaxy state and choose a target again.",
+  "0xab2bcfd3": "This wallet does not own the selected origin planet. Refresh planets and retry.",
+  "0x524f409b": "Select at least one valid ship for this mission.",
+  "0x65dba1c3": "This target has reached the attack bashing limit. Choose another target or retry later.",
+  "0x3570048f": "This target is protected by score rules and cannot be attacked.",
+  "0x1fbd4a7a": "You cannot attack a planet owned by your alliance.",
+  "0xa3ab075a": "The selected debris field is empty. Refresh galaxy state and retry.",
+  "0x84c69485": "This mission type is not supported for the selected fleet action.",
+  "0xb85299a2": "The target attack is already too close to arrival for this fleet action.",
+  "0xb3439205": "A fleet mission involving this planet still needs resolution. Resolve it before launching another mission.",
+};
+
 function revertSelector(error: unknown): string | undefined {
   const data = errorData(error);
   return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
     ? data.slice(0, 10).toLowerCase()
     : undefined;
+}
+
+function fleetMissionRevertReason(error: unknown): string | undefined {
+  const message = errorMessage(error);
+  if (/INVALID_MISSION_SPEED/i.test(message)) {
+    return "Choose a valid mission speed between 10% and 100%.";
+  }
+
+  return fleetMissionRevertReasons[revertSelector(error) ?? ""];
 }
 
 async function assertBuildingUpgradeCallSucceeds(
@@ -584,6 +626,23 @@ async function assertBuildingUpgradeCallSucceeds(
     });
   } catch (error) {
     const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
+    throw new Error(reason ?? walletRequestErrorMessage(error));
+  }
+}
+
+async function assertFleetMissionCallSucceeds(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+): Promise<void> {
+  try {
+    await provider.request({
+      method: "eth_call",
+      params: [{ from, to, data }, "latest"],
+    });
+  } catch (error) {
+    const reason = fleetMissionRevertReason(error);
     throw new Error(reason ?? walletRequestErrorMessage(error));
   }
 }
@@ -625,6 +684,22 @@ export function validatePlayerDisplayName(value: string): string | undefined {
 
 export function playerDisplayLabel(profile: PlayerProfile | null | undefined, wallet: string | null | undefined): string {
   return profile?.displayName ?? profile?.fallbackName ?? (wallet ? shortAddress(wallet) : "Unnamed player");
+}
+
+export function mergePlayerProfile(
+  current: PlayerProfile | undefined,
+  next: PlayerProfile | undefined
+): PlayerProfile | undefined {
+  if (!next) return current;
+  if (!current?.displayName) return next;
+  if (current.wallet.toLowerCase() !== next.wallet.toLowerCase()) return next;
+  if (next.displayName?.trim()) return next;
+
+  return {
+    ...next,
+    displayName: current.displayName,
+    updatedAt: current.updatedAt ?? next.updatedAt,
+  };
 }
 
 export function settlementContractConfigured(config: SettlementConfig): config is SettlementConfig & { address: string } {
@@ -1576,13 +1651,16 @@ export async function sendLaunchFleetMissionTransaction(
   contractAddress: string,
   params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
 ): Promise<string> {
+  const data = encodeLaunchFleetMissionCall(params);
+  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data);
+
   return provider.request<string>({
     method: "eth_sendTransaction",
     params: [
       {
         from: account,
         to: contractAddress,
-        data: encodeLaunchFleetMissionCall(params)
+        data
       }
     ]
   });
@@ -2279,7 +2357,7 @@ async function fetchWalletJson<T>(
         ? controller.signal.reason
         : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`);
     }
-    throw error;
+    throw new Error(walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
   }
@@ -2315,10 +2393,33 @@ async function apiErrorMessage(response: Response, label: string): Promise<strin
   const fallback = `${label} API failed: ${response.status}`;
   try {
     const body = await response.clone().json() as { error?: unknown };
-    return typeof body.error === "string" && body.error.trim()
-      ? `${fallback}: ${body.error}`
-      : fallback;
+    const error = typeof body.error === "string" ? body.error.trim() : "";
+
+    if (response.status === 503 && error === "backend_not_configured") {
+      return `${label} API is temporarily unavailable while backend readiness is restored. The app will retry instead of requiring a wallet reconnect.`;
+    }
+
+    if (response.status >= 500) {
+      return error
+        ? `${label} API is temporarily unavailable (${response.status}: ${error}). The app will retry when game state sync recovers.`
+        : `${label} API is temporarily unavailable (${response.status}). The app will retry when game state sync recovers.`;
+    }
+
+    return error ? `${fallback}: ${error}` : fallback;
   } catch {
+    if (response.status >= 500) {
+      return `${label} API is temporarily unavailable (${response.status}). The app will retry when game state sync recovers.`;
+    }
+
     return fallback;
   }
+}
+
+function walletApiNetworkFailureMessage(label: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/failed to fetch|load failed|network|err_http2/i.test(message)) {
+    return `${label} API could not be reached from this browser. Keeping the last known game state and retrying when the backend connection recovers.`;
+  }
+
+  return message || `${label} API could not be reached.`;
 }

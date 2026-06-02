@@ -18,6 +18,7 @@ import {
   fetchHighscores,
   fetchInfrastructureState,
   fetchMoonState,
+  fetchPlayerProfile,
   fetchResearchState,
   fetchShipyardState,
   fetchWalletSettlement,
@@ -25,6 +26,7 @@ import {
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
+  mergePlayerProfile,
   parseRiftTokenAmount,
   readSettlementFundingState,
   readSettlementState,
@@ -87,6 +89,39 @@ describe("walletFlow", () => {
 
     expect(getInjectedProvider({ ethereum: provider })).toBe(provider);
     expect(getInjectedProvider({})).toBeUndefined();
+  });
+
+  test("keeps a known commander name over fallback-only profile refreshes for the same wallet", () => {
+    expect(mergePlayerProfile({
+      wallet: account,
+      displayName: "Nova Prime",
+      fallbackName: "0x1111...1111",
+      updatedAt: "2026-06-02T00:00:00.000Z"
+    }, {
+      wallet: account.toUpperCase(),
+      displayName: null,
+      fallbackName: "0x1111...1111",
+      updatedAt: null
+    })).toEqual({
+      wallet: account.toUpperCase(),
+      displayName: "Nova Prime",
+      fallbackName: "0x1111...1111",
+      updatedAt: "2026-06-02T00:00:00.000Z"
+    });
+  });
+
+  test("allows unnamed commander fallback when no display name is known", () => {
+    expect(mergePlayerProfile(undefined, {
+      wallet: account,
+      displayName: null,
+      fallbackName: "0x1111...1111",
+      updatedAt: null
+    })).toEqual({
+      wallet: account,
+      displayName: null,
+      fallbackName: "0x1111...1111",
+      updatedAt: null
+    });
   });
 
   test("encodes address calls and settle transaction data", () => {
@@ -162,9 +197,14 @@ describe("walletFlow", () => {
       speedPercent: 40,
     });
     const requests: unknown[] = [];
+    let transactionCount = 0;
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      return `0xgalaxy${requests.length}`;
+      if (method === "eth_sendTransaction") {
+        transactionCount += 1;
+        return `0xgalaxy${transactionCount}`;
+      }
+      return "0x";
     });
 
     await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
@@ -206,6 +246,14 @@ describe("walletFlow", () => {
     expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");
     expect(requests).toEqual([
       {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: missionData,
+        }, "latest"],
+      },
+      {
         method: "eth_sendTransaction",
         params: [{
           from: account,
@@ -236,6 +284,56 @@ describe("walletFlow", () => {
           to: contract,
           data: encodeGameCall("0xa72cd29a", [7, 9, 0, 1]),
         }],
+      },
+    ]);
+  });
+
+  test("preflights fleet launches and reports stale ship counts before opening wallet submit", async () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") {
+        throw { code: 3, message: "execution reverted", data: "0x705f508b" };
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    })).rejects.toThrow("Selected origin planet does not have the requested ships");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeLaunchFleetMissionCall({
+            originPlanetId: 7,
+            targetPlanetId: 9,
+            missionType: 3,
+            ships,
+          }),
+        }, "latest"],
       },
     ]);
   });
@@ -645,7 +743,7 @@ describe("walletFlow", () => {
       "Unlock or reconnect MetaMask"
     );
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
-      "Retry in a moment"
+      "game API may be temporarily unavailable"
     );
   });
 
@@ -1397,6 +1495,65 @@ describe("walletFlow", () => {
       await expect(fetchShipyardState("https://api.example.test", account, "4")).rejects.toThrow(
         "Shipyard API failed: 400: planetId must be a positive integer."
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("explains transient wallet API transport and backend readiness failures", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    try {
+      await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
+        "Keeping the last known game state"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ error: "backend_not_configured" }),
+      {
+        headers: { "content-type": "application/json" },
+        status: 503,
+      }
+    )) as unknown as typeof fetch;
+    try {
+      await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
+        "backend readiness is restored"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches the canonical player profile for a wallet", async () => {
+    const originalFetch = globalThis.fetch;
+    const profile = {
+      wallet: account.toLowerCase(),
+      displayName: "borodutch",
+      fallbackName: "0x1111...1111",
+      updatedAt: "2026-06-02T13:00:00.000Z",
+    };
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe(`https://api.example.test/wallet/${account}/profile`);
+      expect(init).toEqual({
+        cache: "no-store",
+        headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
+      });
+      return new Response(JSON.stringify(profile), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchPlayerProfile("https://api.example.test///", account)).resolves.toEqual(profile);
     } finally {
       globalThis.fetch = originalFetch;
     }

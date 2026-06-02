@@ -2,6 +2,7 @@ import { Crown, Info, RefreshCw, Search, Shield, UserRound, Users, X } from "luc
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
@@ -13,6 +14,7 @@ type AllianceActionState =
   | { status: "error"; label: string };
 
 type DirectoryEntry = ChainAllianceState["directory"][number];
+type JoinRequestEntry = ChainAllianceState["allianceJoinRequests"][number];
 type RosterMember = ChainAllianceState["members"][number];
 
 type AllianceEntry = DirectoryEntry & {
@@ -231,6 +233,7 @@ export function AlliancePage({
               />
               {canManageMembers ? (
                 <JoinRequests
+                  allianceState={allianceState}
                   disabled={disabled}
                   requests={allianceState?.allianceJoinRequests ?? []}
                   onApproveJoinRequest={onApproveJoinRequest}
@@ -271,6 +274,38 @@ export function shouldShowAllianceRefreshIndicator({
 
 export function hasAllianceMembership(allianceState: ChainAllianceState | null): boolean {
   return Boolean(allianceState?.profile && allianceState.membership.allianceId !== "0");
+}
+
+export function allianceJoinRequestApprovalState(
+  allianceState: ChainAllianceState | null,
+  request: JoinRequestEntry
+): { canApprove: boolean; reason: string | null } {
+  if (!allianceState) {
+    return { canApprove: false, reason: "Alliance state is still loading." };
+  }
+
+  const role = allianceState.membership.role;
+  if (role !== "owner" && role !== "officer") {
+    return { canApprove: false, reason: "Only officers and owners can approve applications." };
+  }
+
+  const currentAllianceId = allianceState.membership.allianceId;
+  if (currentAllianceId === "0" || request.allianceId !== currentAllianceId) {
+    return { canApprove: false, reason: "You are not managing this alliance." };
+  }
+
+  const requester = request.requester.toLowerCase();
+  const rosterMember = allianceState.members.find((member) => member.address.toLowerCase() === requester);
+  const requesterAllianceId = request.requesterMembership?.allianceId ?? "0";
+  if (rosterMember || requesterAllianceId === currentAllianceId) {
+    return { canApprove: false, reason: "Applicant is already in this alliance." };
+  }
+
+  if (requesterAllianceId !== "0") {
+    return { canApprove: false, reason: "Applicant already joined another alliance." };
+  }
+
+  return { canApprove: true, reason: null };
 }
 
 function MyAllianceSection({
@@ -512,7 +547,7 @@ function DirectorySection({
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                     <span>{alliance.memberCount} members</span>
                     <span>Owner {playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
-                    <span>Created {alliance.createdAt}</span>
+                    <span>Created {formatUserTimestamp(alliance.createdAt)}</span>
                   </div>
                 </button>
                 <div className="flex flex-wrap gap-2 md:justify-end">
@@ -651,11 +686,13 @@ function PendingInvites({
 }
 
 function JoinRequests({
+  allianceState,
   disabled,
   requests,
   onApproveJoinRequest,
   onOpenPlayer,
 }: {
+  allianceState: ChainAllianceState | null;
   disabled: boolean;
   requests: ChainAllianceState["allianceJoinRequests"];
   onApproveJoinRequest: (playerAddress: string) => void;
@@ -665,22 +702,26 @@ function JoinRequests({
     <Panel title="Join Applications">
       {requests.length ? (
         <div className="grid gap-2">
-          {requests.map((request) => (
-            <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
-              <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
-                {playerLabel(request.requesterDisplayName, request.requester)}
-              </button>
-              <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {request.requestedAt}</p>
-              <button
-                className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled}
-                onClick={() => onApproveJoinRequest(request.requester)}
-                type="button"
-              >
-                Approve Member
-              </button>
-            </div>
-          ))}
+          {requests.map((request) => {
+            const approval = allianceJoinRequestApprovalState(allianceState, request);
+            return (
+              <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
+                <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
+                  {playerLabel(request.requesterDisplayName, request.requester)}
+                </button>
+                <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {formatUserTimestamp(request.requestedAt)}</p>
+                {approval.reason ? <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{approval.reason}</p> : null}
+                <button
+                  className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={disabled || !approval.canApprove}
+                  onClick={() => onApproveJoinRequest(request.requester)}
+                  type="button"
+                >
+                  Approve Member
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p className="text-sm text-slate-400">No pending applications.</p>
@@ -823,7 +864,7 @@ function MemberRow({
           </span>
           {isViewer ? <span className="text-xs text-cyan-100">You</span> : null}
         </div>
-        <p className="mt-1 text-xs text-slate-500">Joined {member.joinedAt}</p>
+        <p className="mt-1 text-xs text-slate-500">Joined {formatUserTimestamp(member.joinedAt)}</p>
       </button>
       {canManageMembers ? (
         <div className="flex flex-wrap gap-2 md:justify-end">

@@ -29,6 +29,7 @@ import {
   type WalletSettlementResponse
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
@@ -47,6 +48,11 @@ export type PlanetRenameActionState =
   | { status: "error"; label: string };
 
 export type PlanetManagementActionState = PlanetRenameActionState;
+type OverviewResearchActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
 
 interface OverviewPageProps {
   state: PlayableState;
@@ -66,6 +72,9 @@ interface OverviewPageProps {
   onFinishBuilding?: (() => void) | undefined;
   isDefenseActionPending?: boolean | undefined;
   onFinishDefense?: (() => void) | undefined;
+  isResearchActionPending?: boolean | undefined;
+  onFinishResearch?: (() => void) | undefined;
+  researchAction?: OverviewResearchActionState | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
   onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
@@ -105,6 +114,9 @@ export function OverviewPage({
   onFinishBuilding,
   isDefenseActionPending = false,
   onFinishDefense,
+  isResearchActionPending = false,
+  onFinishResearch,
+  researchAction = { status: "idle" },
   onNavigate,
   onCounterplay,
   onJoinAttack,
@@ -154,6 +166,12 @@ export function OverviewPage({
     now,
     onFinishDefense,
     queue: onChainQueues?.defense,
+  });
+  const researchFinishAction = overviewResearchFinishAction({
+    actionPending: isResearchActionPending,
+    now,
+    onFinishResearch,
+    queue: onChainQueues?.research,
   });
   const showBuildingFinishAction = shouldShowOverviewBuildingFinishAction({
     isBuildingReadyToFinish,
@@ -302,7 +320,7 @@ export function OverviewPage({
                   <button
                     aria-expanded={renamePanelOpen}
                     aria-label="Rename planet"
-                    className="grid h-8 w-8 place-items-center rounded text-slate-100/90 transition hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+                    className="inline-grid h-6 w-6 place-items-center rounded text-slate-200/80 transition hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"
                     disabled={renameBusy}
                     onClick={() => {
                       setRenamePanelOpen((open) => !open);
@@ -312,7 +330,7 @@ export function OverviewPage({
                     title="Rename planet"
                     type="button"
                   >
-                    <Pencil aria-hidden="true" size={11} strokeWidth={2} />
+                    <Pencil aria-hidden="true" size={12} strokeWidth={2} />
                   </button>
                 )}
                 {showAbandonAction && (
@@ -595,36 +613,50 @@ export function OverviewPage({
           tag={onChainQueues?.research?.active ? "Active" : undefined}
         >
           {onChainResearchQueue ? (
-            <QueueItemDisplay
-              label={`${onChainResearchQueue.label} Level ${onChainResearchQueue.targetLevel}`}
-              remaining={formatDurationUntil(onChainResearchQueue.readyAt, now)}
-              progress={activeResearchProgress}
-              readyAt={onChainResearchQueue.readyAt}
-              startedAt={onChainResearchQueue.startedAt}
-              color="bg-cyan-300"
-              now={now}
-            />
+            <div className="grid gap-2">
+              <QueueItemDisplay
+                label={`${onChainResearchQueue.label} Level ${onChainResearchQueue.targetLevel}`}
+                remaining={formatDurationUntil(onChainResearchQueue.readyAt, now)}
+                progress={activeResearchProgress}
+                readyAt={onChainResearchQueue.readyAt}
+                startedAt={onChainResearchQueue.startedAt}
+                color="bg-cyan-300"
+                now={now}
+              />
+              <OverviewResearchFinishButton action={researchFinishAction} />
+              <OverviewResearchActionNotice actionState={researchAction} />
+            </div>
           ) : onChainQueues?.research?.active ? (
-            <QueueItemDisplay
-              label={`${onChainQueues.research.kind === "research" ? "Research" : onChainQueues.research.kind} level ${onChainQueues.research.targetLevel}`}
-              remaining={queueRemaining(onChainQueues.research.readyAt, now)}
-              indeterminate
-              color="bg-cyan-300"
-            />
+            <div className="grid gap-2">
+              <QueueItemDisplay
+                label={`${onChainQueues.research.kind === "research" ? "Research" : onChainQueues.research.kind} level ${onChainQueues.research.targetLevel}`}
+                remaining={queueRemaining(onChainQueues.research.readyAt, now)}
+                indeterminate
+                color="bg-cyan-300"
+              />
+              <OverviewResearchFinishButton action={researchFinishAction} />
+              <OverviewResearchActionNotice actionState={researchAction} />
+            </div>
           ) : settledState.researchQueue ? (
-            <QueueItemDisplay
-              label={settledState.researchQueue.label}
-              remaining={formatDurationUntil(settledState.researchQueue.readyAt, now)}
-              progress={activeResearchProgress}
-              readyAt={settledState.researchQueue.readyAt}
-              startedAt={settledState.researchQueue.startedAt}
-              color="bg-cyan-300"
-              now={now}
-            />
+            <div className="grid gap-2">
+              <QueueItemDisplay
+                label={settledState.researchQueue.label}
+                remaining={formatDurationUntil(settledState.researchQueue.readyAt, now)}
+                progress={activeResearchProgress}
+                readyAt={settledState.researchQueue.readyAt}
+                startedAt={settledState.researchQueue.startedAt}
+                color="bg-cyan-300"
+                now={now}
+              />
+              <OverviewResearchActionNotice actionState={researchAction} />
+            </div>
           ) : (
-            <EmptyQueue action={<QuickLink onClick={() => onNavigate("research")}>Research</QuickLink>}>
-              No active research.
-            </EmptyQueue>
+            <div className="grid gap-2">
+              <EmptyQueue action={<QuickLink onClick={() => onNavigate("research")}>Research</QuickLink>}>
+                No active research.
+              </EmptyQueue>
+              <OverviewResearchActionNotice actionState={researchAction} />
+            </div>
           )}
         </QueuePanel>
 
@@ -701,6 +733,36 @@ export function overviewDefenseFinishAction({
   };
 }
 
+export function isOverviewResearchReadyToFinish(
+  queue: PlayerQueuesResponse["research"] | undefined,
+  now: number,
+): boolean {
+  return Boolean(queue?.active && queue.readyAt && Number(queue.readyAt) * 1_000 <= now);
+}
+
+export function overviewResearchFinishAction({
+  actionPending,
+  now,
+  onFinishResearch,
+  queue,
+}: {
+  actionPending?: boolean | undefined;
+  now: number;
+  onFinishResearch?: (() => void) | undefined;
+  queue?: PlayerQueuesResponse["research"] | undefined;
+}): {
+  disabled: boolean;
+  onFinish?: (() => void) | undefined;
+  visible: boolean;
+} {
+  const visible = Boolean(isOverviewResearchReadyToFinish(queue, now) && onFinishResearch);
+  return {
+    disabled: Boolean(actionPending),
+    onFinish: visible && !actionPending ? onFinishResearch : undefined,
+    visible,
+  };
+}
+
 function OverviewBuildingFinishButton({
   disabled = false,
   onFinishBuilding,
@@ -738,6 +800,44 @@ function OverviewDefenseFinishButton({
     >
       Complete queue
     </button>
+  );
+}
+
+function OverviewResearchFinishButton({
+  action,
+}: {
+  action: ReturnType<typeof overviewResearchFinishAction>;
+}) {
+  if (!action.visible) return null;
+
+  return (
+    <button
+      className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      disabled={action.disabled}
+      onClick={action.onFinish}
+      type="button"
+    >
+      Complete research
+    </button>
+  );
+}
+
+function OverviewResearchActionNotice({
+  actionState,
+}: {
+  actionState: OverviewResearchActionState;
+}) {
+  if (actionState.status === "idle") return null;
+  const className = actionState.status === "error"
+    ? "border-rose-300/20 bg-rose-300/5 text-rose-100"
+    : actionState.status === "success"
+      ? "border-emerald-300/20 bg-emerald-300/5 text-emerald-100"
+      : "border-white/10 bg-white/5 text-slate-200";
+
+  return (
+    <div className={`rounded-md border px-3 py-2 text-xs ${className}`}>
+      {actionState.label}
+    </div>
   );
 }
 
@@ -785,7 +885,7 @@ function MissionPanel({
                 {mission.originPlanetId} {"->"} {mission.targetPlanetId}
               </p>
               <p className="mt-1 text-[11px] text-slate-400">
-                Arrival {formatDurationUntil(Number(mission.arrivalAt) * 1_000, now)} · Return {formatDurationUntil(Number(mission.returnAt) * 1_000, now)}
+                Arrival {formatMissionSnapshotTime(mission.arrivalAt, now)} · Return {formatMissionSnapshotTime(mission.returnAt, now)}
               </p>
               {mission.attackGroupId ? (
                 <p className="mt-1 text-[11px] text-cyan-100/70">
@@ -942,6 +1042,12 @@ function queueTimestampMs(timestamp: string | null | undefined): number | undefi
   const seconds = Number(timestamp);
   if (!Number.isFinite(seconds)) return undefined;
   return seconds * 1_000;
+}
+
+function formatMissionSnapshotTime(value: string, now: number): string {
+  const timestamp = timestampToMs(value);
+  if (timestamp === undefined) return "Unknown";
+  return `${formatDurationUntil(timestamp, now)} (${formatUserTimestamp(timestamp)})`;
 }
 
 function EmptyQueue({

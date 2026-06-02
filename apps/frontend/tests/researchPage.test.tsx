@@ -6,9 +6,13 @@ import {
   formatResearchRequirements,
   getResearchRequirementStates,
   ResearchLoadErrorPanel,
+  researchActionStatus,
+  researchCompletionButtonState,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
+import { RequirementFlairs } from "../src/components/RequirementFlairs";
 import { createInitialPlayableState } from "../src/playableMvp";
+import type { ChainResearchState } from "../src/walletFlow";
 
 describe("Research page load-error display", () => {
   test("formats cumulative costs and requirements with commas", () => {
@@ -80,9 +84,26 @@ describe("Research page load-error display", () => {
     };
 
     expect(getResearchRequirementStates(state, "laser")).toEqual([
-      { label: "Research Lab 1", met: true },
-      { label: "Energy Technology 2", met: false },
+      { label: "Research Lab 1", met: true, target: { kind: "building", key: "researchLab" } },
+      { label: "Energy Technology 2", met: false, target: { kind: "research", key: "energy" } },
     ]);
+  });
+
+  test("renders concrete requirement states as accessible navigation buttons", () => {
+    const flairs = RequirementFlairs({
+      onOpenRequirement: () => undefined,
+      requirements: [
+        { label: "Energy Technology 2", met: false, target: { kind: "research", key: "energy" } },
+        { label: "Energy production 300,000", met: false },
+      ],
+    }) as VNode;
+    const children = flairs.props.children as VNode[];
+    const clickableChip = (children[0]!.type as (props: Record<string, unknown>) => VNode)(children[0]!.props);
+    const infoChip = (children[1]!.type as (props: Record<string, unknown>) => VNode)(children[1]!.props);
+
+    expect(clickableChip.type).toBe("button");
+    expect(clickableChip.props["aria-label"]).toBe("Open Energy Technology 2 requirement");
+    expect(infoChip.type).toBe("span");
   });
 
   test("renders active research progress with the shared single-item queue pattern", () => {
@@ -105,6 +126,110 @@ describe("Research page load-error display", () => {
     expect(text).toContain("50 %");
     expect(text).toContain("Time remaining");
     expect(text).toContain("Ready at");
+  });
+
+  test("enables research completion from the app clock once the queue is ready", () => {
+    const queue = {
+      kind: "research",
+      key: "energy",
+      label: "Energy Technology",
+      readyAt: 1_700_000_120_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 1,
+    } as const;
+
+    expect(researchCompletionButtonState({
+      actionPending: false,
+      canTransact: true,
+      now: 1_700_000_119_000,
+      queue,
+    })).toMatchObject({
+      disabled: true,
+      label: expect.stringContaining("Ready in 1s"),
+    });
+
+    expect(researchCompletionButtonState({
+      actionPending: false,
+      canTransact: true,
+      now: 1_700_000_120_000,
+      queue,
+    })).toEqual({
+      disabled: false,
+      label: "Complete research",
+    });
+  });
+
+  test("keeps selected queued research disabled before the authoritative ready time", () => {
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_119_000,
+      researchState: researchState({
+        technologyLevels: { "0": 1 },
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000120",
+          startedAt: "1700000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+      state: researchViewState({
+        readyAt: 1_700_000_120_000,
+      }),
+    });
+
+    expect(status).toMatchObject({
+      actionLabel: "In progress",
+      badge: "In progress",
+      completionReady: false,
+      disabled: true,
+      reason: "Research to Level 2 in progress",
+      tileStatus: "Active",
+    });
+  });
+
+  test("lets selected queued research complete once authoritative ready time has passed", () => {
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_120_000,
+      researchState: researchState({
+        technologyLevels: { "0": 1 },
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000120",
+          startedAt: "1700000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+      state: researchViewState({
+        readyAt: 1_700_000_120_000,
+      }),
+    });
+
+    expect(status).toMatchObject({
+      actionLabel: "Complete research",
+      badge: "Ready",
+      completionReady: true,
+      disabled: false,
+      reason: "Ready to complete Level 2",
+      targetLevel: 2,
+      tileStatus: "Ready",
+    });
   });
 });
 
@@ -129,7 +254,7 @@ function textParts(node: ComponentChildren): string[] {
   return textParts(vnode.props?.children);
 }
 
-function researchState() {
+function researchState(overrides: Partial<ChainResearchState> = {}): ChainResearchState {
   return {
     wallet: "0x1111111111111111111111111111111111111111",
     homePlanetId: "7",
@@ -139,5 +264,33 @@ function researchState() {
     technologyLevels: {},
     technologies: [],
     queue: null,
+    ...overrides,
+  };
+}
+
+function researchViewState({
+  readyAt,
+}: {
+  readyAt: number;
+}) {
+  const state = createInitialPlayableState(10_000);
+  return {
+    ...state,
+    buildings: {
+      ...state.buildings,
+      researchLab: 1,
+    },
+    research: {
+      ...state.research,
+      energy: 1,
+    },
+    researchQueue: {
+      kind: "research",
+      key: "energy",
+      label: "Energy Technology",
+      readyAt,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    },
   };
 }

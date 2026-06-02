@@ -1,9 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, missionLifecycleActions } from "../src/components/MissionControlPage";
+import { MissionControlPage, deriveRaidExposedResources, formatMissionTime, missionLifecycleActions } from "../src/components/MissionControlPage";
 import type { FleetMissionSummary } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
+  test("renders mission timing with relative and exact local timestamps", () => {
+    const secondsLabel = formatMissionTime("1770000300", 1_770_000_000_000);
+    const millisecondsLabel = formatMissionTime("1770000300000", 1_770_000_000_000);
+
+    expect(secondsLabel).toContain("5m");
+    expect(secondsLabel).toContain("2026");
+    expect(secondsLabel).not.toContain("1770000300");
+    expect(millisecondsLabel).toBe(secondsLabel);
+  });
+
   test("enables only contract-supported lifecycle actions for mission timing", () => {
     const now = 1_770_000_100_000;
 
@@ -78,7 +88,63 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Espionage mission");
     expect(text).not.toContain("Scan mission");
   });
+
+  test("explains zero protected storage while reconciling raid-exposed resources from current resources", () => {
+    const page = missionControlPage({
+      currentResources: { metal: "44", crystal: "907", deuterium: "326" },
+      protectedResources: { metal: "0", crystal: "0", deuterium: "0" },
+      raidableResources: { metal: "999", crystal: "999", deuterium: "999" },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Protected storage 0 Metal 0 Crystal 0 Deut.");
+    expect(text).toContain("Raid-exposed resources 44 Metal 907 Crystal 326 Deut.");
+    expect(text).toContain("Contract raid protection is currently 0%");
+  });
+
+  test("renders partial protected storage as current resources minus protected amounts", () => {
+    const page = missionControlPage({
+      currentResources: { metal: "12000", crystal: "8000", deuterium: "3000" },
+      protectedResources: { metal: "1000", crystal: "2500", deuterium: "500" },
+      raidableResources: { metal: "0", crystal: "0", deuterium: "0" },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Protected storage 1,000 Metal 2,500 Crystal 500 Deut.");
+    expect(text).toContain("Raid-exposed resources 11,000 Metal 5,500 Crystal 2,500 Deut.");
+    expect(text).toContain("floored at zero");
+  });
+
+  test("caps raid-exposed resources at zero when protection exceeds current resources", () => {
+    expect(deriveRaidExposedResources(
+      { metal: "500", crystal: "250", deuterium: "0" },
+      { metal: "1000", crystal: "250", deuterium: "1" },
+    )).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
+  });
 });
+
+function missionControlPage(overrides: Partial<Parameters<typeof MissionControlPage>[0]> = {}): ComponentChildren {
+  return MissionControlPage({
+    actionState: { status: "idle" },
+    canTransact: true,
+    fleetVisibility: {
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      incoming: [],
+      outgoing: [],
+      returning: [],
+    },
+    loading: false,
+    now: 1_770_000_700_000,
+    onCompleteReturn: () => undefined,
+    onCounterplay: () => undefined,
+    onNavigateGalaxy: () => undefined,
+    onRecall: () => undefined,
+    onRefresh: () => undefined,
+    onResolve: () => undefined,
+    ...overrides,
+  });
+}
 
 function mission(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
   return {
