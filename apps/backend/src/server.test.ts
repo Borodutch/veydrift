@@ -2475,6 +2475,10 @@ describe("Veydrift backend", () => {
       liveReads.push("research");
       throw new Error("research should not call live RPC");
     };
+    chainReader.getMoonState = async () => {
+      liveReads.push("moon");
+      throw new Error("moon should not call live RPC");
+    };
     chainReader.getRiftState = async () => {
       liveReads.push("rift");
       throw new Error("rift should not call live RPC");
@@ -2499,6 +2503,7 @@ describe("Veydrift backend", () => {
       ["shipyard", "shipyard"],
       ["defenses", "defenses"],
       ["research", "research"],
+      ["moon", "moon"],
       ["rift", "rift"]
     ] as const) {
       const response = await handler(new Request(`http://localhost/wallet/${player}/${path}`));
@@ -2526,6 +2531,7 @@ describe("Veydrift backend", () => {
     let shipyardLiveReadCalled = false;
     let defenseLiveReadCalled = false;
     let researchLiveReadCalled = false;
+    let moonLiveReadCalled = false;
     let riftLiveReadCalled = false;
     chainReader.getPlayerQueues = async (wallet: Address, planetId?: bigint) => {
       queuesLiveReadCalled = true;
@@ -2551,6 +2557,11 @@ describe("Veydrift backend", () => {
       researchLiveReadCalled = true;
       expect(planetId).toBeUndefined();
       return baseReader.getResearchState(wallet);
+    };
+    chainReader.getMoonState = async (wallet: Address, planetId?: bigint) => {
+      moonLiveReadCalled = true;
+      expect(planetId).toBeUndefined();
+      return baseReader.getMoonState(wallet);
     };
     chainReader.getRiftState = async (wallet: Address, planetId?: bigint) => {
       riftLiveReadCalled = true;
@@ -2583,6 +2594,8 @@ describe("Veydrift backend", () => {
     const defensesBody = await defensesResponse.json();
     const researchResponse = await handler(new Request(`http://localhost/wallet/${player}/research?source=live`));
     const researchBody = await researchResponse.json();
+    const moonResponse = await handler(new Request(`http://localhost/wallet/${player}/moon?source=live`));
+    const moonBody = await moonResponse.json();
     const riftResponse = await handler(new Request(`http://localhost/wallet/${player}/rift?source=live`));
     const riftBody = await riftResponse.json();
 
@@ -2614,6 +2627,10 @@ describe("Veydrift backend", () => {
     expect(researchResponse.headers.get("x-veydrift-index-state")).toBeNull();
     expect(researchLiveReadCalled).toBe(true);
     expect(researchBody.researchLabLevel).toBe(1);
+    expect(moonResponse.status).toBe(200);
+    expect(moonResponse.headers.get("x-veydrift-index-state")).toBeNull();
+    expect(moonLiveReadCalled).toBe(true);
+    expect(moonBody.moon?.exists).toBe(true);
     expect(riftResponse.status).toBe(200);
     expect(riftResponse.headers.get("x-veydrift-index-state")).toBeNull();
     expect(riftLiveReadCalled).toBe(true);
@@ -2649,7 +2666,7 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
-  test("warms highscore rankings with settled planets only", async () => {
+  test("returns indexed-not-ready instead of rebuilding cold highscore rankings on request", async () => {
     const chainReader = new MockChainReader();
     const currentPlanetReader = chainReader as MockChainReader & {
       listCurrentPlanets: () => Promise<SettledPlanetEvent[]>;
@@ -2682,12 +2699,22 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request("http://localhost/highscores?limit=10"));
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.rankings.total[0]).toMatchObject({
-      rank: 1,
-      wallet: player
+    expect(response.status).toBe(503);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body).toMatchObject({
+      error: "highscores_index_not_ready",
+      detail: "Rankings are warming from indexed game state.",
+      retryable: true,
+      source: "contract-state-indexer",
+      indexer: {
+        indexedPlanets: 0,
+        indexedState: "stale",
+        lastRebuiltAt: null,
+        staleReason: "never_reconciled"
+      }
     });
-    expect(chainReader.rebuildCalls).toBe(1);
+    expect(body.durationMs).toEqual(expect.any(Number));
+    expect(chainReader.rebuildCalls).toBe(0);
   });
 
   test("serves highscores derived from indexed canonical state", async () => {
@@ -2748,6 +2775,7 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(body.durationMs).toEqual(expect.any(Number));
     expect(body.formula.pointsDivisor).toBe("1000");
     expect(body.rankings.total[0]).toMatchObject({
       rank: 1,
@@ -2795,6 +2823,7 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body.durationMs).toEqual(expect.any(Number));
     expect(body.rankings).toEqual({
       total: [],
       economy: [],
@@ -2825,6 +2854,7 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body.durationMs).toEqual(expect.any(Number));
     expect(body.source).toBe("contract-state-indexer");
     expect(body.rankings.total[0]).toMatchObject({
       rank: 1,
@@ -2844,7 +2874,61 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("returns a service error instead of a bad request when highscore index rebuild fails", async () => {
+  test("serves warmed empty highscore rankings as a successful indexed payload", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => [];
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body.durationMs).toEqual(expect.any(Number));
+    expect(body.source).toBe("contract-state-indexer");
+    expect(body.rankings.total).toEqual([]);
+    expect(chainReader.rebuildCalls).toBe(0);
+  });
+
+  test("returns indexed-not-ready without waiting for a reconciling highscore index", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => {
+      chainReader.rebuildCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return [];
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const rebuilding = indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({
+      error: "highscores_index_not_ready",
+      retryable: true,
+      source: "contract-state-indexer",
+      indexer: {
+        indexedState: "reconciling"
+      }
+    });
+    expect(body.durationMs).toEqual(expect.any(Number));
+    expect(chainReader.rebuildCalls).toBe(1);
+    await rebuilding;
+  });
+
+  test("keeps highscore rebuild failures off the user-facing rankings request", async () => {
     const chainReader = new MockChainReader();
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("RPC HTTP 429");
@@ -2861,10 +2945,18 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(503);
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
-    expect(body).toEqual({
-      error: "highscores_unavailable",
-      detail: "RPC HTTP 429"
+    expect(body).toMatchObject({
+      error: "highscores_index_not_ready",
+      detail: "Rankings are warming from indexed game state.",
+      retryable: true,
+      source: "contract-state-indexer",
+      indexer: {
+        indexedState: "stale",
+        lastRebuiltAt: null,
+        staleReason: "never_reconciled"
+      }
     });
+    expect(body.durationMs).toEqual(expect.any(Number));
   });
 
   test("returns CORS headers when highscores are unsupported", async () => {
