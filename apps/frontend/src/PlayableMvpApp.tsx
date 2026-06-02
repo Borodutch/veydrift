@@ -636,6 +636,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const infrastructureRequestId = useRef(0);
+  const moonRequestId = useRef(0);
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -734,7 +735,9 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
   const refreshInfrastructureState = useCallback(async () => {
     const requestId = infrastructureRequestId.current + 1;
+    const nextMoonRequestId = moonRequestId.current + 1;
     infrastructureRequestId.current = requestId;
+    moonRequestId.current = nextMoonRequestId;
 
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
@@ -754,26 +757,30 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         fetchMoonState(apiBaseUrl, account, activePlanetId),
       ]);
 
-      if (requestId !== infrastructureRequestId.current) return;
-
-      if (infrastructureResult.status === "fulfilled") {
-        setInfrastructureChainState(infrastructureResult.value);
-        setInfrastructureError(undefined);
-      } else {
-        console.error("Infrastructure state refresh failed", infrastructureResult.reason);
-        setInfrastructureError(readableRequestError(infrastructureResult.reason, "Infrastructure state could not be loaded."));
+      if (requestId === infrastructureRequestId.current) {
+        if (infrastructureResult.status === "fulfilled") {
+          setInfrastructureChainState(infrastructureResult.value);
+          setInfrastructureError(undefined);
+        } else {
+          console.error("Infrastructure state refresh failed", infrastructureResult.reason);
+          setInfrastructureError(readableRequestError(infrastructureResult.reason, "Infrastructure state could not be loaded."));
+        }
       }
 
-      if (moonResult.status === "fulfilled") {
-        setMoonState(moonResult.value);
-        setMoonError(undefined);
-      } else {
-        console.error("Moon state refresh failed", moonResult.reason);
-        setMoonError(readableRequestError(moonResult.reason, "Moon state could not be loaded."));
+      if (nextMoonRequestId === moonRequestId.current) {
+        if (moonResult.status === "fulfilled") {
+          setMoonState(moonResult.value);
+          setMoonError(undefined);
+        } else {
+          console.error("Moon state refresh failed", moonResult.reason);
+          setMoonError(readableRequestError(moonResult.reason, "Moon state could not be loaded."));
+        }
       }
     } finally {
       if (requestId === infrastructureRequestId.current) {
         setInfrastructureLoading(false);
+      }
+      if (nextMoonRequestId === moonRequestId.current) {
         setMoonLoading(false);
       }
     }
