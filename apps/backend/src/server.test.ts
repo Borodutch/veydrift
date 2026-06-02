@@ -2972,6 +2972,37 @@ describe("Veydrift backend", () => {
     await rebuilding;
   });
 
+  test("serves persisted indexed highscores while refreshing the index", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    chainReader.rebuildCalls = 0;
+    chainReader.listSettledPlanetEvents = async () => {
+      chainReader.rebuildCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return [];
+    };
+    const rebuilding = indexer.reconcile("startup refresh");
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.source).toBe("contract-state-indexer");
+    expect(body.rankings.total[0]).toMatchObject({
+      rank: 1,
+      wallet: player,
+      homePlanetId: planet.planetId
+    });
+    expect(chainReader.rebuildCalls).toBe(1);
+    await rebuilding;
+  });
+
   test("keeps highscore rebuild failures off the user-facing rankings request", async () => {
     const chainReader = new MockChainReader();
     chainReader.listSettledPlanetEvents = async () => {
