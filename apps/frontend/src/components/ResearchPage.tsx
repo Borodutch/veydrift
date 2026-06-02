@@ -186,6 +186,7 @@ export function ResearchPage({
                       error,
                       key: research.key,
                       loading,
+                      now,
                       researchState,
                       state: viewState,
                     });
@@ -217,6 +218,7 @@ export function ResearchPage({
             error={error}
             loading={loading}
             now={now}
+            onFinish={onFinish}
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
             onOpenRequirement={onOpenRequirement}
             queue={queue}
@@ -381,6 +383,7 @@ function ResearchDetailPanel({
   error,
   loading,
   now,
+  onFinish,
   onResearch,
   onOpenRequirement,
   queue,
@@ -394,6 +397,7 @@ function ResearchDetailPanel({
   error: string | undefined;
   loading: boolean;
   now: number;
+  onFinish: () => void;
   onResearch: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   queue: ReturnType<typeof researchQueueForDisplay>;
@@ -409,6 +413,7 @@ function ResearchDetailPanel({
     error,
     key: research.key,
     loading,
+    now,
     researchState,
     state,
   });
@@ -476,10 +481,10 @@ function ResearchDetailPanel({
       )}
 
       <button
-        aria-label={`Research ${research.label} to Level ${status.targetLevel}`}
+        aria-label={status.completionReady ? `Complete ${research.label} Level ${status.targetLevel}` : `Research ${research.label} to Level ${status.targetLevel}`}
         className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
         disabled={status.disabled}
-        onClick={onResearch}
+        onClick={status.completionReady ? onFinish : onResearch}
         type="button"
       >
         {status.actionLabel}
@@ -509,7 +514,7 @@ export function ActiveResearchQueueDetail({
   });
 }
 
-function researchActionStatus({
+export function researchActionStatus({
   actionPending,
   actionPendingLabel,
   canTransact,
@@ -517,6 +522,7 @@ function researchActionStatus({
   error,
   key,
   loading,
+  now,
   researchState,
   state,
 }: {
@@ -527,16 +533,18 @@ function researchActionStatus({
   error: string | undefined;
   key: ResearchKey;
   loading: boolean;
+  now: number;
   researchState: ChainResearchState | null;
   state: PlayableState;
 }) {
   const cost = chainCost;
   const currentLevel = state.research[key];
-  const targetLevel = currentLevel + 1;
   const missingRequirement = unmetResearchRequirement(state, key);
   const resourcesAvailable = Boolean(researchState?.resources);
   const affordable = cost ? canAfford(state.resources, cost) : false;
   const active = state.researchQueue?.key === key;
+  const targetLevel = active ? state.researchQueue?.targetLevel ?? currentLevel + 1 : currentLevel + 1;
+  const activeReady = active && Boolean(state.researchQueue?.readyAt && state.researchQueue.readyAt <= now);
   const queueOccupied = Boolean(state.researchQueue) && !active;
   const labMissing = state.buildings.researchLab === 0;
   const durationSeconds = !labMissing && cost
@@ -561,6 +569,8 @@ function researchActionStatus({
             ? "No VeydriftGame home planet"
             : !canTransact
               ? "Wallet or game contract unavailable"
+              : activeReady
+                ? `Ready to complete Level ${targetLevel}`
               : active
                 ? `Research to Level ${state.researchQueue?.targetLevel ?? targetLevel} in progress`
                 : queueOccupied
@@ -573,12 +583,15 @@ function researchActionStatus({
                         ? "Insufficient resources"
                         : `Ready for Level ${targetLevel}`;
 
-  const disabled = reason !== `Ready for Level ${targetLevel}`;
-  const badge = active ? "In progress" : disabled ? "Locked" : "Available";
+  const completionReady = reason === `Ready to complete Level ${targetLevel}`;
+  const researchReady = reason === `Ready for Level ${targetLevel}`;
+  const disabled = !completionReady && !researchReady;
+  const badge = completionReady ? "Ready" : active ? "In progress" : disabled ? "Locked" : "Available";
 
   return {
-    actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : active ? "In progress" : `Research Level ${targetLevel}`,
+    actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : completionReady ? "Complete research" : active ? "In progress" : `Research Level ${targetLevel}`,
     badge,
+    completionReady,
     cost,
     currentLevel,
     disabled,
@@ -586,7 +599,7 @@ function researchActionStatus({
     hasMissingRequirement: Boolean(missingRequirement),
     reason,
     targetLevel,
-    tileStatus: active ? "Active" : disabled ? "Locked" : "Ready",
+    tileStatus: completionReady ? "Ready" : active ? "Active" : disabled ? "Locked" : "Ready",
   };
 }
 
