@@ -22,7 +22,9 @@ import {
   formatGalaxyOccupancySummary,
   galaxyMissionFuelCost,
   galaxyMissionTravelSeconds,
-  planetsForFailedGalaxyLoad
+  planetsForFailedGalaxyLoad,
+  shouldShowGalaxyInitialLoader,
+  shouldShowGalaxyRows
 } from "../src/components/GalaxyView";
 import {
   planetRecordStatusLabel,
@@ -208,6 +210,26 @@ describe("tester universe display data", () => {
       "3 occupied",
     ]);
     expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
+  });
+
+  test("keeps current galaxy system rows visible during background refreshes", () => {
+    expect(shouldShowGalaxyInitialLoader({
+      hasCurrentSystemData: true,
+      loading: true,
+    })).toBe(false);
+    expect(shouldShowGalaxyRows({
+      hasCurrentSystemData: true,
+    })).toBe(true);
+  });
+
+  test("uses the full galaxy loader only before current-system rows exist", () => {
+    expect(shouldShowGalaxyInitialLoader({
+      hasCurrentSystemData: false,
+      loading: true,
+    })).toBe(true);
+    expect(shouldShowGalaxyRows({
+      hasCurrentSystemData: false,
+    })).toBe(false);
   });
 
   test("planet detail public records replace indexed-universe jargon", () => {

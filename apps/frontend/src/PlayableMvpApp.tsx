@@ -367,8 +367,7 @@ export function infrastructureLoadErrorFor({
   infrastructureError?: string | undefined;
   isWalletConnected: boolean;
 }): string | undefined {
-  if (!isWalletConnected || infrastructureChainState || !infrastructureError) return undefined;
-  if (activeBuildingQueue?.active) return undefined;
+  if (!isWalletConnected || !infrastructureError) return undefined;
   return infrastructureError;
 }
 
