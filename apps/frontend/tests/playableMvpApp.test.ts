@@ -4,6 +4,7 @@ import {
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  overviewResearchCompletionUnavailableReasonFor,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
@@ -262,6 +263,31 @@ describe("Playable MVP app display helpers", () => {
       "7",
       { source: "live" },
     ]]);
+  });
+
+  test("allows Overview-ready research completion to reach live revalidation before wallet submission", () => {
+    const readyOverviewQueue = {
+      active: true,
+      cost: { metal: "800", crystal: "400", deuterium: "0" },
+      itemId: 0,
+      kind: "research",
+      readyAt: "1700000000",
+      targetLevel: 2,
+    };
+
+    expect(overviewResearchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_000_000,
+      overviewQueue: readyOverviewQueue,
+      researchState: null,
+    })).toBeUndefined();
+
+    expect(overviewResearchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_699_999_000_000,
+      overviewQueue: readyOverviewQueue,
+      researchState: null,
+    })).toBe("No active research queue is available to complete.");
   });
 
   test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
