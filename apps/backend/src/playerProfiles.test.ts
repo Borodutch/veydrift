@@ -65,6 +65,7 @@ describe("player profile display names", () => {
 
   test("saves a wallet-signed display name and exposes it in indexed player surfaces", async () => {
     const indexer = testIndexer();
+    await indexer.rebuild();
     indexer.applyEvent(planet);
     const handler = createRequestHandler({
       config,
