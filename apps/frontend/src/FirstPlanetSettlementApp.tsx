@@ -14,6 +14,8 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import {
+  BASE_SEPOLIA,
+  createJsonRpcProvider,
   ensureBaseSepoliaNetwork,
   getChainId,
   getCurrentAccounts,
@@ -30,6 +32,7 @@ import {
   walletRequestErrorMessage,
   type Eip1193Provider,
   type PlanetSummary,
+  type SettlementTransactionOptions,
   type SettlementFundingState,
   type SettlementConfig,
   type WalletSettlementResponse
@@ -38,6 +41,7 @@ import {
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
+const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
 type SettlementConfigState =
   | { status: "loading"; apiUrl?: string; config: SettlementConfig }
@@ -283,7 +287,8 @@ export function FirstPlanetSettlementApp() {
     }
 
     try {
-      const settlement = await readSettlementState(injected, connectedAccount, settlementConfig);
+      const readProvider = settlementReadProvider(miniAppMode) ?? injected;
+      const settlement = await readSettlementState(readProvider, connectedAccount, settlementConfig);
 
       if (settlement.kind === "unconfigured") {
         setSettlementFunding({ status: "idle" });
@@ -411,7 +416,11 @@ export function FirstPlanetSettlementApp() {
           txHash
         });
 
-        const settlement = await waitForSettledPlanet(provider, wallet.account, settlementConfig);
+        const settlement = await waitForSettledPlanet(
+          settlementReadProvider(miniAppMode) ?? provider,
+          wallet.account,
+          settlementConfig
+        );
 
         setPlanet({
           kind: "success",
@@ -434,7 +443,8 @@ export function FirstPlanetSettlementApp() {
     setSettlementFunding({ status: "loading" });
 
     try {
-      const settlement = await readSettlementState(injected, connectedAccount, settlementConfig);
+      const readProvider = settlementReadProvider(miniAppMode) ?? injected;
+      const settlement = await readSettlementState(readProvider, connectedAccount, settlementConfig);
 
       if (settlement.kind === "unconfigured") {
         setSettlementFunding({ status: "idle" });
@@ -684,10 +694,19 @@ export function settlementLaunchBlocker(
   return undefined;
 }
 
-function settlementTransactionOptions(miniAppMode: boolean) {
-  return {
+function settlementTransactionOptions(miniAppMode: boolean): SettlementTransactionOptions {
+  const options: SettlementTransactionOptions = {
     balanceRead: miniAppMode ? "optional" : "required",
-  } as const;
+  };
+  const readProvider = settlementReadProvider(miniAppMode);
+  if (readProvider) {
+    options.readProvider = readProvider;
+  }
+  return options;
+}
+
+function settlementReadProvider(miniAppMode: boolean): Eip1193Provider | undefined {
+  return miniAppMode ? baseSepoliaReadProvider : undefined;
 }
 
 function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding): string {

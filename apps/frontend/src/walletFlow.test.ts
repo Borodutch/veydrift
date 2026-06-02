@@ -929,6 +929,108 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("reads Mini App settlement funding through a readonly provider", async () => {
+    const walletRequests: unknown[] = [];
+    const readRequests: unknown[] = [];
+    const walletProvider = mockProvider(async ({ method, params }) => {
+      walletRequests.push({ method, params });
+      throw { code: 4200, message: "The provider does not support the requested method." };
+    });
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readRequests.push({ method, params });
+      if (method === "eth_call") return word(50_000_000_000_000_000n);
+      if (method === "eth_getBalance") return word(60_000_000_000_000_000n);
+      throw new Error(`Unexpected readonly ${method}`);
+    });
+
+    await expect(readSettlementFundingState(walletProvider, account, { address: contract }, {
+      balanceRead: "optional",
+      readProvider,
+    })).resolves.toEqual({
+      affordable: true,
+      balanceWei: 60_000_000_000_000_000n,
+      contractKind: "game",
+      startPriceWei: 50_000_000_000_000_000n
+    });
+
+    expect(walletRequests).toEqual([]);
+    expect(readRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            to: contract,
+            data: "0xf1a9af89"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_getBalance",
+        params: [
+          account,
+          "latest"
+        ]
+      }
+    ]);
+  });
+
+  test("submits Mini App settlement without wallet-backed read preflights", async () => {
+    const walletRequests: unknown[] = [];
+    const readRequests: unknown[] = [];
+    const walletProvider = mockProvider(async ({ method, params }) => {
+      walletRequests.push({ method, params });
+      if (method === "eth_sendTransaction") return "0xabc";
+      throw { code: 4200, message: "The provider does not support the requested method." };
+    });
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readRequests.push({ method, params });
+      if (method === "eth_call") return word(50_000_000_000_000_000n);
+      if (method === "eth_getBalance") return word(60_000_000_000_000_000n);
+      throw new Error(`Unexpected readonly ${method}`);
+    });
+
+    await expect(
+      sendSettlementTransaction(walletProvider, account, { address: contract }, {
+        balanceRead: "optional",
+        readProvider,
+      })
+    ).resolves.toBe("0xabc");
+
+    expect(readRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            to: contract,
+            data: "0xf1a9af89"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_getBalance",
+        params: [
+          account,
+          "latest"
+        ]
+      }
+    ]);
+    expect(walletRequests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xf45f1f18",
+            value: "0xb1a2bc2ec50000"
+          }
+        ]
+      }
+    ]);
+  });
+
   test("blocks game settlement while resource token reserves are not configured", async () => {
     const provider = mockProvider(async ({ method }) => {
       if (method === "eth_call") return word(50_000_000_000_000_000n);
