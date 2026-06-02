@@ -231,8 +231,11 @@ export function AlliancePage({
               />
               {canManageMembers ? (
                 <JoinRequests
+                  currentAllianceId={currentAllianceId}
                   disabled={disabled}
+                  members={allianceState?.members ?? []}
                   requests={allianceState?.allianceJoinRequests ?? []}
+                  role={role}
                   onApproveJoinRequest={onApproveJoinRequest}
                   onOpenPlayer={setSelectedPlayer}
                 />
@@ -651,13 +654,19 @@ function PendingInvites({
 }
 
 function JoinRequests({
+  currentAllianceId,
   disabled,
+  members,
   requests,
+  role,
   onApproveJoinRequest,
   onOpenPlayer,
 }: {
+  currentAllianceId: string;
   disabled: boolean;
+  members: ChainAllianceState["members"];
   requests: ChainAllianceState["allianceJoinRequests"];
+  role: AllianceRole;
   onApproveJoinRequest: (playerAddress: string) => void;
   onOpenPlayer: (playerAddress: string) => void;
 }) {
@@ -665,22 +674,35 @@ function JoinRequests({
     <Panel title="Join Applications">
       {requests.length ? (
         <div className="grid gap-2">
-          {requests.map((request) => (
-            <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
-              <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
-                {playerLabel(request.requesterDisplayName, request.requester)}
-              </button>
-              <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {request.requestedAt}</p>
-              <button
-                className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled}
-                onClick={() => onApproveJoinRequest(request.requester)}
-                type="button"
-              >
-                Approve Member
-              </button>
-            </div>
-          ))}
+          {requests.map((request) => {
+            const availability = joinRequestApprovalAvailability({
+              currentAllianceId,
+              members,
+              request,
+              role,
+            });
+            return (
+              <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
+                <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
+                  {playerLabel(request.requesterDisplayName, request.requester)}
+                </button>
+                <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {request.requestedAt}</p>
+                {availability.reason ? (
+                  <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">
+                    {availability.reason}
+                  </p>
+                ) : null}
+                <button
+                  className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={disabled || !availability.canApprove}
+                  onClick={() => onApproveJoinRequest(request.requester)}
+                  type="button"
+                >
+                  Approve Member
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p className="text-sm text-slate-400">No pending applications.</p>
@@ -1028,6 +1050,33 @@ export function findAllianceEntry(
   if (currentAlliance?.allianceId === allianceId) return currentAlliance;
   const entry = directory.find((alliance) => alliance.allianceId === allianceId);
   return entry ? { ...entry, rosterAvailable: false } : null;
+}
+
+export function joinRequestApprovalAvailability({
+  currentAllianceId,
+  members,
+  request,
+  role,
+}: {
+  currentAllianceId: string;
+  members: ChainAllianceState["members"];
+  request: ChainAllianceState["allianceJoinRequests"][number];
+  role: AllianceRole;
+}): { canApprove: boolean; reason?: string } {
+  if (!currentAllianceId || currentAllianceId === "0") {
+    return { canApprove: false, reason: "Join an alliance before approving applications." };
+  }
+  if (request.allianceId !== currentAllianceId) {
+    return { canApprove: false, reason: "This application targets another alliance." };
+  }
+  if (role !== "owner" && role !== "officer") {
+    return { canApprove: false, reason: "Only alliance owners or officers can approve applications." };
+  }
+  if (members.some((member) => member.address.toLowerCase() === request.requester.toLowerCase())) {
+    return { canApprove: false, reason: "Applicant is already in this alliance." };
+  }
+
+  return { canApprove: true };
 }
 
 function currentAllianceEntry(allianceState: ChainAllianceState | null, rosterCount: number): AllianceEntry | null {

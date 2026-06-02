@@ -3,6 +3,7 @@ import {
   allianceDisplayName,
   buildAllianceRoster,
   findAllianceEntry,
+  joinRequestApprovalAvailability,
 } from "../src/components/AlliancePage";
 
 const owner = "0x1111111111111111111111111111111111111111";
@@ -97,5 +98,61 @@ describe("AlliancePage helpers", () => {
 
   test("allianceDisplayName keeps tag and name compact", () => {
     expect(allianceDisplayName({ tag: "VDFT", name: "Veydrift Union" })).toBe("VDFT - Veydrift Union");
+  });
+
+  test("keeps mixed pending applicants eligible one row at a time", () => {
+    const validRequest = {
+      allianceId: "1",
+      requester: "0x4444444444444444444444444444444444444444",
+      requestedAt: "1770000000",
+    };
+    const staleRequest = {
+      allianceId: "1",
+      requester: member,
+      requestedAt: "1770000001",
+    };
+
+    expect(joinRequestApprovalAvailability({
+      currentAllianceId: "1",
+      members: [{ address: member, role: "member", joinedAt: "30" }],
+      request: validRequest,
+      role: "officer",
+    })).toEqual({ canApprove: true });
+    expect(joinRequestApprovalAvailability({
+      currentAllianceId: "1",
+      members: [{ address: member, role: "member", joinedAt: "30" }],
+      request: staleRequest,
+      role: "officer",
+    })).toEqual({
+      canApprove: false,
+      reason: "Applicant is already in this alliance.",
+    });
+  });
+
+  test("blocks join approvals when the caller role or alliance target is stale", () => {
+    const request = {
+      allianceId: "2",
+      requester: member,
+      requestedAt: "1770000000",
+    };
+
+    expect(joinRequestApprovalAvailability({
+      currentAllianceId: "1",
+      members: [],
+      request,
+      role: "officer",
+    })).toEqual({
+      canApprove: false,
+      reason: "This application targets another alliance.",
+    });
+    expect(joinRequestApprovalAvailability({
+      currentAllianceId: "2",
+      members: [],
+      request,
+      role: "member",
+    })).toEqual({
+      canApprove: false,
+      reason: "Only alliance owners or officers can approve applications.",
+    });
   });
 });

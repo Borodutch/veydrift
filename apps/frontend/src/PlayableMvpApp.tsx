@@ -213,6 +213,43 @@ export function topBarEnergyFor({
     );
 }
 
+export function allianceJoinApprovalPreflightReason(
+  approverState: ChainAllianceState,
+  applicantState: ChainAllianceState,
+  allianceId: string,
+  applicantAddress: string
+): string | undefined {
+  const role = approverState.membership.role;
+  if (approverState.membership.allianceId !== allianceId || allianceId === "0") {
+    return "Refresh alliance data before approving applications.";
+  }
+  if (role !== "owner" && role !== "officer") {
+    return "Only alliance owners or officers can approve applications.";
+  }
+
+  const applicantKey = applicantAddress.toLowerCase();
+  const requestActive = approverState.allianceJoinRequests.some((request) => (
+    request.allianceId === allianceId && request.requester.toLowerCase() === applicantKey
+  ));
+  if (!requestActive) {
+    return "This application is no longer pending. Refresh alliance data.";
+  }
+  if (approverState.members.some((member) => member.address.toLowerCase() === applicantKey)) {
+    return "Applicant is already in this alliance.";
+  }
+  if (applicantState.membership.allianceId !== "0") {
+    return applicantState.membership.allianceId === allianceId
+      ? "Applicant is already in this alliance."
+      : "Applicant already joined another alliance.";
+  }
+  const applicantStillRequested = applicantState.pendingJoinRequests.some((request) => request.allianceId === allianceId);
+  if (!applicantStillRequested) {
+    return "This application was withdrawn or is no longer pending.";
+  }
+
+  return undefined;
+}
+
 export function infrastructureUnavailableReasonFor({
   buildingAction,
   gameContract,
@@ -1879,19 +1916,42 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [account, allianceContract, provider, runAllianceTransaction]);
 
   const handleApproveAllianceJoinRequest = useCallback((playerAddress: string) => {
-    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+    if (!provider || !account || !allianceContract || !apiBaseUrl || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
       return;
     }
 
-    void runAllianceTransaction("Alliance join approval", () => sendApproveAllianceJoinRequestTransaction(
-      provider,
-      account,
-      allianceContract,
-      allianceState.membership.allianceId,
-      playerAddress,
-    ));
-  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+    const allianceId = allianceState.membership.allianceId;
+    void (async () => {
+      setAllianceAction({ status: "pending", label: "Refreshing applicant eligibility" });
+      try {
+        const [freshState, applicantState] = await Promise.all([
+          fetchAllianceState(apiBaseUrl, account),
+          fetchAllianceState(apiBaseUrl, playerAddress),
+        ]);
+        setAllianceState(freshState);
+        const reason = allianceJoinApprovalPreflightReason(freshState, applicantState, allianceId, playerAddress);
+        if (reason) {
+          setAllianceAction({ status: "error", label: reason });
+          return;
+        }
+
+        await runAllianceTransaction("Alliance join approval", () => sendApproveAllianceJoinRequestTransaction(
+          provider,
+          account,
+          allianceContract,
+          allianceId,
+          playerAddress,
+        ));
+      } catch (error) {
+        console.error(error);
+        setAllianceAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Alliance join approval preflight failed.",
+        });
+      }
+    })();
+  }, [account, allianceContract, allianceState?.membership.allianceId, apiBaseUrl, provider, runAllianceTransaction]);
 
   const handleKickAllianceMember = useCallback((playerAddress: string) => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {

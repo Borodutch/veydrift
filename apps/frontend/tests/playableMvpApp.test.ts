@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allianceJoinApprovalPreflightReason,
   infrastructureActionNoticeFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
@@ -8,7 +9,7 @@ import {
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainInfrastructureState } from "../src/walletFlow";
+import type { ChainAllianceState, ChainInfrastructureState } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   test("does not duplicate pending infrastructure action messages", () => {
@@ -261,6 +262,31 @@ describe("Playable MVP app display helpers", () => {
       onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
       runtimeConfigStatus: "ready",
     })).toContain("currently upgrading");
+  });
+
+  test("maps alliance approval preflight failures to the contract revert paths", () => {
+    const applicant = "0x4444444444444444444444444444444444444444";
+
+    expect(allianceJoinApprovalPreflightReason(
+      allianceState({ requests: [{ allianceId: "1", requester: applicant, requestedAt: "1770000000" }] }),
+      allianceState({ membershipAllianceId: "2", wallet: applicant }),
+      "1",
+      applicant
+    )).toBe("Applicant already joined another alliance.");
+
+    expect(allianceJoinApprovalPreflightReason(
+      allianceState({ requests: [] }),
+      allianceState({ membershipAllianceId: "0", requests: [], wallet: applicant }),
+      "1",
+      applicant
+    )).toBe("This application is no longer pending. Refresh alliance data.");
+
+    expect(allianceJoinApprovalPreflightReason(
+      allianceState({ role: "member", requests: [{ allianceId: "1", requester: applicant, requestedAt: "1770000000" }] }),
+      allianceState({ membershipAllianceId: "0", wallet: applicant }),
+      "1",
+      applicant
+    )).toBe("Only alliance owners or officers can approve applications.");
   });
 
   test("hydrates indexed planet state before requesting live settlement state", async () => {
@@ -539,6 +565,50 @@ function infrastructureState({
     storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
     buildings: [],
     queue: queue ?? null,
+  };
+}
+
+function allianceState({
+  membershipAllianceId = "1",
+  members = [],
+  requests = [{ allianceId: "1", requester: "0x4444444444444444444444444444444444444444", requestedAt: "1770000000" }],
+  role = "officer",
+  wallet = "0x2222222222222222222222222222222222222222",
+}: {
+  membershipAllianceId?: string;
+  members?: ChainAllianceState["members"];
+  requests?: ChainAllianceState["allianceJoinRequests"];
+  role?: ChainAllianceState["membership"]["role"];
+  wallet?: string;
+} = {}): ChainAllianceState {
+  return {
+    wallet,
+    allianceAvailable: true,
+    membership: {
+      allianceId: membershipAllianceId,
+      role,
+      joinedAt: membershipAllianceId === "0" ? "0" : "1770000000",
+    },
+    profile: membershipAllianceId === "0"
+      ? null
+      : {
+          active: true,
+          tag: "VDFT",
+          name: "Veydrift Union",
+          description: "",
+          owner: "0x1111111111111111111111111111111111111111",
+          createdAt: "1770000000",
+          memberCount: members.length + 1,
+        },
+    directory: [],
+    pendingInvites: [],
+    pendingJoinRequests: membershipAllianceId === "0" ? requests.map((request) => ({
+      allianceId: request.allianceId,
+      requester: wallet,
+      requestedAt: request.requestedAt,
+    })) : [],
+    allianceJoinRequests: requests,
+    members,
   };
 }
 
