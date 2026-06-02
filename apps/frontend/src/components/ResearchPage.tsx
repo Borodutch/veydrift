@@ -4,6 +4,7 @@ import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from 
 import {
   buildingCatalog,
   canAfford,
+  energyBalance,
   researchCatalog,
   researchDurationEstimate,
   researchLabRequirementFor,
@@ -21,6 +22,7 @@ import {
   InspectInfoRow,
   SingleItemQueueProgress,
 } from "./InspectProgressLayout";
+import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -369,7 +371,7 @@ function ResearchDetailPanel({
     researchState,
     state,
   });
-  const requirements = researchRequirementsFor(research.key);
+  const requirementStates = getResearchRequirementStates(state, research.key);
   const isSelectedResearchQueued = queue?.key === research.key;
 
   return (
@@ -402,7 +404,9 @@ function ResearchDetailPanel({
 
       <dl className="mt-4 grid gap-2">
         <InspectInfoRow label="Category" value={research.lane} />
-        <InspectInfoRow label="Requirements" value={formatResearchRequirements(requirements)} />
+        <InspectInfoRow label="Requirements">
+          <RequirementFlairs requirements={requirementStates} />
+        </InspectInfoRow>
         <InspectInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
         <InspectInfoRow
           label="Research time"
@@ -607,6 +611,16 @@ export function formatResearchRequirements(requirements: ResearchRequirement[]):
   return requirements.length > 0 ? requirements.map(formatRequirement).join(", ") : "None";
 }
 
+export function getResearchRequirementStates(
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  key: ResearchKey,
+): RequirementFlair[] {
+  return researchRequirementsFor(key).map((requirement) => ({
+    label: formatRequirement(requirement),
+    met: researchRequirementMet(state, requirement),
+  }));
+}
+
 export function formatCost(cost: Resources): string {
   const parts: Array<[string, number]> = [
     ["Metal", cost.metal],
@@ -640,4 +654,23 @@ function formatRequirement(requirement: ResearchRequirement): string {
 
   const research = researchCatalog.find((item) => item.key === requirement.key);
   return `${research?.label ?? requirement.key} ${requirement.level}`;
+}
+
+function researchRequirementMet(
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  requirement: ResearchRequirement,
+): boolean {
+  if (requirement.type === "building") {
+    return state.buildings[requirement.key] >= requirement.level;
+  }
+
+  if (requirement.type === "energy") {
+    return energyBalance(
+      state.buildings,
+      state.research.energy,
+      state.ships.solarSatellite,
+    ).produced >= requirement.produced;
+  }
+
+  return state.research[requirement.key] >= requirement.level;
 }

@@ -146,20 +146,36 @@ export function InspectDetailHero({
   );
 }
 
-export function InspectInfoBlock({ label, value }: { label: string; value: string }) {
+export function InspectInfoBlock({
+  children,
+  label,
+  value,
+}: {
+  children?: ComponentChildren | undefined;
+  label: string;
+  value?: string | undefined;
+}) {
   return (
     <p className="min-w-0">
       <span className="block text-xs uppercase tracking-normal text-slate-500">{label}</span>
-      <span className="mt-1 block break-words text-sm font-semibold text-slate-200">{value}</span>
+      {children ?? <span className="mt-1 block break-words text-sm font-semibold text-slate-200">{value}</span>}
     </p>
   );
 }
 
-export function InspectInfoRow({ label, value }: { label: string; value: string }) {
+export function InspectInfoRow({
+  children,
+  label,
+  value,
+}: {
+  children?: ComponentChildren | undefined;
+  label: string;
+  value?: string | undefined;
+}) {
   return (
     <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
       <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
-      <dd className="mt-1 break-words text-sm font-semibold text-slate-200">{value}</dd>
+      <dd className="mt-1 break-words text-sm font-semibold text-slate-200">{children ?? value}</dd>
     </div>
   );
 }
