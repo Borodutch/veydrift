@@ -3,6 +3,7 @@ import {
   infrastructureActionNoticeFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  refreshedInfrastructureUnavailableReasonFor,
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
 import { createInitialPlayableState } from "../src/playableMvp";
@@ -198,6 +199,32 @@ describe("Playable MVP app display helpers", () => {
       onChainStatus: "error",
       runtimeConfigStatus: "ready",
     })).toBe("Game state unavailable; upgrades are disabled until your wallet resources and building levels load.");
+  });
+
+  test("allows building transactions from refreshed live infrastructure resources", () => {
+    expect(refreshedInfrastructureUnavailableReasonFor({
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState(),
+      isWalletConnected: true,
+      onChainResources: undefined,
+      runtimeConfigStatus: "ready",
+    })).toBeUndefined();
+  });
+
+  test("blocks building transactions when refreshed infrastructure is unavailable", () => {
+    expect(refreshedInfrastructureUnavailableReasonFor({
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: {
+        ...infrastructureState(),
+        infrastructureAvailable: false,
+        unavailableReason: "Infrastructure is unavailable on this deployment.",
+      },
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toBe("Infrastructure is unavailable on this deployment.");
   });
 
   test("hydrates indexed planet state before requesting live settlement state", async () => {
