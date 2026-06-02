@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
-import { getBlockedReason, shipProductionItems } from "../src/components/ShipyardPage";
+import { getBlockedReason, getShipRequirementStates, shipProductionItems } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
 import { shipCatalog } from "../src/playableMvp";
 
@@ -51,6 +51,21 @@ describe("Shipyard page display helpers", () => {
       shipUnavailable: false,
       shipyardState: null,
     })).toBe("Waiting for chain state");
+  });
+
+  test("returns visible met and unmet ship requirement states", () => {
+    const smallCargo = shipCatalog.find((item) => item.key === "smallCargo");
+    expect(smallCargo).toBeDefined();
+
+    expect(getShipRequirementStates(smallCargo!, shipyardState({
+      shipyardLevel: 2,
+      technologyLevels: {
+        "3": 1,
+      },
+    }))).toEqual([
+      { label: "Shipyard 2", met: true },
+      { label: "Combustion Drive 2", met: false },
+    ]);
   });
 
   test("builds a dense catalog with owned counts and ready or locked states", () => {

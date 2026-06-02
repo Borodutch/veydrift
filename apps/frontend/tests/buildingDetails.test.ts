@@ -10,6 +10,7 @@ import {
   formatNumber,
   mineSolarPlantPrerequisiteFor,
 } from "../src/buildingDetails";
+import { getBuildingRequirementStates } from "../src/components/InfrastructurePage";
 import { buildingRequirementsFor, createInitialPlayableState, unmetBuildingRequirement } from "../src/playableMvp";
 
 describe("building detail helpers", () => {
@@ -128,6 +129,9 @@ describe("building detail helpers", () => {
       reason: "Requires Robotics Factory 1",
       targetLevel: 1,
     });
+    expect(getBuildingRequirementStates(state, "researchLab")).toEqual([
+      { label: "Robotics Factory 1", met: false },
+    ]);
   });
 
   test("allows Research Lab after Robotics Factory 1 exists", () => {
@@ -145,6 +149,9 @@ describe("building detail helpers", () => {
       reason: "Ready for Level 1",
       targetLevel: 1,
     });
+    expect(getBuildingRequirementStates(state, "researchLab")).toEqual([
+      { label: "Robotics Factory 1", met: true },
+    ]);
   });
 
   test("blocks Shipyard until Robotics Factory 2 exists", () => {
