@@ -137,7 +137,10 @@ export function OverviewPage({
   const localBuildingLabel = buildingQueue
     ? buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel)
     : settledState.queue?.label;
-  const onChainResearchQueue = researchQueueForDisplay(onChainQueues?.research ?? null, now);
+  const onChainResearchQueue = researchQueueForDisplay(onChainQueues?.research ?? null, now, {
+    buildings: settledState.buildings,
+    research: settledState.research,
+  });
   const activeResearchProgress = onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress;
   const onChainDefenseQueue = defenseQueuePreview(onChainQueues?.defense);
   const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
