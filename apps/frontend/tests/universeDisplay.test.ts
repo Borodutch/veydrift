@@ -14,6 +14,8 @@ import {
   PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
   formatAllianceLabel,
+  formatGalaxyAllianceIdentityLabel,
+  formatGalaxyCommanderLabel,
   formatMoonChanceLabel,
   formatMissionPreview,
   formatGalaxyOccupancySource,
@@ -159,6 +161,37 @@ describe("tester universe display data", () => {
       name: "Veydrift Union",
     });
     expect(formatAllianceLabel(planet?.alliance ?? null)).toBe("[VDFT] Veydrift Union");
+    expect(formatGalaxyAllianceIdentityLabel(planet?.alliance ?? null)).toBe("[VDFT]");
+    expect(formatGalaxyCommanderLabel(planet!)).toBe("0x2222...2222");
+  });
+
+  test("galaxy row commander and alliance copy stays explicit", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          archetype: "cold-tundra",
+          fields: 211,
+          galaxy: 2,
+          key: "2:44:8",
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          occupiedBy: {
+            ownerDisplayName: "Nova Prime",
+            owner: "0x2222222222222222222222222222222222222222",
+            planetId: "7",
+          },
+          position: 8,
+          system: 44,
+          temperature: -8,
+        },
+      ],
+    });
+
+    expect(formatGalaxyCommanderLabel(planet!)).toBe("Nova Prime");
+    expect(formatGalaxyAllianceIdentityLabel(planet?.alliance ?? null)).toBe("No alliance");
   });
 
   test("galaxy occupancy summary avoids implementation wording", () => {
