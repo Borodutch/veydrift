@@ -681,6 +681,14 @@ describe("Veydrift backend", () => {
         gameContractConfigured: false
       },
       configured: false,
+      readiness: {
+        ready: false,
+        configurationReady: false,
+        chainSyncConnected: null,
+        subscribedToLogs: null,
+        indexedState: null,
+        safeToServeIndexedState: null
+      },
       chainSync: null,
       indexer: null,
       missionResolution: null,
@@ -1004,6 +1012,9 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({
       wallet: player,
       homePlanetId: "7",
+      queues: {
+        research: null
+      },
       planets: [
         {
           planetId: "7",

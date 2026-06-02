@@ -6,6 +6,8 @@ import {
   loadWalletPlanetSyncSnapshot,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
+  researchCompletionUnavailableReasonFor,
+  researchStateForCompletionRevalidation,
   researchStartTransactionLabel,
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
@@ -14,7 +16,7 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainInfrastructureState } from "../src/walletFlow";
+import type { ChainInfrastructureState, ChainResearchState } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   test("does not duplicate pending infrastructure action messages", () => {
@@ -191,6 +193,75 @@ describe("Playable MVP app display helpers", () => {
       ],
       queue: null,
     })).toBe("Energy Technology level 2 research");
+  });
+
+  test("blocks research completion transactions until the active queue is ready", () => {
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600",
+          startedAt: "1699997000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+    })).toBe("Research is not ready to complete yet.");
+
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_600_000,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600",
+          startedAt: "1699997000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+    })).toBeUndefined();
+  });
+
+  test("revalidates research completion against live research state before wallet submission", async () => {
+    const fallback = researchState();
+    const latest = researchState({
+      queue: {
+        active: true,
+        kind: "research",
+        itemId: 0,
+        targetLevel: 2,
+        readyAt: "1700000600",
+        startedAt: "1699997000",
+        cost: { metal: "0", crystal: "1600", deuterium: "800" },
+      },
+    });
+    const calls: unknown[][] = [];
+
+    const result = await researchStateForCompletionRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback,
+      loadResearchState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(latest);
+      }) as never,
+    });
+
+    expect(result).toBe(latest);
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+      { source: "live" },
+    ]]);
   });
 
   test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
@@ -467,6 +538,52 @@ describe("Playable MVP app display helpers", () => {
     }
   });
 
+  test("keeps indexed active research queues in the reload snapshot", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const requestedPaths: string[] = [];
+    const activeResearch = {
+      active: true,
+      kind: "research",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: "1770000600",
+      startedAt: "1770000000",
+      cost: {
+        metal: "800",
+        crystal: "400",
+        deuterium: "0",
+      },
+    };
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      requestedPaths.push(url.pathname);
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          queues: {
+            research: activeResearch,
+          },
+          planets: [indexedPlanet(wallet)],
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
+
+      expect(snapshot.queues.research).toEqual(activeResearch);
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("uses indexed queues for the requested active planet", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
@@ -609,6 +726,24 @@ function infrastructureState({
     energyBalance,
     storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
     buildings: [],
+    queue: queue ?? null,
+  };
+}
+
+function researchState({
+  queue,
+}: Partial<Pick<ChainResearchState, "queue">> = {}): ChainResearchState {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: "7",
+    researchAvailable: true,
+    resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+    researchLabLevel: 1,
+    researchNetworkLabLevels: [],
+    technologyLevels: { "0": 1 },
+    technologies: [
+      { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
+    ],
     queue: queue ?? null,
   };
 }
