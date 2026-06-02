@@ -7,6 +7,7 @@ import { formatDurationUntil } from "../durationFormat";
 import { CombatStatsInfoButton } from "./CombatStatsInfo";
 import { OptimizedImage } from "./OptimizedImage";
 import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
+import { QueueProgressPanel } from "./QueueProgressPanel";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -69,16 +70,6 @@ export function ShipyardPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {queue && (
-            <button
-              className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={!canTransact || actionState.status === "pending"}
-              onClick={queueReady ? onFinish : onCollect}
-              type="button"
-            >
-              {queueReady ? "Complete queue" : "Refresh queue"}
-            </button>
-          )}
           <button
             className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
             onClick={onRefresh}
@@ -93,72 +84,83 @@ export function ShipyardPage({
         actionState={actionState}
         error={error}
         loading={loading}
-        queue={queue}
-        queueReady={queueReady}
         shipyardState={shipyardState}
       />
 
       {initialLoading ? (
         <VeydriftLoader label="Syncing shipyard" />
       ) : (
-        (["civil", "combat", "special"] as const).map((group) => (
-          <section className="grid gap-3" key={group}>
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                {groupLabels[group]}
-              </h3>
-              <span className="h-px flex-1 bg-white/10" />
-            </div>
-            <div className="grid gap-3 xl:grid-cols-2">
-              {shipCatalog
-                .filter((ship) => ship.group === group)
-                .map((ship) => {
-                  const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
-                  const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
-                  const owned = productionAvailable && chainShip ? chainShip.count : undefined;
-                  const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
-                  const quantity = quantities[ship.key] ?? 1;
-                  const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
-                  const durationSeconds = baseCost
-                    ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
-                    : undefined;
-                  const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
-                  const requirementStates = getShipRequirementStates(ship, shipyardState);
-                  const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
-                  const blockedReason = getBlockedReason({
-                    affordable,
-                    canTransact,
-                    hasPlanet: Boolean(shipyardState?.homePlanetId),
-                    missing,
-                    queueActive: Boolean(queue),
-                    resources,
-                    shipUnavailable,
-                    shipyardState,
-                  });
-                  const actionPending = actionState.status === "pending";
-                  const disabled = Boolean(blockedReason) || actionPending;
+        <>
+          {queue ? (
+            <ActiveShipyardQueuePanel
+              actionPending={actionState.status === "pending"}
+              canTransact={canTransact}
+              onCollect={onCollect}
+              onFinish={onFinish}
+              queue={queue}
+              queueReady={queueReady}
+            />
+          ) : null}
 
-                  return (
-                    <ShipTile
-                      blockedReason={blockedReason}
-                      cost={totalCost}
-                      disabled={disabled}
-                      durationSeconds={durationSeconds}
-                      key={ship.key}
-                      missing={missing}
-                      onBuild={() => onBuild(ship.id, ship.key, quantity)}
-                      onQuantity={(next) => setQuantities((prev) => ({ ...prev, [ship.key]: next }))}
-                      owned={owned}
-                      buttonLabel={actionPending ? "Pending" : "Build"}
-                      quantity={quantity}
-                      requirementStates={requirementStates}
-                      ship={ship}
-                    />
-                  );
-                })}
-            </div>
-          </section>
-        ))
+          {(["civil", "combat", "special"] as const).map((group) => (
+            <section className="grid gap-3" key={group}>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  {groupLabels[group]}
+                </h3>
+                <span className="h-px flex-1 bg-white/10" />
+              </div>
+              <div className="grid gap-3 xl:grid-cols-2">
+                {shipCatalog
+                  .filter((ship) => ship.group === group)
+                  .map((ship) => {
+                    const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
+                    const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
+                    const owned = productionAvailable && chainShip ? chainShip.count : undefined;
+                    const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
+                    const quantity = quantities[ship.key] ?? 1;
+                    const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+                    const durationSeconds = baseCost
+                      ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
+                      : undefined;
+                    const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
+                    const requirementStates = getShipRequirementStates(ship, shipyardState);
+                    const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
+                    const blockedReason = getBlockedReason({
+                      affordable,
+                      canTransact,
+                      hasPlanet: Boolean(shipyardState?.homePlanetId),
+                      missing,
+                      queueActive: Boolean(queue),
+                      resources,
+                      shipUnavailable,
+                      shipyardState,
+                    });
+                    const actionPending = actionState.status === "pending";
+                    const disabled = Boolean(blockedReason) || actionPending;
+
+                    return (
+                      <ShipTile
+                        blockedReason={blockedReason}
+                        buttonLabel={actionPending ? "Pending" : "Build"}
+                        cost={totalCost}
+                        disabled={disabled}
+                        durationSeconds={durationSeconds}
+                        key={ship.key}
+                        missing={missing}
+                        onBuild={() => onBuild(ship.id, ship.key, quantity)}
+                        onQuantity={(next) => setQuantities((prev) => ({ ...prev, [ship.key]: next }))}
+                        owned={owned}
+                        quantity={quantity}
+                        requirementStates={requirementStates}
+                        ship={ship}
+                      />
+                    );
+                  })}
+              </div>
+            </section>
+          ))}
+        </>
       )}
     </div>
   );
@@ -168,15 +170,11 @@ function StatusPanel({
   actionState,
   error,
   loading,
-  queue,
-  queueReady,
   shipyardState,
 }: {
   actionState: ShipyardActionState;
   error: string | undefined;
   loading: boolean;
-  queue: ChainShipyardState["queue"] | undefined;
-  queueReady: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
 }) {
   if (loading && shipyardState) {
@@ -212,16 +210,44 @@ function StatusPanel({
     return <Notice tone={tone}>{actionState.label}</Notice>;
   }
 
-  if (queue) {
-    const ship = shipCatalog.find((item) => item.id === queue.itemId);
-    return (
-      <Notice tone={queueReady ? "success" : "neutral"}>
-        {ship?.label ?? "Ship"} production: {queue.quantity ?? 0} queued, ready {formatReady(queue.readyAt)}.
-      </Notice>
-    );
-  }
-
   return null;
+}
+
+function ActiveShipyardQueuePanel({
+  actionPending,
+  canTransact,
+  onCollect,
+  onFinish,
+  queue,
+  queueReady,
+}: {
+  actionPending: boolean;
+  canTransact: boolean;
+  onCollect: () => void;
+  onFinish: () => void;
+  queue: NonNullable<ChainShipyardState["queue"]>;
+  queueReady: boolean;
+}) {
+  const ship = shipCatalog.find((item) => item.id === queue.itemId);
+
+  return (
+    <QueueProgressPanel
+      action={{
+        disabled: !canTransact || actionPending,
+        label: queueReady ? "Complete queue" : "Refresh queue",
+        onClick: queueReady ? onFinish : onCollect,
+      }}
+      asset={ship?.asset}
+      label={ship?.label ?? "Ship"}
+      quantity={queue.quantity ?? 0}
+      readyAt={queue.readyAt}
+      startedAt={queue.startedAt}
+      title="Shipyard queue"
+      tone="sky"
+    >
+      Ready {formatReady(queue.readyAt)}.
+    </QueueProgressPanel>
+  );
 }
 
 function ShipTile({

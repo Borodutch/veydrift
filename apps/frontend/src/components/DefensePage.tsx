@@ -6,6 +6,7 @@ import type { ChainDefenseState } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { CombatStatsInfoButton } from "./CombatStatsInfo";
 import { OptimizedImage } from "./OptimizedImage";
+import { QueueProgressPanel } from "./QueueProgressPanel";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -233,33 +234,22 @@ function ActiveDefenseQueuePanel({
   const defense = defenseCatalog.find((item) => item.id === queue.itemId);
 
   return (
-    <section className="grid gap-3 rounded border border-rose-300/20 bg-rose-300/5 p-3 sm:grid-cols-[64px_minmax(0,1fr)_auto] sm:items-center">
-      <div className="h-14 w-14 overflow-hidden rounded-md border border-white/10 bg-black/20 p-1">
-        {defense ? (
-          <OptimizedImage
-            alt=""
-            className="h-full w-full object-contain"
-            sizes="icon"
-            src={defense.asset}
-          />
-        ) : null}
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-rose-200">Active queue</p>
-        <p className="mt-1 break-words text-sm font-semibold text-white">
-          {defense?.label ?? "Defense"} x{format(queue.quantity ?? 0)}
-        </p>
-        <p className="mt-1 text-xs text-slate-400">Ready {formatReady(queue.readyAt)}</p>
-      </div>
-      <button
-        className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-        disabled={!canTransact || !queueReady || actionPending}
-        onClick={onFinish}
-        type="button"
-      >
-        Complete queue
-      </button>
-    </section>
+    <QueueProgressPanel
+      action={{
+        disabled: !canTransact || !queueReady || actionPending,
+        label: "Complete queue",
+        onClick: onFinish,
+      }}
+      asset={defense?.asset}
+      label={defense?.label ?? "Defense"}
+      quantity={queue.quantity ?? 0}
+      readyAt={queue.readyAt}
+      startedAt={queue.startedAt}
+      title="Active queue"
+      tone="rose"
+    >
+      Ready {formatReady(queue.readyAt)}.
+    </QueueProgressPanel>
   );
 }
 
