@@ -5,6 +5,8 @@ import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import {
   assertAddress,
+  type Address,
+  type AllianceIdentity,
   type AllianceState,
   type ChainReader,
   type DefenseState,
@@ -659,6 +661,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           report
         ])
       );
+      const allianceIntel = await allianceIntelForOccupiedPlanets(
+        Array.from(occupied.values()),
+        createLiveChainReader()
+      );
 
       return Response.json(
         {
@@ -672,7 +678,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             system
           ).map((planet) => ({
             ...planet,
-            occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer),
+            occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
             debrisField: debrisFieldRef(debris.get(planet.position)),
             moonChance: moonChanceReportRef(moonChance.get(planet.position))
           }))
@@ -696,7 +702,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             galaxy,
             center,
             radius,
-            systems: Array.from({ length: to - from + 1 }, (_, index) => {
+            systems: await Promise.all(Array.from({ length: to - from + 1 }, async (_, index) => {
               const system = from + index;
               const occupied = new Map(
                 (indexer?.settledPlanetsInSystem(galaxy, system) ?? []).map((planet) => [
@@ -716,6 +722,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   report
                 ])
               );
+              const allianceIntel = await allianceIntelForOccupiedPlanets(
+                Array.from(occupied.values()),
+                createLiveChainReader()
+              );
               const snapshot = systemSnapshot(
                 loaded.config.chainId,
                 universeContractAddress(loaded.config),
@@ -734,12 +744,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   system
                 ).map((planet) => ({
                   ...planet,
-                  occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer),
+                  occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
                   debrisField: debrisFieldRef(debris.get(planet.position)),
                   moonChance: moonChanceReportRef(moonChance.get(planet.position))
                 }))
               };
-            })
+            }))
           },
           {
             headers: corsHeaders
@@ -1338,15 +1348,35 @@ function includeOccupiedPlanets(
 
 function occupiedPlanetRef(
   planet: SettledPlanetEvent | undefined,
-  indexer: SettlementIndexer | undefined
-): { planetId: string; owner: string; ownerDisplayName: string | null } | null {
+  indexer: SettlementIndexer | undefined,
+  allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map()
+): { planetId: string; owner: string; ownerDisplayName: string | null; alliance: AllianceIdentity | null } | null {
   return planet
     ? {
         planetId: planet.planetId,
         owner: planet.owner,
-        ownerDisplayName: indexer?.playerProfile(planet.owner).displayName ?? null
+        ownerDisplayName: indexer?.playerProfile(planet.owner).displayName ?? null,
+        alliance: allianceIntel.get(planet.owner.toLowerCase()) ?? null
       }
     : null;
+}
+
+async function allianceIntelForOccupiedPlanets(
+  planets: readonly SettledPlanetEvent[],
+  chainReader: ChainReader | undefined
+): Promise<Map<string, AllianceIdentity>> {
+  const result = new Map<string, AllianceIdentity>();
+  if (!chainReader?.getAllianceIntelForPlayers || planets.length === 0) return result;
+
+  try {
+    const owners = Array.from(new Set(planets.map((planet) => planet.owner.toLowerCase() as Address)));
+    const intel = await chainReader.getAllianceIntelForPlayers(owners);
+    for (const [owner, alliance] of intel) result.set(owner.toLowerCase(), alliance);
+  } catch (error) {
+    console.error("Alliance intel lookup failed", error);
+  }
+
+  return result;
 }
 
 function debrisFieldRef(field: IndexedDebrisFieldEvent | undefined): { metal: string; crystal: string } | null {

@@ -13,6 +13,7 @@ import {
   estimateGalaxyMissionPreview,
   PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
+  formatAllianceLabel,
   formatMoonChanceLabel,
   formatMissionPreview,
   formatGalaxyOccupancySource,
@@ -121,6 +122,43 @@ describe("tester universe display data", () => {
         planetId: "7",
       },
     });
+  });
+
+  test("real indexed occupancy preserves owner alliance intel when the API provides it", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          archetype: "cold-tundra",
+          fields: 211,
+          galaxy: 2,
+          key: "2:44:8",
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          occupiedBy: {
+            alliance: {
+              allianceId: "3",
+              tag: "VDFT",
+              name: "Veydrift Union",
+            },
+            owner: "0x2222222222222222222222222222222222222222",
+            planetId: "7",
+          },
+          position: 8,
+          system: 44,
+          temperature: -8,
+        },
+      ],
+    });
+
+    expect(planet?.alliance).toEqual({
+      allianceId: "3",
+      tag: "VDFT",
+      name: "Veydrift Union",
+    });
+    expect(formatAllianceLabel(planet?.alliance ?? null)).toBe("[VDFT] Veydrift Union");
   });
 
   test("galaxy occupancy summary avoids implementation wording", () => {

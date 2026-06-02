@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
   Address,
+  AllianceIdentity,
   AllianceState,
   AttackProtectionStatus,
   ChainReader,
@@ -912,6 +913,49 @@ describe("Veydrift backend", () => {
       }
     });
     expect(response.status).toBe(200);
+  });
+
+  test("adds real owner alliance identity to galaxy planet rows when the chain reader can resolve it", async () => {
+    const chainReader = new class extends MockChainReader {
+      async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+        expect(wallets).toContain(player);
+        return new Map([
+          [player, {
+            allianceId: "3",
+            name: "Veydrift Union",
+            tag: "VDFT"
+          }]
+        ]);
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+
+    const response = await createRequestHandler({
+      config: {
+        ...configuredTestConfig,
+        allianceContractAddress: "0x4444444444444444444444444444444444444444"
+      },
+      chainReader,
+      indexer
+    })(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const body = await response.json();
+    const occupied = body.planets.find((item: { position: number }) => item.position === 9);
+
+    expect(occupied.occupiedBy).toMatchObject({
+      alliance: {
+        allianceId: "3",
+        name: "Veydrift Union",
+        tag: "VDFT"
+      },
+      owner: player,
+      planetId: "7"
+    });
   });
 
   test("answers wallet planet management state from a mocked chain reader", async () => {
