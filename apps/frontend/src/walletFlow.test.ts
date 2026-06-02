@@ -1406,6 +1406,31 @@ describe("walletFlow", () => {
     }
   });
 
+  test("explains indexed highscore warmup without leaving rankings on loading copy", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({
+        error: "highscores_index_not_ready",
+        detail: "Rankings are warming from indexed game state.",
+        retryable: true,
+        source: "contract-state-indexer"
+      }),
+      {
+        headers: { "content-type": "application/json" },
+        status: 503,
+      }
+    )) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
+        "Rankings are warming from indexed game state. Retry in a moment."
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("explains highscore network and CORS failures instead of exposing Failed to fetch", async () => {
     const originalFetch = globalThis.fetch;
 
