@@ -536,6 +536,8 @@ export function walletRequestErrorMessage(error: unknown): string {
 
 const buildingUpgradeRevertReasons: Record<string, string> = {
   "0xcec62bc2": "Another building is already upgrading. Finish the active building queue before starting a new upgrade.",
+  "0x7e787175": "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.",
+  "0x4499d03a": "The active building upgrade is not ready to finish yet. Refresh infrastructure state and retry.",
   "0x2ab0f96f": "Not enough on-chain resources are available for this building upgrade. Refresh infrastructure state and retry.",
   "0xb8f7e9ba": "This building upgrade is missing an on-chain prerequisite.",
   "0x359b57cf": "This planet has no free fields for another building upgrade.",
@@ -1361,15 +1363,18 @@ export async function sendFinishBuildingUpgradeTransaction(
   contractAddress: string,
   planetId: string
 ): Promise<string> {
+  const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
+  const transaction = {
+    from: account,
+    to: contractAddress,
+    data
+  };
+
+  await assertBuildingUpgradeCallSucceeds(provider, account, contractAddress, data);
+
   return provider.request<string>({
     method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId])
-      }
-    ]
+    params: [transaction]
   });
 }
 
