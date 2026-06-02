@@ -148,6 +148,7 @@ describe("Infrastructure page display helpers", () => {
     const solarRows = detailEffectRows(solarEffect, buildingEnergyDetail(mineBuildings, "solarPlant"));
 
     expect(solarRows).toContainEqual({
+      delta: "+26",
       label: "Energy output",
       next: "48 produced",
       value: "22 produced",

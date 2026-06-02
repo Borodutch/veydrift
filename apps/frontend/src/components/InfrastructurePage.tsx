@@ -735,6 +735,9 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (effect.kind === "energy") {
     rows.push({
+      ...(effect.deltaProduced !== 0 && effect.currentDeuteriumConsumed === 0 && effect.nextDeuteriumConsumed === 0
+        ? { delta: formatSigned(effect.deltaProduced) }
+        : {}),
       label: "Energy output",
       next: `${formatNumber(effect.nextProduced)} produced`,
       value: `${formatNumber(effect.currentProduced)} produced`,
