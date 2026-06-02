@@ -2393,6 +2393,10 @@ describe("Veydrift backend", () => {
       liveReads.push("research");
       throw new Error("research should not call live RPC");
     };
+    chainReader.getMoonState = async () => {
+      liveReads.push("moon");
+      throw new Error("moon should not call live RPC");
+    };
     chainReader.getRiftState = async () => {
       liveReads.push("rift");
       throw new Error("rift should not call live RPC");
@@ -2417,6 +2421,7 @@ describe("Veydrift backend", () => {
       ["shipyard", "shipyard"],
       ["defenses", "defenses"],
       ["research", "research"],
+      ["moon", "moon"],
       ["rift", "rift"]
     ] as const) {
       const response = await handler(new Request(`http://localhost/wallet/${player}/${path}`));
@@ -2444,6 +2449,7 @@ describe("Veydrift backend", () => {
     let shipyardLiveReadCalled = false;
     let defenseLiveReadCalled = false;
     let researchLiveReadCalled = false;
+    let moonLiveReadCalled = false;
     let riftLiveReadCalled = false;
     chainReader.getPlayerQueues = async (wallet: Address, planetId?: bigint) => {
       queuesLiveReadCalled = true;
@@ -2469,6 +2475,11 @@ describe("Veydrift backend", () => {
       researchLiveReadCalled = true;
       expect(planetId).toBeUndefined();
       return baseReader.getResearchState(wallet);
+    };
+    chainReader.getMoonState = async (wallet: Address, planetId?: bigint) => {
+      moonLiveReadCalled = true;
+      expect(planetId).toBeUndefined();
+      return baseReader.getMoonState(wallet);
     };
     chainReader.getRiftState = async (wallet: Address, planetId?: bigint) => {
       riftLiveReadCalled = true;
@@ -2501,6 +2512,8 @@ describe("Veydrift backend", () => {
     const defensesBody = await defensesResponse.json();
     const researchResponse = await handler(new Request(`http://localhost/wallet/${player}/research?source=live`));
     const researchBody = await researchResponse.json();
+    const moonResponse = await handler(new Request(`http://localhost/wallet/${player}/moon?source=live`));
+    const moonBody = await moonResponse.json();
     const riftResponse = await handler(new Request(`http://localhost/wallet/${player}/rift?source=live`));
     const riftBody = await riftResponse.json();
 
@@ -2532,6 +2545,10 @@ describe("Veydrift backend", () => {
     expect(researchResponse.headers.get("x-veydrift-index-state")).toBeNull();
     expect(researchLiveReadCalled).toBe(true);
     expect(researchBody.researchLabLevel).toBe(1);
+    expect(moonResponse.status).toBe(200);
+    expect(moonResponse.headers.get("x-veydrift-index-state")).toBeNull();
+    expect(moonLiveReadCalled).toBe(true);
+    expect(moonBody.moon?.exists).toBe(true);
     expect(riftResponse.status).toBe(200);
     expect(riftResponse.headers.get("x-veydrift-index-state")).toBeNull();
     expect(riftLiveReadCalled).toBe(true);
