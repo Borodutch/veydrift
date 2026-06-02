@@ -373,6 +373,11 @@ export type ChainAllianceState = {
     allianceId: string;
     requester: string;
     requesterDisplayName?: string | null;
+    requesterMembership?: {
+      allianceId: string;
+      role: AllianceRole;
+      joinedAt: string;
+    };
     requestedAt: string;
   }>;
   members: Array<{
