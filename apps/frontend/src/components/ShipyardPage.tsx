@@ -221,7 +221,8 @@ export function shipProductionItems({
       shipyardState,
     });
     const disabled = Boolean(blockedReason) || actionPending;
-    const stats = shipCombatStats(ship).rows.slice(0, 3).map((row) => `${row.label} ${row.value}`).join(" · ");
+    const combatStats = shipCombatStats(ship);
+    const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
 
     return {
       actionLabel: "Build",
@@ -244,6 +245,7 @@ export function shipProductionItems({
       quantity,
       queued,
       requirements,
+      notes: combatStats.notes,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
     };

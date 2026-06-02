@@ -1,4 +1,4 @@
-import { queueProgress as queueProgressValue, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
+import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Check, Pencil, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
@@ -155,6 +155,14 @@ export function OverviewPage({
     buildings: settledState.buildings,
     research: settledState.research,
   });
+  const onChainResearchAsset = onChainResearchQueue
+    ? researchCatalog.find((research) => research.key === onChainResearchQueue.key)?.asset
+    : onChainQueues?.research?.itemId === undefined
+      ? undefined
+      : researchCatalog.find((research) => research.id === onChainQueues.research?.itemId)?.asset;
+  const settledResearchAsset = settledState.researchQueue
+    ? researchCatalog.find((research) => research.key === settledState.researchQueue?.key)?.asset
+    : undefined;
   const activeResearchProgress = onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress;
   const onChainDefenseQueue = defenseQueuePreview(onChainQueues?.defense);
   const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
@@ -620,6 +628,7 @@ export function OverviewPage({
                 progress={activeResearchProgress}
                 readyAt={onChainResearchQueue.readyAt}
                 startedAt={onChainResearchQueue.startedAt}
+                thumbnailSrc={onChainResearchAsset}
                 color="bg-cyan-300"
                 now={now}
               />
@@ -632,6 +641,7 @@ export function OverviewPage({
                 label={`${onChainQueues.research.kind === "research" ? "Research" : onChainQueues.research.kind} level ${onChainQueues.research.targetLevel}`}
                 remaining={queueRemaining(onChainQueues.research.readyAt, now)}
                 indeterminate
+                thumbnailSrc={onChainResearchAsset}
                 color="bg-cyan-300"
               />
               <OverviewResearchFinishButton action={researchFinishAction} />
@@ -645,6 +655,7 @@ export function OverviewPage({
                 progress={activeResearchProgress}
                 readyAt={settledState.researchQueue.readyAt}
                 startedAt={settledState.researchQueue.startedAt}
+                thumbnailSrc={settledResearchAsset}
                 color="bg-cyan-300"
                 now={now}
               />
