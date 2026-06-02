@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, Ref } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { formatDurationUntil } from "../durationFormat";
 import { queueProgressPercent, type QueueTimeline } from "../playableMvp";
@@ -6,6 +6,82 @@ import { formatUserTimestamp } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
 
 const loadedDetailImageKeys = new Set<string>();
+
+export function useInspectDetailSelection<ItemKey>(
+  onSelectItem?: ((key: ItemKey) => void) | undefined,
+) {
+  const detailPanelRef = useRef<HTMLDivElement>(null);
+
+  function selectInspectItem(key: ItemKey) {
+    onSelectItem?.(key);
+
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches) {
+      window.setTimeout(() => {
+        detailPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, 0);
+    }
+  }
+
+  return { detailPanelRef, selectInspectItem };
+}
+
+export function InspectPageHeader({
+  actions,
+  description,
+  title,
+}: {
+  actions?: ComponentChildren | undefined;
+  description: string;
+  title: string;
+}) {
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        <p className="text-xs text-slate-400">
+          {description}
+        </p>
+      </div>
+      {actions ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {actions}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function InspectTwoColumnLayout({
+  catalog,
+  catalogClassName = "grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-3 2xl:grid-cols-4",
+  detail,
+  detailPanelRef,
+}: {
+  catalog: ComponentChildren;
+  catalogClassName?: string | undefined;
+  detail: ComponentChildren;
+  detailPanelRef?: Ref<HTMLDivElement> | undefined;
+}) {
+  const detailPanel = detailPanelRef ? (
+    <div className="order-1 xl:order-2" ref={detailPanelRef}>
+      {detail}
+    </div>
+  ) : (
+    <div className="order-1 xl:order-2">
+      {detail}
+    </div>
+  );
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
+      <div className={`order-2 xl:order-1 ${catalogClassName}`}>
+        {catalog}
+      </div>
+
+      {detailPanel}
+    </div>
+  );
+}
 
 export function InspectCatalogTile({
   asset,
