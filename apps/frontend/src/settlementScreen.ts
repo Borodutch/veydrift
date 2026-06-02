@@ -14,7 +14,7 @@ export type PlanetState =
   | { kind: "contract-unconfigured" }
   | { kind: "not-settled" }
   | { kind: "legacy-settled"; planet: PlanetSummary }
-  | { kind: "pending"; txHash?: string }
+  | { kind: "pending"; label?: string; txHash?: string }
   | { kind: "success"; planet: PlanetSummary }
   | { kind: "already-settled"; planet: PlanetSummary }
   | { kind: "rejected"; message: string }

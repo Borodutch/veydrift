@@ -21,6 +21,8 @@ interface TopBarProps {
   coordinates?: string | undefined;
   isWalletConnected: boolean;
   canCollectResources?: boolean | undefined;
+  collectResourcesPending?: boolean | undefined;
+  collectResourcesPendingLabel?: string | undefined;
   energy?: EnergyBalance | undefined;
   onCollectResources?: (() => void) | undefined;
   showCollectResources?: boolean | undefined;
@@ -39,15 +41,20 @@ export function TopBar({
   energy,
   isWalletConnected,
   canCollectResources = false,
+  collectResourcesPending = false,
+  collectResourcesPendingLabel,
   onCollectResources,
   showCollectResources = false,
 }: TopBarProps) {
   const showResourceDetails = Boolean(resources);
   const showCollectButton = isWalletConnected
     && showCollectResources
-    && canCollectResources
+    && (canCollectResources || collectResourcesPending)
     && resourceStatus === "ready"
     && Boolean(onCollectResources);
+  const collectTitle = collectResourcesPending
+    ? collectResourcesPendingLabel ?? "Resource collection pending"
+    : collectResourcesTitle(resourceDeltas, canCollectResources);
 
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
@@ -107,15 +114,15 @@ export function TopBar({
           </a>
           {showCollectButton && (
             <button
-              aria-label={collectResourcesTitle(resourceDeltas, canCollectResources)}
+              aria-label={collectTitle}
               className="col-start-6 grid h-7 w-7 shrink-0 place-items-center rounded border border-cyan-300/30 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-start-auto sm:inline-flex sm:w-auto sm:px-2.5 sm:text-[11px] sm:font-semibold sm:leading-none"
-              disabled={!canCollectResources}
+              disabled={!canCollectResources || collectResourcesPending}
               onClick={onCollectResources}
-              title={collectResourcesTitle(resourceDeltas, canCollectResources)}
+              title={collectTitle}
               type="button"
             >
               <Download aria-hidden="true" className="h-3.5 w-3.5 sm:hidden" strokeWidth={2.25} />
-              <span className="sr-only sm:not-sr-only">Collect</span>
+              <span className="sr-only sm:not-sr-only">{collectResourcesPending ? "Pending" : "Collect"}</span>
             </button>
           )}
           {queue && (

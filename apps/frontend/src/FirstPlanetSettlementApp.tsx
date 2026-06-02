@@ -1,11 +1,17 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import heroUrl from "./assets/veydrift-hero.webp";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
+import {
+  createTransactionActionGate,
+  transactionAwaitingWalletLabel,
+  transactionConfirmingLabel,
+  transactionSyncingLabel,
+} from "./transactionActionGate";
 import {
   ensureBaseSepoliaNetwork,
   getChainId,
@@ -55,6 +61,7 @@ export function FirstPlanetSettlementApp() {
     kind: "idle"
   });
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
+  const transactionActionGate = useRef(createTransactionActionGate()).current;
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -343,34 +350,44 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function settlePlanet() {
-    if (!provider || wallet.kind !== "connected") {
-      return;
-    }
+    await transactionActionGate.run("settlement:first-planet", async () => {
+      if (!provider || wallet.kind !== "connected") {
+        return;
+      }
 
-    setPlanet({
-      kind: "pending"
-    });
-
-    try {
-      const txHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig);
+      const label = "First planet settlement";
       setPlanet({
         kind: "pending",
-        txHash
+        label: transactionAwaitingWalletLabel(label)
       });
-      await waitForReceipt(provider, txHash);
 
-      const settlement = await waitForSettledPlanet(provider, wallet.account, settlementConfig);
+      try {
+        const txHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig);
+        setPlanet({
+          kind: "pending",
+          label: transactionConfirmingLabel(label, txHash),
+          txHash
+        });
+        await waitForReceipt(provider, txHash);
+        setPlanet({
+          kind: "pending",
+          label: transactionSyncingLabel(label),
+          txHash
+        });
 
-      setPlanet({
-        kind: "success",
-        planet: settlement.planet
-      });
-    } catch (error) {
-      setPlanet({
-        kind: isUserRejected(error) ? "rejected" : "error",
-        message: isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error)
-      });
-    }
+        const settlement = await waitForSettledPlanet(provider, wallet.account, settlementConfig);
+
+        setPlanet({
+          kind: "success",
+          planet: settlement.planet
+        });
+      } catch (error) {
+        setPlanet({
+          kind: isUserRejected(error) ? "rejected" : "error",
+          message: isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error)
+        });
+      }
+    });
   }
 
   if (hasOverview) {
@@ -503,7 +520,7 @@ function FlowBody({
     return (
       <StateMessage
         title="Colony drop in progress"
-        body={planet.txHash ? `Transaction beacon: ${planet.txHash}` : "Confirm the settlement launch in your wallet."}
+        body={planet.label ?? (planet.txHash ? `Transaction beacon: ${planet.txHash}` : "Confirm the settlement launch in your wallet.")}
         tone="scanning"
       />
     );
