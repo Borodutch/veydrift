@@ -2261,6 +2261,15 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [account, gameContract, provider, refreshStartedResearchState, researchState, runResearchTransaction]);
 
   const handleFinishResearch = useCallback(() => {
+    console.info("Research completion click received", {
+      hasAccount: Boolean(account),
+      hasGameContract: Boolean(gameContract),
+      hasOverviewQueue: Boolean(onChainQueues?.research),
+      hasProvider: Boolean(provider),
+      hasQueue: Boolean(researchState?.queue?.active),
+      itemId: researchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
+      targetLevel: researchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
+    });
     const canTransact = Boolean(provider && account && gameContract);
     const unavailableReason = overviewResearchCompletionUnavailableReasonFor({
       canTransact,
@@ -2268,6 +2277,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       researchState,
     });
     if (unavailableReason) {
+      console.info("Research completion blocked before wallet request", { reason: unavailableReason });
       setResearchAction({ status: "error", label: unavailableReason });
       return;
     }
@@ -2294,14 +2304,23 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         researchState: latestResearchState,
       });
       if (latestUnavailableReason) {
+        console.info("Research completion blocked after live revalidation", { reason: latestUnavailableReason });
         throw new Error(latestUnavailableReason);
       }
 
-      return sendFinishResearchTransaction(
-        provider,
-        account,
-        gameContract,
-      );
+      console.info("Research completion wallet request starting", expectation);
+      try {
+        const txHash = await sendFinishResearchTransaction(
+          provider,
+          account,
+          gameContract,
+        );
+        console.info("Research completion wallet request returned", { txHash });
+        return txHash;
+      } catch (error) {
+        console.error("Research completion wallet request failed", error);
+        throw error;
+      }
     }, () => refreshFinishedResearchState(expectation));
   }, [
     account,
