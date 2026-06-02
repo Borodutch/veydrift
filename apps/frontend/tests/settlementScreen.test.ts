@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { indexedSettlementState } from "../src/FirstPlanetSettlementApp";
+import { indexedSettlementState, settlementLaunchBlocker } from "../src/FirstPlanetSettlementApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "../src/settlementScreen";
 
 const connected = {
@@ -75,5 +75,39 @@ describe("settlement screen mode", () => {
       homePlanetId: null,
       planet: null,
     })).toEqual({ kind: "not-settled" });
+  });
+
+  test("blocks settlement launch until funding info is ready and affordable", () => {
+    expect(settlementLaunchBlocker(false, { status: "ready", funding: {
+      affordable: true,
+      balanceWei: 1n,
+      contractKind: "game",
+      startPriceWei: 1n,
+    } })).toContain("contract address");
+
+    expect(settlementLaunchBlocker(true, { status: "loading" })).toContain("still loading");
+    expect(settlementLaunchBlocker(true, {
+      status: "error",
+      message: "RPC unavailable",
+    })).toBe("RPC unavailable");
+    expect(settlementLaunchBlocker(true, { status: "ready", funding: {
+      affordable: false,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: 1n,
+      unavailableReason: "Resource token reserves are not configured.",
+    } })).toBe("Resource token reserves are not configured.");
+    expect(settlementLaunchBlocker(true, { status: "ready", funding: {
+      affordable: false,
+      balanceWei: 0n,
+      contractKind: "game",
+      startPriceWei: 1n,
+    } })).toContain("more Base Sepolia ETH");
+    expect(settlementLaunchBlocker(true, { status: "ready", funding: {
+      affordable: true,
+      balanceWei: 1n,
+      contractKind: "game",
+      startPriceWei: 1n,
+    } })).toBeUndefined();
   });
 });
