@@ -226,7 +226,8 @@ export function defenseProductionItems({
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const queued = queuedDefenseCount(defense.id, queue);
-    const stats = defenseCombatStats(defense).rows.slice(0, 3).map((row) => `${row.label} ${row.value}`).join(" · ");
+    const combatStats = defenseCombatStats(defense);
+    const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
 
     return {
       actionLabel: queued > 0 ? "Add" : "Build",
@@ -235,6 +236,7 @@ export function defenseProductionItems({
       cost: totalCost,
       countLabel: "Deployed",
       countValue: deployed,
+      description: defenseDescriptions[defense.key],
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
       disabled,
       group: defense.group,
@@ -246,12 +248,27 @@ export function defenseProductionItems({
       quantity,
       queued,
       requirements,
+      statRows: combatStats.rows,
+      notes: combatStats.notes,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked",
       thumbnailStyle: missileThumbnailFrames[defense.key],
     };
   });
 }
+
+const defenseDescriptions: Record<DefenseKey, string> = {
+  rocketLauncher: "Baseline kinetic defense that is cheap to deploy and useful as early battle mass.",
+  lightLaser: "Energy defense with efficient early attack once Energy and Laser research are online.",
+  heavyLaser: "Heavier beam emplacement with stronger attack and hull than Light Laser batteries.",
+  smallShieldDome: "Planetary shield dome that adds a one-per-planet defensive barrier.",
+  gaussCannon: "Magnetic accelerator defense with high armor-piercing attack power.",
+  ionCannon: "Ionized-particle defense with strong shield profile and specialized energy output.",
+  plasmaTurret: "Top-tier static weapon with heavy attack against advanced fleets.",
+  largeShieldDome: "Upgraded shield dome for late-game planetary defense; limited to one per planet.",
+  antiBallisticMissile: "Silo interceptor that automatically counters incoming interplanetary missiles.",
+  interplanetaryMissile: "Long-range missile ordnance used to attack enemy planetary defenses.",
+};
 
 export function getMissingDefenseRequirements(
   defense: (typeof defenseCatalog)[number],

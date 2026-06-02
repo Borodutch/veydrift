@@ -25,8 +25,10 @@ import {
   planetsForFailedGalaxyLoad
 } from "../src/components/GalaxyView";
 import {
+  indexedRows,
   planetRecordStatusLabel,
   publicCommanderRows,
+  publicQueueRows,
   publicSignalRows
 } from "../src/components/PlanetDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
@@ -123,6 +125,68 @@ describe("tester universe display data", () => {
         owner: "0x2222222222222222222222222222222222222222",
         planetId: "7",
       },
+    });
+  });
+
+  test("public planet detail preserves indexed state rows and queue labels", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          fields: 211,
+          galaxy: 2,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          occupiedBy: {
+            owner: "0x2222222222222222222222222222222222222222",
+            planetId: "7",
+          },
+          publicState: {
+            resources: {
+              metal: "5000",
+              crystal: "4900",
+              deuterium: "4800",
+            },
+            buildings: [{ id: 0, level: 12 }],
+            fleet: [{ id: 0, count: 3 }],
+            defenses: [{ id: 0, count: 7 }],
+            research: [{ id: 0, level: 4 }],
+            queues: {
+              building: {
+                active: true,
+                itemId: 0,
+                kind: "building",
+                targetLevel: 13,
+                readyAt: "1770000060",
+              },
+            },
+          },
+          position: 8,
+          system: 44,
+          temperature: -8,
+        },
+      ],
+    });
+
+    expect(planet.publicState?.resources).toEqual({
+      metal: "5000",
+      crystal: "4900",
+      deuterium: "4800",
+    });
+    expect(indexedRows(planet.publicState?.buildings, buildingCatalog, "level")).toContainEqual({
+      label: "Metal Mine",
+      value: "Level 12",
+    });
+    expect(indexedRows(planet.publicState?.fleet, shipCatalog, "count")).toContainEqual({
+      label: "Small Cargo",
+      value: "3",
+    });
+    expect(publicQueueRows(planet)).toContainEqual({
+      label: "Building",
+      value: "Metal Mine Level 13",
+      tone: "accent",
     });
   });
 

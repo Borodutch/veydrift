@@ -690,6 +690,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           ).map((planet) => ({
             ...planet,
             occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
+            publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
             debrisField: debrisFieldRef(debris.get(planet.position)),
             moonChance: moonChanceReportRef(moonChance.get(planet.position))
           }))
@@ -756,6 +757,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                 ).map((planet) => ({
                   ...planet,
                   occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
+                  publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
                   debrisField: debrisFieldRef(debris.get(planet.position)),
                   moonChance: moonChanceReportRef(moonChance.get(planet.position))
                 }))
@@ -1371,6 +1373,39 @@ function occupiedPlanetRef(
         alliance: allianceIntel.get(planet.owner.toLowerCase()) ?? null
       }
     : null;
+}
+
+function publicPlanetStateRef(
+  planet: SettledPlanetEvent | undefined,
+  indexer: SettlementIndexer | undefined
+): {
+  resources: SettledPlanetEvent["resources"];
+  buildings: Array<{ id: number; level: number }>;
+  fleet: Array<{ id: number; count: number }>;
+  defenses: Array<{ id: number; count: number }>;
+  research: Array<{ id: number; level: number }>;
+  queues: {
+    building: PlayerQueues["building"];
+    defense: PlayerQueues["defense"];
+    ship: PlayerQueues["ship"];
+    research: PlayerQueues["research"];
+  };
+} | null {
+  if (!planet || !indexer) return null;
+
+  return {
+    resources: planet.resources,
+    buildings: indexer.infrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
+    fleet: indexer.shipRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+    defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+    research: indexer.technologyRows(planet.owner).map(({ id, level }) => ({ id, level })),
+    queues: {
+      building: indexer.planetQueue(planet.planetId, "building"),
+      defense: indexer.planetQueue(planet.planetId, "defense"),
+      ship: indexer.planetQueue(planet.planetId, "ship"),
+      research: indexer.researchQueue(planet.owner)
+    }
+  };
 }
 
 async function allianceIntelForOccupiedPlanets(
