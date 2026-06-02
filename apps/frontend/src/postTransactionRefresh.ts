@@ -1,5 +1,6 @@
 import type {
   ChainDefenseState,
+  ChainResearchState,
   FleetMissionVisibilityResponse,
   ChainInfrastructureState,
   ManagedPlanetResponse,
@@ -38,6 +39,26 @@ export type StartedDefenseProductionExpectation = {
 export type StartedDefenseProductionSnapshot = {
   defense: ChainDefenseState;
   queues: PlayerQueuesResponse;
+};
+
+export type StartedResearchExpectation = {
+  itemId: number;
+  targetLevel?: number | undefined;
+};
+
+export type StartedResearchSnapshot = {
+  queues: PlayerQueuesResponse;
+  research: ChainResearchState;
+};
+
+export type FinishedResearchExpectation = {
+  itemId?: number | undefined;
+  targetLevel?: number | undefined;
+};
+
+export type FinishedResearchSnapshot = {
+  queues: PlayerQueuesResponse;
+  research: ChainResearchState;
 };
 
 export type WalletPlanetSyncSnapshot = {
@@ -126,6 +147,31 @@ export function isStartedDefenseProductionVisible(
     && defenseQueueMatches(snapshot.queues.defense, expectation);
 }
 
+export function isStartedResearchStateVisible(
+  snapshot: StartedResearchSnapshot,
+  expectation: StartedResearchExpectation,
+): boolean {
+  return researchQueueMatches(snapshot.research.queue, expectation)
+    && researchQueueMatches(snapshot.queues.research, expectation);
+}
+
+export function isFinishedResearchStateVisible(
+  snapshot: FinishedResearchSnapshot,
+  expectation: FinishedResearchExpectation,
+): boolean {
+  const queueCleared = !snapshot.queues.research?.active && !snapshot.research.queue?.active;
+  if (!queueCleared) return false;
+
+  if (expectation.itemId === undefined || expectation.targetLevel === undefined) {
+    return true;
+  }
+
+  const level = snapshot.research.technologies.find((technology) => technology.id === expectation.itemId)?.level
+    ?? snapshot.research.technologyLevels[expectation.itemId.toString()]
+    ?? 0;
+  return level >= expectation.targetLevel;
+}
+
 function defenseQueueMatches(
   queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
   expectation: StartedDefenseProductionExpectation,
@@ -134,6 +180,17 @@ function defenseQueueMatches(
     queue?.active
     && queue.itemId === expectation.itemId
     && (queue.quantity ?? 0) >= expectation.quantity,
+  );
+}
+
+function researchQueueMatches(
+  queue: ChainResearchState["queue"] | PlayerQueuesResponse["research"],
+  expectation: StartedResearchExpectation,
+): boolean {
+  return Boolean(
+    queue?.active
+    && queue.itemId === expectation.itemId
+    && (expectation.targetLevel === undefined || queue.targetLevel === expectation.targetLevel),
   );
 }
 
@@ -183,6 +240,54 @@ export async function waitForStartedDefenseProductionState(
   }
 
   throw new Error(startedDefenseProductionTimeoutMessage(latest, expectation));
+}
+
+export async function waitForStartedResearchState(
+  load: () => Promise<StartedResearchSnapshot>,
+  expectation: StartedResearchExpectation,
+  options: WaitOptions = {},
+): Promise<StartedResearchSnapshot> {
+  const attempts = options.attempts ?? 8;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: StartedResearchSnapshot | undefined;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    latest = await load();
+    if (isStartedResearchStateVisible(latest, expectation)) {
+      return latest;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(startedResearchTimeoutMessage(latest, expectation));
+}
+
+export async function waitForFinishedResearchState(
+  load: () => Promise<FinishedResearchSnapshot>,
+  expectation: FinishedResearchExpectation,
+  options: WaitOptions = {},
+): Promise<FinishedResearchSnapshot> {
+  const attempts = options.attempts ?? 8;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: FinishedResearchSnapshot | undefined;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    latest = await load();
+    if (isFinishedResearchStateVisible(latest, expectation)) {
+      return latest;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(finishedResearchTimeoutMessage(latest, expectation));
 }
 
 export async function waitForCollectedResourcesState(
@@ -311,6 +416,45 @@ function startedDefenseProductionTimeoutMessage(
     : 0;
 
   return `Defense production transaction confirmed, but indexed defense queue state is still syncing. Expected item ${expectation.itemId} x${expectation.quantity}; Defenses page queue x${defenseQuantity}; Overview queue x${overviewQuantity}. Try refreshing in a few seconds.`;
+}
+
+function startedResearchTimeoutMessage(
+  snapshot: StartedResearchSnapshot | undefined,
+  expectation: StartedResearchExpectation,
+): string {
+  const researchQueue = snapshot?.research.queue;
+  const overviewQueue = snapshot?.queues.research;
+  const researchTarget = researchQueue?.active && researchQueue.itemId === expectation.itemId
+    ? researchQueue.targetLevel ?? "unknown"
+    : "missing";
+  const overviewTarget = overviewQueue?.active && overviewQueue.itemId === expectation.itemId
+    ? overviewQueue.targetLevel ?? "unknown"
+    : "missing";
+  const target = expectation.targetLevel === undefined ? "the next level" : `Level ${expectation.targetLevel}`;
+
+  return `Research transaction confirmed, but indexed research queue state is still syncing. Expected item ${expectation.itemId} ${target}; Research page target: ${researchTarget}; Overview target: ${overviewTarget}. Try refreshing in a few seconds.`;
+}
+
+function finishedResearchTimeoutMessage(
+  snapshot: FinishedResearchSnapshot | undefined,
+  expectation: FinishedResearchExpectation,
+): string {
+  const queueActive = Boolean(snapshot?.queues.research?.active || snapshot?.research.queue?.active);
+  const level = expectation.itemId === undefined
+    ? undefined
+    : snapshot?.research.technologies.find((technology) => technology.id === expectation.itemId)?.level
+      ?? snapshot?.research.technologyLevels[expectation.itemId.toString()];
+  const target = expectation.targetLevel === undefined ? "the completed level" : `Level ${expectation.targetLevel}`;
+
+  if (queueActive) {
+    return "Research transaction confirmed, but the completed research queue is still syncing. Try refreshing the game state in a few seconds.";
+  }
+
+  if (level !== undefined && expectation.targetLevel !== undefined && level < expectation.targetLevel) {
+    return `Research transaction confirmed, but the API still shows Level ${level} instead of ${target}. Try refreshing the game state in a few seconds.`;
+  }
+
+  return "Research transaction confirmed, but the completed research state is still syncing. Try refreshing the game state in a few seconds.";
 }
 
 function walletPlanetHydrationTimeoutMessage(
