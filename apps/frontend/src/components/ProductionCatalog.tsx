@@ -13,6 +13,12 @@ const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 export type ProductionRequirementState = RequirementFlair;
 
+export type ProductionDetailStat = {
+  label: string;
+  value: string;
+  hint?: string | undefined;
+};
+
 export type ProductionCatalogItem<Key extends string = string> = {
   key: Key;
   id: number;
@@ -35,15 +41,9 @@ export type ProductionCatalogItem<Key extends string = string> = {
   actionLabel: string;
   detailNote: string;
   description?: string | undefined;
-  statRows?: ProductionStatRow[] | undefined;
   notes?: string[] | undefined;
+  detailStats?: ProductionDetailStat[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
-};
-
-export type ProductionStatRow = {
-  label: string;
-  value: number | string;
-  hint?: string | undefined;
 };
 
 export type ProductionQueue = {
@@ -284,6 +284,17 @@ function SelectedProductionPanel<Key extends string>({
         </p>
       ) : null}
 
+      {item.detailStats?.length ? (
+        <div className="grid gap-2">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Specs</h4>
+          <dl className="grid grid-cols-2 gap-2 text-xs">
+            {item.detailStats.map((stat) => (
+              <Stat hint={stat.hint} label={stat.label} value={stat.value} key={stat.label} />
+            ))}
+          </dl>
+        </div>
+      ) : null}
+
       <dl className="grid grid-cols-2 gap-2 text-xs">
         <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
         <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
@@ -292,19 +303,6 @@ function SelectedProductionPanel<Key extends string>({
         <Stat label="Deut" value={item.cost ? format(item.cost.deuterium) : "-"} />
         <Stat label="Status" value={item.statusLabel} />
       </dl>
-
-      {item.statRows?.length ? (
-        <dl className="grid grid-cols-2 gap-2 text-xs">
-          {item.statRows.map((row) => (
-            <Stat
-              hint={row.hint}
-              key={`${row.label}:${row.value}`}
-              label={row.label}
-              value={typeof row.value === "number" ? format(row.value) : row.value}
-            />
-          ))}
-        </dl>
-      ) : null}
 
       {item.notes?.length ? (
         <ul className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs leading-5 text-slate-400">

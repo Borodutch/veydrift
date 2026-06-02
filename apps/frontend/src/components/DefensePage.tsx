@@ -238,6 +238,11 @@ export function defenseProductionItems({
       countValue: deployed,
       description: defenseDescriptions[defense.key],
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
+      detailStats: combatStats.rows.map((row) => ({
+        hint: row.hint,
+        label: row.label,
+        value: formatStatValue(row.value),
+      })),
       disabled,
       group: defense.group,
       groupLabel: groupLabels[defense.group],
@@ -248,13 +253,16 @@ export function defenseProductionItems({
       quantity,
       queued,
       requirements,
-      statRows: combatStats.rows,
       notes: combatStats.notes,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked",
       thumbnailStyle: missileThumbnailFrames[defense.key],
     };
   });
+}
+
+function formatStatValue(value: number | string): string {
+  return typeof value === "number" ? value.toLocaleString("en-US") : value;
 }
 
 const defenseDescriptions: Record<DefenseKey, string> = {

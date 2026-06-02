@@ -98,10 +98,10 @@ describe("Defense page display helpers", () => {
       countLabel: "Deployed",
       countValue: 12,
       description: expect.stringContaining("kinetic"),
-      statRows: expect.arrayContaining([
-        expect.objectContaining({ label: "Attack", value: 80 }),
-        expect.objectContaining({ label: "Shield", value: 20 }),
-        expect.objectContaining({ label: "Hull", value: 200 }),
+      detailStats: expect.arrayContaining([
+        expect.objectContaining({ label: "Attack", value: "80" }),
+        expect.objectContaining({ label: "Shield", value: "20" }),
+        expect.objectContaining({ label: "Hull", value: "200" }),
       ]),
       status: "ready",
     });

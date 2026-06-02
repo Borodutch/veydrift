@@ -89,11 +89,13 @@ describe("Shipyard page display helpers", () => {
       actionLabel: "Build",
       countLabel: "Owned",
       countValue: 4,
-      description: expect.stringContaining("cargo"),
-      quantity: 3,
-      statRows: expect.arrayContaining([
-        expect.objectContaining({ label: "Cargo", value: 5000 }),
+      description: expect.stringContaining("freighter"),
+      detailStats: expect.arrayContaining([
+        { label: "Structure", value: "400" },
+        { label: "Cargo", value: "5,000" },
+        { label: "Fuel use", value: "10" },
       ]),
+      quantity: 3,
       status: "ready",
     });
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
