@@ -19,6 +19,8 @@ import {
 import { queueProgressPercent } from "../src/playableMvp";
 import type { Planet } from "../src/types";
 
+const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
+
 const homePlanet: Planet = {
   alliance: null,
   diameter: 12_000,
@@ -202,6 +204,12 @@ describe("overview queue progress display", () => {
       elapsedMs: 1_000_000,
       progress: 1,
     });
+  });
+
+  test("passes catalog thumbnails into active research queues", () => {
+    expect(overviewSource).toContain("researchCatalog");
+    expect(overviewSource).toContain("thumbnailSrc={onChainResearchAsset}");
+    expect(overviewSource).toContain("thumbnailSrc={settledResearchAsset}");
   });
 
   test("shows the ready building finish action for infrastructure-backed queues", () => {

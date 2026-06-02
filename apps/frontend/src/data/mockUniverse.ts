@@ -1,5 +1,5 @@
 import { isPlanetSlotPopulated, parsePlanetSlot } from "@veydrift/universe";
-import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, Resources } from "../types";
+import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicPlanetState, Resources } from "../types";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
   "scorching-molten": "/assets/game/style-pass/generated/planets/scorching-molten.webp",
@@ -89,6 +89,7 @@ type ApiPlanet = {
   deuteriumMultiplierBps?: number;
   archetype?: PlanetType;
   occupiedBy?: OccupiedPlanet | null;
+  publicState?: PublicPlanetState | null;
   debrisField?: {
     metal: string | number;
     crystal: string | number;
@@ -261,6 +262,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     ownerId: occupiedBy?.owner ?? null,
     alliance,
     occupiedBy,
+    publicState: planet.publicState ?? null,
     debrisField: debrisFieldFromApi(planet.debrisField),
     moonChance: moonChanceFromApi(planet.moonChance),
     resources: resourcesFromMultipliers({
