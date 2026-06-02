@@ -14,6 +14,7 @@ import {
 import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
+import { formatUserTimestamp } from "../timestampFormat";
 import {
   InspectCatalogTile,
   InspectDetailHero,
@@ -659,7 +660,8 @@ function format(value: number): string {
 
 function formatReady(readyAt: number): string {
   const remaining = formatDurationUntil(readyAt);
-  return remaining === "Ready" ? "now" : `in ${remaining}`;
+  const timestamp = formatUserTimestamp(readyAt);
+  return remaining === "Ready" ? `now (${timestamp})` : `in ${remaining} (${timestamp})`;
 }
 
 function formatRequirement(requirement: ResearchRequirement): string {

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "preact/hooks";
+import { formatUserTimestamp } from "../timestampFormat";
 import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceState } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
@@ -358,12 +359,7 @@ export function formatRiftCountdown(unlocksAt: string, now: number): string {
 }
 
 function formatUnlockDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "after the 30-day wait";
-  return date.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return formatUserTimestamp(value, { fallback: "after the 30-day wait" });
 }
 
 function formatToken(value: string | null): string {

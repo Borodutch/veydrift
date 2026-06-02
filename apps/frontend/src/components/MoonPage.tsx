@@ -6,6 +6,7 @@ import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
 import { formatCost } from "../buildingDetails";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 interface MoonPageProps {
@@ -298,18 +299,11 @@ function moonBuildingLabel(itemId: number | undefined): string {
 
 function formatMoonReadyAt(value: string | null | undefined): string {
   if (!value || value === "0") return "Ready";
-  const timestamp = Number(value);
-  if (!Number.isFinite(timestamp)) return "Unknown";
-  return new Date(timestamp * 1_000).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatUserTimestamp(value);
 }
 
 function queueReady(value: string | null | undefined): boolean {
   if (!value || value === "0") return true;
-  const timestamp = Number(value);
-  return Number.isFinite(timestamp) && timestamp * 1_000 <= Date.now();
+  const timestamp = timestampToMs(value);
+  return timestamp !== undefined && timestamp <= Date.now();
 }

@@ -1,9 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, missionLifecycleActions } from "../src/components/MissionControlPage";
+import { MissionControlPage, formatMissionTime, missionLifecycleActions } from "../src/components/MissionControlPage";
 import type { FleetMissionSummary } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
+  test("renders mission timing with relative and exact local timestamps", () => {
+    const secondsLabel = formatMissionTime("1770000300", 1_770_000_000_000);
+    const millisecondsLabel = formatMissionTime("1770000300000", 1_770_000_000_000);
+
+    expect(secondsLabel).toContain("5m");
+    expect(secondsLabel).toContain("2026");
+    expect(secondsLabel).not.toContain("1770000300");
+    expect(millisecondsLabel).toBe(secondsLabel);
+  });
+
   test("enables only contract-supported lifecycle actions for mission timing", () => {
     const now = 1_770_000_100_000;
 
