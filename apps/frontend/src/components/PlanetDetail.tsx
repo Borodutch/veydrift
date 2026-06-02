@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Planet, Coordinates } from "../types";
+import type { Planet, Coordinates, PublicQueueState } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
+import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
@@ -16,7 +17,7 @@ interface Props {
   onNavigateSystem: (galaxy: number, system: number) => void;
 }
 
-type PlanetRecordRow = {
+export type PlanetRecordRow = {
   label: string;
   value: string;
   tone?: "default" | "accent" | "muted";
@@ -211,34 +212,33 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
             {/* Resources */}
             <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Base Resources
+                Public Resources
               </h3>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <ResourceBar
-                  label="Metal"
-                  value={planet.resources.metal}
-                  max={300}
-                  color="bg-slate-400"
-                />
-                <ResourceBar
-                  label="Crystal"
-                  value={planet.resources.crystal}
-                  max={300}
-                  color="bg-signal"
-                />
-                <ResourceBar
-                  label="Deuterium"
-                  value={planet.resources.deuterium}
-                  max={250}
-                  color="bg-blue-400"
-                />
-                <ResourceBar
-                  label="Energy"
-                  value={planet.resources.energy}
-                  max={100}
-                  color="bg-ember"
-                />
-              </div>
+              <ResourceBars planet={planet} />
+            </div>
+
+            <PublicIndexedPanel
+              title="Buildings"
+              rows={indexedRows(planet.publicState?.buildings, buildingCatalog, "level")}
+            />
+            <PublicIndexedPanel
+              title="Fleet"
+              rows={indexedRows(planet.publicState?.fleet, shipCatalog, "count")}
+            />
+            <PublicIndexedPanel
+              title="Defenses"
+              rows={indexedRows(planet.publicState?.defenses, defenseCatalog, "count")}
+            />
+            <PublicIndexedPanel
+              title="Research"
+              rows={indexedRows(planet.publicState?.research, researchCatalog, "level")}
+            />
+
+            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Active Public Queues
+              </h3>
+              <PublicRecordRows rows={publicQueueRows(planet)} columns />
             </div>
           </div>
 
@@ -349,6 +349,91 @@ function PublicRecordRows({
       ))}
     </dl>
   );
+}
+
+function ResourceBars({ planet }: { planet: Planet }) {
+  const publicResources = planet.publicState?.resources;
+  const metal = publicResources ? Number(publicResources.metal) : planet.resources.metal;
+  const crystal = publicResources ? Number(publicResources.crystal) : planet.resources.crystal;
+  const deuterium = publicResources ? Number(publicResources.deuterium) : planet.resources.deuterium;
+  const max = Math.max(300, metal, crystal, deuterium, planet.resources.energy);
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <ResourceBar label="Metal" value={metal} max={max} color="bg-slate-400" />
+      <ResourceBar label="Crystal" value={crystal} max={max} color="bg-signal" />
+      <ResourceBar label="Deuterium" value={deuterium} max={max} color="bg-blue-400" />
+      <ResourceBar label="Energy" value={planet.resources.energy} max={max} color="bg-ember" />
+    </div>
+  );
+}
+
+function PublicIndexedPanel({ rows, title }: { rows: PlanetRecordRow[]; title: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        {title}
+      </h3>
+      <PublicRecordRows rows={rows.length > 0 ? rows : [{ label: "Public records", value: "No public entries", tone: "muted" }]} />
+    </div>
+  );
+}
+
+export function indexedRows(
+  rows: Array<{ id: number; level?: number; count?: number }> | null | undefined,
+  catalog: readonly { id?: number; label: string }[],
+  valueKind: "level" | "count"
+): PlanetRecordRow[] {
+  return (rows ?? [])
+    .map((row) => {
+      const value = valueKind === "level" ? row.level ?? 0 : row.count ?? 0;
+      const catalogItem = catalog.find((item, index) => (item.id ?? index) === row.id);
+      return {
+        label: catalogItem?.label ?? `ID ${row.id}`,
+        value,
+      };
+    })
+    .filter((row) => row.value > 0)
+    .map((row) => ({
+      label: row.label,
+      value: valueKind === "level" ? `Level ${row.value}` : row.value.toLocaleString(),
+    }));
+}
+
+export function publicQueueRows(planet: Planet): PlanetRecordRow[] {
+  const queues = planet.publicState?.queues;
+  if (!queues) return [{ label: "Queues", value: "Public queue data unavailable", tone: "muted" }];
+
+  const rows: PlanetRecordRow[] = [
+    queueRow("Building", queues.building, buildingCatalog, "Level"),
+    queueRow("Defense", queues.defense, defenseCatalog, "x"),
+    queueRow("Shipyard", queues.ship, shipCatalog, "x"),
+    queueRow("Research", queues.research, researchCatalog, "Level"),
+  ];
+
+  return rows.some((row) => row.tone === "accent")
+    ? rows
+    : [{ label: "Queues", value: "No active public queues", tone: "muted" }];
+}
+
+function queueRow(
+  label: string,
+  queue: PublicQueueState | null | undefined,
+  catalog: readonly { id?: number; label: string }[],
+  suffix: "Level" | "x"
+): PlanetRecordRow {
+  if (!queue?.active) return { label, value: "Idle", tone: "muted" };
+  const item = queue.itemId === undefined
+    ? undefined
+    : catalog.find((candidate, index) => (candidate.id ?? index) === queue.itemId);
+  const quantity = suffix === "Level"
+    ? queue.targetLevel ? ` ${suffix} ${queue.targetLevel}` : ""
+    : queue.quantity ? ` ${suffix}${queue.quantity}` : "";
+  return {
+    label,
+    value: `${item?.label ?? queue.kind ?? "Queue"}${quantity}`,
+    tone: "accent",
+  };
 }
 
 function recordToneClass(tone: PlanetRecordRow["tone"]): string {

@@ -221,7 +221,8 @@ export function shipProductionItems({
       shipyardState,
     });
     const disabled = Boolean(blockedReason) || actionPending;
-    const stats = shipCombatStats(ship).rows.slice(0, 3).map((row) => `${row.label} ${row.value}`).join(" · ");
+    const combatStats = shipCombatStats(ship);
+    const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
 
     return {
       actionLabel: "Build",
@@ -230,6 +231,7 @@ export function shipProductionItems({
       cost: totalCost,
       countLabel: "Owned",
       countValue: owned,
+      description: shipDescriptions[ship.key],
       detailNote: stats || "Production unit",
       disabled,
       durationSeconds,
@@ -242,11 +244,32 @@ export function shipProductionItems({
       quantity,
       queued,
       requirements,
+      statRows: combatStats.rows,
+      notes: combatStats.notes,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
     };
   });
 }
+
+const shipDescriptions: Record<ShipKey, string> = {
+  smallCargo: "Fast early cargo transport for moving resources and looting lightly defended planets.",
+  lightFighter: "Cheap combat screen that adds attack volume and absorbs losses in fleet battles.",
+  recycler: "Debris-field harvester used after combat to recover metal and crystal wreckage.",
+  colonyShip: "Expansion vessel that settles an open planet slot and establishes a new colony.",
+  largeCargo: "High-capacity transport for larger resource transfers and raid haul capacity.",
+  heavyFighter: "Armored fighter with stronger hull and attack than the Light Fighter.",
+  cruiser: "Mid-game warship with strong anti-fighter pressure and balanced combat stats.",
+  battleship: "Line combat ship built for sustained attack power in conventional battles.",
+  bomber: "Heavy strike craft tuned for assaulting planetary defenses.",
+  solarSatellite: "Orbital energy platform that increases planetary power but cannot fly missions.",
+  destroyer: "Capital-class attack ship with heavy firepower and durable hull.",
+  deathstar: "Dreadstar-class superheavy platform with extreme cargo and combat capacity.",
+  battlecruiser: "Advanced assault ship for efficient pressure against large combat fleets.",
+  reaper: "Late-game hunter ship with strong combat presence and debris recovery role.",
+  pathfinder: "Recon and recovery craft with useful cargo capacity for advanced missions.",
+  crawler: "Planet-bound economy unit that supports production rather than fleet missions.",
+};
 
 export function getMissingRequirements(
   ship: (typeof shipCatalog)[number],

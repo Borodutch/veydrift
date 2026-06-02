@@ -1877,10 +1877,44 @@ describe("Veydrift backend", () => {
       indexedPlanets: 1,
       fromBlock: "100"
     });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xshipdone",
+      logIndex: "0x0",
+      topics: [
+        shipCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xdefensedone",
+      logIndex: "0x0",
+      topics: [
+        defenseCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(3n, 3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xresearchdone",
+      logIndex: "0x0",
+      topics: [
+        researchCompletedTopic,
+        addressTopic(player),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
 
     const system = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
     const body = await system.json();
-    expect(body.planets.find((item: { position: number }) => item.position === 9)).toMatchObject({
+    const occupiedPlanet = body.planets.find((item: { position: number }) => item.position === 9);
+    expect(occupiedPlanet).toMatchObject({
       position: 9,
       fields: planet.fields,
       temperature: planet.temperature,
@@ -1899,6 +1933,33 @@ describe("Veydrift backend", () => {
         targetPlanetId: "7"
       }
     });
+    expect(occupiedPlanet.publicState).toMatchObject({
+      resources: {
+        metal: "5000",
+        crystal: "4900",
+        deuterium: "4800"
+      },
+      queues: {
+        building: {
+          active: true,
+          kind: "building",
+          targetLevel: 2,
+          readyAt: "1770000060"
+        }
+      }
+    });
+    expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 0, level: 1 })
+    ]));
+    expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 0, count: 2 })
+    ]));
+    expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 0, count: 3 })
+    ]));
+    expect(occupiedPlanet.publicState.research).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 0, level: 1 })
+    ]));
     expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
     expect(chainReader.rebuildCalls).toBe(1);
   });
