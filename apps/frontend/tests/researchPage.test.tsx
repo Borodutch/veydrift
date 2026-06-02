@@ -231,6 +231,66 @@ describe("Research page load-error display", () => {
       tileStatus: "Ready",
     });
   });
+
+  test("reports the exact single resource missing for research actions", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 707, crystal: 2_169, deuterium: 1_139 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "707", crystal: "2169", deuterium: "1139" },
+      }),
+      state,
+    });
+
+    expect(status).toMatchObject({
+      disabled: true,
+      reason: "Requires 893 more Metal",
+    });
+  });
+
+  test("reports every missing resource for research actions", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 707, crystal: 2_169, deuterium: 1_139 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 3_000, deuterium: 2_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "707", crystal: "2169", deuterium: "1139" },
+      }),
+      state,
+    });
+
+    expect(status).toMatchObject({
+      disabled: true,
+      reason: "Requires 893 more Metal, 831 more Crystal, 861 more Deuterium",
+    });
+  });
 });
 
 function visibleText(node: ComponentChildren): string {

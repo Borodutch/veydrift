@@ -13,6 +13,7 @@ import {
 } from "../playableMvp";
 import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
+import { formatMissingResources } from "../buildingDetails";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp } from "../timestampFormat";
 import {
@@ -571,8 +572,10 @@ export function researchActionStatus({
                     ? "Locked by unmet prerequisites"
                     : !resourcesAvailable
                       ? "Resources unavailable"
+                      : !cost
+                        ? "Research cost unavailable"
                       : !affordable
-                        ? "Insufficient resources"
+                        ? formatMissingResources(state.resources, cost)
                         : `Ready for Level ${targetLevel}`;
 
   const completionReady = reason === `Ready to complete Level ${targetLevel}`;

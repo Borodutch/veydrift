@@ -323,7 +323,7 @@ export function formatCost(cost: Resources): string {
     .join(", ") || "No resource cost";
 }
 
-function formatMissingResources(resources: Resources, cost: Resources): string {
+export function formatMissingResources(resources: Resources, cost: Resources): string {
   const missing = resourceEntries(cost)
     .map(([resource, required]) => [resource, required - resources[resource]] as const)
     .filter(([, deficit]) => deficit > 0);
