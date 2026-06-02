@@ -356,6 +356,12 @@ export function FirstPlanetSettlementApp() {
       }
 
       const label = "First planet settlement";
+
+      const canLaunch = await refreshSettlementLaunchInfo(provider, wallet.account, planet);
+      if (!canLaunch) {
+        return;
+      }
+
       setPlanet({
         kind: "pending",
         label: transactionAwaitingWalletLabel(label)
@@ -388,6 +394,57 @@ export function FirstPlanetSettlementApp() {
         });
       }
     });
+  }
+
+  async function refreshSettlementLaunchInfo(
+    injected: Eip1193Provider,
+    connectedAccount: string,
+    currentPlanet: PlanetState,
+  ): Promise<boolean> {
+    setSettlementFunding({ status: "loading" });
+
+    try {
+      const settlement = await readSettlementState(injected, connectedAccount, settlementConfig);
+
+      if (settlement.kind === "unconfigured") {
+        setSettlementFunding({ status: "idle" });
+        setPlanet({ kind: "contract-unconfigured" });
+        return false;
+      }
+
+      if (settlement.kind === "settled") {
+        setSettlementFunding({ status: "idle" });
+        setPlanet({
+          kind: "already-settled",
+          planet: settlement.planet,
+        });
+        return false;
+      }
+
+      if (settlement.kind === "legacy-settled") {
+        setPlanet({
+          kind: "legacy-settled",
+          planet: settlement.planet,
+        });
+      } else {
+        setPlanet({ kind: "not-settled" });
+      }
+
+      const nextFunding: SettlementFunding = {
+        status: "ready",
+        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig),
+      };
+      setSettlementFunding(nextFunding);
+
+      return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding) === undefined;
+    } catch (error) {
+      setPlanet(currentPlanet.kind === "legacy-settled" ? currentPlanet : { kind: "not-settled" });
+      setSettlementFunding({
+        status: "error",
+        message: walletRequestErrorMessage(error),
+      });
+      return false;
+    }
   }
 
   if (hasOverview) {
@@ -547,15 +604,13 @@ function FlowBody({
     );
   }
 
-  const actionBlocked = !settlementReady
-    || settlementFunding.status === "idle"
-    || settlementFunding.status === "loading"
-    || settlementFunding.status === "error"
-    || (settlementFunding.status === "ready" && !settlementFunding.funding.affordable);
+  const actionBlocked = settlementLaunchBlocker(settlementReady, settlementFunding) !== undefined;
   const actionLabel = settlementFunding.status === "idle" || settlementFunding.status === "loading"
     ? "Checking balance"
     : "Launch settlement";
-  const title = settlementFunding.status === "ready" && settlementFunding.funding.unavailableReason
+  const title = settlementFunding.status === "error"
+    ? "Settlement info unavailable"
+    : settlementFunding.status === "ready" && settlementFunding.funding.unavailableReason
     ? "Settlement setup incomplete"
     : settlementFunding.status === "ready" && !settlementFunding.funding.affordable
     ? "More Base Sepolia ETH required"
@@ -573,6 +628,27 @@ function FlowBody({
   );
 }
 
+export function settlementLaunchBlocker(
+  settlementReady: boolean,
+  settlementFunding: SettlementFunding,
+): string | undefined {
+  if (!settlementReady) return "Settlement contract address is not configured.";
+  if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
+    return "Settlement funding information is still loading.";
+  }
+  if (settlementFunding.status === "error") {
+    return settlementFunding.message;
+  }
+  if (settlementFunding.funding.unavailableReason) {
+    return settlementFunding.funding.unavailableReason;
+  }
+  if (!settlementFunding.funding.affordable) {
+    return "This wallet needs more Base Sepolia ETH before launching settlement.";
+  }
+
+  return undefined;
+}
+
 function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding): string {
   const prefix = planet.kind === "legacy-settled"
     ? "This wallet has a legacy first planet but no game home planet yet. Launch a new game settlement to continue."
@@ -583,7 +659,7 @@ function settlementBody(planet: PlanetState, settlementFunding: SettlementFundin
   }
 
   if (settlementFunding.status === "error") {
-    return `Could not verify the game start price and wallet balance: ${settlementFunding.message}`;
+    return `Could not verify settlement launch info before asking your wallet to send a transaction: ${settlementFunding.message}`;
   }
 
   if (settlementFunding.status === "ready" && settlementFunding.funding.contractKind === "game") {
