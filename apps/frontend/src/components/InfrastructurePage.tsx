@@ -32,7 +32,7 @@ import {
   SingleItemQueueProgress,
 } from "./InspectProgressLayout";
 import { OptimizedImage } from "./OptimizedImage";
-import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
+import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
@@ -81,7 +81,10 @@ interface InfrastructurePageProps {
   isBuildingReadyToFinish?: boolean | undefined;
   loadError?: string | undefined;
   onFinishBuilding?: (() => void) | undefined;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
+  onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
+  selectedBuildingKey?: BuildingKey | undefined;
   state: PlayableState;
   settledState: PlayableState;
   now?: number | undefined;
@@ -98,17 +101,22 @@ export function InfrastructurePage({
   loadError,
   now = Date.now(),
   onFinishBuilding,
+  onOpenRequirement,
+  onSelectBuilding,
   planetProductionProfile,
+  selectedBuildingKey,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
-  const [selectedKey, setSelectedKey] = useState<BuildingKey>("metalMine");
+  const [localSelectedKey, setLocalSelectedKey] = useState<BuildingKey>("metalMine");
+  const selectedKey = selectedBuildingKey ?? localSelectedKey;
   const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedBuilding = buildingCatalog.find((building) => building.key === selectedKey)
     ?? buildingCatalog[0]!;
 
   function handleSelectBuilding(key: BuildingKey) {
-    setSelectedKey(key);
+    setLocalSelectedKey(key);
+    onSelectBuilding?.(key);
 
     if (window.matchMedia("(max-width: 1279px)").matches) {
       window.setTimeout(() => {
@@ -197,6 +205,7 @@ export function InfrastructurePage({
             isActionPending={isActionPending}
             isBuildingReadyToFinish={isBuildingReadyToFinish}
             onFinishBuilding={onFinishBuilding}
+            onOpenRequirement={onOpenRequirement}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             now={now}
             planetProductionProfile={planetProductionProfile}
@@ -258,6 +267,7 @@ function BuildingDetailPanel({
   isActionPending,
   isBuildingReadyToFinish,
   onFinishBuilding,
+  onOpenRequirement,
   onUpgrade,
   now,
   planetProductionProfile,
@@ -272,6 +282,7 @@ function BuildingDetailPanel({
   isBuildingReadyToFinish?: boolean | undefined;
   now: number;
   onFinishBuilding?: (() => void) | undefined;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onUpgrade: () => void;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   state: PlayableState;
@@ -371,7 +382,7 @@ function BuildingDetailPanel({
 
       <div className="mt-4 grid gap-2 border-t border-white/10 pt-4 text-sm sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
         <InspectInfoBlock label="Requirements">
-          <RequirementFlairs requirements={requirementStates} />
+          <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={requirementStates} />
         </InspectInfoBlock>
         {binary && built ? (
           <InspectInfoBlock label="Rift bridge" value="Built" />
@@ -695,7 +706,7 @@ export function getBuildingRequirementStates(
   key: BuildingKey,
 ): RequirementFlair[] {
   const frontendOnlyRequirements: RequirementFlair[] = solarPrerequisiteMineKeys.has(key)
-    ? [{ label: "Solar Plant level 1", met: state.buildings.solarPlant >= 1 }]
+    ? [{ label: "Solar Plant level 1", met: state.buildings.solarPlant >= 1, target: { kind: "building", key: "solarPlant" as const } }]
     : [];
 
   return [
@@ -705,6 +716,9 @@ export function getBuildingRequirementStates(
       met: requirement.type === "building"
         ? state.buildings[requirement.key] >= requirement.level
         : state.research[requirement.key] >= requirement.level,
+      target: requirement.type === "building"
+        ? { kind: "building" as const, key: requirement.key }
+        : { kind: "research" as const, key: requirement.key },
     })),
   ];
 }

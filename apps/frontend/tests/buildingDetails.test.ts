@@ -130,7 +130,7 @@ describe("building detail helpers", () => {
       targetLevel: 1,
     });
     expect(getBuildingRequirementStates(state, "researchLab")).toEqual([
-      { label: "Robotics Factory 1", met: false },
+      { label: "Robotics Factory 1", met: false, target: { kind: "building", key: "roboticsFactory" } },
     ]);
   });
 
@@ -150,7 +150,7 @@ describe("building detail helpers", () => {
       targetLevel: 1,
     });
     expect(getBuildingRequirementStates(state, "researchLab")).toEqual([
-      { label: "Robotics Factory 1", met: true },
+      { label: "Robotics Factory 1", met: true, target: { kind: "building", key: "roboticsFactory" } },
     ]);
   });
 

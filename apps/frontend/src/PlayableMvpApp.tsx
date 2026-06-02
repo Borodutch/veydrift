@@ -10,6 +10,7 @@ import { DefensePage } from "./components/DefensePage";
 import { AlliancePage } from "./components/AlliancePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
+import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { MissionControlPage } from "./components/MissionControlPage";
@@ -604,6 +605,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
   const [page, setPage] = useState<Page>("overview");
+  const [selectedBuildingKey, setSelectedBuildingKey] = useState<BuildingKey>("metalMine");
+  const [selectedResearchKey, setSelectedResearchKey] = useState<ResearchKey>("energy");
+  const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
+  const [selectedShipKey, setSelectedShipKey] = useState<ShipKey>("smallCargo");
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
   const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
   const [playerProfileOverride, setPlayerProfileOverride] = useState<PlayerProfile | undefined>();
@@ -2510,6 +2515,19 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     setPage("galaxy");
   }, []);
 
+  const handleOpenRequirement = useCallback((target: RequirementTarget) => {
+    setSelectedCoords(undefined);
+
+    if (target.kind === "building") {
+      setSelectedBuildingKey(target.key);
+      setPage("infrastructure");
+      return;
+    }
+
+    setSelectedResearchKey(target.key);
+    setPage("research");
+  }, []);
+
   const topBar = (
     <TopBar
       canCollectResources={isCollectReady}
@@ -2607,8 +2625,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           loadError={isWalletConnected && !infrastructureChainState ? infrastructureError : undefined}
           now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
+          onOpenRequirement={handleOpenRequirement}
+          onSelectBuilding={setSelectedBuildingKey}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}
+          selectedBuildingKey={selectedBuildingKey}
           settledState={infrastructureState}
           state={state}
         />
@@ -2659,9 +2680,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           error={researchError}
           loading={researchLoading}
           onFinish={handleFinishResearch}
+          onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshResearchState}
           onResearch={handleResearch}
+          onSelectResearch={setSelectedResearchKey}
           researchState={researchState}
+          selectedResearchKey={selectedResearchKey}
           settledState={settledState}
           state={state}
           useLocalStateFallback={!isWalletConnected}
@@ -2679,7 +2703,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           loading={defenseLoading}
           onBuild={handleBuildDefense}
           onFinish={handleFinishDefenseProduction}
+          onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshDefenseState}
+          onSelectDefense={setSelectedDefenseKey}
+          selectedDefenseKey={selectedDefenseKey}
         />
       );
     }
@@ -2718,7 +2745,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onBuild={handleBuildShip}
           onCollect={refreshShipyardState}
           onFinish={handleFinishShipProduction}
+          onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshShipyardState}
+          onSelectShip={setSelectedShipKey}
+          selectedShipKey={selectedShipKey}
           shipyardState={shipyardState}
         />
       );
