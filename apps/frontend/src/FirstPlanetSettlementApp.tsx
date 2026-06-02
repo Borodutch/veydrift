@@ -323,7 +323,7 @@ export function FirstPlanetSettlementApp() {
     try {
       setSettlementFunding({
         status: "ready",
-        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig)
+        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig, settlementTransactionOptions(miniAppMode))
       });
     } catch (error) {
       setSettlementFunding({
@@ -398,7 +398,7 @@ export function FirstPlanetSettlementApp() {
       });
 
       try {
-        const txHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig);
+        const txHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig, settlementTransactionOptions(miniAppMode));
         setPlanet({
           kind: "pending",
           label: transactionConfirmingLabel(label, txHash),
@@ -462,7 +462,7 @@ export function FirstPlanetSettlementApp() {
 
       const nextFunding: SettlementFunding = {
         status: "ready",
-        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig),
+        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig, settlementTransactionOptions(miniAppMode)),
       };
       setSettlementFunding(nextFunding);
 
@@ -684,6 +684,12 @@ export function settlementLaunchBlocker(
   return undefined;
 }
 
+function settlementTransactionOptions(miniAppMode: boolean) {
+  return {
+    balanceRead: miniAppMode ? "optional" : "required",
+  } as const;
+}
+
 function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding): string {
   const prefix = planet.kind === "legacy-settled"
     ? "This wallet has a legacy first planet but no game home planet yet. Launch a new game settlement to continue."
@@ -699,11 +705,15 @@ function settlementBody(planet: PlanetState, settlementFunding: SettlementFundin
 
   if (settlementFunding.status === "ready" && settlementFunding.funding.contractKind === "game") {
     const startPrice = formatEth(settlementFunding.funding.startPriceWei ?? 0n);
-    const balance = formatEth(settlementFunding.funding.balanceWei ?? 0n);
     if (settlementFunding.funding.unavailableReason) {
       return `${prefix} ${settlementFunding.funding.unavailableReason}`;
     }
 
+    if (settlementFunding.funding.balanceWei === null) {
+      return `${prefix} Settlement costs ${startPrice} ETH; Farcaster Wallet will verify this wallet's Base Sepolia balance before submission.`;
+    }
+
+    const balance = formatEth(settlementFunding.funding.balanceWei);
     return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on Base Sepolia.`;
   }
 

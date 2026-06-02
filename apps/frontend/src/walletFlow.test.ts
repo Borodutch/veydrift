@@ -861,6 +861,74 @@ describe("walletFlow", () => {
     });
   });
 
+  test("allows Mini App settlement funding when the host provider cannot read wallet balance", async () => {
+    const provider = mockProvider(async ({ method }) => {
+      if (method === "eth_call") return word(50_000_000_000_000_000n);
+      if (method === "eth_getBalance") {
+        throw { code: 4200, message: "The provider does not support the requested method." };
+      }
+      throw new Error(`Unexpected ${method}`);
+    });
+
+    await expect(readSettlementFundingState(provider, account, { address: contract }, {
+      balanceRead: "optional",
+    })).resolves.toEqual({
+      affordable: true,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: 50_000_000_000_000_000n
+    });
+  });
+
+  test("submits Mini App settlement when only the balance read is unsupported", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") return word(50_000_000_000_000_000n);
+      if (method === "eth_getBalance") {
+        throw { code: 4200, message: "The provider does not support the requested method." };
+      }
+      return "0xabc";
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        balanceRead: "optional",
+      })
+    ).resolves.toBe("0xabc");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            to: contract,
+            data: "0xf1a9af89"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_getBalance",
+        params: [
+          account,
+          "latest"
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xf45f1f18",
+            value: "0xb1a2bc2ec50000"
+          }
+        ]
+      }
+    ]);
+  });
+
   test("blocks game settlement while resource token reserves are not configured", async () => {
     const provider = mockProvider(async ({ method }) => {
       if (method === "eth_call") return word(50_000_000_000_000_000n);
