@@ -22,6 +22,7 @@ import {
   fetchPlayerProfile,
   fetchResearchState,
   fetchShipyardState,
+  fetchWalletPlanets,
   fetchWalletSettlement,
   fetchWalletQueues,
   getAvailableWalletProvider,
@@ -1554,6 +1555,8 @@ describe("walletFlow", () => {
 
     try {
       await fetchWalletSettlement("https://api.example.test", account);
+      await fetchWalletSettlement("https://api.example.test", account, { source: "live" });
+      await fetchWalletPlanets("https://api.example.test///", account, { source: "live" });
       await fetchWalletQueues("https://api.example.test///", account);
       await fetchWalletQueues("https://api.example.test///", account, "7", { source: "live" });
       await fetchInfrastructureState("https://api.example.test", account);
@@ -1575,6 +1578,22 @@ describe("walletFlow", () => {
     expect(calls).toEqual([
       {
         url: `https://api.example.test/wallet/${account}/settlement`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/settlement?source=live`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/planets?source=live`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },

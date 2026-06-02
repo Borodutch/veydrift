@@ -2641,6 +2641,8 @@ describe("Veydrift backend", () => {
   test("allows explicit live wallet reads to bypass indexed warm state", async () => {
     const baseReader = new MockChainReader();
     const chainReader = new MockChainReader();
+    let settlementLiveReadCalled = false;
+    let planetsLiveReadCalled = false;
     let queuesLiveReadCalled = false;
     let infrastructureLiveReadCalled = false;
     let shipyardLiveReadCalled = false;
@@ -2648,6 +2650,14 @@ describe("Veydrift backend", () => {
     let researchLiveReadCalled = false;
     let moonLiveReadCalled = false;
     let riftLiveReadCalled = false;
+    chainReader.getWalletSettlement = async (wallet: Address) => {
+      settlementLiveReadCalled = true;
+      return baseReader.getWalletSettlement(wallet);
+    };
+    chainReader.getWalletPlanets = async (wallet: Address) => {
+      planetsLiveReadCalled = true;
+      return baseReader.getWalletPlanets(wallet);
+    };
     chainReader.getPlayerQueues = async (wallet: Address, planetId?: bigint) => {
       queuesLiveReadCalled = true;
       expect(planetId).toBeUndefined();
@@ -2699,6 +2709,10 @@ describe("Veydrift backend", () => {
       indexer
     });
 
+    const settlementResponse = await handler(new Request(`http://localhost/wallet/${player}/settlement?source=live`));
+    const settlementBody = await settlementResponse.json();
+    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets?source=live`));
+    const planetsBody = await planetsResponse.json();
     const queuesResponse = await handler(new Request(`http://localhost/wallet/${player}/queues?source=live`));
     const queuesBody = await queuesResponse.json();
     const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure?source=live`));
@@ -2714,6 +2728,14 @@ describe("Veydrift backend", () => {
     const riftResponse = await handler(new Request(`http://localhost/wallet/${player}/rift?source=live`));
     const riftBody = await riftResponse.json();
 
+    expect(settlementResponse.status).toBe(200);
+    expect(settlementResponse.headers.get("x-veydrift-index-state")).toBeNull();
+    expect(settlementLiveReadCalled).toBe(true);
+    expect(settlementBody.homePlanetId).toBe(planet.planetId);
+    expect(planetsResponse.status).toBe(200);
+    expect(planetsResponse.headers.get("x-veydrift-index-state")).toBeNull();
+    expect(planetsLiveReadCalled).toBe(true);
+    expect(planetsBody.planets).toHaveLength(1);
     expect(queuesResponse.status).toBe(200);
     expect(queuesResponse.headers.get("x-veydrift-index-state")).toBeNull();
     expect(queuesLiveReadCalled).toBe(true);
