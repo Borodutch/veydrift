@@ -152,9 +152,10 @@ describe("chainState", () => {
     expect(progress(queue, halfway)).toBe(0.5);
   });
 
-  test("does not synthesize active research progress when startedAt is missing", () => {
-    const readyAtSeconds = 1_700_000_600;
-    const now = 1_700_000_300_000;
+  test("derives active research progress from cost and lab level when startedAt is missing", () => {
+    const readyAtSeconds = 1_700_002_880;
+    const now = 1_700_001_440_000;
+    const state = createInitialPlayableState();
     const queue = researchQueueForDisplay({
       active: true,
       kind: "research",
@@ -162,7 +163,31 @@ describe("chainState", () => {
       targetLevel: 2,
       readyAt: readyAtSeconds.toString(),
       cost: { metal: "0", crystal: "1600", deuterium: "800" },
-    }, now);
+    }, now, {
+      buildings: { ...state.buildings, researchLab: 1 },
+      research: { ...state.research, energy: 1 },
+    });
+
+    expect(queue).toMatchObject({
+      kind: "research",
+      key: "energy",
+      label: "Energy Technology",
+      readyAt: readyAtSeconds * 1_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    });
+    expect(progress(queue, now)).toBe(0.5);
+  });
+
+  test("does not synthesize active research progress without enough timeline context", () => {
+    const queue = researchQueueForDisplay({
+      active: true,
+      kind: "research",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: "1700000600",
+      cost: { metal: "0", crystal: "1600", deuterium: "800" },
+    }, 1_700_000_300_000);
 
     expect(queue).toBeUndefined();
   });
