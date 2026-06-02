@@ -538,6 +538,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [allianceLoading, setAllianceLoading] = useState(false);
   const [allianceError, setAllianceError] = useState<string | undefined>();
   const [allianceAction, setAllianceAction] = useState<AllianceActionState>({ status: "idle" });
+  const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(null);
   const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
@@ -2265,6 +2266,12 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     setPage("planet");
   }, []);
 
+  const handleSelectAlliance = useCallback((allianceId: string) => {
+    setSelectedAllianceId(allianceId);
+    setSelectedCoords(undefined);
+    setPage("alliance");
+  }, []);
+
   const handleNavigateSystem = useCallback((g: number, s: number) => {
     setGalaxyNav({ galaxy: g, system: s });
     setPage("galaxy");
@@ -2334,6 +2341,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           defenseState={defenseState}
           shipyardState={shipyardState}
           onAction={handleGalaxyAction}
+          onSelectAlliance={handleSelectAlliance}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
@@ -2446,9 +2454,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         <AlliancePage
           actionState={allianceAction}
           allianceState={allianceState}
+          apiBaseUrl={apiBaseUrl}
           canTransact={Boolean(provider && account && allianceContract)}
           error={allianceError}
           loading={allianceLoading}
+          selectedAllianceId={selectedAllianceId}
           onAcceptInvite={handleAcceptAllianceInvite}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onCancelJoinRequest={handleCancelAllianceJoinRequest}
