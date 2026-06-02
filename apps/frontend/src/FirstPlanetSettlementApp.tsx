@@ -16,13 +16,13 @@ import {
   ensureBaseSepoliaNetwork,
   getChainId,
   getCurrentAccounts,
-  getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
   readSettlementFundingState,
   readSettlementState,
   requestAccounts,
   fetchWalletSettlement,
+  getAvailableWalletProvider,
   sendSettlementTransaction,
   settlementContractConfigured,
   waitForReceipt,
@@ -109,42 +109,54 @@ export function FirstPlanetSettlementApp() {
   }, []);
 
   useEffect(() => {
-    const injected = getInjectedProvider(window as typeof window & { ethereum?: Eip1193Provider });
-    setProvider(injected);
+    let disposed = false;
+    let cleanupProvider: (() => void) | undefined;
 
-    if (!injected) {
-      setWallet({
-        kind: "no-wallet"
-      });
-      return;
-    }
+    void (async () => {
+      const injected = await getAvailableWalletProvider(window as typeof window & { ethereum?: Eip1193Provider });
+      if (disposed) return;
 
-    const handleAccountsChanged = (...args: unknown[]) => {
-      const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
+      setProvider(injected);
 
-      if (nextAccounts[0]) {
-        void refreshWallet(injected, nextAccounts[0]);
-      } else {
+      if (!injected) {
         setWallet({
-          kind: "disconnected"
+          kind: "no-wallet"
         });
-        setPlanet({
-          kind: "idle"
-        });
-        setSettlementFunding({ status: "idle" });
+        return;
       }
-    };
 
-    const handleChainChanged = () => {
-      void refreshWallet(injected);
-    };
+      const handleAccountsChanged = (...args: unknown[]) => {
+        const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
 
-    injected.on?.("accountsChanged", handleAccountsChanged);
-    injected.on?.("chainChanged", handleChainChanged);
+        if (nextAccounts[0]) {
+          void refreshWallet(injected, nextAccounts[0]);
+        } else {
+          setWallet({
+            kind: "disconnected"
+          });
+          setPlanet({
+            kind: "idle"
+          });
+          setSettlementFunding({ status: "idle" });
+        }
+      };
+
+      const handleChainChanged = () => {
+        void refreshWallet(injected);
+      };
+
+      injected.on?.("accountsChanged", handleAccountsChanged);
+      injected.on?.("chainChanged", handleChainChanged);
+
+      cleanupProvider = () => {
+        injected.removeListener?.("accountsChanged", handleAccountsChanged);
+        injected.removeListener?.("chainChanged", handleChainChanged);
+      };
+    })();
 
     return () => {
-      injected.removeListener?.("accountsChanged", handleAccountsChanged);
-      injected.removeListener?.("chainChanged", handleChainChanged);
+      disposed = true;
+      cleanupProvider?.();
     };
   }, []);
 
