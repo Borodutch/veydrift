@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
+import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainDefenseState } from "../walletFlow";
 import {
   Notice,
@@ -29,6 +30,7 @@ interface DefensePageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
+  overviewQueue?: ChainDefenseState["queue"] | undefined;
   selectedDefenseKey?: DefenseKey | undefined;
 }
 
@@ -59,6 +61,7 @@ export function DefensePage({
   onOpenRequirement,
   onRefresh,
   onSelectDefense,
+  overviewQueue,
   selectedDefenseKey,
 }: DefensePageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -66,7 +69,7 @@ export function DefensePage({
   const selectedKey = selectedDefenseKey ?? localSelectedKey;
   const shipyardLevel = defenseState?.shipyardLevel ?? 0;
   const resources = toResources(defenseState?.resources);
-  const queue = defenseState?.queue?.active ? defenseState.queue : undefined;
+  const queue = activeProductionQueue(defenseState?.queue, overviewQueue, "defense");
   const productionAvailable = defenseState?.productionAvailable !== false;
   const initialLoading = loading && !defenseState;
 

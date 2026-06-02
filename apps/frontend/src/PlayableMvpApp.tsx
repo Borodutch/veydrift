@@ -47,6 +47,7 @@ import {
   type ResearchKey,
   type ShipKey,
 } from "./playableMvp";
+import { activeProductionQueue } from "./productionQueueFallback";
 import { allianceContractAddress, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   activeBuildingQueueResponse,
@@ -367,8 +368,7 @@ export function infrastructureLoadErrorFor({
   infrastructureError?: string | undefined;
   isWalletConnected: boolean;
 }): string | undefined {
-  if (!isWalletConnected || infrastructureChainState || !infrastructureError) return undefined;
-  if (activeBuildingQueue?.active) return undefined;
+  if (!isWalletConnected || !infrastructureError) return undefined;
   return infrastructureError;
 }
 
@@ -811,6 +811,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     [onChainSettlement?.homePlanetId, selectedPlanetId, walletPlanets]
   );
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlement?.homePlanetId ?? undefined;
+  const activeShipyardProductionQueue = activeProductionQueue(shipyardState?.queue, onChainQueues?.ship, "ship");
+  const activeDefenseProductionQueue = activeProductionQueue(defenseState?.queue, onChainQueues?.defense, "defense");
   const activePlanetCoords = selectedManagedPlanet
     ? {
         galaxy: selectedManagedPlanet.galaxy,
@@ -1099,7 +1101,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       const snapshot = await waitForFinishedBuildingState(
         async () => {
           const [settlement, queues, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account),
+            fetchWalletSettlement(apiBaseUrl, account, { source: "live" }),
             fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
             fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
@@ -1160,7 +1162,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       const snapshot = await waitForCollectedResourcesState(
         async () => {
           const [settlement, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account),
+            fetchWalletSettlement(apiBaseUrl, account, { source: "live" }),
             fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
 
@@ -2040,8 +2042,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
 
     const currentQueuedQuantity =
-      shipyardState?.queue?.active && shipyardState.queue.itemId === shipId
-        ? shipyardState.queue.quantity ?? 0
+      activeShipyardProductionQueue?.itemId === shipId
+        ? activeShipyardProductionQueue.quantity ?? 0
         : 0;
     const expectedQuantity = currentQueuedQuantity + quantity;
 
@@ -2059,13 +2061,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }));
   }, [
     account,
+    activeShipyardProductionQueue,
     gameContract,
     provider,
     refreshStartedShipProductionState,
     runShipyardTransaction,
     shipyardState?.homePlanetId,
     shipyardState?.planetId,
-    shipyardState?.queue,
   ]);
 
   const handleFinishShipProduction = useCallback(() => {
@@ -2091,8 +2093,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
     const planetId = defenseState.homePlanetId;
     const currentQueuedQuantity =
-      defenseState.queue?.active && defenseState.queue.itemId === defenseId
-        ? defenseState.queue.quantity ?? 0
+      activeDefenseProductionQueue?.itemId === defenseId
+        ? activeDefenseProductionQueue.quantity ?? 0
         : 0;
     const expectedQuantity = currentQueuedQuantity + quantity;
 
@@ -2110,8 +2112,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }));
   }, [
     account,
+    activeDefenseProductionQueue,
     defenseState?.homePlanetId,
-    defenseState?.queue,
     gameContract,
     provider,
     refreshStartedDefenseProductionState,
@@ -2948,6 +2950,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
+          hasLoadedInfrastructureState={Boolean(onChainResources && onChainSettlement?.homePlanetId && infrastructureChainState)}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={infrastructureLoadErrorFor({
@@ -3041,6 +3044,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}
+          overviewQueue={onChainQueues?.defense}
           selectedDefenseKey={selectedDefenseKey}
         />
       );
@@ -3083,6 +3087,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshShipyardState}
           onSelectShip={setSelectedShipKey}
+          overviewQueue={onChainQueues?.ship}
           selectedShipKey={selectedShipKey}
           shipyardState={shipyardState}
         />
