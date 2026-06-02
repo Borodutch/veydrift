@@ -785,9 +785,12 @@ describe("walletFlow", () => {
 
   test("submits VeydriftGame building and shipyard transactions", async () => {
     const requests: unknown[] = [];
+    let sentTransactions = 0;
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      return `0xtx${requests.length}`;
+      if (method === "eth_call") return "0x";
+      sentTransactions += 1;
+      return `0xtx${sentTransactions}`;
     });
 
     await expect(
@@ -821,6 +824,17 @@ describe("walletFlow", () => {
             to: contract,
             data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
           }
+        ]
+      },
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 0])
+          },
+          "latest"
         ]
       },
       {
@@ -881,6 +895,35 @@ describe("walletFlow", () => {
             to: contract,
             data: "0xa5a0d5970000000000000000000000000000000000000000000000000000000000000007"
           }
+        ]
+      }
+    ]);
+  });
+
+  test("blocks building upgrade transactions before wallet confirmation when contract preflight reverts", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") {
+        throw { code: 3, message: "execution reverted", data: "0xcec62bc2" };
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "1", 3)
+    ).rejects.toThrow("Another building is already upgrading");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [1, 3])
+          },
+          "latest"
         ]
       }
     ]);
