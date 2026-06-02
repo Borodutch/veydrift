@@ -2853,6 +2853,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         <MissionControlPage
           actionState={missionAction}
           canTransact={Boolean(provider && account && gameContract)}
+          currentResources={infrastructureChainState?.resources}
           fleetVisibility={fleetVisibility}
           loading={isWalletConnected && onChainStatus === "loading"}
           now={now}
