@@ -474,6 +474,7 @@ describe("moon chance report event decoding", () => {
   test("decodes alliance profiles returned as dynamic ABI tuples", async () => {
     const allianceContractAddress = "0x2222222222222222222222222222222222222222";
     const wallet = "0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE" as Address;
+    const requester = "0x3333333333333333333333333333333333333333" as Address;
     const reader = new VeydriftGameReader(
       {
         ...readerConfig,
@@ -487,6 +488,9 @@ describe("moon chance report event decoding", () => {
           const selector = call.data.slice(0, 10);
 
           if (selector === "0xad642b52") {
+            if (call.data.toLowerCase().includes(requester.slice(2).toLowerCase())) {
+              return dataWords([word(2n), word(1n), word(1_779_816_700n)]) as T;
+            }
             return dataWords([word(1n), word(3n), word(1_779_816_676n)]) as T;
           }
           if (selector === "0xf0bab901") {
@@ -503,14 +507,20 @@ describe("moon chance report event decoding", () => {
               memberCount: 1n
             }) as T;
           }
-          if (selector === "0xf4d46b3b" || selector === "0xdb132ffb") {
+          if (selector === "0xf4d46b3b") {
+            return dataWords([word(0n), word(0n), word(0n), word(0n)]) as T;
+          }
+          if (selector === "0xdb132ffb") {
+            if (call.data.toLowerCase().includes(requester.slice(2).toLowerCase())) {
+              return dataWords([word(1n), word(1n), addressWord(requester), word(1_779_816_690n)]) as T;
+            }
             return dataWords([word(0n), word(0n), word(0n), word(0n)]) as T;
           }
           if (selector === "0x2a1ef311") {
             return addressArrayResult([wallet]) as T;
           }
           if (selector === "0x2953e5ce") {
-            return addressArrayResult([]) as T;
+            return addressArrayResult([requester]) as T;
           }
 
           throw new Error(`Unexpected selector ${selector}`);
@@ -549,6 +559,18 @@ describe("moon chance report event decoding", () => {
           address: wallet,
           role: "owner",
           joinedAt: "1779816676"
+        }
+      ],
+      allianceJoinRequests: [
+        {
+          allianceId: "1",
+          requester,
+          requestedAt: "1779816690",
+          requesterMembership: {
+            allianceId: "2",
+            role: "member",
+            joinedAt: "1779816700"
+          }
         }
       ]
     });

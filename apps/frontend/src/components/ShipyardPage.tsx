@@ -69,7 +69,7 @@ export function ShipyardPage({
           <h2 className="text-lg font-semibold text-white">Shipyard</h2>
           <p className="mt-1 text-xs text-slate-400">
             {shipyardState?.homePlanetId
-              ? `Planet #${shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
+              ? `Planet #${shipyardState.planetId ?? shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
               : productionAvailable
                 ? "On-chain VeydriftGame planet required for ship production"
                 : "Ship production contract unavailable on this deployment"}
