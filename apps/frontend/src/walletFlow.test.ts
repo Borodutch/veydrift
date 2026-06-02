@@ -1469,6 +1469,25 @@ describe("walletFlow", () => {
     }
   });
 
+  test("explains wallet API network and CORS failures instead of exposing Failed to fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
+
+    globalThis.fetch = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchInfrastructureState("https://api.example.test", account)).rejects.toThrow(
+        "Infrastructure state could not be loaded because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry."
+      );
+    } finally {
+      console.error = originalConsoleError;
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("explains temporary highscore chain read failures", async () => {
     const originalFetch = globalThis.fetch;
 

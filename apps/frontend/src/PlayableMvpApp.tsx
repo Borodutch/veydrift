@@ -339,6 +339,10 @@ function resourceAmountIsZero(value: string): boolean {
   }
 }
 
+function readableRequestError(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export function abandonPlanetUnavailableLabel(
   planet: ManagedPlanetResponse,
   canTransact: boolean,
@@ -631,6 +635,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
+  const infrastructureRequestId = useRef(0);
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -728,9 +733,14 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [runtimeConfig]);
 
   const refreshInfrastructureState = useCallback(async () => {
+    const requestId = infrastructureRequestId.current + 1;
+    infrastructureRequestId.current = requestId;
+
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
       setMoonState(null);
+      setInfrastructureError(undefined);
+      setMoonError(undefined);
       return;
     }
 
@@ -739,25 +749,43 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     setInfrastructureError(undefined);
     setMoonError(undefined);
     try {
-      const [nextInfrastructure, nextMoon] = await Promise.all([
+      const [infrastructureResult, moonResult] = await Promise.allSettled([
         fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
         fetchMoonState(apiBaseUrl, account, activePlanetId),
       ]);
-      setInfrastructureChainState(nextInfrastructure);
-      setMoonState(nextMoon);
-    } catch (error) {
-      console.error(error);
-      setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
-      setMoonError(error instanceof Error ? error.message : "Moon state could not be loaded.");
+
+      if (requestId !== infrastructureRequestId.current) return;
+
+      if (infrastructureResult.status === "fulfilled") {
+        setInfrastructureChainState(infrastructureResult.value);
+        setInfrastructureError(undefined);
+      } else {
+        console.error("Infrastructure state refresh failed", infrastructureResult.reason);
+        setInfrastructureError(readableRequestError(infrastructureResult.reason, "Infrastructure state could not be loaded."));
+      }
+
+      if (moonResult.status === "fulfilled") {
+        setMoonState(moonResult.value);
+        setMoonError(undefined);
+      } else {
+        console.error("Moon state refresh failed", moonResult.reason);
+        setMoonError(readableRequestError(moonResult.reason, "Moon state could not be loaded."));
+      }
     } finally {
-      setInfrastructureLoading(false);
-      setMoonLoading(false);
+      if (requestId === infrastructureRequestId.current) {
+        setInfrastructureLoading(false);
+        setMoonLoading(false);
+      }
     }
   }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshLiveInfrastructureState = useCallback(async () => {
+    const requestId = infrastructureRequestId.current + 1;
+    infrastructureRequestId.current = requestId;
+
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
+      setInfrastructureError(undefined);
       return null;
     }
 
@@ -765,14 +793,18 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     setInfrastructureError(undefined);
     try {
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" });
+      if (requestId !== infrastructureRequestId.current) return null;
       setInfrastructureChainState(nextInfrastructure);
       return nextInfrastructure;
     } catch (error) {
-      console.error(error);
-      setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
+      if (requestId !== infrastructureRequestId.current) return null;
+      console.error("Live infrastructure state refresh failed", error);
+      setInfrastructureError(readableRequestError(error, "Infrastructure state could not be loaded."));
       throw error;
     } finally {
-      setInfrastructureLoading(false);
+      if (requestId === infrastructureRequestId.current) {
+        setInfrastructureLoading(false);
+      }
     }
   }, [account, activePlanetId, apiBaseUrl]);
 

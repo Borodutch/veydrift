@@ -2279,7 +2279,14 @@ async function fetchWalletJson<T>(
         ? controller.signal.reason
         : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`);
     }
-    throw error;
+    console.error("Wallet API request failed", {
+      label,
+      path,
+      apiBaseUrl: apiUrl.replace(/\/+$/, ""),
+      endpoint: `/wallet/:wallet/${path}`,
+      cause: error,
+    });
+    throw new Error(walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
   }
@@ -2288,6 +2295,17 @@ async function fetchWalletJson<T>(
     throw new Error(await apiErrorMessage(response, label));
   }
   return response.json() as Promise<T>;
+}
+
+function walletApiNetworkFailureMessage(label: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const requestLabel = `${label} state`;
+
+  if (/failed to fetch|load failed|network/i.test(message)) {
+    return `${requestLabel} could not be loaded because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry.`;
+  }
+
+  return message || `${requestLabel} could not be loaded because the game API request failed. Retry in a moment.`;
 }
 
 function withPlanetId(path: string, planetId: string | undefined): string {
