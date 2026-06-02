@@ -401,6 +401,12 @@ export type AttackProtectionStatus = {
   defenderInactive: boolean;
 };
 
+export type AllianceIdentity = {
+  allianceId: string;
+  tag: string;
+  name: string;
+};
+
 export type SettledPlanetEvent = PlanetState & {
   eventName: "PlanetStarted" | "ColonyCreated";
   transactionHash: string;
@@ -479,6 +485,7 @@ export interface ChainReader {
   getResearchState(wallet: Address, planetId?: bigint): Promise<ResearchState>;
   getRiftState(wallet: Address, planetId?: bigint): Promise<RiftState>;
   getAllianceState(wallet: Address): Promise<AllianceState>;
+  getAllianceIntelForPlayers?(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>>;
   getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   getHighscoresForWallets?(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]>;
@@ -1542,6 +1549,48 @@ export class VeydriftGameReader implements ChainReader {
         };
       })
     };
+  }
+
+  async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+    const result = new Map<Address, AllianceIdentity>();
+    if (!this.allianceContractAddress || wallets.length === 0) return result;
+
+    const uniqueWallets = Array.from(new Set(wallets.map((wallet) => wallet.toLowerCase() as Address)));
+    const membershipResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      uniqueWallets.map((wallet) => ({ selector: "0xad642b52", args: [encodeAddress(wallet)] }))
+    );
+    const memberships = uniqueWallets.map((wallet, index) => {
+      const words = splitWords(membershipResults[index] ?? "0x");
+      return {
+        wallet,
+        allianceId: decodeUintWord(wordAt(words, 0))
+      };
+    }).filter((membership) => membership.allianceId !== 0n);
+    const uniqueAllianceIds = Array.from(new Set(memberships.map((membership) => membership.allianceId.toString())))
+      .map((allianceId) => BigInt(allianceId));
+
+    if (uniqueAllianceIds.length === 0) return result;
+
+    const profileResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      uniqueAllianceIds.map((allianceId) => ({ selector: "0x79c76adf", args: [encodeUint(allianceId)] }))
+    );
+    const profiles = new Map(
+      uniqueAllianceIds.flatMap((allianceId, index) => {
+        const profile = decodeAllianceDirectoryEntry(allianceId, splitWords(profileResults[index] ?? "0x"));
+        return profile.active
+          ? [[allianceId.toString(), { allianceId: allianceId.toString(), tag: profile.tag, name: profile.name }]]
+          : [];
+      })
+    );
+
+    for (const membership of memberships) {
+      const profile = profiles.get(membership.allianceId.toString());
+      if (profile) result.set(membership.wallet, profile);
+    }
+
+    return result;
   }
 
   async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {

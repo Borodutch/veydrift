@@ -37,6 +37,11 @@ const SMALL_CARGO_SHIP_ID = 0;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
 export const PUBLIC_INTEL_SUMMARY_LABEL = "Public intel";
 
+export function formatAllianceLabel(alliance: Planet["alliance"]): string {
+  if (!alliance) return "";
+  return alliance.tag ? `[${alliance.tag}] ${alliance.name}` : alliance.name;
+}
+
 type MissionResources = {
   metal?: number;
   crystal?: number;
@@ -643,6 +648,7 @@ function GalaxySlot({
       : planet.ownerId
         ? shortAddress(planet.ownerId)
       : "Unclaimed";
+  const allianceLabel = formatAllianceLabel(planet.alliance);
   const debrisLabel = planet.debrisField
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
@@ -738,10 +744,11 @@ function GalaxySlot({
           <button
             className="mt-1 text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
             disabled={!onSelectAlliance}
-            onClick={() => onSelectAlliance?.(planet.alliance ?? "")}
+            onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
+            title={`Open ${allianceLabel}`}
             type="button"
           >
-            {planet.alliance}
+            {allianceLabel}
           </button>
         ) : null}
       </div>

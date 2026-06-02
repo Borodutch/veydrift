@@ -240,6 +240,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
   const type = planet.archetype
     ?? planetTypeFromTemperature(temperature);
   const occupiedBy = planet.occupiedBy ?? null;
+  const alliance = occupiedBy?.alliance ?? null;
 
   return {
     id: planet.key ?? `${planet.galaxy}-${planet.system}-${planet.position}`,
@@ -251,7 +252,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     system: planet.system,
     owner: occupiedBy?.owner ?? null,
     ownerId: occupiedBy?.owner ?? null,
-    alliance: null,
+    alliance,
     occupiedBy,
     debrisField: debrisFieldFromApi(planet.debrisField),
     moonChance: moonChanceFromApi(planet.moonChance),

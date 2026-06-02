@@ -8,7 +8,7 @@ export interface Planet {
   system: number;
   owner: string | null;
   ownerId: string | null;
-  alliance: string | null;
+  alliance: AllianceIdentity | null;
   occupiedBy: OccupiedPlanet | null;
   debrisField: DebrisField | null;
   moonChance: MoonChanceReport | null;
@@ -20,10 +20,17 @@ export interface Planet {
   moonName?: string;
 }
 
+export interface AllianceIdentity {
+  allianceId: string;
+  tag: string;
+  name: string;
+}
+
 export interface OccupiedPlanet {
   planetId: string;
   owner: string;
   ownerDisplayName?: string | null;
+  alliance?: AllianceIdentity | null;
 }
 
 export interface DebrisField {
