@@ -23,6 +23,7 @@ import {
   fetchShipyardState,
   fetchWalletSettlement,
   fetchWalletQueues,
+  getAvailableWalletProvider,
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
@@ -84,11 +85,32 @@ describe("walletFlow", () => {
     expect(isUserRejected({ code: -32603 })).toBe(false);
   });
 
-  test("detects injected wallet availability", () => {
+  test("detects injected wallet availability before Mini App fallback", async () => {
     const provider = mockProvider(async () => null);
+    const miniAppProvider = mockProvider(async () => null);
 
     expect(getInjectedProvider({ ethereum: provider })).toBe(provider);
+    await expect(getAvailableWalletProvider({ ethereum: provider }, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    })).resolves.toBe(provider);
+    await expect(getAvailableWalletProvider({}, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    })).resolves.toBe(miniAppProvider);
     expect(getInjectedProvider({})).toBeUndefined();
+  });
+
+  test("ignores unavailable Mini App wallet provider outside host sessions", async () => {
+    await expect(getAvailableWalletProvider({}, {
+      wallet: {
+        getEthereumProvider: () => {
+          throw new Error("not in a Mini App host");
+        },
+      },
+    })).resolves.toBeUndefined();
   });
 
   test("keeps a known commander name over fallback-only profile refreshes for the same wallet", () => {

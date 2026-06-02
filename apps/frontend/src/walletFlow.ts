@@ -1,3 +1,4 @@
+import { sdk } from "@farcaster/miniapp-sdk";
 import type { PlanetType } from "./types";
 
 export type Eip1193Provider = {
@@ -523,8 +524,34 @@ const ERC20_SELECTORS = {
 } as const;
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
 
-export function getInjectedProvider(globalWindow: InjectedWindow | undefined): Eip1193Provider | undefined {
+export type FarcasterWalletClient = {
+  wallet?: {
+    getEthereumProvider?: () => Promise<Eip1193Provider | undefined> | Eip1193Provider | undefined;
+  };
+};
+
+export function getInjectedProvider(
+  globalWindow: InjectedWindow | undefined,
+): Eip1193Provider | undefined {
   return globalWindow?.ethereum;
+}
+
+export async function getAvailableWalletProvider(
+  globalWindow: InjectedWindow | undefined,
+  farcasterClient: FarcasterWalletClient = sdk as unknown as FarcasterWalletClient,
+): Promise<Eip1193Provider | undefined> {
+  return getInjectedProvider(globalWindow)
+    ?? await getFarcasterEthereumProvider(farcasterClient);
+}
+
+async function getFarcasterEthereumProvider(
+  farcasterClient: FarcasterWalletClient,
+): Promise<Eip1193Provider | undefined> {
+  try {
+    return await farcasterClient.wallet?.getEthereumProvider?.();
+  } catch {
+    return undefined;
+  }
 }
 
 export function isUserRejected(error: unknown): boolean {

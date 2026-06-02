@@ -1,0 +1,63 @@
+import { describe, expect, test } from "bun:test";
+import {
+  accountAssociationDomain,
+  assertAccountAssociationDomain,
+  buildMiniAppEmbed,
+  buildMiniAppManifest,
+  productionAccountAssociation,
+  productionMiniAppSurface,
+  testMiniAppSurface,
+} from "../miniAppMetadata";
+
+const testAccountAssociation = {
+  header: "test-header",
+  payload: "eyJkb21haW4iOiJ0ZXN0LnZleWRyaWZ0LmNvbSJ9",
+  signature: "test-signature",
+};
+
+describe("Farcaster Mini App metadata", () => {
+  test("keeps production manifest associated with veydrift.com", () => {
+    const manifest = buildMiniAppManifest(productionMiniAppSurface, productionAccountAssociation);
+
+    expect(accountAssociationDomain(manifest.accountAssociation)).toBe("veydrift.com");
+    expect(manifest.miniapp.homeUrl).toBe("https://veydrift.com");
+    expect(manifest.miniapp.canonicalDomain).toBe("veydrift.com");
+    expect(manifest.miniapp.noindex).toBe(false);
+  });
+
+  test("builds test manifest with test.veydrift.com URLs and canonical domain", () => {
+    const manifest = buildMiniAppManifest(testMiniAppSurface, testAccountAssociation);
+
+    expect(accountAssociationDomain(manifest.accountAssociation)).toBe("test.veydrift.com");
+    expect(manifest.miniapp.homeUrl).toBe("https://test.veydrift.com");
+    expect(manifest.miniapp.iconUrl).toBe("https://test.veydrift.com/assets/miniapp/icon.png");
+    expect(manifest.miniapp.imageUrl).toBe("https://test.veydrift.com/assets/miniapp/embed.png");
+    expect(manifest.miniapp.canonicalDomain).toBe("test.veydrift.com");
+    expect(manifest.miniapp.requiredCapabilities).toContain("wallet.getEthereumProvider");
+    expect(manifest.miniapp.noindex).toBe(true);
+  });
+
+  test("rejects a signed association for the wrong domain", () => {
+    expect(() => assertAccountAssociationDomain(productionAccountAssociation, "test.veydrift.com"))
+      .toThrow("must be test.veydrift.com");
+  });
+
+  test("builds share embed metadata for root Mini App launch", () => {
+    const embed = buildMiniAppEmbed(testMiniAppSurface);
+
+    expect(embed).toEqual({
+      version: "1",
+      imageUrl: "https://test.veydrift.com/assets/miniapp/embed.png",
+      button: {
+        title: "Join the testers",
+        action: {
+          type: "launch_miniapp",
+          name: "Veydrift",
+          url: "https://test.veydrift.com",
+          splashImageUrl: "https://test.veydrift.com/assets/miniapp/splash.png",
+          splashBackgroundColor: "#05070d",
+        },
+      },
+    });
+  });
+});
