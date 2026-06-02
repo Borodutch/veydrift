@@ -113,6 +113,9 @@ export type WalletPlanetsResponse = {
   wallet: string;
   homePlanetId: string | null;
   player?: PlayerProfile | undefined;
+  queues?: {
+    research: QueueStateResponse | null;
+  } | undefined;
   planets: ManagedPlanetResponse[];
 };
 

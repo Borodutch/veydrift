@@ -58,6 +58,9 @@ export type ManagedPlanet = PlanetState & {
 export type WalletPlanets = {
   wallet: Address;
   homePlanetId: string | null;
+  queues?: {
+    research: QueueState | null;
+  };
   planets: ManagedPlanet[];
 };
 
@@ -921,9 +924,12 @@ export class VeydriftGameReader implements ChainReader {
       return Number(BigInt(left.planetId) - BigInt(right.planetId));
     });
 
+    const research = await this.readResearchQueue(wallet);
+
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
+      queues: { research },
       planets
     };
   }

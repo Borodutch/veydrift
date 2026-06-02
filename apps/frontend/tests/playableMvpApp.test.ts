@@ -440,6 +440,52 @@ describe("Playable MVP app display helpers", () => {
     }
   });
 
+  test("keeps indexed active research queues in the reload snapshot", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const requestedPaths: string[] = [];
+    const activeResearch = {
+      active: true,
+      kind: "research",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: "1770000600",
+      startedAt: "1770000000",
+      cost: {
+        metal: "800",
+        crystal: "400",
+        deuterium: "0",
+      },
+    };
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      requestedPaths.push(url.pathname);
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          queues: {
+            research: activeResearch,
+          },
+          planets: [indexedPlanet(wallet)],
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
+
+      expect(snapshot.queues.research).toEqual(activeResearch);
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("uses indexed queues for the requested active planet", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
