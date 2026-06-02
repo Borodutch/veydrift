@@ -8,6 +8,7 @@ import {
   InfrastructureLoadErrorPanel,
   detailEffectRows,
 } from "../src/components/InfrastructurePage";
+import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
 import { buildingEffectMetrics, createInitialPlayableState } from "../src/playableMvp";
 
 describe("Infrastructure page display helpers", () => {
@@ -380,5 +381,10 @@ function textParts(node: ComponentChildren): string[] {
   }
 
   const vnode = node as VNode;
+  if (vnode.type === QueueProgressPanel) {
+    const Component = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
+    return textParts(Component(vnode.props ?? {}));
+  }
+
   return textParts(vnode.props?.children);
 }
