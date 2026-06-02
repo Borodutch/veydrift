@@ -4,6 +4,7 @@ import {
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
   refreshedInfrastructureUnavailableReasonFor,
+  refreshedInfrastructureUpgradeUnavailableReasonFor,
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
 import { createInitialPlayableState } from "../src/playableMvp";
@@ -225,6 +226,41 @@ describe("Playable MVP app display helpers", () => {
       onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
       runtimeConfigStatus: "ready",
     })).toBe("Infrastructure is unavailable on this deployment.");
+  });
+
+  test("blocks building transactions when refreshed live resources cannot afford the upgrade", () => {
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "solarPlant",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState({
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+      }),
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toContain("Requires");
+  });
+
+  test("blocks building transactions when refreshed live infrastructure has an active building queue", () => {
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "metalMine",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState({
+        queue: {
+          active: true,
+          itemId: 1,
+          targetLevel: 2,
+          readyAt: "1770000300",
+          startedAt: "1770000000",
+          cost: { metal: "60", crystal: "15", deuterium: "0" },
+        },
+      }),
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toContain("currently upgrading");
   });
 
   test("hydrates indexed planet state before requesting live settlement state", async () => {
@@ -486,21 +522,23 @@ describe("Playable MVP app display helpers", () => {
 
 function infrastructureState({
   energyBalance,
+  queue,
+  resources,
   source,
   stale,
-}: Partial<Pick<ChainInfrastructureState, "energyBalance" | "source" | "stale">> = {}): ChainInfrastructureState {
+}: Partial<Pick<ChainInfrastructureState, "energyBalance" | "queue" | "resources" | "source" | "stale">> = {}): ChainInfrastructureState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
     source,
     stale,
     infrastructureAvailable: true,
-    resources: { metal: "500", crystal: "500", deuterium: "0" },
+    resources: resources ?? { metal: "500", crystal: "500", deuterium: "0" },
     productionPerHour: { metal: "60", crystal: "30", deuterium: "0" },
     energyBalance,
     storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
     buildings: [],
-    queue: null,
+    queue: queue ?? null,
   };
 }
 

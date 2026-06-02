@@ -19,6 +19,7 @@ import {
   infrastructureActionNoticeFor,
   type BuildingActionState,
 } from "./buildingActionNotice";
+import { buildingUpgradeStatus } from "./buildingDetails";
 
 export { infrastructureActionNoticeFor } from "./buildingActionNotice";
 import {
@@ -286,6 +287,48 @@ export function refreshedInfrastructureUnavailableReasonFor({
     onChainStatus: "ready",
     runtimeConfigStatus,
   });
+}
+
+export function refreshedInfrastructureUpgradeUnavailableReasonFor({
+  buildingKey,
+  gameContract,
+  homePlanetId,
+  infrastructureChainState,
+  isWalletConnected,
+  onChainResources,
+  runtimeConfigStatus,
+}: {
+  buildingKey: BuildingKey;
+  gameContract?: string | undefined;
+  homePlanetId?: string | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  isWalletConnected: boolean;
+  onChainResources?: PlayableState["resources"] | undefined;
+  runtimeConfigStatus: RuntimeConfigState["status"];
+}): string | undefined {
+  const unavailableReason = refreshedInfrastructureUnavailableReasonFor({
+    gameContract,
+    homePlanetId,
+    infrastructureChainState,
+    isWalletConnected,
+    onChainResources,
+    runtimeConfigStatus,
+  });
+  if (unavailableReason) return unavailableReason;
+  if (!infrastructureChainState) return "Infrastructure state unavailable.";
+
+  const refreshedState = infrastructurePlayableState(infrastructureChainState);
+  const refreshedResources = resourcesFromChain(infrastructureChainState.resources);
+  const status = buildingUpgradeStatus(
+    {
+      ...refreshedState,
+      resources: refreshedResources ?? onChainResources ?? refreshedState.resources,
+    },
+    buildingKey,
+    { chainCost: buildingCosts(infrastructureChainState)[buildingKey] },
+  );
+
+  return status.disabled ? status.reason : undefined;
 }
 
 function resourceAmountIsZero(value: string): boolean {
@@ -1335,7 +1378,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
 
       try {
         const liveInfrastructure = await refreshLiveInfrastructureState();
-        const unavailableReason = refreshedInfrastructureUnavailableReasonFor({
+        const unavailableReason = refreshedInfrastructureUpgradeUnavailableReasonFor({
+          buildingKey: key,
           gameContract,
           homePlanetId: planetId,
           infrastructureChainState: liveInfrastructure,
