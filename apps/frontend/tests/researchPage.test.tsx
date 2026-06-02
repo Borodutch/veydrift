@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import {
+  ActiveResearchQueueDetail,
   formatCost,
   formatResearchRequirements,
   ResearchLoadErrorPanel,
@@ -61,6 +62,28 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Research request failed with 503");
     expect(text).toContain("Levels, costs, resources, queue state, and requirement-derived values are unavailable");
     expect(text).not.toMatch(/\bLevel 0\b|Research Level 1|Research Lab 1 is required|No resource cost/);
+  });
+
+  test("renders active research progress with the shared single-item queue pattern", () => {
+    const panel = ActiveResearchQueueDetail({
+      isSelectedResearch: true,
+      now: 1_700_000_060_000,
+      queue: {
+        kind: "research",
+        key: "energy",
+        label: "Energy Technology",
+        readyAt: 1_700_000_120_000,
+        startedAt: 1_700_000_000_000,
+        targetLevel: 1,
+      },
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("Research in progress");
+    expect(text).toContain("Energy Technology Level 1 is researching");
+    expect(text).toContain("50 %");
+    expect(text).toContain("Time remaining");
+    expect(text).toContain("Ready at");
   });
 });
 
