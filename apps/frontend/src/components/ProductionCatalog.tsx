@@ -3,13 +3,15 @@ import type { Resources } from "../playableMvp";
 import type { QueueStateResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 import { QueueProgressPanel } from "./QueueProgressPanel";
+import {
+  RequirementFlairs as SharedRequirementFlairs,
+  type RequirementFlair,
+  type RequirementTarget,
+} from "./RequirementFlairs";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
-export type ProductionRequirementState = {
-  label: string;
-  met: boolean;
-};
+export type ProductionRequirementState = RequirementFlair;
 
 export type ProductionCatalogItem<Key extends string = string> = {
   key: Key;
@@ -72,6 +74,7 @@ export function ProductionCatalog<Key extends string>({
   items,
   onBuild,
   onFinishQueue,
+  onOpenRequirement,
   onQuantity,
   onRefreshQueue,
   onSelect,
@@ -84,6 +87,7 @@ export function ProductionCatalog<Key extends string>({
   items: ProductionCatalogItem<Key>[];
   onBuild: (item: ProductionCatalogItem<Key>) => void;
   onFinishQueue?: (() => void) | undefined;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onQuantity: (key: Key, quantity: number) => void;
   onRefreshQueue?: (() => void) | undefined;
   onSelect: (key: Key) => void;
@@ -110,6 +114,7 @@ export function ProductionCatalog<Key extends string>({
           emptyLabel={emptyLabel}
           item={selected}
           onBuild={onBuild}
+          onOpenRequirement={onOpenRequirement}
           onQuantity={onQuantity}
         />
 
@@ -228,11 +233,13 @@ function SelectedProductionPanel<Key extends string>({
   emptyLabel,
   item,
   onBuild,
+  onOpenRequirement,
   onQuantity,
 }: {
   emptyLabel: string;
   item: ProductionCatalogItem<Key> | undefined;
   onBuild: (item: ProductionCatalogItem<Key>) => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onQuantity: (key: Key, quantity: number) => void;
 }) {
   if (!item) {
@@ -271,7 +278,11 @@ function SelectedProductionPanel<Key extends string>({
         <Stat label="Status" value={item.statusLabel} />
       </dl>
 
-      <RequirementFlairs requirements={item.requirements} missing={item.missing} />
+      <ProductionRequirementFlairs
+        missing={item.missing}
+        onOpenRequirement={onOpenRequirement}
+        requirements={item.requirements}
+      />
 
       <div className="grid gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -301,14 +312,16 @@ function SelectedProductionPanel<Key extends string>({
   );
 }
 
-function RequirementFlairs({
+function ProductionRequirementFlairs({
   missing,
+  onOpenRequirement,
   requirements,
 }: {
   missing: string[];
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   requirements: ProductionRequirementState[];
 }) {
-  if (requirements.length === 0) {
+  if (requirements.length === 0 && missing.length === 0) {
     return (
       <div className="rounded border border-emerald-300/20 bg-emerald-300/10 px-3 py-2 text-xs text-emerald-200">
         No unlock requirements.
@@ -316,26 +329,16 @@ function RequirementFlairs({
     );
   }
 
+  const visibleRequirements = requirements.length > 0
+    ? requirements
+    : missing.map((label) => ({ label, met: false }));
+
   return (
-    <div className="flex min-h-10 flex-wrap content-start gap-1.5 text-xs">
-      {requirements.map((requirement) => (
-        <span
-          className={
-            requirement.met
-              ? "rounded border border-emerald-300/20 bg-emerald-300/10 px-2 py-1 text-emerald-200"
-              : "rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-amber-200"
-          }
-          key={requirement.label}
-        >
-          {requirement.label}
-        </span>
-      ))}
-      {requirements.length === 0 && missing.map((label) => (
-        <span className="rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-amber-200" key={label}>
-          {label}
-        </span>
-      ))}
-    </div>
+    <SharedRequirementFlairs
+      emptyLabel="No unlock requirements."
+      onOpenRequirement={onOpenRequirement}
+      requirements={visibleRequirements}
+    />
   );
 }
 

@@ -22,7 +22,7 @@ import {
   InspectInfoRow,
   SingleItemQueueProgress,
 } from "./InspectProgressLayout";
-import { RequirementFlairs, type RequirementFlair } from "./RequirementFlairs";
+import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -58,9 +58,12 @@ interface ResearchPageProps {
   error: string | undefined;
   loading: boolean;
   onFinish: () => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onResearch: (technologyId: number, key: ResearchKey) => void;
+  onSelectResearch?: ((key: ResearchKey) => void) | undefined;
   researchState: ChainResearchState | null;
+  selectedResearchKey?: ResearchKey | undefined;
   settledState: PlayableState;
   state: PlayableState;
   useLocalStateFallback?: boolean | undefined;
@@ -72,13 +75,17 @@ export function ResearchPage({
   error,
   loading,
   onFinish,
+  onOpenRequirement,
   onRefresh,
   onResearch,
+  onSelectResearch,
   researchState,
+  selectedResearchKey,
   settledState,
   useLocalStateFallback = false,
 }: ResearchPageProps) {
-  const [selectedKey, setSelectedKey] = useState<ResearchKey>("energy");
+  const [localSelectedKey, setLocalSelectedKey] = useState<ResearchKey>("energy");
+  const selectedKey = selectedResearchKey ?? localSelectedKey;
   const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedResearch = researchCatalog.find((research) => research.key === selectedKey)
     ?? researchCatalog[0]!;
@@ -94,7 +101,8 @@ export function ResearchPage({
   const queueReady = queue?.readyAt ? queue.readyAt <= now : false;
 
   function handleSelectResearch(key: ResearchKey) {
-    setSelectedKey(key);
+    setLocalSelectedKey(key);
+    onSelectResearch?.(key);
 
     if (window.matchMedia("(max-width: 1279px)").matches) {
       window.setTimeout(() => {
@@ -202,6 +210,7 @@ export function ResearchPage({
             loading={loading}
             now={now}
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
+            onOpenRequirement={onOpenRequirement}
             queue={queue}
             research={selectedResearch}
             researchState={researchState}
@@ -343,6 +352,7 @@ function ResearchDetailPanel({
   loading,
   now,
   onResearch,
+  onOpenRequirement,
   queue,
   research,
   researchState,
@@ -355,6 +365,7 @@ function ResearchDetailPanel({
   loading: boolean;
   now: number;
   onResearch: () => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   queue: ReturnType<typeof researchQueueForDisplay>;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
@@ -405,7 +416,7 @@ function ResearchDetailPanel({
       <dl className="mt-4 grid gap-2">
         <InspectInfoRow label="Category" value={research.lane} />
         <InspectInfoRow label="Requirements">
-          <RequirementFlairs requirements={requirementStates} />
+          <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={requirementStates} />
         </InspectInfoRow>
         <InspectInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
         <InspectInfoRow
@@ -622,6 +633,11 @@ export function getResearchRequirementStates(
   return researchRequirementsFor(key).map((requirement) => ({
     label: formatRequirement(requirement),
     met: researchRequirementMet(state, requirement),
+    target: requirement.type === "building"
+      ? { kind: "building", key: requirement.key }
+      : requirement.type === "research"
+        ? { kind: "research", key: requirement.key }
+        : undefined,
   }));
 }
 

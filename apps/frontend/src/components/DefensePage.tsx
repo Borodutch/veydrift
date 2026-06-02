@@ -1,13 +1,15 @@
 import { useState } from "preact/hooks";
-import type { DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
+import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
 import type { ChainDefenseState } from "../walletFlow";
 import {
   Notice,
   ProductionCatalog,
   type ProductionCatalogItem,
+  type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
+import type { RequirementTarget } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type DefenseActionState =
@@ -24,7 +26,10 @@ interface DefensePageProps {
   loading: boolean;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
   onFinish: () => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
+  onSelectDefense?: ((key: DefenseKey) => void) | undefined;
+  selectedDefenseKey?: DefenseKey | undefined;
 }
 
 const groupLabels = {
@@ -51,10 +56,14 @@ export function DefensePage({
   loading,
   onBuild,
   onFinish,
+  onOpenRequirement,
   onRefresh,
+  onSelectDefense,
+  selectedDefenseKey,
 }: DefensePageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [selectedKey, setSelectedKey] = useState<DefenseKey>("rocketLauncher");
+  const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
+  const selectedKey = selectedDefenseKey ?? localSelectedKey;
   const shipyardLevel = defenseState?.shipyardLevel ?? 0;
   const resources = toResources(defenseState?.resources);
   const queue = defenseState?.queue?.active ? defenseState.queue : undefined;
@@ -110,8 +119,12 @@ export function DefensePage({
           })}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
           onFinishQueue={onFinish}
+          onOpenRequirement={onOpenRequirement}
           onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
-          onSelect={setSelectedKey}
+          onSelect={(key) => {
+            setLocalSelectedKey(key);
+            onSelectDefense?.(key);
+          }}
           queue={productionQueueViewModel(queue, defenseCatalog)}
           selectedKey={selectedKey}
         />
@@ -168,10 +181,7 @@ function StatusPanel({
   return null;
 }
 
-type DefenseRequirementState = {
-  label: string;
-  met: boolean;
-};
+type DefenseRequirementState = ProductionRequirementState;
 
 export function defenseProductionItems({
   actionPending,
@@ -280,6 +290,11 @@ export function getDefenseRequirementStates(
     return {
       label: `${requirement.label} ${requirement.level}`,
       met: actual >= requirement.level,
+      target: requirement.key
+        ? requirement.kind === "building"
+          ? { kind: "building" as const, key: requirement.key as BuildingKey }
+          : { kind: "research" as const, key: requirement.key as ResearchKey }
+        : undefined,
     };
   });
 }
