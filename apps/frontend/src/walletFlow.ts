@@ -627,6 +627,22 @@ export function playerDisplayLabel(profile: PlayerProfile | null | undefined, wa
   return profile?.displayName ?? profile?.fallbackName ?? (wallet ? shortAddress(wallet) : "Unnamed player");
 }
 
+export function mergePlayerProfile(
+  current: PlayerProfile | undefined,
+  next: PlayerProfile | undefined
+): PlayerProfile | undefined {
+  if (!next) return current;
+  if (!current?.displayName) return next;
+  if (current.wallet.toLowerCase() !== next.wallet.toLowerCase()) return next;
+  if (next.displayName?.trim()) return next;
+
+  return {
+    ...next,
+    displayName: current.displayName,
+    updatedAt: current.updatedAt ?? next.updatedAt,
+  };
+}
+
 export function settlementContractConfigured(config: SettlementConfig): config is SettlementConfig & { address: string } {
   return Boolean(config.address && /^0x[a-fA-F0-9]{40}$/.test(config.address));
 }
