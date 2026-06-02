@@ -274,7 +274,9 @@ function BuildingDetailPanel({
   const binary = isBinaryBuilding(building.key);
   const built = currentLevel > 0;
   const actionVerb = currentLevel === 0 || binary ? "Build" : "Upgrade";
-  const actionLabel = binary ? "Build Rift Bridge" : `${actionVerb} Level ${status.targetLevel}`;
+  const actionLabel = status.disabled && actionUnavailableReason
+    ? actionUnavailableReason
+    : binary ? "Build Rift Bridge" : `${actionVerb} Level ${status.targetLevel}`;
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -371,11 +373,12 @@ function BuildingDetailPanel({
 
       {isBuildingReadyToFinish && onFinishBuilding && (
         <button
-          className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+          className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          disabled={Boolean(actionUnavailableReason)}
           onClick={onFinishBuilding}
           type="button"
         >
-          {binary ? "Finish build" : "Finish upgrade"}
+          {actionUnavailableReason ?? (binary ? "Finish build" : "Finish upgrade")}
         </button>
       )}
 

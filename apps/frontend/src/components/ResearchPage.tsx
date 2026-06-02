@@ -194,6 +194,7 @@ export function ResearchPage({
         <div className="order-1 xl:order-2" ref={detailPanelRef}>
           <ResearchDetailPanel
             actionPending={actionState.status === "pending"}
+            actionPendingLabel={actionState.status === "pending" ? actionState.label : undefined}
             canTransact={canTransact}
             error={error}
             loading={loading}
@@ -334,6 +335,7 @@ function Notice({
 
 function ResearchDetailPanel({
   actionPending,
+  actionPendingLabel,
   canTransact,
   error,
   loading,
@@ -345,6 +347,7 @@ function ResearchDetailPanel({
   state,
 }: {
   actionPending: boolean;
+  actionPendingLabel?: string | undefined;
   canTransact: boolean;
   error: string | undefined;
   loading: boolean;
@@ -357,6 +360,7 @@ function ResearchDetailPanel({
 }) {
   const status = researchActionStatus({
     actionPending,
+    actionPendingLabel,
     canTransact,
     chainCost: chainCostFor(researchState, research.id),
     error,
@@ -462,6 +466,7 @@ export function ActiveResearchQueueDetail({
 
 function researchActionStatus({
   actionPending,
+  actionPendingLabel,
   canTransact,
   chainCost,
   error,
@@ -471,6 +476,7 @@ function researchActionStatus({
   state,
 }: {
   actionPending: boolean;
+  actionPendingLabel?: string | undefined;
   canTransact: boolean;
   chainCost: Resources | undefined;
   error: string | undefined;
@@ -497,7 +503,7 @@ function researchActionStatus({
     : undefined;
 
   const reason = actionPending
-    ? "Waiting for wallet confirmation"
+    ? actionPendingLabel ?? "Awaiting wallet"
     : loading
       ? "Reading on-chain research state"
       : error
@@ -526,7 +532,7 @@ function researchActionStatus({
   const badge = active ? "In progress" : disabled ? "Locked" : "Available";
 
   return {
-    actionLabel: active ? "In progress" : `Research Level ${targetLevel}`,
+    actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : active ? "In progress" : `Research Level ${targetLevel}`,
     badge,
     cost,
     currentLevel,

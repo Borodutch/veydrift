@@ -133,7 +133,8 @@ export function ShipyardPage({
                     shipUnavailable,
                     shipyardState,
                   });
-                  const disabled = Boolean(blockedReason) || actionState.status === "pending";
+                  const actionPending = actionState.status === "pending";
+                  const disabled = Boolean(blockedReason) || actionPending;
 
                   return (
                     <ShipTile
@@ -146,6 +147,7 @@ export function ShipyardPage({
                       onBuild={() => onBuild(ship.id, ship.key, quantity)}
                       onQuantity={(next) => setQuantities((prev) => ({ ...prev, [ship.key]: next }))}
                       owned={owned}
+                      buttonLabel={actionPending ? "Pending" : "Build"}
                       quantity={quantity}
                       ship={ship}
                     />
@@ -221,6 +223,7 @@ function StatusPanel({
 
 function ShipTile({
   blockedReason,
+  buttonLabel,
   cost,
   disabled,
   durationSeconds,
@@ -232,6 +235,7 @@ function ShipTile({
   ship,
 }: {
   blockedReason: string | undefined;
+  buttonLabel: string;
   cost: Resources | undefined;
   disabled: boolean;
   durationSeconds: number | undefined;
@@ -295,7 +299,7 @@ function ShipTile({
             onClick={onBuild}
             type="button"
           >
-            Build
+            {buttonLabel}
           </button>
           {blockedReason && <span className="text-xs text-slate-500">{blockedReason}</span>}
         </div>
