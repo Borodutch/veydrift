@@ -77,6 +77,7 @@ interface InfrastructurePageProps {
   actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
+  hasLoadedInfrastructureState?: boolean | undefined;
   isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   loadError?: string | undefined;
@@ -96,6 +97,7 @@ export function InfrastructurePage({
   actionPendingLabel,
   actionUnavailableReason,
   chainCosts,
+  hasLoadedInfrastructureState = false,
   isActionPending = false,
   isBuildingReadyToFinish,
   loadError,
@@ -113,6 +115,11 @@ export function InfrastructurePage({
   const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedBuilding = buildingCatalog.find((building) => building.key === selectedKey)
     ?? buildingCatalog[0]!;
+  const showInitialLoadError = shouldShowInfrastructureInitialLoadError({
+    hasLoadedInfrastructureState,
+    loadError,
+  });
+  const initialLoadError = showInitialLoadError ? loadError : undefined;
 
   function handleSelectBuilding(key: BuildingKey) {
     setLocalSelectedKey(key);
@@ -125,7 +132,7 @@ export function InfrastructurePage({
     }
   }
 
-  if (loadError) {
+  if (initialLoadError) {
     return (
       <div className="grid gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -136,7 +143,7 @@ export function InfrastructurePage({
             </p>
           </div>
         </div>
-        <InfrastructureLoadErrorPanel reason={loadError} />
+        <InfrastructureLoadErrorPanel reason={initialLoadError} />
       </div>
     );
   }
@@ -169,6 +176,8 @@ export function InfrastructurePage({
           ) : null}
         </div>
       </div>
+
+      {loadError ? <InfrastructureRefreshErrorPanel reason={loadError} /> : null}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
         <div className="order-2 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:order-1 xl:grid-cols-3 2xl:grid-cols-4">
@@ -217,6 +226,16 @@ export function InfrastructurePage({
   );
 }
 
+export function shouldShowInfrastructureInitialLoadError({
+  hasLoadedInfrastructureState,
+  loadError,
+}: {
+  hasLoadedInfrastructureState: boolean;
+  loadError?: string | undefined;
+}): boolean {
+  return Boolean(loadError && !hasLoadedInfrastructureState);
+}
+
 export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
   return (
     <div className="rounded-lg border border-rose-300/20 bg-rose-300/5 px-4 py-4 text-sm text-rose-100">
@@ -226,6 +245,17 @@ export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
       </p>
       <p className="mt-3 text-xs text-rose-100/70">
         Levels, costs, production effects, storage caps, and upgrade values are unavailable until the live state request succeeds.
+      </p>
+    </div>
+  );
+}
+
+export function InfrastructureRefreshErrorPanel({ reason }: { reason: string }) {
+  return (
+    <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+      <p className="font-semibold">Infrastructure refresh failed.</p>
+      <p className="mt-1 text-amber-100/80">
+        Showing the last loaded building data. {reason}
       </p>
     </div>
   );

@@ -6,7 +6,9 @@ import {
   BuildingLevelInfoButton,
   BuildingLevelInfoModal,
   InfrastructureLoadErrorPanel,
+  InfrastructureRefreshErrorPanel,
   detailEffectRows,
+  shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
 import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
 import { buildingEffectMetrics, createInitialPlayableState } from "../src/playableMvp";
@@ -22,6 +24,29 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Infrastructure request failed with 503");
     expect(text).toContain("Levels, costs, production effects, storage caps, and upgrade values are unavailable");
     expect(text).not.toMatch(/\bLevel 0\b|Upgrade cost|Production capacity|Ready for Level/);
+  });
+
+  test("keeps loaded infrastructure values visible when a background refresh fails", () => {
+    expect(shouldShowInfrastructureInitialLoadError({
+      hasLoadedInfrastructureState: true,
+      loadError: "Infrastructure request failed with 503",
+    })).toBe(false);
+
+    const panel = InfrastructureRefreshErrorPanel({
+      reason: "Infrastructure request failed with 503",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("Infrastructure refresh failed");
+    expect(text).toContain("Showing the last loaded building data");
+    expect(text).toContain("Infrastructure request failed with 503");
+  });
+
+  test("keeps initial infrastructure load failures in the full load-error state", () => {
+    expect(shouldShowInfrastructureInitialLoadError({
+      hasLoadedInfrastructureState: false,
+      loadError: "Infrastructure request failed with 503",
+    })).toBe(true);
   });
 
   test("renders a compact level info button with the building label", () => {

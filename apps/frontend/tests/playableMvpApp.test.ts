@@ -360,11 +360,18 @@ describe("Playable MVP app display helpers", () => {
       infrastructureChainState: null,
       infrastructureError: "Infrastructure request failed with 503.",
       isWalletConnected: true,
-    })).toBeUndefined();
+    })).toBe("Infrastructure request failed with 503.");
 
     expect(infrastructureLoadErrorFor({
       activeBuildingQueue: null,
       infrastructureChainState: null,
+      infrastructureError: "Infrastructure request failed with 503.",
+      isWalletConnected: true,
+    })).toBe("Infrastructure request failed with 503.");
+
+    expect(infrastructureLoadErrorFor({
+      activeBuildingQueue: null,
+      infrastructureChainState: infrastructureState(),
       infrastructureError: "Infrastructure request failed with 503.",
       isWalletConnected: true,
     })).toBe("Infrastructure request failed with 503.");
