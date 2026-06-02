@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { getDefenseRequirementStates, getQueueBlocker } from "../src/components/DefensePage";
+import { selectedProductionItem } from "../src/components/ProductionCatalog";
+import { defenseProductionItems, getDefenseRequirementStates, getQueueBlocker } from "../src/components/DefensePage";
 import { defenseCatalog } from "../src/playableMvp";
 import type { ChainDefenseState } from "../src/walletFlow";
 
@@ -49,6 +50,113 @@ describe("Defense page display helpers", () => {
       { label: "Energy 1", met: true },
       { label: "Laser 3", met: false },
     ]);
+  });
+
+  test("builds a dense defense catalog with deployed counts and locked states", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 2,
+        technologyLevels: {
+          "0": 1,
+          "1": 3,
+        },
+        defenses: [
+          {
+            id: 0,
+            count: 12,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+          {
+            id: 1,
+            count: 3,
+            cost: {
+              metal: "1500",
+              crystal: "500",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+      productionAvailable: true,
+      quantities: { lightLaser: 4 },
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+    });
+
+    expect(items).toHaveLength(defenseCatalog.length);
+    expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      countLabel: "Deployed",
+      countValue: 12,
+      status: "ready",
+    });
+    expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
+      countValue: 3,
+      quantity: 4,
+      status: "ready",
+    });
+    expect(items.find((item) => item.key === "gaussCannon")).toMatchObject({
+      status: "locked",
+    });
+  });
+
+  test("marks matching active defense queues as selectable add targets", () => {
+    const queue = {
+      active: true,
+      kind: "defense",
+      itemId: 0,
+      quantity: 2,
+      readyAt: "1700000100",
+      cost: {
+        metal: "4000",
+        crystal: "0",
+        deuterium: "0",
+      },
+    };
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 1,
+        defenses: [
+          {
+            id: 0,
+            count: 5,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+        ],
+        queue,
+      }),
+      productionAvailable: true,
+      quantities: {},
+      queue,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+    });
+
+    expect(selectedProductionItem(items, "rocketLauncher")).toMatchObject({
+      actionLabel: "Add",
+      queued: 2,
+      status: "queued",
+      statusLabel: "Queued",
+    });
+    expect(items.find((item) => item.key === "lightLaser")?.blockedReason).toBe("Active queue: Rocket Launcher");
   });
 });
 

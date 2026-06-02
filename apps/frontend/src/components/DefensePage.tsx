@@ -1,15 +1,14 @@
 import { useState } from "preact/hooks";
-import type { ComponentChildren } from "preact";
 import type { DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
 import type { ChainDefenseState } from "../walletFlow";
-import { formatDurationUntil } from "../durationFormat";
-import { CombatStatsInfoButton } from "./CombatStatsInfo";
-import { OptimizedImage } from "./OptimizedImage";
-import { QueueProgressPanel } from "./QueueProgressPanel";
+import {
+  Notice,
+  ProductionCatalog,
+  type ProductionCatalogItem,
+  productionQueueViewModel,
+} from "./ProductionCatalog";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
-
-const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 type DefenseActionState =
   | { status: "idle" }
@@ -55,12 +54,11 @@ export function DefensePage({
   onRefresh,
 }: DefensePageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [selectedKey, setSelectedKey] = useState<DefenseKey>("rocketLauncher");
   const shipyardLevel = defenseState?.shipyardLevel ?? 0;
   const resources = toResources(defenseState?.resources);
   const queue = defenseState?.queue?.active ? defenseState.queue : undefined;
   const productionAvailable = defenseState?.productionAvailable !== false;
-  const queueReady =
-    queue?.readyAt ? Number(queue.readyAt) <= Math.floor(Date.now() / 1_000) : false;
   const initialLoading = loading && !defenseState;
 
   return (
@@ -97,74 +95,26 @@ export function DefensePage({
       {initialLoading ? (
         <VeydriftLoader label="Reading defenses" />
       ) : (
-        <>
-          {queue && (
-            <ActiveDefenseQueuePanel
-              actionPending={actionState.status === "pending"}
-              canTransact={canTransact}
-              onFinish={onFinish}
-              queue={queue}
-              queueReady={queueReady}
-            />
-          )}
-
-          {(["kinetic", "energy", "shield", "missile"] as const).map((group) => (
-            <section className="grid gap-3" key={group}>
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  {groupLabels[group]}
-                </h3>
-                <span className="h-px flex-1 bg-white/10" />
-              </div>
-              <div className="grid gap-3 xl:grid-cols-2">
-                {defenseCatalog
-                  .filter((defense) => defense.group === group)
-                  .map((defense) => {
-                    const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
-                    const owned = productionAvailable ? chainDefense?.count : undefined;
-                    const baseCost = productionAvailable ? toResources(chainDefense?.cost) : undefined;
-                    const quantity = quantities[defense.key] ?? 1;
-                    const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
-                    const missing = getMissingRequirements(defense, defenseState);
-                    const requirementStates = getDefenseRequirementStates(defense, defenseState);
-                    const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
-                    const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
-                    const blockedReason = getBlockedReason({
-                      affordable,
-                      canTransact,
-                      defenseState,
-                      hasPlanet: Boolean(defenseState?.homePlanetId),
-                      limitReason,
-                      missing,
-                      queueBlocker: getQueueBlocker(defense.id, queue),
-                      resources,
-                    });
-                    const actionPending = actionState.status === "pending";
-                    const disabled = Boolean(blockedReason) || actionPending;
-                    const queued = queuedDefenseCount(defense.id, queue);
-
-                    return (
-                      <DefenseTile
-                        blockedReason={blockedReason}
-                        cost={totalCost}
-                        defense={defense}
-                        disabled={disabled}
-                        buttonLabel={actionPending ? "Pending" : undefined}
-                        key={defense.key}
-                        missing={missing}
-                        onBuild={() => onBuild(defense.id, defense.key, quantity)}
-                        onQuantity={(next) => setQuantities((prev) => ({ ...prev, [defense.key]: next }))}
-                        owned={owned}
-                        queued={queued}
-                        quantity={quantity}
-                        requirementStates={requirementStates}
-                      />
-                    );
-                  })}
-              </div>
-            </section>
-          ))}
-        </>
+        <ProductionCatalog
+          actionPending={actionState.status === "pending"}
+          canTransact={canTransact}
+          emptyLabel="Select a defense to review costs, requirements, and production controls."
+          items={defenseProductionItems({
+            actionPending: actionState.status === "pending",
+            canTransact,
+            defenseState,
+            productionAvailable,
+            quantities,
+            queue,
+            resources,
+          })}
+          onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
+          onFinishQueue={onFinish}
+          onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
+          onSelect={setSelectedKey}
+          queue={productionQueueViewModel(queue, defenseCatalog)}
+          selectedKey={selectedKey}
+        />
       )}
     </div>
   );
@@ -218,185 +168,76 @@ function StatusPanel({
   return null;
 }
 
-function ActiveDefenseQueuePanel({
-  actionPending,
-  canTransact,
-  onFinish,
-  queue,
-  queueReady,
-}: {
-  actionPending: boolean;
-  canTransact: boolean;
-  onFinish: () => void;
-  queue: NonNullable<ChainDefenseState["queue"]>;
-  queueReady: boolean;
-}) {
-  const defense = defenseCatalog.find((item) => item.id === queue.itemId);
-
-  return (
-    <QueueProgressPanel
-      action={{
-        disabled: !canTransact || !queueReady || actionPending,
-        label: "Complete queue",
-        onClick: onFinish,
-      }}
-      asset={defense?.asset}
-      label={defense?.label ?? "Defense"}
-      quantity={queue.quantity ?? 0}
-      readyAt={queue.readyAt}
-      startedAt={queue.startedAt}
-      title="Active queue"
-      tone="rose"
-    >
-      Ready {formatReady(queue.readyAt)}.
-    </QueueProgressPanel>
-  );
-}
-
-function DefenseTile({
-  blockedReason,
-  buttonLabel,
-  cost,
-  defense,
-  disabled,
-  missing,
-  onBuild,
-  onQuantity,
-  owned,
-  queued,
-  quantity,
-  requirementStates,
-}: {
-  blockedReason: string | undefined;
-  buttonLabel?: string | undefined;
-  cost: Resources | undefined;
-  defense: (typeof defenseCatalog)[number];
-  disabled: boolean;
-  missing: string[];
-  onBuild: () => void;
-  onQuantity: (quantity: number) => void;
-  owned: number | undefined;
-  queued: number;
-  quantity: number;
-  requirementStates: DefenseRequirementState[];
-}) {
-  const thumbnailFrame = missileThumbnailFrames[defense.key];
-  const resolvedButtonLabel = buttonLabel ?? (queued > 0 ? "Add" : "Build");
-
-  return (
-    <article className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 rounded border border-white/10 bg-[#101624] p-3 sm:grid-cols-[104px_minmax(0,1fr)]">
-      <div className="aspect-square w-full overflow-hidden rounded bg-black/20 p-1">
-        <OptimizedImage
-          alt=""
-          className="h-full w-full object-contain"
-          sizes="shipThumbnail"
-          src={defense.asset}
-          style={thumbnailFrame}
-        />
-      </div>
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-semibold text-white">{defense.label}</h4>
-              <CombatStatsInfoButton label={defense.label} stats={defenseCombatStats(defense)} />
-            </div>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Deployed: {owned === undefined ? "unavailable" : format(owned)}
-              {queued > 0 ? ` · Queued: ${format(queued)}` : ""}
-            </p>
-          </div>
-          <span className={missing.length === 0 ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
-            {queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked"}
-          </span>
-        </div>
-
-        <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
-          <Stat label="Metal" value={cost ? format(cost.metal) : "-"} />
-          <Stat label="Crystal" value={cost ? format(cost.crystal) : "-"} />
-          <Stat label="Deut" value={cost ? format(cost.deuterium) : "-"} />
-        </dl>
-
-        <RequirementChips requirements={requirementStates} />
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
-            aria-label={`${defense.label} quantity`}
-            className="h-9 w-20 rounded border border-white/10 bg-black/20 px-2 text-sm text-white outline-none focus:border-signal/60"
-            min={1}
-            onInput={(event) => {
-              const value = Number((event.currentTarget as HTMLInputElement).value);
-              onQuantity(Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1);
-            }}
-            type="number"
-            value={quantity}
-          />
-          <button
-            className="h-9 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-            disabled={disabled}
-            onClick={onBuild}
-            type="button"
-          >
-            {resolvedButtonLabel}
-          </button>
-          {blockedReason && <span className="text-xs text-slate-500">{blockedReason}</span>}
-        </div>
-      </div>
-    </article>
-  );
-}
-
 type DefenseRequirementState = {
   label: string;
   met: boolean;
 };
 
-function RequirementChips({ requirements }: { requirements: DefenseRequirementState[] }) {
-  return (
-    <div className="mt-3 flex min-h-10 flex-wrap content-start gap-1.5 text-xs">
-      {requirements.map((requirement) => (
-        <span
-          className={
-            requirement.met
-              ? "rounded border border-emerald-300/20 bg-emerald-300/10 px-2 py-1 text-emerald-200"
-              : "rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-amber-200"
-          }
-          key={requirement.label}
-        >
-          {requirement.label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function Notice({
-  children,
-  tone,
+export function defenseProductionItems({
+  actionPending,
+  canTransact,
+  defenseState,
+  productionAvailable,
+  quantities,
+  queue,
+  resources,
 }: {
-  children: ComponentChildren;
-  tone: "danger" | "neutral" | "success";
-}) {
-  const classes = {
-    danger: "border-rose-300/20 bg-rose-300/5 text-rose-200",
-    neutral: "border-sky-300/20 bg-sky-300/5 text-sky-200",
-    success: "border-emerald-300/20 bg-emerald-300/5 text-emerald-200",
-  } as const;
+  actionPending: boolean;
+  canTransact: boolean;
+  defenseState: ChainDefenseState | null;
+  productionAvailable: boolean;
+  quantities: Record<string, number>;
+  queue?: ChainDefenseState["queue"] | undefined;
+  resources: Resources | undefined;
+}): ProductionCatalogItem<DefenseKey>[] {
+  return defenseCatalog.map((defense) => {
+    const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
+    const deployed = productionAvailable ? chainDefense?.count : undefined;
+    const baseCost = productionAvailable ? toResources(chainDefense?.cost) : undefined;
+    const quantity = quantities[defense.key] ?? 1;
+    const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+    const missing = getMissingRequirements(defense, defenseState);
+    const requirements = getDefenseRequirementStates(defense, defenseState);
+    const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
+    const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
+    const queueBlocker = getQueueBlocker(defense.id, queue);
+    const blockedReason = getBlockedReason({
+      affordable,
+      canTransact,
+      defenseState,
+      hasPlanet: Boolean(defenseState?.homePlanetId),
+      limitReason,
+      missing,
+      queueBlocker,
+      resources,
+    });
+    const disabled = Boolean(blockedReason) || actionPending;
+    const queued = queuedDefenseCount(defense.id, queue);
+    const stats = defenseCombatStats(defense).rows.slice(0, 3).map((row) => `${row.label} ${row.value}`).join(" · ");
 
-  return (
-    <div className={`rounded border p-3 text-sm ${classes[tone]}`}>
-      {children}
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
-      <dt className="text-[10px] uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="truncate text-slate-200">{value}</dd>
-    </div>
-  );
+    return {
+      actionLabel: queued > 0 ? "Add" : "Build",
+      asset: defense.asset,
+      blockedReason,
+      cost: totalCost,
+      countLabel: "Deployed",
+      countValue: deployed,
+      detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
+      disabled,
+      group: defense.group,
+      groupLabel: groupLabels[defense.group],
+      id: defense.id,
+      key: defense.key,
+      label: defense.label,
+      missing,
+      quantity,
+      queued,
+      requirements,
+      status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
+      statusLabel: queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked",
+      thumbnailStyle: missileThumbnailFrames[defense.key],
+    };
+  });
 }
 
 export function getMissingDefenseRequirements(
@@ -547,16 +388,6 @@ function multiply(resources: Resources, quantity: number): Resources {
     crystal: resources.crystal * quantity,
     deuterium: resources.deuterium * quantity,
   };
-}
-
-function formatReady(readyAt: string | null): string {
-  if (!readyAt) return "unknown";
-  const remaining = formatDurationUntil(Number(readyAt) * 1_000);
-  return remaining === "Ready" ? "now" : `in ${remaining}`;
-}
-
-function format(value: number): string {
-  return formatter.format(Math.floor(value));
 }
 
 const technologyIdByKey: Partial<Record<string, number>> = {
