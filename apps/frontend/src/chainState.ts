@@ -175,12 +175,14 @@ export function researchQueueForDisplay(
 
   const readyAt = queueTimestampMs(queue.readyAt) ?? now;
   const chainStartedAt = queueTimestampMs(queue.startedAt);
+  if (chainStartedAt === undefined || chainStartedAt >= readyAt) return undefined;
+
   return {
     kind: "research",
     key: research.key,
     label: research.label,
     readyAt,
-    startedAt: chainStartedAt !== undefined && chainStartedAt < readyAt ? chainStartedAt : now,
+    startedAt: chainStartedAt,
     targetLevel: queue.targetLevel ?? 0,
   };
 }
