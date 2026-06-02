@@ -36,6 +36,7 @@ import {
   hasCollectableResources,
   productionPerHour,
   progress,
+  researchCatalog,
   storageCaps,
   type BuildingKey,
   type DefenseKey,
@@ -63,12 +64,16 @@ import {
 } from "./overviewData";
 import {
   waitForCollectedResourcesState,
+  waitForFinishedResearchState,
+  waitForStartedResearchState,
   waitForStartedDefenseProductionState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForRenamedWalletPlanet,
   type CollectedResourcesExpectation,
+  type FinishedResearchExpectation,
   type StartedDefenseProductionExpectation,
+  type StartedResearchExpectation,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
 } from "./postTransactionRefresh";
@@ -157,6 +162,20 @@ import {
   transactionConfirmingLabel,
   transactionSyncingLabel,
 } from "./transactionActionGate";
+
+export function researchStartTransactionLabel(
+  technologyId: number,
+  key: ResearchKey,
+  researchState: ChainResearchState | null,
+): string {
+  const catalogEntry = researchCatalog.find((research) => research.id === technologyId || research.key === key);
+  const label = catalogEntry?.label ?? "Research";
+  const currentLevel = researchState?.technologies.find((technology) => technology.id === technologyId)?.level
+    ?? researchState?.technologyLevels[technologyId.toString()]
+    ?? 0;
+
+  return `${label} level ${currentLevel + 1} research`;
+}
 
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
@@ -1053,6 +1072,86 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [account, activePlanetId, apiBaseUrl, refreshDefenseState, refreshOnChainState]);
 
+  const refreshStartedResearchState = useCallback(async (expectation: StartedResearchExpectation) => {
+    if (!apiBaseUrl || !account) {
+      refreshResearchState();
+      void refreshOnChainState();
+      return;
+    }
+
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setResearchLoading(true);
+    setResearchError(undefined);
+
+    try {
+      const snapshot = await waitForStartedResearchState(
+        async () => {
+          const [research, queues] = await Promise.all([
+            fetchResearchState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+          ]);
+
+          return { research, queues };
+        },
+        expectation,
+      );
+
+      setResearchState(snapshot.research);
+      setResearchError(undefined);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load started research state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setResearchError(message);
+      throw error;
+    } finally {
+      setResearchLoading(false);
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshResearchState]);
+
+  const refreshFinishedResearchState = useCallback(async (expectation: FinishedResearchExpectation) => {
+    if (!apiBaseUrl || !account) {
+      refreshResearchState();
+      void refreshOnChainState();
+      return;
+    }
+
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setResearchLoading(true);
+    setResearchError(undefined);
+
+    try {
+      const snapshot = await waitForFinishedResearchState(
+        async () => {
+          const [research, queues] = await Promise.all([
+            fetchResearchState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+          ]);
+
+          return { research, queues };
+        },
+        expectation,
+      );
+
+      setResearchState(snapshot.research);
+      setResearchError(undefined);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load finished research state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setResearchError(message);
+      throw error;
+    } finally {
+      setResearchLoading(false);
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshResearchState]);
+
   useEffect(() => {
     if (homeCoords) {
       setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
@@ -1595,7 +1694,11 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     }
   }, [provider, refreshAllianceState]);
 
-  const runResearchTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+  const runResearchTransaction = useCallback(async (
+    label: string,
+    send: () => Promise<string>,
+    afterReceipt?: (() => Promise<void>) | undefined,
+  ) => {
     await transactionActionGate.run(`research:${label}`, async () => {
       setResearchAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
 
@@ -1606,9 +1709,13 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
           await waitForReceipt(provider, txHash);
         }
         setResearchAction({ status: "pending", label: transactionSyncingLabel(label) });
-        refreshResearchState();
-        void refreshOnChainState();
-        refreshInfrastructureState();
+        if (afterReceipt) {
+          await afterReceipt();
+        } else {
+          refreshResearchState();
+          void refreshOnChainState();
+          refreshInfrastructureState();
+        }
         setResearchAction({ status: "success", label: `${label} confirmed.` });
       } catch (error) {
         console.error(error);
@@ -1924,20 +2031,26 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
-  const handleResearch = useCallback((technologyId: number, _key: ResearchKey) => {
+  const handleResearch = useCallback((technologyId: number, key: ResearchKey) => {
     if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
       setResearchAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
-    void runResearchTransaction(`Research ${technologyId}`, () => sendStartResearchTransaction(
+    const currentLevel = researchState.technologies.find((technology) => technology.id === technologyId)?.level
+      ?? researchState.technologyLevels[technologyId.toString()]
+      ?? 0;
+    void runResearchTransaction(researchStartTransactionLabel(technologyId, key, researchState), () => sendStartResearchTransaction(
       provider,
       account,
       gameContract,
       researchState.homePlanetId ?? "0",
       technologyId,
-    ));
-  }, [account, gameContract, provider, researchState?.homePlanetId, runResearchTransaction]);
+    ), () => refreshStartedResearchState({
+      itemId: technologyId,
+      targetLevel: currentLevel + 1,
+    }));
+  }, [account, gameContract, provider, refreshStartedResearchState, researchState, runResearchTransaction]);
 
   const handleFinishResearch = useCallback(() => {
     if (!provider || !account || !gameContract) {
@@ -1945,12 +2058,16 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       return;
     }
 
+    const expectation = {
+      itemId: researchState?.queue?.itemId,
+      targetLevel: researchState?.queue?.targetLevel,
+    };
     void runResearchTransaction("Research completion", () => sendFinishResearchTransaction(
       provider,
       account,
       gameContract,
-    ));
-  }, [account, gameContract, provider, runResearchTransaction]);
+    ), () => refreshFinishedResearchState(expectation));
+  }, [account, gameContract, provider, refreshFinishedResearchState, researchState?.queue, runResearchTransaction]);
 
   const handleApproveRiftResource = useCallback((resource: RiftResourceState, amount: string) => {
     if (!provider || !account || !gameContract || !resource.tokenAddress) {

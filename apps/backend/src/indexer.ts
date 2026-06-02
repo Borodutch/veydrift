@@ -1283,6 +1283,7 @@ export class SettlementIndexer {
       ...(queue.targetLevel !== undefined ? { targetLevel: queue.targetLevel } : {}),
       ...(queue.quantity !== undefined ? { quantity: queue.quantity } : {}),
       readyAt: queue.readyAt ?? "0",
+      ...(queue.startedAt ? { startedAt: queue.startedAt } : {}),
       cost: queue.cost
     });
   }
@@ -1484,6 +1485,11 @@ export class SettlementIndexer {
     this.upsertQueue(event);
     if (event.planetId) {
       this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
+    } else if (event.queueKind === "research" && event.owner) {
+      const settlement = this.walletSettlement(event.owner);
+      if (settlement.homePlanetId) {
+        this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
+      }
     }
     this.touch();
   }
@@ -1563,7 +1569,7 @@ export class SettlementIndexer {
       event.targetLevel ?? null,
       event.quantity ?? null,
       event.readyAt,
-      null,
+      event.startedAt ?? null,
       JSON.stringify(event.cost),
       JSON.stringify(event)
     );
@@ -1595,7 +1601,7 @@ export class SettlementIndexer {
       event.targetLevel ?? null,
       event.quantity ?? null,
       event.readyAt,
-      null,
+      event.startedAt ?? null,
       event.cost.metal,
       event.cost.crystal,
       event.cost.deuterium,

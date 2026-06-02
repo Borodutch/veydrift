@@ -503,6 +503,11 @@ describe("SettlementIndexer", () => {
         readyAt: "1770001100"
       }
     });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "2200",
+      crystal: "3500",
+      deuterium: "4600"
+    });
 
     indexer.applyLog({
       blockNumber: "0x85",
@@ -886,6 +891,7 @@ describe("SettlementIndexer", () => {
         itemId: 4,
         targetLevel: 2,
         readyAt: "1770001200",
+        startedAt: "1770000600",
         cost: { metal: "800", crystal: "400", deuterium: "200" }
       }
     };
@@ -945,7 +951,8 @@ describe("SettlementIndexer", () => {
       kind: "research",
       itemId: 4,
       targetLevel: 2,
-      readyAt: "1770001200"
+      readyAt: "1770001200",
+      startedAt: "1770000600"
     });
     expect(indexer.technologyLevels(player)).toMatchObject({
       "4": 2

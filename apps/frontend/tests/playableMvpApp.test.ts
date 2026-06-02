@@ -5,6 +5,7 @@ import {
   loadWalletPlanetSyncSnapshot,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
+  researchStartTransactionLabel,
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
 import {
@@ -174,6 +175,21 @@ describe("Playable MVP app display helpers", () => {
       isWalletConnected: true,
       settledState,
     })).toBeUndefined();
+  });
+
+  test("names research start confirmations with technology label and target level", () => {
+    expect(researchStartTransactionLabel(0, "energy", {
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      resources: { metal: "1000", crystal: "2000", deuterium: "1000" },
+      researchLabLevel: 1,
+      researchNetworkLabLevels: [],
+      technologyLevels: { "0": 1 },
+      technologies: [
+        { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
+      ],
+      queue: null,
+    })).toBe("Energy Technology level 2 research");
   });
 
   test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
