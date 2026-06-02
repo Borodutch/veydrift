@@ -1102,7 +1102,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       const snapshot = await waitForFinishedBuildingState(
         async () => {
           const [settlement, queues, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account),
+            fetchWalletSettlement(apiBaseUrl, account, { source: "live" }),
             fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
             fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
@@ -1163,7 +1163,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
       const snapshot = await waitForCollectedResourcesState(
         async () => {
           const [settlement, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account),
+            fetchWalletSettlement(apiBaseUrl, account, { source: "live" }),
             fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
           ]);
 
