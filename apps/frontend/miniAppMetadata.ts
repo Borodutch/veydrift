@@ -168,6 +168,7 @@ export function buildMiniAppManifest(
       ogImageUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/og-image.jpg`,
       requiredChains: surface.requiredChains,
       requiredCapabilities: [
+        "actions.ready",
         "wallet.getEthereumProvider",
       ],
       canonicalDomain: surface.domain,

@@ -30,7 +30,10 @@ describe("Farcaster Mini App metadata", () => {
     expect(manifest.miniapp.imageUrl).toBe("https://test.veydrift.com/assets/miniapp/embed.png");
     expect(manifest.miniapp.canonicalDomain).toBe("test.veydrift.com");
     expect(manifest.miniapp.requiredChains).toEqual(["eip155:84532"]);
-    expect(manifest.miniapp.requiredCapabilities).toContain("wallet.getEthereumProvider");
+    expect(manifest.miniapp.requiredCapabilities).toEqual([
+      "actions.ready",
+      "wallet.getEthereumProvider",
+    ]);
     expect(manifest.miniapp.noindex).toBe(true);
   });
 

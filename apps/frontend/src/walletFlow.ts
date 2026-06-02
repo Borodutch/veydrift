@@ -31,6 +31,10 @@ export type SettlementFundingState = {
   unavailableReason?: string;
 };
 
+export type SettlementTransactionOptions = {
+  balanceRead?: "required" | "optional";
+};
+
 export type OnChainResources = {
   metal: string;
   crystal: string;
@@ -1058,7 +1062,8 @@ export async function readSettlementState(
 export async function sendSettlementTransaction(
   provider: Eip1193Provider,
   account: string,
-  config: SettlementConfig
+  config: SettlementConfig,
+  options: SettlementTransactionOptions = {}
 ): Promise<string> {
   if (!settlementContractConfigured(config)) {
     throw new Error("Settlement contract address is not configured.");
@@ -1070,8 +1075,8 @@ export async function sendSettlementTransaction(
       throw new Error("Resource token reserves are not configured for this game deployment yet.");
     }
 
-    const balance = await readNativeBalance(provider, account);
-    if (balance < startPrice) {
+    const balance = await readNativeBalanceForSettlement(provider, account, options);
+    if (balance !== undefined && balance < startPrice) {
       throw new Error(
         `First planet settlement costs ${formatEth(startPrice)} ETH, but this wallet only has ${formatEth(balance)} ETH on Base Sepolia.`
       );
@@ -1105,7 +1110,8 @@ export async function sendSettlementTransaction(
 export async function readSettlementFundingState(
   provider: Eip1193Provider,
   account: string,
-  config: SettlementConfig
+  config: SettlementConfig,
+  options: SettlementTransactionOptions = {}
 ): Promise<SettlementFundingState> {
   if (!settlementContractConfigured(config)) {
     throw new Error("Settlement contract address is not configured.");
@@ -1131,10 +1137,10 @@ export async function readSettlementFundingState(
     };
   }
 
-  const balance = await readNativeBalance(provider, account);
+  const balance = await readNativeBalanceForSettlement(provider, account, options);
   return {
-    affordable: balance >= startPrice,
-    balanceWei: balance,
+    affordable: balance === undefined || balance >= startPrice,
+    balanceWei: balance ?? null,
     contractKind: "game",
     startPriceWei: startPrice
   };
@@ -1996,6 +2002,35 @@ async function readNativeBalance(provider: Eip1193Provider, account: string): Pr
       "latest"
     ]
   }, "wallet balance"));
+}
+
+async function readNativeBalanceForSettlement(
+  provider: Eip1193Provider,
+  account: string,
+  options: SettlementTransactionOptions,
+): Promise<bigint | undefined> {
+  try {
+    return await readNativeBalance(provider, account);
+  } catch (error) {
+    if (options.balanceRead === "optional" && isUnsupportedProviderMethodError(error)) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function isUnsupportedProviderMethodError(error: unknown): boolean {
+  const code = errorCode(error);
+  const message = errorMessage(error);
+
+  return code === 4200
+    || code === "4200"
+    || code === -32601
+    || code === "-32601"
+    || /provider does not support the requested method/i.test(message)
+    || /method .*not supported/i.test(message)
+    || /unsupported .*method/i.test(message);
 }
 
 function formatEth(wei: bigint): string {
