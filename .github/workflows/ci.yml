@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    timeout-minutes: 10
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -19,68 +20,152 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed areas
+        id: scope
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            {
+              echo "frontend=true"
+              echo "backend=true"
+              echo "universe=true"
+              echo "contracts=true"
+              echo "circuits=true"
+              echo "full_build=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          changed="$(git diff --name-only "origin/$BASE_REF"...HEAD)"
+
+          matches() {
+            grep -Eq "$1" <<< "$changed"
+          }
+
+          repo_wide='^(\.github/workflows/ci\.yml|package\.json|bun\.lockb)$'
+          if matches "$repo_wide"; then
+            frontend=true
+            backend=true
+            universe=true
+            contracts=true
+            circuits=true
+          else
+            frontend=false
+            backend=false
+            universe=false
+            contracts=false
+            circuits=false
+
+            if matches '^(apps/frontend|packages/universe)/'; then frontend=true; fi
+            if matches '^(apps/backend|packages/universe)/'; then backend=true; fi
+            if matches '^packages/universe/'; then universe=true; fi
+            if matches '^packages/contracts/'; then contracts=true; fi
+            if matches '^packages/circuits/'; then circuits=true; fi
+          fi
+
+          {
+            echo "frontend=$frontend"
+            echo "backend=$backend"
+            echo "universe=$universe"
+            echo "contracts=$contracts"
+            echo "circuits=$circuits"
+            echo "full_build=false"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.1.42
 
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
       - name: Set up Foundry
+        if: steps.scope.outputs.contracts == 'true'
         uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Cache Foundry build artifacts
+        if: steps.scope.outputs.contracts == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/contracts/cache
+            packages/contracts/out
+          key: foundry-${{ runner.os }}-${{ hashFiles('packages/contracts/src/**/*.sol', 'packages/contracts/test/**/*.sol', 'packages/contracts/foundry.toml') }}
+          restore-keys: |
+            foundry-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run checks
+      - name: Run scoped checks
         shell: bash
         run: |
           set -euo pipefail
 
-          log="$RUNNER_TEMP/check.log"
-          bun run check 2>&1 | tee "$log"
-
           w='warn'
           e='error'
           pattern="(^|[^[:alpha:]])(${w}ing|${w}:|${e}:)"
-          level="$e"
 
-          if grep -Eiq "$pattern" "$log"; then
-            echo "::$level::Check output contains flagged output."
-            exit 1
+          run_logged() {
+            local label="$1"
+            shift
+            local log="$RUNNER_TEMP/${label}.log"
+            "$@" 2>&1 | tee "$log"
+
+            if grep -Eiq "$pattern" "$log"; then
+              echo "::$e::${label} output contains flagged output."
+              exit 1
+            fi
+          }
+
+          if [[ "${{ steps.scope.outputs.universe }}" == "true" ]]; then
+            run_logged universe-check bun run check:universe
+            run_logged universe-test bun run test:universe
           fi
 
-      - name: Run tests
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          log="$RUNNER_TEMP/test.log"
-          bun run test 2>&1 | tee "$log"
-
-          w='warn'
-          e='error'
-          pattern="(^|[^[:alpha:]])(${w}ing|${w}:|${e}:)"
-          level="$e"
-
-          if grep -Eiq "$pattern" "$log"; then
-            echo "::$level::Test output contains flagged output."
-            exit 1
+          if [[ "${{ steps.scope.outputs.backend }}" == "true" ]]; then
+            run_logged backend-check bun run check:backend
+            run_logged backend-test bun run test:backend
           fi
 
-      - name: Build packages
-        shell: bash
-        run: |
-          set -euo pipefail
+          if [[ "${{ steps.scope.outputs.frontend }}" == "true" ]]; then
+            run_logged frontend-precheck bash -lc 'cd apps/frontend && bun scripts/generate-image-variants.mjs'
+            run_logged frontend-typecheck bash -lc 'cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json'
+            run_logged frontend-test bash -lc 'cd apps/frontend && bun run test'
+          fi
 
-          log="$RUNNER_TEMP/build.log"
-          bun run build 2>&1 | tee "$log"
+          if [[ "${{ steps.scope.outputs.circuits }}" == "true" ]]; then
+            run_logged circuits-check bun run check:circuits
+          fi
 
-          w='warn'
-          e='error'
-          pattern="(^|[^[:alpha:]])(${w}ing|${w}:|${e}:)"
-          level="$e"
+          if [[ "${{ steps.scope.outputs.contracts }}" == "true" ]]; then
+            run_logged contracts-check bun run check:contracts
+            run_logged contracts-test bun run test:contracts
+          fi
 
-          if grep -Eiq "$pattern" "$log"; then
-            echo "::$level::Build output contains flagged output."
-            exit 1
+          if [[ "${{ steps.scope.outputs.full_build }}" == "true" ]]; then
+            run_logged build bun run build
+          fi
+
+          if [[ "${{ steps.scope.outputs.frontend }}" != "true" \
+            && "${{ steps.scope.outputs.backend }}" != "true" \
+            && "${{ steps.scope.outputs.universe }}" != "true" \
+            && "${{ steps.scope.outputs.contracts }}" != "true" \
+            && "${{ steps.scope.outputs.circuits }}" != "true" ]]; then
+            echo "No package checks needed for this change."
           fi
