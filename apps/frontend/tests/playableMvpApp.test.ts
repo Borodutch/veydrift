@@ -3,8 +3,15 @@ import {
   infrastructureActionNoticeFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  refreshedInfrastructureUnavailableReasonFor,
+  refreshedInfrastructureUpgradeUnavailableReasonFor,
+  researchStartTransactionLabel,
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
+import {
+  infrastructureFinishButtonLabel,
+  infrastructureUpgradeButtonLabel,
+} from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { ChainInfrastructureState } from "../src/walletFlow";
 
@@ -14,6 +21,30 @@ describe("Playable MVP app display helpers", () => {
       status: "pending",
       label: "Waiting for wallet confirmation",
     })).toBeUndefined();
+  });
+
+  test("keeps pending infrastructure copy out of unavailable and button labels", () => {
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: {
+        status: "pending",
+        label: "Building completion: awaiting wallet",
+      },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState(),
+      infrastructureLoading: false,
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
+      onChainStatus: "ready",
+      runtimeConfigStatus: "ready",
+    })).toBeUndefined();
+
+    expect(infrastructureUpgradeButtonLabel({
+      binary: false,
+      defaultLabel: "Upgrade Level 2",
+      statusDisabled: true,
+    })).toBe("Upgrade Level 2");
+    expect(infrastructureFinishButtonLabel(undefined, false)).toBe("Finish upgrade");
   });
 
   test("keeps terminal infrastructure action notices visible", () => {
@@ -146,6 +177,21 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
+  test("names research start confirmations with technology label and target level", () => {
+    expect(researchStartTransactionLabel(0, "energy", {
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      resources: { metal: "1000", crystal: "2000", deuterium: "1000" },
+      researchLabLevel: 1,
+      researchNetworkLabLevels: [],
+      technologyLevels: { "0": 1 },
+      technologies: [
+        { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
+      ],
+      queue: null,
+    })).toBe("Energy Technology level 2 research");
+  });
+
   test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: { status: "idle" },
@@ -198,6 +244,67 @@ describe("Playable MVP app display helpers", () => {
       onChainStatus: "error",
       runtimeConfigStatus: "ready",
     })).toBe("Game state unavailable; upgrades are disabled until your wallet resources and building levels load.");
+  });
+
+  test("allows building transactions from refreshed live infrastructure resources", () => {
+    expect(refreshedInfrastructureUnavailableReasonFor({
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState(),
+      isWalletConnected: true,
+      onChainResources: undefined,
+      runtimeConfigStatus: "ready",
+    })).toBeUndefined();
+  });
+
+  test("blocks building transactions when refreshed infrastructure is unavailable", () => {
+    expect(refreshedInfrastructureUnavailableReasonFor({
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: {
+        ...infrastructureState(),
+        infrastructureAvailable: false,
+        unavailableReason: "Infrastructure is unavailable on this deployment.",
+      },
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toBe("Infrastructure is unavailable on this deployment.");
+  });
+
+  test("blocks building transactions when refreshed live resources cannot afford the upgrade", () => {
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "solarPlant",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState({
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+      }),
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toContain("Requires");
+  });
+
+  test("blocks building transactions when refreshed live infrastructure has an active building queue", () => {
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "metalMine",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState({
+        queue: {
+          active: true,
+          itemId: 1,
+          targetLevel: 2,
+          readyAt: "1770000300",
+          startedAt: "1770000000",
+          cost: { metal: "60", crystal: "15", deuterium: "0" },
+        },
+      }),
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toContain("currently upgrading");
   });
 
   test("hydrates indexed planet state before requesting live settlement state", async () => {
@@ -459,21 +566,23 @@ describe("Playable MVP app display helpers", () => {
 
 function infrastructureState({
   energyBalance,
+  queue,
+  resources,
   source,
   stale,
-}: Partial<Pick<ChainInfrastructureState, "energyBalance" | "source" | "stale">> = {}): ChainInfrastructureState {
+}: Partial<Pick<ChainInfrastructureState, "energyBalance" | "queue" | "resources" | "source" | "stale">> = {}): ChainInfrastructureState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
     source,
     stale,
     infrastructureAvailable: true,
-    resources: { metal: "500", crystal: "500", deuterium: "0" },
+    resources: resources ?? { metal: "500", crystal: "500", deuterium: "0" },
     productionPerHour: { metal: "60", crystal: "30", deuterium: "0" },
     energyBalance,
     storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
     buildings: [],
-    queue: null,
+    queue: queue ?? null,
   };
 }
 

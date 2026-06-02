@@ -74,8 +74,10 @@ const buildingDescriptions: Record<BuildingKey, string> = {
 
 interface InfrastructurePageProps {
   actionNotice?: InfrastructureActionNotice | undefined;
+  actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
+  isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   loadError?: string | undefined;
   onFinishBuilding?: (() => void) | undefined;
@@ -88,8 +90,10 @@ interface InfrastructurePageProps {
 
 export function InfrastructurePage({
   actionNotice,
+  actionPendingLabel,
   actionUnavailableReason,
   chainCosts,
+  isActionPending = false,
   isBuildingReadyToFinish,
   loadError,
   now = Date.now(),
@@ -147,7 +151,8 @@ export function InfrastructurePage({
           ) : null}
           {isBuildingReadyToFinish && onFinishBuilding ? (
             <button
-              className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+              className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+              disabled={isActionPending}
               onClick={onFinishBuilding}
               type="button"
             >
@@ -185,9 +190,11 @@ export function InfrastructurePage({
         <div className="order-1 xl:order-2" ref={detailPanelRef}>
           <BuildingDetailPanel
             actionNotice={actionNoticeForBuilding(actionNotice, selectedBuilding.key)}
+            actionPendingLabel={actionPendingLabel}
             actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
+            isActionPending={isActionPending}
             isBuildingReadyToFinish={isBuildingReadyToFinish}
             onFinishBuilding={onFinishBuilding}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
@@ -244,9 +251,11 @@ function buildingStatusText(label: string, currentLevel: number): string {
 
 function BuildingDetailPanel({
   actionNotice,
+  actionPendingLabel,
   actionUnavailableReason,
   building,
   chainCost,
+  isActionPending,
   isBuildingReadyToFinish,
   onFinishBuilding,
   onUpgrade,
@@ -255,9 +264,11 @@ function BuildingDetailPanel({
   state,
 }: {
   actionNotice?: InfrastructureActionNotice | undefined;
+  actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
+  isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   now: number;
   onFinishBuilding?: (() => void) | undefined;
@@ -274,7 +285,10 @@ function BuildingDetailPanel({
     energyTechnologyLevel,
   );
   const energy = buildingEnergyDetail(state.buildings, building.key, energyTechnologyLevel);
-  const status = buildingUpgradeStatus(state, building.key, { actionUnavailableReason, chainCost });
+  const status = buildingUpgradeStatus(state, building.key, {
+    actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
+    chainCost,
+  });
   const effectRows = detailEffectRows(effect, energy);
   const levelInfoRows = buildingLevelInfoRows(
     state.buildings,
@@ -286,9 +300,12 @@ function BuildingDetailPanel({
   const binary = isBinaryBuilding(building.key);
   const built = currentLevel > 0;
   const actionVerb = currentLevel === 0 || binary ? "Build" : "Upgrade";
-  const actionLabel = status.disabled && actionUnavailableReason
-    ? actionUnavailableReason
-    : binary ? "Build Rift Bridge" : `${actionVerb} Level ${status.targetLevel}`;
+  const actionLabel = infrastructureUpgradeButtonLabel({
+    actionUnavailableReason,
+    binary,
+    defaultLabel: `${actionVerb} Level ${status.targetLevel}`,
+    statusDisabled: status.disabled,
+  });
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key);
@@ -389,11 +406,11 @@ function BuildingDetailPanel({
       {isBuildingReadyToFinish && onFinishBuilding && (
         <button
           className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-          disabled={Boolean(actionUnavailableReason)}
+          disabled={Boolean(actionUnavailableReason || isActionPending)}
           onClick={onFinishBuilding}
           type="button"
         >
-          {actionUnavailableReason ?? (binary ? "Finish build" : "Finish upgrade")}
+          {infrastructureFinishButtonLabel(actionUnavailableReason, binary)}
         </button>
       )}
 
@@ -419,6 +436,31 @@ function BuildingDetailPanel({
       )}
     </InspectDetailShell>
   );
+}
+
+export function infrastructureUpgradeButtonLabel({
+  actionUnavailableReason,
+  binary,
+  defaultLabel,
+  statusDisabled,
+}: {
+  actionUnavailableReason?: string | undefined;
+  binary: boolean;
+  defaultLabel: string;
+  statusDisabled: boolean;
+}): string {
+  if (statusDisabled && actionUnavailableReason) {
+    return actionUnavailableReason;
+  }
+
+  return binary ? "Build Rift Bridge" : defaultLabel;
+}
+
+export function infrastructureFinishButtonLabel(
+  actionUnavailableReason: string | undefined,
+  binary: boolean,
+): string {
+  return actionUnavailableReason ?? (binary ? "Finish build" : "Finish upgrade");
 }
 
 export function ActiveBuildingQueueDetail({
@@ -693,6 +735,9 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (effect.kind === "energy") {
     rows.push({
+      ...(effect.deltaProduced !== 0 && effect.currentDeuteriumConsumed === 0 && effect.nextDeuteriumConsumed === 0
+        ? { delta: formatSigned(effect.deltaProduced) }
+        : {}),
       label: "Energy output",
       next: `${formatNumber(effect.nextProduced)} produced`,
       value: `${formatNumber(effect.currentProduced)} produced`,

@@ -582,7 +582,7 @@ function researchLevels(researchState: ChainResearchState): PlayableState["resea
 
 function researchQueueForDisplay(
   researchState: ChainResearchState | null,
-  state: Pick<PlayableState, "researchQueue">,
+  state: Pick<PlayableState, "buildings" | "research" | "researchQueue">,
   now = Date.now(),
 ): PlayableState["researchQueue"] {
   const queue = researchState?.queue;
@@ -590,7 +590,11 @@ function researchQueueForDisplay(
     return researchState ? undefined : state.researchQueue;
   }
 
-  return chainResearchQueueForDisplay(queue, now);
+  return chainResearchQueueForDisplay(queue, now, {
+    buildings: state.buildings,
+    research: state.research,
+    researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
+  });
 }
 
 function chainCostFor(researchState: ChainResearchState | null, technologyId: number): Resources | undefined {

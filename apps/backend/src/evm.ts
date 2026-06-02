@@ -100,6 +100,7 @@ export type IndexedQueueStartedEvent = {
   targetLevel?: number;
   quantity?: number;
   readyAt: string;
+  startedAt?: string;
   cost: Resources;
 };
 

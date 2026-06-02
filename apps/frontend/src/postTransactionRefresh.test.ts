@@ -2,14 +2,20 @@ import { describe, expect, test } from "bun:test";
 import {
   isCollectedResourcesStateVisible,
   isFinishedBuildingStateVisible,
+  isFinishedResearchStateVisible,
   isStartedDefenseProductionVisible,
+  isStartedResearchStateVisible,
   waitForCollectedResourcesState,
+  waitForFinishedResearchState,
+  waitForStartedResearchState,
   waitForStartedDefenseProductionState,
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
   waitForRenamedWalletPlanet,
   type CollectedResourcesSnapshot,
+  type FinishedResearchSnapshot,
   type StartedDefenseProductionSnapshot,
+  type StartedResearchSnapshot,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingSnapshot,
 } from "./postTransactionRefresh";
@@ -95,6 +101,63 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.defense.queue?.quantity).toBe(2);
     expect(result.queues.defense?.itemId).toBe(0);
     expect(result.queues.defense?.quantity).toBe(2);
+  });
+
+  test("polls until started research is visible on Research and Overview state", async () => {
+    expect(isStartedResearchStateVisible(staleStartedResearchSnapshot(), {
+      itemId: 4,
+      targetLevel: 2,
+    })).toBe(false);
+
+    const snapshots = [
+      staleStartedResearchSnapshot(),
+      startedResearchSnapshot(),
+    ];
+    const loads: StartedResearchSnapshot[] = [];
+
+    const result = await waitForStartedResearchState(
+      async () => {
+        const snapshot = snapshots.shift() ?? startedResearchSnapshot();
+        loads.push(snapshot);
+        return snapshot;
+      },
+      { itemId: 4, targetLevel: 2 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.research.queue?.itemId).toBe(4);
+    expect(result.research.queue?.targetLevel).toBe(2);
+    expect(result.queues.research?.itemId).toBe(4);
+    expect(result.queues.research?.targetLevel).toBe(2);
+  });
+
+  test("polls until finished research is visible on Research and Overview state", async () => {
+    expect(isFinishedResearchStateVisible(staleFinishedResearchSnapshot(), {
+      itemId: 4,
+      targetLevel: 2,
+    })).toBe(false);
+
+    const snapshots = [
+      staleFinishedResearchSnapshot(),
+      finishedResearchSnapshot(),
+    ];
+    const loads: FinishedResearchSnapshot[] = [];
+
+    const result = await waitForFinishedResearchState(
+      async () => {
+        const snapshot = snapshots.shift() ?? finishedResearchSnapshot();
+        loads.push(snapshot);
+        return snapshot;
+      },
+      { itemId: 4, targetLevel: 2 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.research.queue).toBeNull();
+    expect(result.queues.research).toBeNull();
+    expect(result.research.technologyLevels["4"]).toBe(2);
   });
 
   test("does not accept stale indexed collect resources while infrastructure has newer resources", () => {
@@ -293,6 +356,70 @@ function startedDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
       ...staleDefenseProductionSnapshot().queues,
       defense: defenseQueue,
     },
+  };
+}
+
+function staleStartedResearchSnapshot(): StartedResearchSnapshot {
+  return {
+    research: baseResearchState(),
+    queues: emptyQueues(),
+  };
+}
+
+function startedResearchSnapshot(): StartedResearchSnapshot {
+  const researchQueue = {
+    active: true,
+    kind: "research" as const,
+    itemId: 4,
+    targetLevel: 2,
+    readyAt: "1770000060",
+    startedAt: "1770000000",
+    cost: { metal: "800", crystal: "400", deuterium: "200" },
+  };
+
+  return {
+    research: {
+      ...baseResearchState(),
+      queue: researchQueue,
+    },
+    queues: {
+      ...emptyQueues(),
+      research: researchQueue,
+    },
+  };
+}
+
+function staleFinishedResearchSnapshot(): FinishedResearchSnapshot {
+  return startedResearchSnapshot();
+}
+
+function finishedResearchSnapshot(): FinishedResearchSnapshot {
+  return {
+    research: {
+      ...baseResearchState(),
+      technologyLevels: { "4": 2 },
+      technologies: [
+        { id: 4, level: 2, cost: { metal: "1600", crystal: "800", deuterium: "400" } },
+      ],
+      queue: null,
+    },
+    queues: emptyQueues(),
+  };
+}
+
+function baseResearchState() {
+  return {
+    wallet,
+    homePlanetId: "7",
+    researchAvailable: true,
+    resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+    researchLabLevel: 1,
+    researchNetworkLabLevels: [],
+    technologyLevels: { "4": 1 },
+    technologies: [
+      { id: 4, level: 1, cost: { metal: "800", crystal: "400", deuterium: "200" } },
+    ],
+    queue: null,
   };
 }
 
