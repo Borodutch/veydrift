@@ -4,7 +4,7 @@ import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
-import { OverviewPage, type PlanetRenameActionState } from "./components/OverviewPage";
+import { isOverviewResearchReadyToFinish, OverviewPage, type PlanetRenameActionState } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
 import { AlliancePage, allianceJoinRequestApprovalState } from "./components/AlliancePage";
@@ -211,6 +211,28 @@ export function researchCompletionUnavailableReasonFor({
   }
 
   return undefined;
+}
+
+export function overviewResearchCompletionUnavailableReasonFor({
+  canTransact,
+  now = Date.now(),
+  overviewQueue,
+  researchState,
+}: {
+  canTransact: boolean;
+  now?: number;
+  overviewQueue: PlayerQueuesResponse["research"] | undefined;
+  researchState: ChainResearchState | null;
+}): string | undefined {
+  const unavailableReason = researchCompletionUnavailableReasonFor({
+    canTransact,
+    now,
+    researchState,
+  });
+  if (!unavailableReason) return undefined;
+  return canTransact && isOverviewResearchReadyToFinish(overviewQueue, now)
+    ? undefined
+    : unavailableReason;
 }
 
 export async function researchStateForCompletionRevalidation({
@@ -549,11 +571,16 @@ export async function loadWalletPlanetSyncSnapshot(
       activePlanetId,
       planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
     );
+    const queuesResult = indexedPlanetsExposeResearchQueue(planetsResult)
+      ? { status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>
+      : await settlePromise(fetchWalletQueues(apiBaseUrl, account, activePlanetId));
     return walletPlanetSyncSnapshotFromResults(
       account,
       indexedSettlement,
       planetsResult,
-      { status: "fulfilled", value: indexedQueues },
+      queuesResult.status === "fulfilled"
+        ? { status: "fulfilled", value: mergeIndexedPlayerQueues(indexedQueues, queuesResult.value) }
+        : { status: "fulfilled", value: indexedQueues },
       { status: "fulfilled", value: emptyFleetVisibility(account, indexedSettlement.homePlanetId) },
     );
   }
@@ -636,6 +663,28 @@ function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQ
     defense: null,
     ship: null,
     research: null,
+  };
+}
+
+function indexedPlanetsExposeResearchQueue(
+  planetsResult: PromiseSettledResult<WalletPlanetsResponse>,
+): boolean {
+  return planetsResult.status === "fulfilled"
+    && planetsResult.value.queues !== undefined
+    && "research" in planetsResult.value.queues;
+}
+
+function mergeIndexedPlayerQueues(
+  indexedQueues: PlayerQueuesResponse,
+  fetchedQueues: PlayerQueuesResponse,
+): PlayerQueuesResponse {
+  return {
+    ...indexedQueues,
+    ...fetchedQueues,
+    building: fetchedQueues.building ?? indexedQueues.building,
+    defense: fetchedQueues.defense ?? indexedQueues.defense,
+    ship: fetchedQueues.ship ?? indexedQueues.ship,
+    research: fetchedQueues.research ?? indexedQueues.research,
   };
 }
 
@@ -2212,8 +2261,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
   }, [account, gameContract, provider, refreshStartedResearchState, researchState, runResearchTransaction]);
 
   const handleFinishResearch = useCallback(() => {
-    const unavailableReason = researchCompletionUnavailableReasonFor({
-      canTransact: Boolean(provider && account && gameContract),
+    const canTransact = Boolean(provider && account && gameContract);
+    const unavailableReason = overviewResearchCompletionUnavailableReasonFor({
+      canTransact,
+      overviewQueue: onChainQueues?.research,
       researchState,
     });
     if (unavailableReason) {
@@ -2223,8 +2274,8 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     if (!provider || !account || !gameContract) return;
 
     const expectation = {
-      itemId: researchState?.queue?.itemId,
-      targetLevel: researchState?.queue?.targetLevel,
+      itemId: researchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
+      targetLevel: researchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
     };
     void runResearchTransaction("Research completion", async () => {
       const latestResearchState = await researchStateForCompletionRevalidation({
@@ -2257,6 +2308,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
     activePlanetId,
     apiBaseUrl,
     gameContract,
+    onChainQueues?.research,
     provider,
     refreshFinishedResearchState,
     researchState,
@@ -2994,8 +3046,10 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         onCounterplay={handleCounterplay}
         onJoinAttack={handleJoinAttack}
         isDefenseActionPending={defenseAction.status === "pending"}
+        isResearchActionPending={researchAction.status === "pending"}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onFinishDefense={handleFinishDefenseProduction}
+        onFinishResearch={handleFinishResearch}
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
         onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
@@ -3009,6 +3063,7 @@ export function PlayableMvpApp({ provider, account, planet }: PlayableMvpAppProp
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}
+        researchAction={researchAction}
         researchProgress={researchProgress}
         settledState={settledState}
         shipProgress={shipProgress}

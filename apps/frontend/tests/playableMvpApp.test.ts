@@ -4,6 +4,7 @@ import {
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  overviewResearchCompletionUnavailableReasonFor,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
@@ -264,6 +265,31 @@ describe("Playable MVP app display helpers", () => {
     ]]);
   });
 
+  test("allows Overview-ready research completion to reach live revalidation before wallet submission", () => {
+    const readyOverviewQueue = {
+      active: true,
+      cost: { metal: "800", crystal: "400", deuterium: "0" },
+      itemId: 0,
+      kind: "research",
+      readyAt: "1700000000",
+      targetLevel: 2,
+    };
+
+    expect(overviewResearchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_000_000,
+      overviewQueue: readyOverviewQueue,
+      researchState: null,
+    })).toBeUndefined();
+
+    expect(overviewResearchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_699_999_000_000,
+      overviewQueue: readyOverviewQueue,
+      researchState: null,
+    })).toBe("No active research queue is available to complete.");
+  });
+
   test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: { status: "idle" },
@@ -422,6 +448,7 @@ describe("Playable MVP app display helpers", () => {
         return Promise.resolve(Response.json({
           wallet,
           homePlanetId: "7",
+          queues: { research: null },
           planets: [indexedPlanet(wallet)],
         }));
       }
@@ -472,6 +499,7 @@ describe("Playable MVP app display helpers", () => {
         return Promise.resolve(Response.json({
           wallet,
           homePlanetId: "7",
+          queues: { research: null },
           planets: [indexedPlanet(wallet)],
         }));
       }
@@ -515,6 +543,7 @@ describe("Playable MVP app display helpers", () => {
         return Promise.resolve(Response.json({
           wallet,
           homePlanetId: "7",
+          queues: { research: null },
           planets: [{
             ...indexedPlanet(wallet),
             queues: {
@@ -579,6 +608,64 @@ describe("Playable MVP app display helpers", () => {
 
       expect(snapshot.queues.research).toEqual(activeResearch);
       expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches active research queues when indexed planets omit the global queue snapshot", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const requestedPaths: string[] = [];
+    const activeResearch = {
+      active: true,
+      kind: "research",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: "1770000600",
+      startedAt: "1770000000",
+      cost: {
+        metal: "800",
+        crystal: "400",
+        deuterium: "0",
+      },
+    };
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      requestedPaths.push(url.pathname);
+
+      if (url.pathname.endsWith("/settlement")) {
+        throw new Error("indexed state should hydrate before live settlement reads");
+      }
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          planets: [indexedPlanet(wallet)],
+        }));
+      }
+
+      if (url.pathname.endsWith("/queues")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          building: null,
+          defense: null,
+          ship: null,
+          research: activeResearch,
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
+
+      expect(snapshot.queues.research).toEqual(activeResearch);
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`, `/wallet/${wallet}/queues`]);
     } finally {
       globalThis.fetch = originalFetch;
     }

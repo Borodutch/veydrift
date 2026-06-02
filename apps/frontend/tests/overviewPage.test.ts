@@ -4,7 +4,9 @@ import {
   overviewHeroImage,
 } from "../src/overviewHeroImage";
 import {
+  isOverviewResearchReadyToFinish,
   overviewDefenseFinishAction,
+  overviewResearchFinishAction,
   shouldShowOverviewBuildingFinishAction,
 } from "../src/components/OverviewPage";
 import {
@@ -270,6 +272,71 @@ describe("overview queue progress display", () => {
         kind: "defense",
         quantity: 1,
         readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("shows and invokes the ready research completion action on Overview", () => {
+    let calls = 0;
+    const queue = {
+      active: true,
+      cost: { metal: "800", crystal: "400", deuterium: "0" },
+      itemId: 0,
+      kind: "research",
+      readyAt: "1700000000",
+      targetLevel: 2,
+    };
+    const action = overviewResearchFinishAction({
+      now: 1_700_000_000_000,
+      onFinishResearch: () => {
+        calls += 1;
+      },
+      queue,
+    });
+
+    expect(isOverviewResearchReadyToFinish(queue, 1_700_000_000_000)).toBe(true);
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(false);
+    action.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("keeps not-ready research queues passive on Overview", () => {
+    const queue = {
+      active: true,
+      cost: { metal: "800", crystal: "400", deuterium: "0" },
+      itemId: 0,
+      kind: "research",
+      readyAt: "1700000000",
+      targetLevel: 2,
+    };
+    const action = overviewResearchFinishAction({
+      now: 1_699_999_000_000,
+      onFinishResearch: () => undefined,
+      queue,
+    });
+
+    expect(isOverviewResearchReadyToFinish(queue, 1_699_999_000_000)).toBe(false);
+    expect(action.visible).toBe(false);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("disables ready research completion while a research transaction is pending", () => {
+    const action = overviewResearchFinishAction({
+      actionPending: true,
+      now: 1_700_000_000_000,
+      onFinishResearch: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "800", crystal: "400", deuterium: "0" },
+        itemId: 0,
+        kind: "research",
+        readyAt: "1700000000",
+        targetLevel: 2,
       },
     });
 
