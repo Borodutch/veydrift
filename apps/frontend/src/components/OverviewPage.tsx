@@ -320,7 +320,7 @@ export function OverviewPage({
                   <button
                     aria-expanded={renamePanelOpen}
                     aria-label="Rename planet"
-                    className="grid h-7 w-7 place-items-center rounded border border-white/10 bg-white/5 text-slate-100/90 transition hover:border-cyan-200/40 hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/5 disabled:text-slate-500"
+                    className="inline-grid h-6 w-6 place-items-center rounded text-slate-200/80 transition hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"
                     disabled={renameBusy}
                     onClick={() => {
                       setRenamePanelOpen((open) => !open);
@@ -330,7 +330,7 @@ export function OverviewPage({
                     title="Rename planet"
                     type="button"
                   >
-                    <Pencil aria-hidden="true" size={13} strokeWidth={2} />
+                    <Pencil aria-hidden="true" size={12} strokeWidth={2} />
                   </button>
                 )}
                 {showAbandonAction && (
