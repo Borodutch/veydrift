@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildingCompletionUnavailableReasonFor,
-  buildingCompletionUnavailableReasonAfterLiveRevalidation,
+  buildingCompletionUnavailableReasonAfterBackendRevalidation,
   buildingFinishActionErrorLabel,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
@@ -340,7 +340,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Research is not ready to complete yet.");
   });
 
-  test("revalidates research completion against live research state before wallet submission", async () => {
+  test("revalidates research completion against backend research state before wallet submission", async () => {
     const fallback = researchState();
     const latest = researchState({
       queue: {
@@ -371,11 +371,10 @@ describe("Playable MVP app display helpers", () => {
       "https://api.test",
       "0x2222222222222222222222222222222222222222",
       "7",
-      { source: "live" },
     ]]);
   });
 
-  test("allows Overview-ready research completion to reach live revalidation before wallet submission", () => {
+  test("allows Overview-ready research completion to reach backend revalidation before wallet submission", () => {
     const readyOverviewQueue = {
       active: true,
       cost: { metal: "800", crystal: "400", deuterium: "0" },
@@ -495,7 +494,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Building upgrade is not ready to finish yet.");
   });
 
-  test("revalidates building completion against live infrastructure state before wallet submission", async () => {
+  test("revalidates building completion against backend infrastructure state before wallet submission", async () => {
     const fallback = infrastructureState();
     const latest = infrastructureState({
       queue: readyBuildingQueue(),
@@ -518,11 +517,10 @@ describe("Playable MVP app display helpers", () => {
       "https://api.test",
       "0x2222222222222222222222222222222222222222",
       "7",
-      { source: "live" },
     ]]);
   });
 
-  test("uses live building completion revalidation even when the local queue snapshot is stale", async () => {
+  test("uses backend building completion revalidation even when the local queue snapshot is stale", async () => {
     const fallback = infrastructureState({
       queue: {
         ...readyBuildingQueue(),
@@ -538,7 +536,7 @@ describe("Playable MVP app display helpers", () => {
     });
     const calls: unknown[][] = [];
 
-    const result = await buildingCompletionUnavailableReasonAfterLiveRevalidation({
+    const result = await buildingCompletionUnavailableReasonAfterBackendRevalidation({
       account: "0x2222222222222222222222222222222222222222",
       activePlanetId: "7",
       apiBaseUrl: "https://api.test",
@@ -558,7 +556,6 @@ describe("Playable MVP app display helpers", () => {
       "https://api.test",
       "0x2222222222222222222222222222222222222222",
       "7",
-      { source: "live" },
     ]]);
   });
 
