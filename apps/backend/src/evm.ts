@@ -80,6 +80,14 @@ export type WalletSettlement = {
   contractKind?: "game" | "settlement";
 };
 
+export type SettlementFundingState = {
+  affordable: boolean;
+  balanceWei: string | null;
+  contractKind: "game" | "legacy";
+  startPriceWei: string | null;
+  unavailableReason?: string;
+};
+
 export type QueueState = {
   active: boolean;
   kind: string | null;
@@ -494,6 +502,7 @@ export type DebrisFieldEvent = {
 
 export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
+  getSettlementFunding(wallet: Address): Promise<SettlementFundingState>;
   getWalletPlanets(wallet: Address): Promise<WalletPlanets>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address, planetId?: bigint): Promise<PlayerQueues>;
@@ -890,6 +899,37 @@ export class VeydriftGameReader implements ChainReader {
 
       return this.getCompactSettlement(wallet);
     }
+  }
+
+  async getSettlementFunding(wallet: Address): Promise<SettlementFundingState> {
+    assertAddress(wallet);
+    const startPrice = await this.readStartPrice();
+    if (startPrice === undefined) {
+      return {
+        affordable: true,
+        balanceWei: null,
+        contractKind: "legacy",
+        startPriceWei: null
+      };
+    }
+
+    if (!this.resourceTokensConfigured()) {
+      return {
+        affordable: false,
+        balanceWei: null,
+        contractKind: "game",
+        startPriceWei: startPrice.toString(),
+        unavailableReason: "Resource token reserves are not configured for this game deployment yet."
+      };
+    }
+
+    const balance = await this.readNativeBalance(wallet);
+    return {
+      affordable: balance >= startPrice,
+      balanceWei: balance.toString(),
+      contractKind: "game",
+      startPriceWei: startPrice.toString()
+    };
   }
 
   async getPlanet(planetId: bigint): Promise<PlanetState | null> {
@@ -2615,6 +2655,30 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readUintCall(selector: string, args: string[]): Promise<bigint> {
     return decodeUintWord(wordAt(splitWords(await this.call(selector, args)), 0));
+  }
+
+  private async readStartPrice(): Promise<bigint | undefined> {
+    try {
+      return await this.readUintCall("0xf1a9af89", []);
+    } catch (error) {
+      if (isRpcRevert(error)) return undefined;
+      throw error;
+    }
+  }
+
+  private async readNativeBalance(wallet: Address): Promise<bigint> {
+    return decodeUint(await this.transport.request<string>("eth_getBalance", [
+      wallet,
+      "latest"
+    ]));
+  }
+
+  private resourceTokensConfigured(): boolean {
+    return Boolean(
+      this.resourceTokenAddresses.metal
+        && this.resourceTokenAddresses.crystal
+        && this.resourceTokenAddresses.deuterium
+    );
   }
 
   private async readMoonUintCall(selector: string, args: string[]): Promise<bigint> {

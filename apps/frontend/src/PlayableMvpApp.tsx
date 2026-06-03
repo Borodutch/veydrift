@@ -584,7 +584,6 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
 
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
-  readProvider?: Eip1193Provider | undefined;
   account?: string | undefined;
   miniAppMode?: boolean | undefined;
   planet?: PlanetSummary | undefined;
@@ -1172,7 +1171,7 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
   };
 }
 
-export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = false, planet }: PlayableMvpAppProps = {}) {
+export function PlayableMvpApp({ provider, account, miniAppMode = false, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
@@ -1227,7 +1226,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
-  const receiptProvider = readProvider ?? provider;
+  const receiptProvider = provider;
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -2247,14 +2246,13 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           gameContract,
           planetId,
           building,
-          { readProvider },
         );
         setBuildingAction({
           status: "pending",
           buildingKey: key,
           label: transactionConfirmingLabel(label, txHash),
         });
-        await waitForReceipt(receiptProvider ?? provider, txHash);
+        await waitForReceipt(provider, txHash);
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
         await refreshOnChainState();
         await refreshInfrastructureState();
@@ -2278,8 +2276,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     onChainResources,
     onChainSettlement?.homePlanetId,
     provider,
-    readProvider,
-    receiptProvider,
     refreshLiveInfrastructureState,
     refreshInfrastructureState,
     refreshOnChainState,
@@ -2335,14 +2331,13 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           account,
           gameContract,
           planetId,
-          { readProvider },
         );
         setBuildingAction({
           status: "pending",
           buildingKey: completionBuildingKey,
           label: transactionConfirmingLabel(label, txHash),
         });
-        await waitForReceipt(receiptProvider ?? provider, txHash);
+        await waitForReceipt(provider, txHash);
         setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: transactionSyncingLabel(label) });
         const synced = await refreshFinishedBuildingState(expectation);
         setBuildingAction(synced
@@ -2371,8 +2366,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     buildingQueue?.key,
     onChainSettlement?.homePlanetId,
     provider,
-    readProvider,
-    receiptProvider,
     refreshFinishedBuildingState,
     transactionActionGate,
   ]);
@@ -2609,7 +2602,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       account,
       gameContract,
       planetId,
-      { readProvider },
     ), () => refreshCollectedResourcesState({ planetId, previousLastSettledAt }));
   }, [
     account,
@@ -2617,7 +2609,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     onChainSettlement?.homePlanetId,
     onChainSettlement?.planet?.lastSettledAt,
     provider,
-    readProvider,
     refreshCollectedResourcesState,
     runShipyardTransaction,
   ]);

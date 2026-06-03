@@ -313,6 +313,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/settlement-funding$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
+        if (ready instanceof Response) return ready;
+        return Response.json(await liveWalletRead(ready.getSettlementFunding(wallet), "settlement funding"), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/planets$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {

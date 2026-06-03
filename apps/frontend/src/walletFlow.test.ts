@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   BASE_SEPOLIA,
   assertWalletUnlocked,
-  createJsonRpcProvider,
   decodeBoolResult,
   decodeUintResult,
   encodeQuantity,
@@ -35,8 +34,6 @@ import {
   miniAppUnsupportedChainMessage,
   mergePlayerProfile,
   parseRiftTokenAmount,
-  readSettlementFundingState,
-  readSettlementState,
   sendCollectResourcesTransaction,
   sendCompleteFleetMissionReturnTransaction,
   sendApproveResourceTokenTransaction,
@@ -163,7 +160,6 @@ describe("walletFlow", () => {
       ...mockProvider(async ({ method, params }) => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [account];
-        if (method === "eth_call") return "0x";
         if (method === "eth_sendTransaction") return "0xabc";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -174,17 +170,6 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [7, 0]),
-          },
-          "latest",
-        ],
-      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -202,7 +187,6 @@ describe("walletFlow", () => {
       ...mockProvider(async ({ method, params }) => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [account];
-        if (method === "eth_call") return "0x";
         if (method === "eth_sendTransaction") return "0xdef";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -213,17 +197,6 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [7, 0]),
-          },
-          "latest",
-        ],
-      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -264,14 +237,13 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("requests Rabby accounts before building start preflight when current accounts are empty", async () => {
+  test("requests Rabby accounts before building start submission when current accounts are empty", async () => {
     const requests: unknown[] = [];
     const provider = {
       ...mockProvider(async ({ method, params }) => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [];
         if (method === "eth_requestAccounts") return [account];
-        if (method === "eth_call") return "0x";
         if (method === "eth_sendTransaction") return "0xbuild";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -283,17 +255,6 @@ describe("walletFlow", () => {
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
       { method: "eth_requestAccounts", params: undefined },
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [7, 0]),
-          },
-          "latest",
-        ],
-      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -848,230 +809,6 @@ describe("walletFlow", () => {
     expect(message).toContain("desktop browser wallet flow");
   });
 
-  test("reports no settlement when hasFirstPlanet returns false", async () => {
-    const provider = mockProvider(async () => `0x${"0".repeat(64)}`);
-
-    await expect(readSettlementState(provider, account, { address: contract })).resolves.toEqual({
-      kind: "not-settled"
-    });
-  });
-
-  test("reports already-settled from VeydriftSettlement reads", async () => {
-    const provider = mockProvider(async ({ method, params }) => {
-      if (method !== "eth_call") {
-        throw new Error(`Unexpected ${method}`);
-      }
-
-      const call = params?.[0] as { data: string };
-
-      if (call.data.startsWith("0x1d750846")) {
-        return word(1n);
-      }
-
-      if (call.data.startsWith("0x29147f24")) {
-        return [
-          word(1n),
-          word(42n),
-          word(7n),
-          word(0xabc123n),
-          word(0xdef456n),
-          word(1_800_000_000n),
-          word(123_456n)
-        ].join("");
-      }
-
-      throw new Error(`Unexpected call ${call.data}`);
-    });
-
-    const settlement = await readSettlementState(provider, account, { address: contract });
-
-    expect(settlement).toMatchObject({
-      kind: "settled",
-      planet: {
-        coordinates: "1:42:7",
-        label: "Planet 1:42:7",
-        rarity: "Genesis settlement",
-        settledBlock: "123456",
-        source: "chain",
-        settledAt: "2027-01-15T08:00:00.000Z"
-      }
-    });
-    expect(settlement.kind === "settled" ? settlement.planet.fields : undefined).toBeUndefined();
-    expect(settlement.kind === "settled" ? settlement.planet.temperature : undefined).toBeUndefined();
-  });
-
-  test("decodes VeydriftGame first planet fields and signed temperature", async () => {
-    const provider = mockProvider(async ({ method, params }) => {
-      if (method !== "eth_call") {
-        throw new Error(`Unexpected ${method}`);
-      }
-
-      const call = params?.[0] as { data: string };
-
-      if (call.data.startsWith("0x1d750846")) {
-        return word(1n);
-      }
-
-      if (call.data.startsWith("0x29147f24")) {
-        return [
-          word(2n),
-          word(88n),
-          word(14n),
-          word(206n),
-          word(BigInt.asUintN(256, -18n)),
-          word(1_800_000_000n),
-          word(123_456n)
-        ].join("");
-      }
-
-      throw new Error(`Unexpected call ${call.data}`);
-    });
-
-    const settlement = await readSettlementState(provider, account, { address: contract });
-
-    expect(settlement).toMatchObject({
-      kind: "settled",
-      planet: {
-        coordinates: "2:88:14",
-        fields: "206",
-        temperature: "-18",
-      }
-    });
-  });
-
-  test("falls back to VeydriftGame homePlanetOf when first-planet compatibility reads revert", async () => {
-    const provider = mockProvider(async ({ method, params }) => {
-      if (method !== "eth_call") {
-        throw new Error(`Unexpected ${method}`);
-      }
-
-      const call = params?.[0] as { data: string };
-
-      if (call.data.startsWith("0x1d750846")) {
-        throw { code: -32603, message: "Internal JSON-RPC error." };
-      }
-
-      if (call.data.startsWith("0x0ff79fa5")) {
-        return word(9n);
-      }
-
-      if (call.data.startsWith("0x181c1bc4")) {
-        return [
-          word(BigInt(account)),
-          word(3n),
-          word(44n),
-          word(12n),
-          word(219n),
-          word(BigInt.asUintN(256, -42n)),
-          word(10_500n),
-          word(9_900n),
-          word(11_100n),
-          word(1_800_000_000n),
-          word(5_000n),
-          word(2_500n),
-          word(750n)
-        ].join("");
-      }
-
-      throw new Error(`Unexpected call ${call.data}`);
-    });
-
-    const settlement = await readSettlementState(provider, account, { address: contract });
-
-    expect(settlement).toEqual({
-      kind: "settled",
-      planet: {
-        coordinates: "3:44:12",
-        fields: "219",
-        label: "Planet 3:44:12",
-        rarity: "Genesis settlement",
-        resources: {
-          crystal: "2500",
-          deuterium: "750",
-          metal: "5000",
-        },
-        settledAt: "2027-01-15T08:00:00.000Z",
-        source: "chain",
-        temperature: "-42",
-      }
-    });
-  });
-
-  test("falls back to not-settled when game homePlanetOf returns zero", async () => {
-    const provider = mockProvider(async ({ method, params }) => {
-      if (method !== "eth_call") {
-        throw new Error(`Unexpected ${method}`);
-      }
-
-      const call = params?.[0] as { data: string };
-
-      if (call.data.startsWith("0x1d750846")) {
-        throw { code: -32603, message: "Internal JSON-RPC error." };
-      }
-
-      if (call.data.startsWith("0x0ff79fa5")) {
-        return word(0n);
-      }
-
-      throw new Error(`Unexpected call ${call.data}`);
-    });
-
-    await expect(readSettlementState(provider, account, { address: contract })).resolves.toEqual({
-      kind: "not-settled"
-    });
-  });
-
-  test("surfaces legacy settlement when game homePlanetOf is empty", async () => {
-    const legacy = "0x3333333333333333333333333333333333333333";
-    const provider = mockProvider(async ({ method, params }) => {
-      if (method !== "eth_call") {
-        throw new Error(`Unexpected ${method}`);
-      }
-
-      const call = params?.[0] as { data: string; to: string };
-
-      if (call.to === contract && call.data.startsWith("0x1d750846")) {
-        throw { code: -32603, message: "Internal JSON-RPC error." };
-      }
-
-      if (call.to === contract && call.data.startsWith("0x0ff79fa5")) {
-        return word(0n);
-      }
-
-      if (call.to === legacy && call.data.startsWith("0x1d750846")) {
-        return word(1n);
-      }
-
-      if (call.to === legacy && call.data.startsWith("0x29147f24")) {
-        return [
-          word(2n),
-          word(88n),
-          word(14n),
-          word(206n),
-          word(BigInt.asUintN(256, -18n)),
-          word(1_800_000_000n),
-          word(123_456n)
-        ].join("");
-      }
-
-      throw new Error(`Unexpected call ${call.to} ${call.data}`);
-    });
-
-    await expect(readSettlementState(provider, account, { address: contract, legacyAddress: legacy })).resolves.toEqual({
-      kind: "legacy-settled",
-      planet: {
-        coordinates: "2:88:14",
-        fields: "206",
-        label: "Planet 2:88:14",
-        rarity: "Genesis settlement",
-        settledBlock: "123456",
-        settledAt: "2027-01-15T08:00:00.000Z",
-        source: "chain",
-        temperature: "-18",
-      }
-    });
-  });
-
   test("formats raw JSON-RPC provider errors into an actionable wallet message", () => {
     expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
       "wallet could not read the current game contract state"
@@ -1088,146 +825,20 @@ describe("walletFlow", () => {
     );
   });
 
-  test("reports unconfigured settlement when no address is present", async () => {
-    const provider = mockProvider(async () => {
-      throw new Error("No chain calls expected");
-    });
-
-    await expect(readSettlementState(provider, account, {})).resolves.toEqual({
-      kind: "unconfigured"
-    });
-  });
-
-  test("submits a value-bearing VeydriftGame startPlanet transaction when startPrice is available", async () => {
+  test("submits a value-bearing VeydriftGame startPlanet transaction with backend-provided start price", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") return word(50_000_000_000_000_000n);
-      if (method === "eth_getBalance") return word(60_000_000_000_000_000n);
-      return "0xabc";
-    });
-
-    await expect(
-      sendSettlementTransaction(provider, account, {
-        address: contract
-      })
-    ).resolves.toBe("0xabc");
-
-    expect(requests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            to: contract,
-            data: "0xf1a9af89"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_getBalance",
-        params: [
-          account,
-          "latest"
-        ]
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xf45f1f18",
-            value: "0xb1a2bc2ec50000"
-          }
-        ]
-      }
-    ]);
-  });
-
-  test("blocks first planet transactions when the game start price exceeds wallet balance", async () => {
-    const provider = mockProvider(async ({ method }) => {
-      if (method === "eth_call") return word(50_000_000_000_000_000n);
-      if (method === "eth_getBalance") return word(31_000_000_000_000_000n);
-      throw new Error(`Unexpected ${method}`);
-    });
-
-    await expect(
-      sendSettlementTransaction(provider, account, {
-        address: contract
-      })
-    ).rejects.toThrow("costs 0.05 ETH");
-  });
-
-  test("reports settlement funding from game startPrice and native balance", async () => {
-    const provider = mockProvider(async ({ method }) => {
-      if (method === "eth_call") return word(50_000_000_000_000_000n);
-      if (method === "eth_getBalance") return word(31_000_000_000_000_000n);
-      throw new Error(`Unexpected ${method}`);
-    });
-
-    await expect(readSettlementFundingState(provider, account, { address: contract })).resolves.toEqual({
-      affordable: false,
-      balanceWei: 31_000_000_000_000_000n,
-      contractKind: "game",
-      startPriceWei: 50_000_000_000_000_000n
-    });
-  });
-
-  test("allows Mini App settlement funding when the host provider cannot read wallet balance", async () => {
-    const provider = mockProvider(async ({ method }) => {
-      if (method === "eth_call") return word(50_000_000_000_000_000n);
-      if (method === "eth_getBalance") {
-        throw { code: 4200, message: "The provider does not support the requested method." };
-      }
-      throw new Error(`Unexpected ${method}`);
-    });
-
-    await expect(readSettlementFundingState(provider, account, { address: contract }, {
-      balanceRead: "optional",
-    })).resolves.toEqual({
-      affordable: true,
-      balanceWei: null,
-      contractKind: "game",
-      startPriceWei: 50_000_000_000_000_000n
-    });
-  });
-
-  test("submits Mini App settlement when only the balance read is unsupported", async () => {
-    const requests: unknown[] = [];
-    const provider = mockProvider(async ({ method, params }) => {
-      requests.push({ method, params });
-      if (method === "eth_call") return word(50_000_000_000_000_000n);
-      if (method === "eth_getBalance") {
-        throw { code: 4200, message: "The provider does not support the requested method." };
-      }
       return "0xabc";
     });
 
     await expect(
       sendSettlementTransaction(provider, account, { address: contract }, {
-        balanceRead: "optional",
+        startPriceWei: 50_000_000_000_000_000n,
       })
     ).resolves.toBe("0xabc");
 
     expect(requests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            to: contract,
-            data: "0xf1a9af89"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_getBalance",
-        params: [
-          account,
-          "latest"
-        ]
-      },
       {
         method: "eth_sendTransaction",
         params: [
@@ -1242,102 +853,37 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("reads Mini App settlement funding through a readonly provider", async () => {
-    const walletRequests: unknown[] = [];
-    const readRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      throw { code: 4200, message: "The provider does not support the requested method." };
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readRequests.push({ method, params });
-      if (method === "eth_call") return word(50_000_000_000_000_000n);
-      if (method === "eth_getBalance") return word(60_000_000_000_000_000n);
-      throw new Error(`Unexpected readonly ${method}`);
-    });
-
-    await expect(readSettlementFundingState(walletProvider, account, { address: contract }, {
-      balanceRead: "optional",
-      readProvider,
-    })).resolves.toEqual({
-      affordable: true,
-      balanceWei: 60_000_000_000_000_000n,
-      contractKind: "game",
-      startPriceWei: 50_000_000_000_000_000n
-    });
-
-    expect(walletRequests).toEqual([]);
-    expect(readRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            to: contract,
-            data: "0xf1a9af89"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_getBalance",
-        params: [
-          account,
-          "latest"
-        ]
-      }
-    ]);
-  });
-
-  test("submits Mini App settlement without wallet-backed read preflights", async () => {
-    const walletRequests: unknown[] = [];
-    const readRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      if (method === "eth_sendTransaction") return "0xabc";
-      throw { code: 4200, message: "The provider does not support the requested method." };
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readRequests.push({ method, params });
-      if (method === "eth_call") return word(50_000_000_000_000_000n);
-      if (method === "eth_getBalance") return word(60_000_000_000_000_000n);
-      throw new Error(`Unexpected readonly ${method}`);
+  test("requires backend settlement funding before submitting first planet transactions", async () => {
+    const provider = mockProvider(async ({ method }) => {
+      throw new Error(`Unexpected ${method}`);
     });
 
     await expect(
-      sendSettlementTransaction(walletProvider, account, { address: contract }, {
-        balanceRead: "optional",
-        readProvider,
+      sendSettlementTransaction(provider, account, {
+        address: contract
       })
+    ).rejects.toThrow("Settlement funding information is required");
+  });
+
+  test("submits legacy settleFirstPlanet when backend reports no game start price", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xabc";
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, { startPriceWei: null })
     ).resolves.toBe("0xabc");
 
-    expect(readRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            to: contract,
-            data: "0xf1a9af89"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_getBalance",
-        params: [
-          account,
-          "latest"
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([
+    expect(requests).toEqual([
       {
         method: "eth_sendTransaction",
         params: [
           {
             from: account,
             to: contract,
-            data: "0xf45f1f18",
-            value: "0xb1a2bc2ec50000"
+            data: "0x59268393"
           }
         ]
       }
@@ -1346,51 +892,15 @@ describe("walletFlow", () => {
 
   test("blocks game settlement while resource token reserves are not configured", async () => {
     const provider = mockProvider(async ({ method }) => {
-      if (method === "eth_call") return word(50_000_000_000_000_000n);
       throw new Error(`Unexpected ${method}`);
-    });
-
-    await expect(
-      readSettlementFundingState(provider, account, {
-        address: contract,
-        resourceTokensConfigured: false
-      })
-    ).resolves.toEqual({
-      affordable: false,
-      balanceWei: null,
-      contractKind: "game",
-      startPriceWei: 50_000_000_000_000_000n,
-      unavailableReason: "Resource token reserves are not configured for this game deployment yet."
     });
 
     await expect(
       sendSettlementTransaction(provider, account, {
         address: contract,
         resourceTokensConfigured: false
-      })
+      }, { startPriceWei: 50_000_000_000_000_000n })
     ).rejects.toThrow("Resource token reserves are not configured");
-  });
-
-  test("falls back to legacy settleFirstPlanet when startPrice is unavailable", async () => {
-    const requests: unknown[] = [];
-    const provider = mockProvider(async ({ method, params }) => {
-      requests.push({ method, params });
-      if (method === "eth_call") throw { code: -32603, message: "execution reverted" };
-      return "0xabc";
-    });
-
-    await expect(sendSettlementTransaction(provider, account, { address: contract })).resolves.toBe("0xabc");
-
-    expect(requests.at(-1)).toEqual({
-      method: "eth_sendTransaction",
-      params: [
-        {
-          from: account,
-          to: contract,
-          data: "0x59268393"
-        }
-      ]
-    });
   });
 
   test("submits VeydriftGame building and shipyard transactions", async () => {
@@ -1398,7 +908,6 @@ describe("walletFlow", () => {
     let sentTransactions = 0;
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") return "0x";
       sentTransactions += 1;
       return `0xtx${sentTransactions}`;
     });
@@ -1434,17 +943,6 @@ describe("walletFlow", () => {
             to: contract,
             data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
           }
-        ]
-      },
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [7, 0])
-          },
-          "latest"
         ]
       },
       {
@@ -1510,57 +1008,6 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("blocks building upgrade transactions before wallet confirmation when contract preflight reverts", async () => {
-    const requests: unknown[] = [];
-    const provider = mockProvider(async ({ method, params }) => {
-      requests.push({ method, params });
-      if (method === "eth_call") {
-        throw { code: 3, message: "execution reverted", data: "0xcec62bc2" };
-      }
-      throw new Error("eth_sendTransaction should not be called");
-    });
-
-    await expect(
-      sendStartBuildingUpgradeTransaction(provider, account, contract, "1", 3)
-    ).rejects.toThrow("Another building is already upgrading");
-
-    expect(requests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [1, 3])
-          },
-          "latest"
-        ]
-      }
-    ]);
-  });
-
-  test("checks building upgrade readonly preflight before probing wallet unlock state", async () => {
-    let unlockChecks = 0;
-    const walletProvider = withMetaMaskUnlockProbe(
-      mockProvider(async () => {
-        throw new Error("eth_sendTransaction should not be called");
-      }),
-      async () => {
-        unlockChecks += 1;
-        return true;
-      }
-    );
-    const readProvider = mockProvider(async () => {
-      throw { code: 3, message: "execution reverted", data: "0xcec62bc2" };
-    });
-
-    await expect(
-      sendStartBuildingUpgradeTransaction(walletProvider, account, contract, "1", 3, { readProvider })
-    ).rejects.toThrow("Another building is already upgrading");
-
-    expect(unlockChecks).toBe(0);
-  });
-
   test("submits ready finish building upgrade transactions without a wallet-backed preflight call", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
@@ -1587,670 +1034,6 @@ describe("walletFlow", () => {
         ]
       }
     ]);
-  });
-
-  test("blocks stale ready finish building upgrades before opening the wallet when readonly preflight reverts", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      throw new Error("eth_sendTransaction should not be called");
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
-      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
-        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
-      }
-      throw { code: 3, message: "execution reverted", data: "0x7e787175" };
-    });
-
-    await expect(
-      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).rejects.toThrow("No active building upgrade is waiting to be finished");
-
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([]);
-  });
-
-  test("checks finish building readonly preflight before probing wallet unlock state", async () => {
-    let unlockChecks = 0;
-    const walletProvider = withMetaMaskUnlockProbe(
-      mockProvider(async () => {
-        throw new Error("eth_sendTransaction should not be called");
-      }),
-      async () => {
-        unlockChecks += 1;
-        return true;
-      }
-    );
-    const readProvider = mockProvider(async ({ method, params }) => {
-      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
-      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
-        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
-      }
-      if (method === "eth_call") return "0x";
-      throw new Error("execution reverted: likely fail");
-    });
-
-    await expect(
-      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).rejects.toThrow("This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
-
-    expect(unlockChecks).toBe(0);
-  });
-
-  test("decodes JSON-RPC readonly preflight revert selectors", async () => {
-    const fetchCalls: unknown[] = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
-      fetchCalls.push(body);
-      const data = String(body.params?.[0]?.data ?? "");
-      if (data.startsWith("0xb8e835ab")) {
-        return new Response(JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          result: activeBuildingConstructionResult({ active: true, readyAt: 1n }),
-        }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        error: {
-          code: 3,
-          message: "execution reverted",
-          data: "0x7e787175",
-        },
-      }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }) as typeof fetch;
-
-    try {
-      await expect(
-        sendFinishBuildingUpgradeTransaction(
-          mockProvider(async () => {
-            throw new Error("eth_sendTransaction should not be called");
-          }),
-          account,
-          contract,
-          "1",
-          { readProvider: createJsonRpcProvider("https://example.invalid/rpc") },
-        )
-      ).rejects.toThrow("No active building upgrade is waiting to be finished");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-
-    expect(fetchCalls).toEqual([
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000001"
-          },
-          "latest"
-        ]
-      },
-      {
-        jsonrpc: "2.0",
-        id: 2,
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
-          },
-          "latest"
-        ]
-      }
-    ]);
-  });
-
-  test("uses a readonly provider for ready finish building upgrade preflight when available", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      if (method === "eth_sendTransaction") return "0xfinish";
-      throw new Error("wallet reads should not be used for finish preflight");
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
-      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
-        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
-      }
-      if (method === "eth_estimateGas") return "0xc350";
-      return "0x";
-    });
-
-    await expect(
-      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).resolves.toBe("0xfinish");
-
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007",
-            gas: "0xc350"
-          }
-        ]
-      }
-    ]);
-  });
-
-  test("requests Rabby accounts before ready finish building preflight when current accounts are empty", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = {
-      ...mockProvider(async ({ method, params }) => {
-        walletRequests.push({ method, params });
-        if (method === "eth_accounts") return [];
-        if (method === "eth_requestAccounts") return [account];
-        if (method === "eth_sendTransaction") return "0xfinish";
-        throw new Error(`Unexpected wallet method ${method}`);
-      }),
-      isRabby: true,
-    } as Eip1193Provider;
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
-      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
-        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
-      }
-      if (method === "eth_estimateGas") return "0xc350";
-      return "0x";
-    });
-
-    await expect(
-      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).resolves.toBe("0xfinish");
-
-    expect(walletRequests).toEqual([
-      { method: "eth_accounts", params: undefined },
-      { method: "eth_requestAccounts", params: undefined },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007",
-            gas: "0xc350"
-          }
-        ]
-      }
-    ]);
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      }
-    ]);
-  });
-
-  test("blocks likely-failing ready finish building upgrades before opening the wallet when readonly gas estimation fails", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      throw new Error("eth_sendTransaction should not be called");
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
-      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
-        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
-      }
-      if (method === "eth_call") return "0x";
-      throw new Error("execution reverted: likely fail");
-    });
-
-    await expect(
-      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).rejects.toThrow("This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
-
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([]);
-  });
-
-  test("preflights resource collection before wallet confirmation when a readonly provider is available", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      if (method === "eth_sendTransaction") return "0xcollect";
-      throw new Error("wallet reads should not be used for resource collection submission");
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      if (method === "eth_estimateGas") return "0x5208";
-      return "0x";
-    });
-
-    await expect(
-      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).resolves.toBe("0xcollect");
-
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007",
-            gas: "0x5208"
-          }
-        ]
-      }
-    ]);
-  });
-
-  test("checks Rabby-style providers before resource collection preflight and submission", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = {
-      ...mockProvider(async ({ method, params }) => {
-        walletRequests.push({ method, params });
-        if (method === "eth_accounts") return [account];
-        if (method === "eth_sendTransaction") return "0xrabbycollect";
-        throw new Error(`Unexpected wallet method ${method}`);
-      }),
-      isRabby: true,
-    } as Eip1193Provider;
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      if (method === "eth_estimateGas") return "0x5208";
-      return "0x";
-    });
-
-    await expect(
-      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).resolves.toBe("0xrabbycollect");
-
-    expect(walletRequests[0]).toEqual({ method: "eth_accounts", params: undefined });
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([
-      { method: "eth_accounts", params: undefined },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007",
-            gas: "0x5208"
-          }
-        ]
-      }
-    ]);
-  });
-
-  test("requests Rabby accounts before resource collection when current accounts are empty", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = {
-      ...mockProvider(async ({ method, params }) => {
-        walletRequests.push({ method, params });
-        if (method === "eth_accounts") return [];
-        if (method === "eth_requestAccounts") return [account];
-        if (method === "eth_sendTransaction") return "0xrabbycollect";
-        throw new Error(`Unexpected wallet method ${method}`);
-      }),
-      isRabby: true,
-    } as Eip1193Provider;
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      if (method === "eth_estimateGas") return "0x5208";
-      return "0x";
-    });
-
-    await expect(
-      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).resolves.toBe("0xrabbycollect");
-
-    expect(walletRequests).toEqual([
-      { method: "eth_accounts", params: undefined },
-      { method: "eth_requestAccounts", params: undefined },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007",
-            gas: "0x5208"
-          }
-        ]
-      }
-    ]);
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      }
-    ]);
-  });
-
-  test("reports rejected Rabby account authorization without calling readonly preflight", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = {
-      ...mockProvider(async ({ method, params }) => {
-        walletRequests.push({ method, params });
-        if (method === "eth_accounts") return [];
-        if (method === "eth_requestAccounts") throw { code: 4001, message: "User rejected account access" };
-        throw new Error(`Unexpected wallet method ${method}`);
-      }),
-      isRabby: true,
-    } as Eip1193Provider;
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      return "0x";
-    });
-
-    await expect(
-      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).rejects.toThrow("Wallet connection was rejected. Reconnect your wallet, then retry.");
-
-    expect(walletRequests).toEqual([
-      { method: "eth_accounts", params: undefined },
-      { method: "eth_requestAccounts", params: undefined },
-    ]);
-    expect(readonlyRequests).toEqual([]);
-  });
-
-  test("reports unavailable Rabby accounts without calling readonly preflight", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = {
-      ...mockProvider(async ({ method, params }) => {
-        walletRequests.push({ method, params });
-        if (method === "eth_accounts") return [];
-        if (method === "eth_requestAccounts") return [];
-        throw new Error(`Unexpected wallet method ${method}`);
-      }),
-      isRabby: true,
-    } as Eip1193Provider;
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      return "0x";
-    });
-
-    await expect(
-      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).rejects.toThrow("Wallet account is unavailable. Reconnect your wallet, then retry.");
-
-    expect(walletRequests).toEqual([
-      { method: "eth_accounts", params: undefined },
-      { method: "eth_requestAccounts", params: undefined },
-    ]);
-    expect(readonlyRequests).toEqual([]);
-  });
-
-  test("reports Rabby account mismatch without calling readonly preflight", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = {
-      ...mockProvider(async ({ method, params }) => {
-        walletRequests.push({ method, params });
-        if (method === "eth_accounts") return ["0x9999999999999999999999999999999999999999"];
-        throw new Error(`Unexpected wallet method ${method}`);
-      }),
-      isRabby: true,
-    } as Eip1193Provider;
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      return "0x";
-    });
-
-    await expect(
-      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).rejects.toThrow("The selected wallet account changed. Reconnect the active wallet, then retry.");
-
-    expect(walletRequests).toEqual([
-      { method: "eth_accounts", params: undefined },
-    ]);
-    expect(readonlyRequests).toEqual([]);
-  });
-
-  test("blocks likely-failing resource collection before opening the wallet", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      throw new Error("eth_sendTransaction should not be called");
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      if (method === "eth_call") return "0x";
-      throw new Error("execution reverted: likely fail");
-    });
-
-    await expect(
-      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).rejects.toThrow("This resource collection is likely to fail on-chain. Refresh resources and retry.");
-
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([]);
   });
 
   test("requests Rabby accounts before other production, research, and rift submissions", async () => {
@@ -2759,50 +1542,6 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("uses readonly providers for Mini App building preflight without wallet reads", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      if (method === "eth_sendTransaction") return "0xtx1";
-      throw { code: 4200, message: "The provider does not support the requested method." };
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      return "0x";
-    });
-
-    await expect(
-      sendStartBuildingUpgradeTransaction(walletProvider, account, contract, "7", 0, { readProvider })
-    ).resolves.toBe("0xtx1");
-
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [7, 0])
-          },
-          "latest"
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [7, 0])
-          }
-        ]
-      }
-    ]);
-  });
-
   test("includes backend wallet API validation messages in shipyard errors", async () => {
     const originalFetch = globalThis.fetch;
 
@@ -3048,22 +1787,4 @@ function withMetaMaskUnlockProbe(
 
 function word(value: bigint): string {
   return value.toString(16).padStart(64, "0");
-}
-
-function activeBuildingConstructionResult({
-  active,
-  readyAt = 1n,
-}: {
-  active: boolean;
-  readyAt?: bigint;
-}): string {
-  return `0x${[
-    word(active ? 1n : 0n),
-    word(0n),
-    word(2n),
-    word(readyAt),
-    word(60n),
-    word(15n),
-    word(0n),
-  ].join("")}`;
 }
