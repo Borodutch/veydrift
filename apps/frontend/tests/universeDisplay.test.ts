@@ -29,12 +29,13 @@ import {
   shouldShowGalaxyRows
 } from "../src/components/GalaxyView";
 import {
-  indexedRows,
   planetRecordStatusLabel,
   publicCommanderRows,
   publicQueueRows,
   publicPlanetDataRows,
   publicProductionRows,
+  publicResourceRows,
+  publicStateRows,
   publicSignalRows
 } from "../src/components/PlanetDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
@@ -99,7 +100,7 @@ describe("tester universe display data", () => {
     expect(withHome.length).toBe(planets.length + 1);
   });
 
-  test("real indexed occupancy is preserved as an owner address only", () => {
+  test("public occupancy is preserved as an owner address only", () => {
     const planets = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
@@ -134,7 +135,7 @@ describe("tester universe display data", () => {
     });
   });
 
-  test("public planet detail preserves indexed state rows and queue labels", () => {
+  test("public planet detail preserves public state rows and queue labels", () => {
     const [planet] = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
@@ -156,7 +157,10 @@ describe("tester universe display data", () => {
               deuterium: "4800",
             },
             buildings: [{ id: 0, level: 12 }],
-            fleet: [{ id: 0, count: 3 }],
+            fleet: [
+              { id: 0, count: 3 },
+              { id: 9, count: 5 },
+            ],
             defenses: [{ id: 0, count: 7 }],
             research: [{ id: 0, level: 4 }],
             queues: {
@@ -181,22 +185,33 @@ describe("tester universe display data", () => {
       crystal: "4900",
       deuterium: "4800",
     });
-    expect(indexedRows(planet.publicState?.buildings, buildingCatalog, "level")).toContainEqual({
+    expect(publicResourceRows(planet.publicState?.resources)?.map((row) => `${row.label}: ${row.value}`)).toEqual([
+      "Metal: 5,000",
+      "Crystal: 4,900",
+      "Deuterium: 4,800",
+    ]);
+    expect(publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")).toContainEqual({
       label: "Metal Mine",
       value: "Level 12",
     });
-    expect(indexedRows(planet.publicState?.fleet, shipCatalog, "count")).toContainEqual({
+    expect(publicStateRows(planet.publicState?.fleet, shipCatalog, "count")).toContainEqual({
       label: "Small Cargo",
       value: "3",
+    });
+    expect(publicStateRows(planet.publicState?.fleet, shipCatalog, "count")).toContainEqual({
+      label: "Solar Satellite",
+      value: "5",
     });
     expect(publicQueueRows(planet)).toContainEqual({
       label: "Building",
       value: "Metal Mine Level 13",
       tone: "accent",
     });
+
+    expect(publicResourceRows(undefined)).toBeNull();
   });
 
-  test("real indexed occupancy preserves owner alliance intel when the API provides it", () => {
+  test("public occupancy preserves owner alliance intel when the API provides it", () => {
     const [planet] = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
