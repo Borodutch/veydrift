@@ -458,6 +458,44 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("keeps indexed building completion levels monotonic when older logs arrive late", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xbuilddone2",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(5n)
+      ],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xbuilddone1",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(5n)
+      ],
+      data: abiWords(1n)
+    });
+
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)).toMatchObject({
+      id: 5,
+      level: 2
+    });
+    expect(indexer.walletPlanets(player).planets[0]?.keyLevels.shipyard).toBe(2);
+  });
+
   test("indexes ship and research queues plus completed counts and levels", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

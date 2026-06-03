@@ -1574,10 +1574,10 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
     this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
     if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
-      this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
-      this.upsertIndexedLevel("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.upsertIndexedLevelAtLeast("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.upsertIndexedLevelAtLeast("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-building" && event.planetId && event.level !== undefined) {
-      this.upsertIndexedLevel("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "defense" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
       this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
@@ -1739,6 +1739,21 @@ export class SettlementIndexer {
       INSERT INTO ${table} (planet_id, ${idColumn}, ${valueColumn})
       VALUES (?, ?, ?)
       ON CONFLICT(planet_id, ${idColumn}) DO UPDATE SET ${valueColumn} = excluded.${valueColumn}
+    `).run(planetId, itemId, value);
+  }
+
+  private upsertIndexedLevelAtLeast(
+    table: "contract_building_levels" | "contract_moon_building_levels" | "indexed_building_levels" | "indexed_moon_building_levels",
+    idColumn: string,
+    valueColumn: string,
+    planetId: string,
+    itemId: number,
+    value: number
+  ): void {
+    this.db.query(`
+      INSERT INTO ${table} (planet_id, ${idColumn}, ${valueColumn})
+      VALUES (?, ?, ?)
+      ON CONFLICT(planet_id, ${idColumn}) DO UPDATE SET ${valueColumn} = max(${table}.${valueColumn}, excluded.${valueColumn})
     `).run(planetId, itemId, value);
   }
 
