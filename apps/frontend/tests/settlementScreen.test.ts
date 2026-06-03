@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   indexedSettlementState,
   noWalletDetectedMessage,
+  POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
   settlementLaunchBlocker,
   shouldAttemptFarcasterNetworkSetup,
   shouldAutoConnectFarcasterWallet,
+  shouldRetryFarcasterWalletProviderProbe,
+  waitForIndexedSettledPlanet,
 } from "../src/FirstPlanetSettlementApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "../src/settlementScreen";
 
@@ -148,6 +151,57 @@ describe("settlement screen mode", () => {
     })).toEqual({ kind: "indexing" });
   });
 
+  test("waits for indexed settlement resources to hydrate after reconnect", async () => {
+    const responses = [
+      indexedSettlementResponse({ lastSettledAt: "0", resources: { metal: "0", crystal: "0", deuterium: "0" } }),
+      indexedSettlementResponse({ lastSettledAt: "1770000000", resources: { metal: "5000", crystal: "4900", deuterium: "4800" } }),
+    ];
+    const fetches: string[] = [];
+    const delays: number[] = [];
+
+    await expect(waitForIndexedSettledPlanet("https://api.example.test", connected.account, {
+      attempts: 2,
+      delay: async (ms) => {
+        delays.push(ms);
+      },
+      fetchSettlement: async (apiUrl, account) => {
+        fetches.push(`${apiUrl}:${account}`);
+        const response = responses.shift();
+        if (!response) throw new Error("unexpected extra fetch");
+        return response;
+      },
+      intervalMs: 25,
+    })).resolves.toMatchObject({
+      kind: "settled",
+      planet: {
+        coordinates: "2:44:9",
+        resources: {
+          metal: "5000",
+          crystal: "4900",
+          deuterium: "4800",
+        },
+      },
+    });
+
+    expect(fetches).toEqual([
+      `https://api.example.test:${connected.account}`,
+      `https://api.example.test:${connected.account}`,
+    ]);
+    expect(delays).toEqual([25]);
+  });
+
+  test("times out with a retryable message when indexed starter resources stay pending", async () => {
+    await expect(waitForIndexedSettledPlanet("https://api.example.test", connected.account, {
+      attempts: 2,
+      delay: async () => {},
+      fetchSettlement: async () => indexedSettlementResponse({
+        lastSettledAt: "0",
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+      }),
+      intervalMs: 1,
+    })).rejects.toThrow(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
+  });
+
   test("blocks settlement launch until funding info is ready and affordable", () => {
     expect(settlementLaunchBlocker(false, { status: "ready", funding: {
       affordable: true,
@@ -233,6 +287,33 @@ describe("settlement screen mode", () => {
     })).toBe(false);
   });
 
+  test("retries Farcaster provider discovery only while Mini App wallet support may still be late", () => {
+    expect(shouldRetryFarcasterWalletProviderProbe({
+      attempt: 1,
+      maxAttempts: 3,
+      miniAppMode: true,
+      providerAvailable: false,
+    })).toBe(true);
+    expect(shouldRetryFarcasterWalletProviderProbe({
+      attempt: 3,
+      maxAttempts: 3,
+      miniAppMode: true,
+      providerAvailable: false,
+    })).toBe(false);
+    expect(shouldRetryFarcasterWalletProviderProbe({
+      attempt: 1,
+      maxAttempts: 3,
+      miniAppMode: false,
+      providerAvailable: false,
+    })).toBe(false);
+    expect(shouldRetryFarcasterWalletProviderProbe({
+      attempt: 1,
+      maxAttempts: 3,
+      miniAppMode: true,
+      providerAvailable: true,
+    })).toBe(false);
+  });
+
   test("uses backend settlement state instead of Mini App read-provider fallbacks", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
@@ -242,6 +323,7 @@ describe("settlement screen mode", () => {
     expect(source).not.toContain("readSettlementStateWithMiniAppFallback");
     expect(source).not.toContain("readSettlementFundingWithMiniAppFallback");
     expect(source).not.toContain("isUnsupportedProviderMethodError(error)");
+    expect(source).not.toContain("waitForReceipt(");
     expect(source).toContain("setMiniAppMode(true)");
   });
 
@@ -261,8 +343,42 @@ describe("settlement screen mode", () => {
   test("rechecks the Farcaster wallet provider when connect is clicked after a cold desktop load", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
-    expect(source).toContain("const activeProvider = provider ?? bindWalletProviderDetails(await loadWalletProviderDetails())");
+    expect(source).toContain("await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode })");
+    expect(source).toContain("shouldRetryFarcasterWalletProviderProbe");
     expect(source).toContain("const accounts = await requestAccounts(activeProvider)");
-    expect(source).toContain("await refreshWallet(activeProvider, accounts[0])");
+    expect(source).toContain("await refreshWallet(activeProvider, accounts[0], providerContext)");
   });
 });
+
+function indexedSettlementResponse({
+  lastSettledAt,
+  resources,
+}: {
+  lastSettledAt: string;
+  resources: {
+    metal: string;
+    crystal: string;
+    deuterium: string;
+  };
+}) {
+  return {
+    wallet: connected.account,
+    hasFirstPlanet: true,
+    homePlanetId: "7",
+    planet: {
+      planetId: "7",
+      owner: connected.account,
+      name: null,
+      galaxy: 2,
+      system: 44,
+      position: 9,
+      fields: 211,
+      temperature: -8,
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 10_000,
+      lastSettledAt,
+      resources,
+    },
+  };
+}

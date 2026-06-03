@@ -26,7 +26,6 @@ import {
   getAvailableWalletProviderDetails,
   sendSettlementTransaction,
   settlementContractConfigured,
-  waitForReceipt,
   walletRequestErrorMessage,
   type Eip1193Provider,
   type PlanetSummary,
@@ -39,6 +38,10 @@ import {
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
+export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
+export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
+const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
+const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
 
 type SettlementConfigState =
   | { status: "loading"; apiUrl?: string; config: SettlementConfig }
@@ -70,11 +73,28 @@ export function shouldAttemptFarcasterNetworkSetup(input: {
     && input.lastAttemptedChainId !== input.chainId;
 }
 
+export function shouldRetryFarcasterWalletProviderProbe(input: {
+  attempt: number;
+  maxAttempts?: number;
+  miniAppMode: boolean;
+  providerAvailable: boolean;
+}): boolean {
+  return input.miniAppMode
+    && !input.providerAvailable
+    && input.attempt < (input.maxAttempts ?? FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS);
+}
+
 type SettlementFunding =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; funding: SettlementFundingState }
   | { status: "error"; message: string };
+
+type WalletProviderDetails = Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>;
+type WalletProviderContext = {
+  miniAppMode: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+};
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -162,7 +182,7 @@ export function FirstPlanetSettlementApp() {
     let disposed = false;
 
     void (async () => {
-      const walletProvider = await loadWalletProviderDetails();
+      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
       if (disposed) return;
       bindWalletProviderDetails(walletProvider);
 
@@ -179,6 +199,26 @@ export function FirstPlanetSettlementApp() {
       walletProviderCleanup.current = undefined;
     };
   }, []);
+
+  useEffect(() => {
+    if (!miniAppMode || provider || wallet.kind !== "no-wallet") {
+      return;
+    }
+
+    let disposed = false;
+
+    void (async () => {
+      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: true });
+      if (disposed || !walletProvider?.provider) return;
+
+      bindWalletProviderDetails(walletProvider);
+      setWallet({ kind: "disconnected" });
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [miniAppMode, provider, wallet.kind]);
 
   useEffect(() => {
     if (!provider || settlementConfigState.status !== "ready") {
@@ -203,14 +243,32 @@ export function FirstPlanetSettlementApp() {
     void connectWallet();
   }, [miniAppMode, provider, settlementConfigState.status, walletProviderSource]);
 
-  async function loadWalletProviderDetails() {
-    return getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+  async function loadWalletProviderDetails({
+    waitForFarcasterProvider = false,
+  }: { waitForFarcasterProvider?: boolean } = {}): Promise<WalletProviderDetails> {
+    let walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+
+    for (
+      let attempt = 1;
+      shouldRetryFarcasterWalletProviderProbe({
+        attempt,
+        miniAppMode: waitForFarcasterProvider,
+        providerAvailable: Boolean(walletProvider?.provider),
+      });
+      attempt += 1
+    ) {
+      await delay(FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS);
+      walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+    }
+
+    return walletProvider;
   }
 
   function bindWalletProviderDetails(
-    walletProvider: Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>,
+    walletProvider: WalletProviderDetails,
   ) {
     const injected = walletProvider?.provider;
+    const providerContext = walletProviderContext(walletProvider?.source);
     setProvider(injected);
     setWalletProviderSource(walletProvider?.source);
     if (walletProvider?.source === "farcaster") {
@@ -228,7 +286,7 @@ export function FirstPlanetSettlementApp() {
       const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
 
       if (nextAccounts[0]) {
-        void refreshWallet(injected, nextAccounts[0]);
+        void refreshWallet(injected, nextAccounts[0], providerContext);
       } else {
         setWallet({
           kind: "disconnected"
@@ -241,7 +299,7 @@ export function FirstPlanetSettlementApp() {
     };
 
     const handleChainChanged = () => {
-      void refreshWallet(injected);
+      void refreshWallet(injected, undefined, providerContext);
     };
 
     injected.on?.("accountsChanged", handleAccountsChanged);
@@ -255,7 +313,14 @@ export function FirstPlanetSettlementApp() {
     return injected;
   }
 
-  async function refreshWallet(injected = provider, preferredAccount?: string) {
+  function walletProviderContext(source = walletProviderSource): WalletProviderContext {
+    return {
+      miniAppMode: miniAppMode || source === "farcaster",
+      walletProviderSource: source,
+    };
+  }
+
+  async function refreshWallet(injected = provider, preferredAccount?: string, context = walletProviderContext()) {
     if (!injected) {
       setWallet({
         kind: "no-wallet"
@@ -295,8 +360,8 @@ export function FirstPlanetSettlementApp() {
         if (shouldAttemptFarcasterNetworkSetup({
           chainId,
           lastAttemptedChainId: farcasterNetworkSetupAttempted.current,
-          miniAppMode,
-          walletProviderSource,
+          miniAppMode: context.miniAppMode,
+          walletProviderSource: context.walletProviderSource,
         })) {
           farcasterNetworkSetupAttempted.current = chainId;
           setWallet({
@@ -310,7 +375,7 @@ export function FirstPlanetSettlementApp() {
 
           try {
             await ensureBaseSepoliaNetwork(injected);
-            await refreshWallet(injected, accounts[0]);
+            await refreshWallet(injected, accounts[0], context);
           } catch (error) {
             console.error("Mini App Base Sepolia setup failed", error);
             setWallet({
@@ -379,7 +444,12 @@ export function FirstPlanetSettlementApp() {
         setSettlementFunding({ status: "idle" });
         setPlanet({
           kind: "pending",
-          label: "Settlement confirmed. Indexing starting resources before opening planetary overview."
+          label: POST_SETTLEMENT_INDEXING_LABEL
+        });
+        const settled = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, connectedAccount);
+        setPlanet({
+          kind: "already-settled",
+          planet: settled.planet
         });
       } else {
         setPlanet({
@@ -416,7 +486,15 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function connectWallet() {
-    const activeProvider = provider ?? bindWalletProviderDetails(await loadWalletProviderDetails());
+    setWallet({
+      kind: "connecting"
+    });
+
+    const walletProvider = provider
+      ? undefined
+      : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+    const activeProvider = provider ?? bindWalletProviderDetails(walletProvider);
+    const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
 
     if (!activeProvider) {
       setWallet({
@@ -425,13 +503,9 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
-    setWallet({
-      kind: "connecting"
-    });
-
     try {
       const accounts = await requestAccounts(activeProvider);
-      await refreshWallet(activeProvider, accounts[0]);
+      await refreshWallet(activeProvider, accounts[0], providerContext);
     } catch (error) {
       setWallet({
         kind: "disconnected"
@@ -505,7 +579,6 @@ export function FirstPlanetSettlementApp() {
           label: transactionConfirmingLabel(label, txHash),
           txHash
         });
-        await waitForReceipt(provider, txHash);
         setPlanet({
           kind: "pending",
           label: transactionSyncingLabel(label),
@@ -1011,25 +1084,40 @@ function buildSettlementConfig(): SettlementConfig {
   return address ? { address } : {};
 }
 
-async function waitForIndexedSettledPlanet(
+type WaitForIndexedSettledPlanetOptions = {
+  attempts?: number;
+  delay?: (ms: number) => Promise<void>;
+  fetchSettlement?: typeof fetchWalletSettlement;
+  intervalMs?: number;
+};
+
+export async function waitForIndexedSettledPlanet(
   apiUrl: string | undefined,
   account: string,
+  options: WaitForIndexedSettledPlanetOptions = {},
 ) {
   if (!apiUrl) {
     throw new Error("Settlement is confirmed, but the game API is unavailable. Retry once backend indexing is reachable.");
   }
 
-  for (let attempt = 0; attempt < POST_SETTLEMENT_READ_ATTEMPTS; attempt += 1) {
-    const settlement = await fetchWalletSettlement(apiUrl, account);
+  const attempts = options.attempts ?? POST_SETTLEMENT_READ_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? POST_SETTLEMENT_READ_INTERVAL_MS;
+  const fetchSettlement = options.fetchSettlement ?? fetchWalletSettlement;
+  const wait = options.delay ?? delay;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const settlement = await fetchSettlement(apiUrl, account);
     const indexed = indexedSettlementState(settlement);
     if (indexed.kind === "settled" && indexed.planet.coordinates) {
       return indexed;
     }
 
-    await delay(POST_SETTLEMENT_READ_INTERVAL_MS);
+    if (attempt < attempts - 1) {
+      await wait(intervalMs);
+    }
   }
 
-  throw new Error("Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.");
+  throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
 }
 
 function delay(ms: number): Promise<void> {

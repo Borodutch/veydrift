@@ -58,6 +58,24 @@ const PLANET_TYPES = [
   "deuterium-blue",
 ] as const;
 
+const APPROVED_BUILDING_ASSETS = [
+  {
+    key: "fusionReactor",
+    label: "Fusion Reactor",
+    sha256: "e95cada20cecb0e8d08b2684cc4cb3e5e6174a9c6a181e197dc7671fd47ebf02",
+  },
+  {
+    key: "missileSilo",
+    label: "Missile Silo",
+    sha256: "59599920da43538da6aac9dd758e58ec70ab340e4a111dcfd991297517c8b770",
+  },
+  {
+    key: "interdimensionalRiftStabilizer",
+    label: "Interdimensional Rift Stabilizer",
+    sha256: "ba1c702dc91797791f810c0dc1a7b6db2b5ad8a5034ede515a1dad16805582b9",
+  },
+] as const;
+
 describe("tester universe display data", () => {
   test("neutral deterministic fallback does not invent owners or alliances", () => {
     const planets = generateSystem(1, 1);
@@ -704,16 +722,20 @@ describe("tester universe display data", () => {
     );
   });
 
-  test("Fusion Reactor asset exists with responsive variants", () => {
-    const fusionReactorAsset = buildingCatalog.find((building) => building.key === "fusionReactor")?.asset;
+  test("approved building assets exist with responsive variants", async () => {
+    for (const approvedAsset of APPROVED_BUILDING_ASSETS) {
+      const buildingAsset = buildingCatalog.find((building) => building.key === approvedAsset.key)?.asset;
 
-    expect(fusionReactorAsset).toBeDefined();
-    expect(existsSync(join(PUBLIC_DIR, fusionReactorAsset!.replace("/assets/", "assets/")))).toBe(true);
+      expect(buildingAsset, approvedAsset.label).toBeDefined();
+      expect(buildingAsset, approvedAsset.label).toContain("/assets/game/style-pass/generated/buildings/");
+      expect(existsSync(join(PUBLIC_DIR, buildingAsset!.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
+      expect(await assetHash(buildingAsset!), approvedAsset.label).toBe(approvedAsset.sha256);
 
-    for (const width of VARIANT_WIDTHS) {
-      const variant = fusionReactorAsset!.replace("/assets/game/", `/assets/game/sizes/${width}/`);
-      expect(getSrcSet(fusionReactorAsset!)).toContain(`${variant} ${width}w`);
-      expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/")))).toBe(true);
+      for (const width of VARIANT_WIDTHS) {
+        const variant = buildingAsset!.replace("/assets/game/", `/assets/game/sizes/${width}/`);
+        expect(getSrcSet(buildingAsset!), approvedAsset.label).toContain(`${variant} ${width}w`);
+        expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
+      }
     }
   });
 

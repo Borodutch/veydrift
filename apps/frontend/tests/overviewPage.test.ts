@@ -338,7 +338,7 @@ describe("overview queue progress display", () => {
     expect(calls).toBe(1);
   });
 
-  test("disables ready building finish controls when backend canonical sync is paused", () => {
+  test("disables ready building finish controls when the backend is unavailable", () => {
     const queue = {
       kind: "building" as const,
       key: "crystalMine" as const,
@@ -347,9 +347,11 @@ describe("overview queue progress display", () => {
       startedAt: 1_699_999_000_000,
       targetLevel: 8,
     };
+    const backendUnavailableReason =
+      "Infrastructure API is temporarily unavailable while backend state is restored. The app will retry when game state sync recovers.";
     let calls = 0;
     const action = overviewBuildingFinishAction({
-      actionUnavailableReason: "Syncing building queue with the backend. Actions are paused until canonical state catches up.",
+      actionUnavailableReason: backendUnavailableReason,
       isBuildingReadyToFinish: true,
       now: 1_700_000_000_000,
       onFinishBuilding: () => {
@@ -361,7 +363,8 @@ describe("overview queue progress display", () => {
     expect(action.visible).toBe(true);
     expect(action.disabled).toBe(true);
     expect(action.onFinish).toBeUndefined();
-    expect(action.label).toContain("Syncing building queue");
+    expect(action.label).toContain("Infrastructure API is temporarily unavailable");
+    expect(action.label).not.toContain("Syncing building queue");
     expect(calls).toBe(0);
   });
 
