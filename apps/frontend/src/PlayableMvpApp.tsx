@@ -196,6 +196,8 @@ const buildingFinishStateReadFailureLabel =
   "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
 const buildingFinishLiveStateRequiredLabel =
   "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
+export const infrastructureBackendSyncPausedLabel =
+  "Syncing building queue with the backend. Actions are paused until canonical state catches up.";
 const buildingWalletConfirmationLabel = (label: string) =>
   `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 
@@ -338,6 +340,7 @@ export function buildingCompletionUnavailableReasonFor({
 
 export function buildingFinishUnavailableReasonForDisplay({
   activeBuildingQueue,
+  backendSyncPausedReason,
   canTransact,
   infrastructureState,
   isBuildingReadyToFinish,
@@ -345,13 +348,26 @@ export function buildingFinishUnavailableReasonForDisplay({
   now = Date.now(),
 }: {
   activeBuildingQueue: QueueStateResponse | null | undefined;
+  backendSyncPausedReason?: string | undefined;
   canTransact: boolean;
   infrastructureState: ChainInfrastructureState | null;
   isBuildingReadyToFinish: boolean;
   isDisplayedBuildingQueueReady: boolean;
   now?: number;
 }): string | undefined {
-  if (!activeBuildingQueue?.active || !isDisplayedBuildingQueueReady || isBuildingReadyToFinish) {
+  if (!activeBuildingQueue?.active || !isDisplayedBuildingQueueReady) {
+    return undefined;
+  }
+
+  if (!canTransact) {
+    return "Wallet or game contract is unavailable.";
+  }
+
+  if (backendSyncPausedReason) {
+    return backendSyncPausedReason;
+  }
+
+  if (isBuildingReadyToFinish) {
     return undefined;
   }
 
@@ -654,6 +670,24 @@ export function infrastructureUnavailableReasonFor({
     return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
   }
   if (!infrastructureChainState) return "Infrastructure state unavailable.";
+  const syncPausedReason = infrastructureBackendSyncPausedReasonFor({
+    infrastructureChainState,
+    infrastructureError,
+  });
+  if (syncPausedReason) return syncPausedReason;
+  return undefined;
+}
+
+export function infrastructureBackendSyncPausedReasonFor({
+  infrastructureChainState,
+  infrastructureError,
+}: {
+  infrastructureChainState: ChainInfrastructureState | null;
+  infrastructureError?: string | undefined;
+}): string | undefined {
+  if (infrastructureError || infrastructureChainState?.stale === true) {
+    return infrastructureBackendSyncPausedLabel;
+  }
   return undefined;
 }
 
@@ -1314,16 +1348,22 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     setInfrastructureError(undefined);
     setMoonError(undefined);
     try {
-      const [nextInfrastructure, nextMoon] = await Promise.all([
-        fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
-        fetchMoonState(apiBaseUrl, account, activePlanetId),
+      const [infrastructureResult, moonResult] = await Promise.all([
+        settlePromise(fetchInfrastructureState(apiBaseUrl, account, activePlanetId)),
+        settlePromise(fetchMoonState(apiBaseUrl, account, activePlanetId)),
       ]);
-      setInfrastructureChainState(nextInfrastructure);
-      setMoonState(nextMoon);
-    } catch (error) {
-      console.error(error);
-      setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
-      setMoonError(error instanceof Error ? error.message : "Moon state could not be loaded.");
+      if (infrastructureResult.status === "fulfilled") {
+        setInfrastructureChainState(infrastructureResult.value);
+      } else {
+        console.error(infrastructureResult.reason);
+        setInfrastructureError(infrastructureResult.reason instanceof Error ? infrastructureResult.reason.message : "Infrastructure state could not be loaded.");
+      }
+      if (moonResult.status === "fulfilled") {
+        setMoonState(moonResult.value);
+      } else {
+        console.error(moonResult.reason);
+        setMoonError(moonResult.reason instanceof Error ? moonResult.reason.message : "Moon state could not be loaded.");
+      }
     } finally {
       setInfrastructureLoading(false);
       setMoonLoading(false);
@@ -1973,9 +2013,16 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       now,
     });
   }, [infrastructureChainState, now]);
+  const infrastructureBackendSyncPausedReason = useMemo(() => {
+    return infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState,
+      infrastructureError,
+    });
+  }, [infrastructureChainState, infrastructureError]);
   const buildingFinishUnavailableReason = useMemo(() => {
     return buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedReason,
       canTransact: Boolean(provider && account && gameContract),
       infrastructureState: infrastructureChainState,
       isBuildingReadyToFinish,
@@ -1986,6 +2033,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     account,
     activeBuildingQueue,
     gameContract,
+    infrastructureBackendSyncPausedReason,
     infrastructureChainState,
     isBuildingReadyToFinish,
     isDisplayedBuildingQueueReady,
