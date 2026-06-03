@@ -43,6 +43,8 @@ import {
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
+export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
+export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
 const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
 type SettlementConfigState =
@@ -384,8 +386,20 @@ export function FirstPlanetSettlementApp() {
           setSettlementFunding({ status: "idle" });
           setPlanet({
             kind: "pending",
-            label: "Settlement confirmed. Indexing starting resources before opening planetary overview."
+            label: POST_SETTLEMENT_INDEXING_LABEL
           });
+          try {
+            const settled = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, connectedAccount);
+            setPlanet({
+              kind: "already-settled",
+              planet: settled.planet
+            });
+          } catch (error) {
+            setPlanet({
+              kind: "error",
+              message: walletRequestErrorMessage(error)
+            });
+          }
         } else {
           setPlanet({
             kind: "not-settled"
@@ -416,7 +430,7 @@ export function FirstPlanetSettlementApp() {
         } else {
           setPlanet({
             kind: "pending",
-            label: "Settlement confirmed. Indexing starting resources before opening planetary overview."
+            label: POST_SETTLEMENT_INDEXING_LABEL
           });
         }
       } else if (settlement.kind === "legacy-settled") {
@@ -1112,25 +1126,40 @@ function buildSettlementConfig(): SettlementConfig {
   return address ? { address } : {};
 }
 
-async function waitForIndexedSettledPlanet(
+type WaitForIndexedSettledPlanetOptions = {
+  attempts?: number;
+  delay?: (ms: number) => Promise<void>;
+  fetchSettlement?: typeof fetchWalletSettlement;
+  intervalMs?: number;
+};
+
+export async function waitForIndexedSettledPlanet(
   apiUrl: string | undefined,
   account: string,
+  options: WaitForIndexedSettledPlanetOptions = {},
 ) {
   if (!apiUrl) {
     throw new Error("Settlement is confirmed, but the game API is unavailable. Retry once backend indexing is reachable.");
   }
 
-  for (let attempt = 0; attempt < POST_SETTLEMENT_READ_ATTEMPTS; attempt += 1) {
-    const settlement = await fetchWalletSettlement(apiUrl, account);
+  const attempts = options.attempts ?? POST_SETTLEMENT_READ_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? POST_SETTLEMENT_READ_INTERVAL_MS;
+  const fetchSettlement = options.fetchSettlement ?? fetchWalletSettlement;
+  const wait = options.delay ?? delay;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const settlement = await fetchSettlement(apiUrl, account);
     const indexed = indexedSettlementState(settlement);
     if (indexed.kind === "settled" && indexed.planet.coordinates) {
       return indexed;
     }
 
-    await delay(POST_SETTLEMENT_READ_INTERVAL_MS);
+    if (attempt < attempts - 1) {
+      await wait(intervalMs);
+    }
   }
 
-  throw new Error("Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.");
+  throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
 }
 
 function delay(ms: number): Promise<void> {
