@@ -277,6 +277,26 @@ export function overviewBuildingReadyToFinishFlag({
   return activeBuildingQueue ? isBuildingReadyToFinish : undefined;
 }
 
+export function canonicalInfrastructureBuildingCompletionQueue(
+  infrastructureState: ChainInfrastructureState | null,
+): QueueStateResponse | null {
+  if (!infrastructureState || infrastructureState.stale === true) {
+    return null;
+  }
+
+  return infrastructureState.queue?.active ? infrastructureState.queue : null;
+}
+
+export function buildingCompletionReadyToFinishFlag({
+  infrastructureState,
+  now = Date.now(),
+}: {
+  infrastructureState: ChainInfrastructureState | null;
+  now?: number;
+}): boolean {
+  return isBuildingQueueReadyToFinish(canonicalInfrastructureBuildingCompletionQueue(infrastructureState), now);
+}
+
 export function buildingCompletionUnavailableReasonFor({
   canTransact,
   canVerifyWithReadonlyProvider = false,
@@ -296,11 +316,15 @@ export function buildingCompletionUnavailableReasonFor({
     return buildingFinishLiveStateRequiredLabel;
   }
 
-  if (!canVerifyWithReadonlyProvider && (infrastructureState.source === "contract-state-indexer" || infrastructureState.stale === true)) {
+  if (infrastructureState.stale === true) {
     return buildingFinishLiveStateRequiredLabel;
   }
 
-  const queue = infrastructureState?.queue;
+  if (!canVerifyWithReadonlyProvider && infrastructureState.source === "contract-state-indexer") {
+    return buildingFinishLiveStateRequiredLabel;
+  }
+
+  const queue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
   if (!queue?.active) {
     return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
   }
@@ -1897,9 +1921,33 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
   );
-  const isBuildingReadyToFinish = useMemo(() => {
+  const isDisplayedBuildingQueueReady = useMemo(() => {
     return isBuildingQueueReadyToFinish(activeBuildingQueue, now);
   }, [activeBuildingQueue, now]);
+  const isBuildingReadyToFinish = useMemo(() => {
+    return buildingCompletionReadyToFinishFlag({
+      infrastructureState: infrastructureChainState,
+      now,
+    });
+  }, [infrastructureChainState, now]);
+  const buildingFinishUnavailableReason = useMemo(() => {
+    if (!activeBuildingQueue?.active || !isDisplayedBuildingQueueReady || isBuildingReadyToFinish) return undefined;
+
+    return buildingCompletionUnavailableReasonFor({
+      canTransact: Boolean(provider && account && gameContract),
+      infrastructureState: infrastructureChainState,
+      now,
+    });
+  }, [
+    account,
+    activeBuildingQueue,
+    gameContract,
+    infrastructureChainState,
+    isBuildingReadyToFinish,
+    isDisplayedBuildingQueueReady,
+    now,
+    provider,
+  ]);
   const buildingQueue = useMemo(() => {
     if (activeBuildingQueue?.active) {
       return buildingQueueItemForDisplay(activeBuildingQueue, settledState.buildings, now);
@@ -1952,7 +2000,14 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     onChainStatus,
     runtimeConfig.status,
   ]);
-  const infrastructureActionNotice = infrastructureActionNoticeFor(buildingAction);
+  const buildingFinishUnavailableNotice = buildingFinishUnavailableReason
+    ? {
+        buildingKey: buildingKeyForContractId(activeBuildingQueue?.itemId) ?? buildingQueue?.key,
+        label: buildingFinishUnavailableReason,
+        tone: "error" as const,
+      }
+    : undefined;
+  const infrastructureActionNotice = infrastructureActionNoticeFor(buildingAction) ?? buildingFinishUnavailableNotice;
   const infrastructureActionPendingLabel = buildingAction.status === "pending" ? buildingAction.label : undefined;
   const topBarEnergy = useMemo(() => {
     return topBarEnergyFor({
@@ -3512,6 +3567,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
             infrastructureChainState,
             onChainResources,
           })}
+          finishUnavailableReason={buildingFinishUnavailableReason}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={infrastructureLoadErrorFor({
