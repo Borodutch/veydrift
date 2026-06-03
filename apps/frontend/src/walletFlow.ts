@@ -538,6 +538,7 @@ const START_PLANET_SELECTOR = "0xf45f1f18";
 const START_PRICE_SELECTOR = "0xf1a9af89";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
+  activeBuildingConstruction: "0xb8e835ab",
   completeFleetMissionReturn: "0xc2472852",
   collectResources: "0xdb43284d",
   createColony: "0x71358ab8",
@@ -762,6 +763,51 @@ async function assertBuildingUpgradeEstimateSucceeds(
     const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
     throw new Error(reason ?? "This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
   }
+}
+
+async function assertActiveBuildingConstructionReady(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  planetId: string,
+): Promise<void> {
+  const data = encodeGameCall(GAME_SELECTORS.activeBuildingConstruction, [planetId]);
+  try {
+    const result = await provider.request<string>({
+      method: "eth_call",
+      params: [{ from, to, data }, "latest"],
+    });
+    const words = abiWords(result);
+    const active = decodeAbiBool(words[0]);
+    if (!active) {
+      throw new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
+    }
+
+    const readyAt = decodeAbiUint(words[3]);
+    if (readyAt <= 0n) {
+      throw new Error("Building completion time is unavailable. Refresh infrastructure state before finishing.");
+    }
+    if (readyAt > BigInt(Math.floor(Date.now() / 1_000))) {
+      throw new Error("Building upgrade is not ready to finish yet.");
+    }
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
+    throw new Error(reason ?? walletRequestErrorMessage(error));
+  }
+}
+
+function abiWords(hex: string): string[] {
+  const clean = hex.replace(/^0x/, "");
+  return clean.match(/.{1,64}/g) ?? [];
+}
+
+function decodeAbiUint(word: string | undefined): bigint {
+  return word ? BigInt(`0x${word}`) : 0n;
+}
+
+function decodeAbiBool(word: string | undefined): boolean {
+  return decodeAbiUint(word) !== 0n;
 }
 
 async function assertFleetMissionCallSucceeds(
@@ -1657,6 +1703,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   };
 
   if (options.readProvider) {
+    await assertActiveBuildingConstructionReady(options.readProvider, account, contractAddress, planetId);
     await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
     await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
   }
