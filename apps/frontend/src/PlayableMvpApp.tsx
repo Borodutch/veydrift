@@ -613,13 +613,17 @@ export function topBarEnergyFor({
     return undefined;
   }
 
-  return energyBalanceFromChain(infrastructureChainState.energyBalance)
-    ?? energyBalance(
-      settledState.buildings,
-      settledState.research.energy,
-      settledState.ships.solarSatellite,
-      planetProductionProfile,
-    );
+  const localEnergy = energyBalance(
+    settledState.buildings,
+    settledState.research.energy,
+    settledState.ships.solarSatellite,
+    planetProductionProfile,
+  );
+  const chainEnergy = energyBalanceFromChain(infrastructureChainState.energyBalance);
+
+  if (!chainEnergy) return localEnergy;
+  if (chainEnergy.sources) return chainEnergy;
+  return localEnergy.sources ? { ...chainEnergy, sources: localEnergy.sources } : chainEnergy;
 }
 
 export function infrastructureUnavailableReasonFor({

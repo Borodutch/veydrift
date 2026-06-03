@@ -15,6 +15,14 @@ export type EnergyBalance = {
   produced: string;
   required: string;
   scaleBps: string;
+  sources?: {
+    solarPlant: string;
+    fusionReactor: string;
+    fusionReactorDeuteriumConsumed: string;
+    solarSatellites: string;
+    solarSatelliteCount: number;
+    solarSatelliteEnergy: string;
+  };
 };
 
 export type PlanetState = Coordinates & {
@@ -206,6 +214,7 @@ export type ShipyardState = {
     id: number;
     count: number;
     cost: Resources;
+    energyPerUnit?: string;
   }>;
   queue: QueueState | null;
 };
@@ -1223,7 +1232,7 @@ export class VeydriftGameReader implements ChainReader {
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readTechnologyLevels(wallet),
-      this.readShipRows(planetId),
+      this.readShipRows(planetId, settlement.planet?.temperature),
       this.readOptionalUintCall("0x423f9f10", [encodeAddress(wallet)])
     ]);
 
@@ -2120,7 +2129,9 @@ export class VeydriftGameReader implements ChainReader {
     return Object.fromEntries(entries);
   }
 
-  private async readShipRows(planetId: bigint): Promise<ShipyardState["ships"]> {
+  private async readShipRows(planetId: bigint, maxTemperature?: number): Promise<ShipyardState["ships"]> {
+    const solarSatelliteEnergyPerUnit = maxTemperature === undefined ? undefined : solarSatelliteEnergy(maxTemperature).toString();
+
     try {
       const results = await this.batchCallContract(
         this.gameContractAddress,
@@ -2139,7 +2150,8 @@ export class VeydriftGameReader implements ChainReader {
       return supportedShipIds.map((id, index) => ({
         id,
         count: Number(decodeUintWord(wordAt(splitWords(results[index * 2] ?? "0x"), 0))),
-        cost: decodeResources(splitWords(results[index * 2 + 1] ?? "0x"))
+        cost: decodeResources(splitWords(results[index * 2 + 1] ?? "0x")),
+        ...(id === 9 && solarSatelliteEnergyPerUnit ? { energyPerUnit: solarSatelliteEnergyPerUnit } : {})
       }));
     } catch (error) {
       if (!isRpcRevert(error)) {
@@ -2149,13 +2161,13 @@ export class VeydriftGameReader implements ChainReader {
 
     const rows: Array<ShipyardState["ships"][number] | null> = [];
     for (const id of supportedShipIds) {
-      rows.push(await this.readShipRow(planetId, id));
+      rows.push(await this.readShipRow(planetId, id, solarSatelliteEnergyPerUnit));
     }
 
     return rows.filter((row): row is ShipyardState["ships"][number] => row !== null);
   }
 
-  private async readShipRow(planetId: bigint, id: number): Promise<ShipyardState["ships"][number] | null> {
+  private async readShipRow(planetId: bigint, id: number, solarSatelliteEnergyPerUnit?: string): Promise<ShipyardState["ships"][number] | null> {
     try {
       const [count, cost] = await Promise.all([
         this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
@@ -2165,7 +2177,8 @@ export class VeydriftGameReader implements ChainReader {
       return {
         id,
         count: Number(count),
-        cost
+        cost,
+        ...(id === 9 && solarSatelliteEnergyPerUnit ? { energyPerUnit: solarSatelliteEnergyPerUnit } : {})
       };
     } catch (error) {
       if (isRpcRevert(error)) {
@@ -3528,6 +3541,10 @@ function decodeSignedWord(word: string): bigint {
 
 function decodeBoolWord(word: string): boolean {
   return decodeUintWord(word) !== 0n;
+}
+
+function solarSatelliteEnergy(maxTemperature: number): number {
+  return Math.max(1, Math.min(65, Math.floor((maxTemperature + 140) / 6)));
 }
 
 function decodeAddressWord(word: string): Address {

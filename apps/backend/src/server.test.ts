@@ -2342,7 +2342,15 @@ describe("Veydrift backend", () => {
     expect(poweredBody.energyBalance).toEqual({
       produced: "110",
       required: "11",
-      scaleBps: "10000"
+      scaleBps: "10000",
+      sources: {
+        solarPlant: "0",
+        fusionReactor: "0",
+        fusionReactorDeuteriumConsumed: "0",
+        solarSatellites: "110",
+        solarSatelliteCount: 5,
+        solarSatelliteEnergy: "22"
+      }
     });
 
     indexer.applyLog({
@@ -2361,7 +2369,15 @@ describe("Veydrift backend", () => {
     expect(damagedBody.energyBalance).toEqual({
       produced: "44",
       required: "11",
-      scaleBps: "10000"
+      scaleBps: "10000",
+      sources: {
+        solarPlant: "0",
+        fusionReactor: "0",
+        fusionReactorDeuteriumConsumed: "0",
+        solarSatellites: "44",
+        solarSatelliteCount: 2,
+        solarSatelliteEnergy: "22"
+      }
     });
   });
 
@@ -2455,7 +2471,8 @@ describe("Veydrift backend", () => {
     expect(shipyard).toMatchObject({
       source: "contract-state-indexer",
       ships: expect.arrayContaining([
-        expect.objectContaining({ id: 3, count: 7 })
+        expect.objectContaining({ id: 3, count: 7 }),
+        expect.objectContaining({ id: 9, energyPerUnit: "22" })
       ])
     });
     expect(research).toMatchObject({

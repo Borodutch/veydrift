@@ -179,6 +179,14 @@ export type EnergyBalance = {
   produced: number;
   required: number;
   scaleBps: number;
+  sources?: {
+    solarPlant: number;
+    fusionReactor: number;
+    fusionReactorDeuteriumConsumed: number;
+    solarSatellites: number;
+    solarSatelliteCount: number;
+    solarSatelliteEnergy: number;
+  };
 };
 
 export type PlanetProductionProfile = {
@@ -1298,17 +1306,28 @@ export function energyBalance(
     + scaledLevelValue(10, buildings.crystalMine)
     + scaledLevelValue(20, buildings.deuteriumSynthesizer)
   );
-  const produced = scaledLevelValue(20, buildings.solarPlant)
-    + fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel)
-    + solarSatelliteEnergy(profile.maxTemperature ?? PLANET.maxTemperature) * solarSatelliteCount;
+  const solarPlant = scaledLevelValue(20, buildings.solarPlant);
+  const fusionReactor = fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel);
+  const fusionReactorDeuteriumConsumed = fusionReactorDeuteriumConsumption(buildings.fusionReactor);
+  const solarSatelliteEnergyPerUnit = solarSatelliteEnergy(profile.maxTemperature ?? PLANET.maxTemperature);
+  const solarSatellites = solarSatelliteEnergyPerUnit * solarSatelliteCount;
+  const produced = solarPlant + fusionReactor + solarSatellites;
 
   return {
-    deuteriumConsumed: fusionReactorDeuteriumConsumption(buildings.fusionReactor),
+    deuteriumConsumed: fusionReactorDeuteriumConsumed,
     produced,
     required,
     scaleBps: required === 0 || produced >= required
       ? BPS
       : Math.floor((produced * BPS) / required),
+    sources: {
+      solarPlant,
+      fusionReactor,
+      fusionReactorDeuteriumConsumed,
+      solarSatellites,
+      solarSatelliteCount,
+      solarSatelliteEnergy: solarSatelliteEnergyPerUnit,
+    },
   };
 }
 
