@@ -149,6 +149,11 @@ function StatusPanel({
     return null;
   }
 
+  const refreshError = shipyardRefreshErrorLabel({ error, shipyardState });
+  if (refreshError) {
+    return <Notice tone="neutral">{refreshError}</Notice>;
+  }
+
   if (error) {
     return <Notice tone="danger">{error}</Notice>;
   }
@@ -175,6 +180,17 @@ function StatusPanel({
   }
 
   return null;
+}
+
+export function shipyardRefreshErrorLabel({
+  error,
+  shipyardState,
+}: {
+  error: string | undefined;
+  shipyardState?: ChainShipyardState | null | undefined;
+}): string | undefined {
+  if (!error || !shipyardState) return undefined;
+  return `Refreshing shipyard state: ${error}`;
 }
 
 export function shipProductionItems({
