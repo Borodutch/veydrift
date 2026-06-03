@@ -315,12 +315,15 @@ VEYDRIFT_NETWORK_NAME=Base Sepolia
 VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
 VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql
 VEYDRIFT_RPC_URL=<Alchemy Base Sepolia RPC URL>
+VEYDRIFT_WS_RPC_URL=<Alchemy Base Sepolia websocket RPC URL>
 PORT=4000
 ```
 
-`VEYDRIFT_RPC_URL` and deployer keys must come from Vaultwarden or EasyPanel
-secret storage and must not be committed. If the backend Nixpacks deploy needs
-to be rolled back, keep the same environment variables and switch only
+`VEYDRIFT_RPC_URL`, `VEYDRIFT_WS_RPC_URL`, and deployer keys must come from
+Vaultwarden or EasyPanel secret storage and must not be committed. When the
+shared `ALCHEMY_BASE_SEPOLIA_API_KEY` is used, the backend derives both HTTPS
+and websocket Alchemy RPC URLs. If the backend Nixpacks deploy needs to be
+rolled back, keep the same environment variables and switch only
 `veydrift/backend-test` back to Dockerfile build with Dockerfile path
 `apps/backend/Dockerfile.test` from the repository root. Broader rollback is
 service-local: remove the `test.veydrift.com` and `api-test.veydrift.com`
