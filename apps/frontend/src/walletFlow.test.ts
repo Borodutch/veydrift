@@ -1833,7 +1833,7 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("checks Rabby-style providers before submitting resource collection", async () => {
+  test("checks Rabby-style providers before resource collection preflight and submission", async () => {
     const walletRequests: unknown[] = [];
     const readonlyRequests: unknown[] = [];
     const walletProvider = {
@@ -1855,6 +1855,7 @@ describe("walletFlow", () => {
       sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
     ).resolves.toBe("0xrabbycollect");
 
+    expect(walletRequests[0]).toEqual({ method: "eth_accounts", params: undefined });
     expect(readonlyRequests).toEqual([
       {
         method: "eth_call",
@@ -1892,6 +1893,151 @@ describe("walletFlow", () => {
         ]
       }
     ]);
+  });
+
+  test("requests Rabby accounts before resource collection when current accounts are empty", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = {
+      ...mockProvider(async ({ method, params }) => {
+        walletRequests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") return [account];
+        if (method === "eth_sendTransaction") return "0xrabbycollect";
+        throw new Error(`Unexpected wallet method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      if (method === "eth_estimateGas") return "0x5208";
+      return "0x";
+    });
+
+    await expect(
+      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).resolves.toBe("0xrabbycollect");
+
+    expect(walletRequests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007",
+            gas: "0x5208"
+          }
+        ]
+      }
+    ]);
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("reports rejected Rabby account authorization without calling readonly preflight", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = {
+      ...mockProvider(async ({ method, params }) => {
+        walletRequests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") throw { code: 4001, message: "User rejected account access" };
+        throw new Error(`Unexpected wallet method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      return "0x";
+    });
+
+    await expect(
+      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).rejects.toThrow("Wallet connection was rejected. Reconnect your wallet, then retry.");
+
+    expect(walletRequests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+    ]);
+    expect(readonlyRequests).toEqual([]);
+  });
+
+  test("reports unavailable Rabby accounts without calling readonly preflight", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = {
+      ...mockProvider(async ({ method, params }) => {
+        walletRequests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") return [];
+        throw new Error(`Unexpected wallet method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      return "0x";
+    });
+
+    await expect(
+      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).rejects.toThrow("Wallet account is unavailable. Reconnect your wallet, then retry.");
+
+    expect(walletRequests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+    ]);
+    expect(readonlyRequests).toEqual([]);
+  });
+
+  test("reports Rabby account mismatch without calling readonly preflight", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = {
+      ...mockProvider(async ({ method, params }) => {
+        walletRequests.push({ method, params });
+        if (method === "eth_accounts") return ["0x9999999999999999999999999999999999999999"];
+        throw new Error(`Unexpected wallet method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      return "0x";
+    });
+
+    await expect(
+      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).rejects.toThrow("The selected wallet account changed. Reconnect the active wallet, then retry.");
+
+    expect(walletRequests).toEqual([
+      { method: "eth_accounts", params: undefined },
+    ]);
+    expect(readonlyRequests).toEqual([]);
   });
 
   test("blocks likely-failing resource collection before opening the wallet", async () => {
