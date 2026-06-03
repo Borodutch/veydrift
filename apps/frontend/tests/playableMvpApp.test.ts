@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   buildingCompletionUnavailableReasonFor,
   buildingCompletionUnavailableReasonAfterBackendRevalidation,
+  buildingCompletionReadyToFinishFlag,
   buildingFinishActionErrorLabel,
   canLoadIndexedPageState,
+  canonicalInfrastructureBuildingCompletionQueue,
   hasInfrastructureDisplayState,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
@@ -570,6 +572,41 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(true);
   });
 
+  test("keeps Overview finish disabled when ready wallet queues lack canonical infrastructure verification", () => {
+    const readyWalletQueue = buildingQueue({
+      readyAt: "1700000000",
+    });
+    const unverifiedInfrastructure = infrastructureState({
+      queue: null,
+      source: "contract-state-indexer",
+      stale: true,
+    });
+
+    expect(canonicalInfrastructureBuildingCompletionQueue(unverifiedInfrastructure)).toBeNull();
+    expect(buildingCompletionReadyToFinishFlag({
+      infrastructureState: unverifiedInfrastructure,
+      now: 1_700_000_000_000,
+    })).toBe(false);
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: readyWalletQueue,
+      isBuildingReadyToFinish: buildingCompletionReadyToFinishFlag({
+        infrastructureState: unverifiedInfrastructure,
+        now: 1_700_000_000_000,
+      }),
+    })).toBe(false);
+
+    const canonicalInfrastructure = infrastructureState({
+      queue: readyWalletQueue,
+      source: "contract-state-indexer",
+      stale: false,
+    });
+    expect(canonicalInfrastructureBuildingCompletionQueue(canonicalInfrastructure)).toBe(readyWalletQueue);
+    expect(buildingCompletionReadyToFinishFlag({
+      infrastructureState: canonicalInfrastructure,
+      now: 1_700_000_000_000,
+    })).toBe(true);
+  });
+
   test("blocks stale building completion transactions when backend infrastructure has no active queue", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
@@ -596,7 +633,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Building upgrade is not ready to finish yet.");
   });
 
-  test("blocks building completion transactions when infrastructure state cannot be verified live", () => {
+  test("blocks building completion transactions when canonical infrastructure state cannot be verified", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: null,
@@ -612,6 +649,16 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_000_000,
     })).toBe(buildingFinishLiveStateRequiredLabel);
+
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      canVerifyWithReadonlyProvider: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
   test("allows indexed ready building queues to reach readonly completion preflight", () => {
@@ -622,16 +669,6 @@ describe("Playable MVP app display helpers", () => {
         queue: readyBuildingQueue(),
         source: "contract-state-indexer",
         stale: false,
-      }),
-      now: 1_700_000_000_000,
-    })).toBeUndefined();
-
-    expect(buildingCompletionUnavailableReasonFor({
-      canTransact: true,
-      canVerifyWithReadonlyProvider: true,
-      infrastructureState: infrastructureState({
-        queue: readyBuildingQueue(),
-        stale: true,
       }),
       now: 1_700_000_000_000,
     })).toBeUndefined();
