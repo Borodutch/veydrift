@@ -20,11 +20,13 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainInfrastructureState, ChainResearchState } from "../src/walletFlow";
+import type { ChainInfrastructureState, ChainResearchState, QueueStateResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
     "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
+  const buildingFinishLiveStateRequiredLabel =
+    "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
 
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
@@ -337,18 +339,49 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Building upgrade is not ready to finish yet.");
   });
 
+  test("blocks building completion transactions when infrastructure state cannot be verified live", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: null,
+      now: 1_700_000_000_000,
+    })).toBe(buildingFinishLiveStateRequiredLabel);
+
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(buildingFinishLiveStateRequiredLabel);
+
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(buildingFinishLiveStateRequiredLabel);
+  });
+
+  test("allows building completion wallet submission after a live ready queue revalidation", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
   test("revalidates building completion against live infrastructure state before wallet submission", async () => {
     const fallback = infrastructureState();
     const latest = infrastructureState({
-      queue: {
-        active: true,
-        kind: "building",
-        itemId: 0,
-        targetLevel: 2,
-        readyAt: "1700000000",
-        startedAt: "1699997000",
-        cost: { metal: "60", crystal: "15", deuterium: "0" },
-      },
+      queue: readyBuildingQueue(),
     });
     const calls: unknown[][] = [];
 
@@ -903,6 +936,18 @@ function infrastructureState({
     storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
     buildings: [],
     queue: queue ?? null,
+  };
+}
+
+function readyBuildingQueue(): QueueStateResponse {
+  return {
+    active: true,
+    kind: "building",
+    itemId: 0,
+    targetLevel: 2,
+    readyAt: "1700000000",
+    startedAt: "1699997000",
+    cost: { metal: "60", crystal: "15", deuterium: "0" },
   };
 }
 

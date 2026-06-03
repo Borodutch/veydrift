@@ -189,6 +189,8 @@ export function researchStartTransactionLabel(
 
 const buildingFinishStateReadFailureLabel =
   "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
+const buildingFinishLiveStateRequiredLabel =
+  "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -270,6 +272,14 @@ export function buildingCompletionUnavailableReasonFor({
 }): string | undefined {
   if (!canTransact) {
     return "Wallet or game contract is unavailable.";
+  }
+
+  if (!infrastructureState) {
+    return buildingFinishLiveStateRequiredLabel;
+  }
+
+  if (infrastructureState.source === "contract-state-indexer" || infrastructureState.stale === true) {
+    return buildingFinishLiveStateRequiredLabel;
   }
 
   const queue = infrastructureState?.queue;
