@@ -115,6 +115,43 @@ describe("Shipyard page display helpers", () => {
     });
   });
 
+  test("shows Solar Satellite energy per unit from shipyard state", () => {
+    const baseState = shipyardState();
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: {},
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState({
+        ships: [
+          ...baseState.ships,
+          {
+            id: 9,
+            count: 3,
+            cost: {
+              metal: "0",
+              crystal: "2000",
+              deuterium: "500",
+            },
+            energyPerUnit: "22",
+          },
+        ],
+      }),
+    });
+
+    expect(items.find((item) => item.key === "solarSatellite")?.detailStats).toContainEqual({
+      label: "E/unit",
+      value: "22",
+    });
+  });
+
   test("keeps catalog context while selected item drives the build panel model", () => {
     const items = shipProductionItems({
       actionPending: false,

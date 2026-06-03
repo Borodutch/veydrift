@@ -69,11 +69,18 @@ describe("TopBar", () => {
     expect(energyInfo?.props?.title).toBe("Energy explanation");
     expect(energyInfo?.props?.["aria-label"]).toContain("100 produced / 125 consumed");
     expect(energyInfo?.props?.["aria-label"]).toContain("Shortage 25");
+    expect(energyInfo?.props?.["aria-label"]).toContain("Production in total: 100");
+    expect(energyInfo?.props?.["aria-label"]).toContain("By Fusion Generator: 20 from 11 DEUT/h");
+    expect(energyInfo?.props?.["aria-label"]).toContain("By Solar Satellites: 40 from 2 satellites (20 E/Sat)");
     expect(energyInfo?.props?.["aria-label"]).toContain("Mine output is reduced to 80%");
     expect(panelText).toContain("Solar Plant and Solar Satellites produce it");
     expect(panelText).toContain("Produced 100");
     expect(panelText).toContain("Consumed 125");
     expect(panelText).toContain("Balance -25");
+    expect(panelText).toContain("Production in total 100");
+    expect(panelText).toContain("By Solar Plant 40");
+    expect(panelText).toContain("By Fusion Generator 20 from 11 DEUT/h");
+    expect(panelText.replace(/\(\s+/g, "(")).toContain("By Solar Satellites 40 from 2 satellites (20 E/Sat)");
     expect(panelText).toContain("Insufficient energy reduces mine output to 80%");
   });
 
@@ -123,7 +130,19 @@ function renderTopBar(overrides: Partial<Parameters<typeof TopBar>[0]> = {}): Co
   return TopBar({
     canCollectResources: true,
     caps: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
-    energy: { produced: 100, required: 125, scaleBps: 8_000 },
+    energy: {
+      produced: 100,
+      required: 125,
+      scaleBps: 8_000,
+      sources: {
+        solarPlant: 40,
+        fusionReactor: 20,
+        fusionReactorDeuteriumConsumed: 11,
+        solarSatellites: 40,
+        solarSatelliteCount: 2,
+        solarSatelliteEnergy: 20,
+      },
+    },
     isWalletConnected: true,
     onCollectResources: () => undefined,
     rates: { metal: 77, crystal: 29, deuterium: 14 },

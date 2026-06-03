@@ -244,7 +244,7 @@ describe("Playable MVP app display helpers", () => {
       infrastructureChainState,
       isWalletConnected: true,
       settledState,
-    })).toEqual({
+    })).toMatchObject({
       deuteriumConsumed: 0,
       produced: 100,
       required: 40,
@@ -265,7 +265,7 @@ describe("Playable MVP app display helpers", () => {
       }),
       isWalletConnected: true,
       settledState,
-    })).toEqual({
+    })).toMatchObject({
       deuteriumConsumed: 0,
       produced: 100,
       required: 40,
@@ -307,6 +307,14 @@ describe("Playable MVP app display helpers", () => {
       produced: 108,
       required: 11,
       scaleBps: 10000,
+      sources: {
+        solarPlant: 0,
+        fusionReactor: 0,
+        fusionReactorDeuteriumConsumed: 0,
+        solarSatellites: 108,
+        solarSatelliteCount: 3,
+        solarSatelliteEnergy: 36,
+      },
     });
 
     expect(topBarEnergyFor({
