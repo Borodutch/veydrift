@@ -12,7 +12,10 @@ import {
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
+  researchStartUnavailableReasonAfterLiveRevalidation,
+  researchStartUnavailableReasonFor,
   researchStateForCompletionRevalidation,
+  researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
@@ -373,6 +376,82 @@ describe("Playable MVP app display helpers", () => {
       "7",
       { source: "live" },
     ]]);
+  });
+
+  test("preserves a recently known active research queue when a refresh returns empty queue data", () => {
+    const knownQueue = activeResearchQueue();
+    const next = researchState({ queue: null });
+
+    expect(researchStateWithPreservedActiveQueue({
+      knownResearchQueue: knownQueue,
+      next,
+    }).queue).toBe(knownQueue);
+
+    expect(researchStartUnavailableReasonFor({
+      canTransact: true,
+      knownResearchQueue: knownQueue,
+      researchState: next,
+    })).toBe("Another research is already active. Finish or refresh the active research before starting a new one.");
+  });
+
+  test("blocks research start when live wallet queues still report active research", async () => {
+    const latestResearch = researchState({ queue: null });
+    const latestQueues = walletQueues({ research: activeResearchQueue({ itemId: 1, targetLevel: 4 }) });
+    const calls: unknown[][] = [];
+
+    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: researchState({ queue: null }),
+      loadResearchState: ((...args: unknown[]) => {
+        calls.push(["research", ...args]);
+        return Promise.resolve(latestResearch);
+      }) as never,
+      loadWalletQueues: ((...args: unknown[]) => {
+        calls.push(["queues", ...args]);
+        return Promise.resolve(latestQueues);
+      }) as never,
+    });
+
+    expect(result).toEqual({
+      researchState: latestResearch,
+      queues: latestQueues,
+      unavailableReason: "Another research is already active. Finish or refresh the active research before starting a new one.",
+    });
+    expect(calls).toEqual([
+      [
+        "research",
+        "https://api.test",
+        "0x2222222222222222222222222222222222222222",
+        "7",
+        { source: "live" },
+      ],
+      [
+        "queues",
+        "https://api.test",
+        "0x2222222222222222222222222222222222222222",
+        "7",
+        { source: "live" },
+      ],
+    ]);
+  });
+
+  test("allows research start preflight to clear a stale preserved active queue when live state is empty", async () => {
+    const latestResearch = researchState({ queue: null });
+    const latestQueues = walletQueues({ research: null });
+
+    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: researchState({ queue: activeResearchQueue() }),
+      knownResearchQueue: activeResearchQueue(),
+      loadResearchState: (() => Promise.resolve(latestResearch)) as never,
+      loadWalletQueues: (() => Promise.resolve(latestQueues)) as never,
+    });
+
+    expect(result.unavailableReason).toBeUndefined();
   });
 
   test("allows Overview-ready research completion to reach live revalidation before wallet submission", () => {
@@ -1123,6 +1202,36 @@ function researchState({
       { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
     ],
     queue: queue ?? null,
+  };
+}
+
+function activeResearchQueue({
+  itemId = 0,
+  targetLevel = 2,
+}: Partial<Pick<QueueStateResponse, "itemId" | "targetLevel">> = {}): QueueStateResponse {
+  return {
+    active: true,
+    kind: "research",
+    itemId,
+    targetLevel,
+    readyAt: "1700000600",
+    startedAt: "1699997000",
+    cost: { metal: "0", crystal: "1600", deuterium: "800" },
+  };
+}
+
+function walletQueues({
+  research,
+}: {
+  research: QueueStateResponse | null;
+}) {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: "7",
+    building: null,
+    defense: null,
+    ship: null,
+    research,
   };
 }
 
