@@ -798,7 +798,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
-  const transactionReadProvider = miniAppMode ? readProvider : undefined;
+  const transactionReadProvider = readProvider;
   const receiptProvider = transactionReadProvider ?? provider;
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
@@ -1810,6 +1810,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           account,
           gameContract,
           planetId,
+          { readProvider: transactionReadProvider },
         );
         setBuildingAction({
           status: "pending",

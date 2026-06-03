@@ -503,6 +503,7 @@ export function createJsonRpcProvider(rpcUrl: string): Eip1193Provider {
         error?: {
           code?: number | string;
           message?: string;
+          data?: unknown;
         };
       };
 
@@ -512,6 +513,9 @@ export function createJsonRpcProvider(rpcUrl: string): Eip1193Provider {
         };
         if (payload.error.code !== undefined) {
           error.code = payload.error.code;
+        }
+        if (payload.error.data !== undefined) {
+          (error as Error & { data?: unknown }).data = payload.error.data;
         }
         throw error;
       }
@@ -1625,7 +1629,8 @@ export async function sendFinishBuildingUpgradeTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  planetId: string
+  planetId: string,
+  options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
   const transaction = {
@@ -1633,6 +1638,10 @@ export async function sendFinishBuildingUpgradeTransaction(
     to: contractAddress,
     data
   };
+
+  if (options.readProvider) {
+    await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
+  }
 
   return provider.request<string>({
     method: "eth_sendTransaction",
