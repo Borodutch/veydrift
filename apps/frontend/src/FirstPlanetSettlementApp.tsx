@@ -446,11 +446,18 @@ export function FirstPlanetSettlementApp() {
           kind: "pending",
           label: POST_SETTLEMENT_INDEXING_LABEL
         });
-        const settled = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, connectedAccount);
-        setPlanet({
-          kind: "already-settled",
-          planet: settled.planet
-        });
+        try {
+          const settled = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, connectedAccount);
+          setPlanet({
+            kind: "already-settled",
+            planet: settled.planet
+          });
+        } catch (error) {
+          setPlanet({
+            kind: "error",
+            message: walletRequestErrorMessage(error)
+          });
+        }
       } else {
         setPlanet({
           kind: "not-settled"
