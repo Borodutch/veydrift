@@ -777,6 +777,23 @@ function settlementFromIndexedPlanets(
   };
 }
 
+export function walletSnapshotHydrationKey(apiBaseUrl: string | undefined, account: string | undefined): string | undefined {
+  return apiBaseUrl && account ? `${apiBaseUrl}\n${account.toLowerCase()}` : undefined;
+}
+
+export function canLoadIndexedPageState({
+  account,
+  apiBaseUrl,
+  hydratedWalletSnapshotKey,
+}: {
+  account: string | undefined;
+  apiBaseUrl: string | undefined;
+  hydratedWalletSnapshotKey: string | undefined;
+}): boolean {
+  const expectedKey = walletSnapshotHydrationKey(apiBaseUrl, account);
+  return expectedKey === undefined || hydratedWalletSnapshotKey === expectedKey;
+}
+
 function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
   return {
     wallet,
@@ -859,6 +876,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
   const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
   const [onChainError, setOnChainError] = useState<string | undefined>();
+  const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
   const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
@@ -956,6 +974,11 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
+  const pageStateHydrationReady = canLoadIndexedPageState({
+    account,
+    apiBaseUrl,
+    hydratedWalletSnapshotKey,
+  });
 
   useEffect(() => {
     setPlayerProfile(undefined);
@@ -1173,6 +1196,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       setFleetVisibility(undefined);
       setOnChainError(undefined);
       setOnChainStatus(isWalletConnected ? "loading" : "local");
+      setHydratedWalletSnapshotKey(undefined);
       return;
     }
 
@@ -1201,6 +1225,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       setFleetVisibility(fleetVisibility);
       setOnChainError(undefined);
       setOnChainStatus("ready");
+      setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainStatus("error");
@@ -1533,8 +1558,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
 
   useEffect(() => {
     void refreshOnChainState();
+  }, [refreshOnChainState]);
+
+  useEffect(() => {
+    if (!pageStateHydrationReady) return;
     refreshInfrastructureState();
-  }, [refreshInfrastructureState, refreshOnChainState]);
+  }, [pageStateHydrationReady, refreshInfrastructureState]);
 
   useEffect(() => {
     if (!apiBaseUrl || !account || typeof window.EventSource === "undefined") {
@@ -1733,40 +1762,46 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   }, []);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "shipyard" || page === "galaxy") {
       refreshShipyardState();
     }
-  }, [page, refreshShipyardState]);
+  }, [page, pageStateHydrationReady, refreshShipyardState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "defenses" || page === "galaxy") {
       refreshDefenseState();
     }
-  }, [page, refreshDefenseState]);
+  }, [page, pageStateHydrationReady, refreshDefenseState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "alliance") {
       refreshAllianceState();
     }
-  }, [page, refreshAllianceState]);
+  }, [page, pageStateHydrationReady, refreshAllianceState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "research") {
       refreshResearchState();
     }
-  }, [page, refreshResearchState]);
+  }, [page, pageStateHydrationReady, refreshResearchState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "rift") {
       refreshRiftState();
     }
-  }, [page, refreshRiftState]);
+  }, [page, pageStateHydrationReady, refreshRiftState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "moon") {
       refreshInfrastructureState();
     }
-  }, [page, refreshInfrastructureState]);
+  }, [page, pageStateHydrationReady, refreshInfrastructureState]);
 
   useEffect(() => {
     const abortController = new AbortController();
