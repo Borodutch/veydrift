@@ -1790,7 +1790,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           account,
           gameContract,
           planetId,
-          { readProvider: transactionReadProvider },
         );
         setBuildingAction({
           status: "pending",

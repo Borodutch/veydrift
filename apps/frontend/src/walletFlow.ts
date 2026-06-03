@@ -1625,8 +1625,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  planetId: string,
-  options: TransactionPreflightOptions = {}
+  planetId: string
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
   const transaction = {
@@ -1634,8 +1633,6 @@ export async function sendFinishBuildingUpgradeTransaction(
     to: contractAddress,
     data
   };
-
-  await assertBuildingUpgradeCallSucceeds(options.readProvider ?? provider, account, contractAddress, data);
 
   return provider.request<string>({
     method: "eth_sendTransaction",
