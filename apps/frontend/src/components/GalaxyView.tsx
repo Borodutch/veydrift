@@ -943,20 +943,20 @@ export function formatAttackBlockReason(status: AttackProtectionStatus | undefin
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit";
   if (status.blockedReason === "score_protection") return "Attack blocked by score protection";
-  if (status.blockedReason === "same_alliance") return "Attack blocked by alliance rules";
+  if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
   return "Attack blocked";
 }
 
 export function formatAttackRuleLabels(status: AttackProtectionStatus | undefined): string[] {
   if (!status) return [];
   const labels: string[] = [];
-  if (status.relation === "stronger") labels.push("Stronger");
-  if (status.relation === "weaker") labels.push("Weaker");
-  if (status.defenderHonorStatus === "honorable") labels.push("Honorable");
-  if (status.defenderHonorStatus === "bandit") labels.push("Bandit");
-  if (status.defenderInactive) labels.push("Inactive");
+  if (status.relation === "stronger") labels.push("Stronger target");
+  if (status.relation === "weaker") labels.push("Weaker target");
+  if (status.defenderHonorStatus === "honorable") labels.push("Honor target");
+  if (status.defenderHonorStatus === "bandit") labels.push("Bandit target");
+  if (status.defenderInactive) labels.push("Inactive target");
   if (status.plunderBps && status.plunderBps !== 5000) {
-    labels.push(`${Math.floor(status.plunderBps / 100)}% plunder`);
+    labels.push(`Loot: ${Math.floor(status.plunderBps / 100)}%`);
   }
   return labels;
 }
