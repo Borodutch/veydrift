@@ -94,9 +94,11 @@ export function buildingUpgradeStatus(
     actionUnavailableReason?: string | undefined;
     chainCost?: Resources | undefined;
     productionRates?: Resources | undefined;
+    spendableResources?: Resources | undefined;
   } = {},
 ): BuildingUpgradeStatus {
   const cost = options.chainCost ?? buildingCost(state.buildings, key);
+  const spendable = options.spendableResources ?? state.resources;
   const binary = isBinaryBuilding(key);
   const currentLevel = state.buildings[key];
   const targetLevel = binary ? 1 : currentLevel + 1;
@@ -158,12 +160,12 @@ export function buildingUpgradeStatus(
     };
   }
 
-  if (!canAfford(state.resources, cost)) {
+  if (!canAfford(spendable, cost)) {
     return {
       cost,
       disabled: true,
       durationSeconds,
-      reason: formatMissingResources(state.resources, cost, options.productionRates),
+      reason: formatMissingResources(spendable, cost, options.productionRates),
       targetLevel,
     };
   }

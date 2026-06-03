@@ -71,6 +71,7 @@ interface ResearchPageProps {
   productionRates?: Resources | undefined;
   researchState: ChainResearchState | null;
   selectedResearchKey?: ResearchKey | undefined;
+  spendableResources?: Resources | undefined;
   settledState: PlayableState;
   state: PlayableState;
   useLocalStateFallback?: boolean | undefined;
@@ -90,6 +91,7 @@ export function ResearchPage({
   productionRates,
   researchState,
   selectedResearchKey,
+  spendableResources,
   settledState,
   useLocalStateFallback = false,
 }: ResearchPageProps) {
@@ -184,6 +186,7 @@ export function ResearchPage({
                     now,
                     productionRates,
                     researchState,
+                    spendableResources,
                     state: viewState,
                   });
                   return (
@@ -220,6 +223,7 @@ export function ResearchPage({
             productionRates={productionRates}
             research={selectedResearch}
             researchState={researchState}
+            spendableResources={spendableResources}
             state={viewState}
           />
         )}
@@ -403,6 +407,7 @@ function ResearchDetailPanel({
   productionRates,
   research,
   researchState,
+  spendableResources,
   state,
 }: {
   actionPending: boolean;
@@ -418,6 +423,7 @@ function ResearchDetailPanel({
   productionRates?: Resources | undefined;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
+  spendableResources?: Resources | undefined;
   state: PlayableState;
 }) {
   const status = researchActionStatus({
@@ -431,6 +437,7 @@ function ResearchDetailPanel({
     now,
     productionRates,
     researchState,
+    spendableResources,
     state,
   });
   const requirementStates = getResearchRequirementStates(state, research.key);
@@ -541,6 +548,7 @@ export function researchActionStatus({
   now,
   productionRates,
   researchState,
+  spendableResources,
   state,
 }: {
   actionPending: boolean;
@@ -553,13 +561,15 @@ export function researchActionStatus({
   now: number;
   productionRates?: Resources | undefined;
   researchState: ChainResearchState | null;
+  spendableResources?: Resources | undefined;
   state: PlayableState;
 }) {
   const cost = chainCost;
   const currentLevel = state.research[key];
   const missingRequirement = unmetResearchRequirement(state, key);
   const resourcesAvailable = Boolean(researchState?.resources);
-  const affordable = cost ? canAfford(state.resources, cost) : false;
+  const spendable = spendableResources ?? state.resources;
+  const affordable = cost ? canAfford(spendable, cost) : false;
   const active = state.researchQueue?.key === key;
   const targetLevel = active ? state.researchQueue?.targetLevel ?? currentLevel + 1 : currentLevel + 1;
   const activeReady = active && Boolean(state.researchQueue?.readyAt && state.researchQueue.readyAt <= now);
@@ -600,7 +610,7 @@ export function researchActionStatus({
                       : !cost
                         ? "Research cost unavailable"
                       : !affordable
-                        ? formatMissingResources(state.resources, cost, productionRates)
+                        ? formatMissingResources(spendable, cost, productionRates)
                         : `Ready for Level ${targetLevel}`;
 
   const completionReady = reason === `Ready to complete Level ${targetLevel}`;

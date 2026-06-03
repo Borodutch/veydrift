@@ -305,6 +305,54 @@ describe("Research page load-error display", () => {
     });
   });
 
+  test("uses spendable accrued resources for research affordability and ETA", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 700, crystal: 2_000, deuterium: 1_000 },
+    };
+
+    expect(researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 900, crystal: 2_100, deuterium: 1_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "700", crystal: "2000", deuterium: "1000" },
+      }),
+      spendableResources: { metal: 900, crystal: 2_100, deuterium: 1_000 },
+      state,
+    })).toMatchObject({
+      disabled: false,
+      reason: "Ready for Level 1",
+    });
+
+    expect(researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 2_300, deuterium: 1_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      productionRates: { metal: 300, crystal: 600, deuterium: 0 },
+      researchState: researchState({
+        resources: { metal: "700", crystal: "2000", deuterium: "1000" },
+      }),
+      spendableResources: { metal: 1_000, crystal: 2_250, deuterium: 1_000 },
+      state,
+    })).toMatchObject({
+      disabled: true,
+      reason: "Requires 600 more Metal, 50 more Crystal (affordable in 2h)",
+    });
+  });
+
   test("reports every missing resource for research actions", () => {
     const state = {
       ...createInitialPlayableState(10_000),

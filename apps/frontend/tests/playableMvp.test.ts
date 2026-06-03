@@ -24,6 +24,7 @@ import {
   shipCatalog,
   shipCombatStats,
   shipSpecRows,
+  spendableResources,
   storageCaps,
   unmetResearchRequirement,
 } from "../src/playableMvp";
@@ -530,6 +531,17 @@ describe("playable MVP contract display helpers", () => {
     expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_060_000)).toBe(true);
     expect(hasCollectableResources({ metal: 0, crystal: 0, deuterium: 0 }, lastSettledAtSeconds, 1_600_000))
       .toBe(false);
+  });
+
+  test("counts whole collectable deltas as spendable resources", () => {
+    expect(spendableResources(
+      { metal: 10, crystal: 20, deuterium: 30 },
+      { metal: 2.9, crystal: -5, deuterium: 0.5 },
+    )).toEqual({
+      metal: 12,
+      crystal: 20,
+      deuterium: 30,
+    });
   });
 
   test("reports collectible resource deltas with storage caps applied", () => {

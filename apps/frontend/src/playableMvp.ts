@@ -1667,6 +1667,16 @@ export function canAfford(resources: Resources, cost: Resources): boolean {
     && resources.deuterium >= cost.deuterium;
 }
 
+export function spendableResources(resources: Resources, collectibleDeltas?: Resources | undefined): Resources {
+  if (!collectibleDeltas) return resources;
+
+  return {
+    metal: resources.metal + Math.max(0, Math.floor(collectibleDeltas.metal)),
+    crystal: resources.crystal + Math.max(0, Math.floor(collectibleDeltas.crystal)),
+    deuterium: resources.deuterium + Math.max(0, Math.floor(collectibleDeltas.deuterium)),
+  };
+}
+
 export function hasCollectableResources(
   rates: Resources,
   lastSettledAtSeconds: number,

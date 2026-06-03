@@ -91,6 +91,7 @@ interface InfrastructurePageProps {
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
   selectedBuildingKey?: BuildingKey | undefined;
+  spendableResources?: Resources | undefined;
   state: PlayableState;
   settledState: PlayableState;
   now?: number | undefined;
@@ -114,6 +115,7 @@ export function InfrastructurePage({
   planetProductionProfile,
   productionRates,
   selectedBuildingKey,
+  spendableResources,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
@@ -221,6 +223,7 @@ export function InfrastructurePage({
             now={now}
             planetProductionProfile={planetProductionProfile}
             productionRates={productionRates}
+            spendableResources={spendableResources}
             state={settledState}
           />
         )}
@@ -307,6 +310,7 @@ function BuildingDetailPanel({
   now,
   planetProductionProfile,
   productionRates,
+  spendableResources,
   state,
 }: {
   actionNotice?: InfrastructureActionNotice | undefined;
@@ -323,6 +327,7 @@ function BuildingDetailPanel({
   onUpgrade: () => void;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
+  spendableResources?: Resources | undefined;
   state: PlayableState;
 }) {
   const currentLevel = state.buildings[building.key];
@@ -338,6 +343,7 @@ function BuildingDetailPanel({
     actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
     chainCost,
     productionRates,
+    spendableResources,
   });
   const effectRows = detailEffectRows(effect, energy);
   const levelInfoRows = buildingLevelInfoRows(

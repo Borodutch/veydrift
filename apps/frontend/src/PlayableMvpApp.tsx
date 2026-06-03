@@ -38,6 +38,7 @@ import {
   productionPerHour,
   progress,
   researchCatalog,
+  spendableResources as resourcesWithCollectibleDeltas,
   storageCaps,
   type BuildingKey,
   type DefenseKey,
@@ -1936,6 +1937,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     if (!isWalletConnected || !onChainResources || !onChainSettlement?.planet?.lastSettledAt) return undefined;
     return collectibleResourceDeltas(rates, Number(onChainSettlement.planet.lastSettledAt), now, onChainResources, caps);
   }, [caps, isWalletConnected, now, onChainResources, onChainSettlement?.planet?.lastSettledAt, rates]);
+  const spendableResources = useMemo(() => {
+    if (!isWalletConnected || !onChainResources) return undefined;
+    return resourcesWithCollectibleDeltas(onChainResources, collectibleDeltas);
+  }, [collectibleDeltas, isWalletConnected, onChainResources]);
   const isCollectReady = useMemo(() => {
     if (collectibleDeltas) {
       return collectibleDeltas.metal > 0
@@ -3629,6 +3634,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           planetProductionProfile={planetProductionProfile}
           productionRates={rates}
           selectedBuildingKey={selectedBuildingKey}
+          spendableResources={spendableResources}
           settledState={infrastructureState}
           state={state}
         />
@@ -3688,6 +3694,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           productionRates={rates}
           researchState={effectiveResearchState}
           selectedResearchKey={selectedResearchKey}
+          spendableResources={spendableResources}
           settledState={settledState}
           state={state}
           useLocalStateFallback={!isWalletConnected}
@@ -3709,7 +3716,9 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           onRefresh={refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}
           overviewQueue={onChainQueues?.defense}
+          productionRates={rates}
           selectedDefenseKey={selectedDefenseKey}
+          spendableResources={spendableResources}
         />
       );
     }
@@ -3753,8 +3762,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           onRefresh={refreshShipyardState}
           onSelectShip={setSelectedShipKey}
           overviewQueue={onChainQueues?.ship}
+          productionRates={rates}
           selectedShipKey={selectedShipKey}
           shipyardState={shipyardState}
+          spendableResources={spendableResources}
         />
       );
     }
