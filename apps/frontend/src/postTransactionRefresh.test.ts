@@ -4,6 +4,7 @@ import {
   isCollectedResourcesStateVisible,
   isFinishedBuildingStateVisible,
   isFinishedResearchStateVisible,
+  isAllianceApplicationCleared,
   isStartedDefenseProductionVisible,
   isStartedShipProductionVisible,
   isStartedResearchStateVisible,
@@ -14,6 +15,7 @@ import {
   waitForStartedShipProductionState,
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
+  waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
   type CollectedResourcesSnapshot,
   type FinishedResearchSnapshot,
@@ -23,6 +25,7 @@ import {
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingSnapshot,
 } from "./postTransactionRefresh";
+import type { ChainAllianceState } from "./walletFlow";
 
 const wallet = "0x2222222222222222222222222222222222222222";
 
@@ -67,6 +70,44 @@ describe("post-transaction refresh reconciliation", () => {
       crystal: "30",
       deuterium: "0",
     });
+  });
+
+  test("polls past stale alliance applications after dismiss confirmation", async () => {
+    const snapshots = [
+      allianceStateWithApplication(),
+      allianceStateWithApplication({ allianceJoinRequests: [] }),
+    ];
+    const loads: ChainAllianceState[] = [];
+
+    const result = await waitForAllianceApplicationCleared(
+      async () => {
+        const snapshot = snapshots.shift() ?? allianceStateWithApplication({ allianceJoinRequests: [] });
+        loads.push(snapshot);
+        return snapshot;
+      },
+      {
+        allianceId: "7",
+        requester: "0x3333333333333333333333333333333333333333",
+      },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(isAllianceApplicationCleared(result, {
+      allianceId: "7",
+      requester: "0x3333333333333333333333333333333333333333",
+    })).toBe(true);
+  });
+
+  test("explains alliance application sync timeout after confirmation", async () => {
+    await expect(waitForAllianceApplicationCleared(
+      async () => allianceStateWithApplication(),
+      {
+        allianceId: "7",
+        requester: "0x3333333333333333333333333333333333333333",
+      },
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    )).rejects.toThrow("Alliance application transaction confirmed, but the pending application is still syncing in the game API.");
   });
 
   test("recovers from a transient post-finish game-state read failure", async () => {
@@ -703,6 +744,45 @@ function renamedWalletPlanetSyncSnapshot(name: string): WalletPlanetSyncSnapshot
       ...snapshot.planetsResponse,
       planets: [renamedPlanet],
     },
+  };
+}
+
+function allianceStateWithApplication(overrides: Partial<ChainAllianceState> = {}): ChainAllianceState {
+  return {
+    wallet,
+    allianceAvailable: true,
+    membership: {
+      allianceId: "7",
+      role: "officer",
+      joinedAt: "1770000000",
+    },
+    profile: {
+      active: true,
+      createdAt: "1770000000",
+      description: "Union",
+      memberCount: 2,
+      name: "Veydrift Union",
+      owner: wallet,
+      tag: "VDFT",
+    },
+    directory: [],
+    pendingInvites: [],
+    pendingJoinRequests: [],
+    allianceJoinRequests: [
+      {
+        allianceId: "7",
+        requester: "0x3333333333333333333333333333333333333333",
+        requestedAt: "1770000010",
+      },
+    ],
+    members: [
+      {
+        address: wallet,
+        role: "officer",
+        joinedAt: "1770000000",
+      },
+    ],
+    ...overrides,
   };
 }
 
