@@ -1,4 +1,4 @@
-import { Crown, Info, RefreshCw, Search, Shield, UserRound, Users, X } from "lucide-preact";
+import { Crown, Info, RefreshCw, Shield, UserRound, Users, X } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
@@ -518,7 +518,7 @@ function DirectorySection({
     : alliances;
 
   return (
-    <Panel title="Other Alliances" action={<SectionIcon icon={Search} />}>
+    <Panel title="Other Alliances">
       {visibleAlliances.length ? (
         <div className="grid gap-2">
           {visibleAlliances.map((alliance) => {
