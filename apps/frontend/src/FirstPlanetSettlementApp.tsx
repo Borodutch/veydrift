@@ -104,6 +104,7 @@ export function FirstPlanetSettlementApp() {
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const farcasterAutoConnectAttempted = useRef(false);
   const farcasterNetworkSetupAttempted = useRef<string>();
+  const walletProviderCleanup = useRef<(() => void) | undefined>();
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -166,58 +167,23 @@ export function FirstPlanetSettlementApp() {
 
   useEffect(() => {
     let disposed = false;
-    let cleanupProvider: (() => void) | undefined;
 
     void (async () => {
-      const walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+      const walletProvider = await loadWalletProviderDetails();
       if (disposed) return;
+      bindWalletProviderDetails(walletProvider);
 
-      const injected = walletProvider?.provider;
-      setProvider(injected);
-      setWalletProviderSource(walletProvider?.source);
-      if (walletProvider?.source === "farcaster") {
-        setMiniAppMode(true);
-      }
-
-      if (!injected) {
+      if (!walletProvider?.provider) {
         setWallet({
           kind: "no-wallet"
         });
-        return;
       }
-
-      const handleAccountsChanged = (...args: unknown[]) => {
-        const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
-
-        if (nextAccounts[0]) {
-          void refreshWallet(injected, nextAccounts[0]);
-        } else {
-          setWallet({
-            kind: "disconnected"
-          });
-          setPlanet({
-            kind: "idle"
-          });
-          setSettlementFunding({ status: "idle" });
-        }
-      };
-
-      const handleChainChanged = () => {
-        void refreshWallet(injected);
-      };
-
-      injected.on?.("accountsChanged", handleAccountsChanged);
-      injected.on?.("chainChanged", handleChainChanged);
-
-      cleanupProvider = () => {
-        injected.removeListener?.("accountsChanged", handleAccountsChanged);
-        injected.removeListener?.("chainChanged", handleChainChanged);
-      };
     })();
 
     return () => {
       disposed = true;
-      cleanupProvider?.();
+      walletProviderCleanup.current?.();
+      walletProviderCleanup.current = undefined;
     };
   }, []);
 
@@ -243,6 +209,58 @@ export function FirstPlanetSettlementApp() {
     farcasterAutoConnectAttempted.current = true;
     void connectWallet();
   }, [miniAppMode, provider, settlementConfigState.status, walletProviderSource]);
+
+  async function loadWalletProviderDetails() {
+    return getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+  }
+
+  function bindWalletProviderDetails(
+    walletProvider: Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>,
+  ) {
+    const injected = walletProvider?.provider;
+    setProvider(injected);
+    setWalletProviderSource(walletProvider?.source);
+    if (walletProvider?.source === "farcaster") {
+      setMiniAppMode(true);
+    }
+
+    walletProviderCleanup.current?.();
+    walletProviderCleanup.current = undefined;
+
+    if (!injected) {
+      return undefined;
+    }
+
+    const handleAccountsChanged = (...args: unknown[]) => {
+      const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
+
+      if (nextAccounts[0]) {
+        void refreshWallet(injected, nextAccounts[0]);
+      } else {
+        setWallet({
+          kind: "disconnected"
+        });
+        setPlanet({
+          kind: "idle"
+        });
+        setSettlementFunding({ status: "idle" });
+      }
+    };
+
+    const handleChainChanged = () => {
+      void refreshWallet(injected);
+    };
+
+    injected.on?.("accountsChanged", handleAccountsChanged);
+    injected.on?.("chainChanged", handleChainChanged);
+
+    walletProviderCleanup.current = () => {
+      injected.removeListener?.("accountsChanged", handleAccountsChanged);
+      injected.removeListener?.("chainChanged", handleChainChanged);
+    };
+
+    return injected;
+  }
 
   async function refreshWallet(injected = provider, preferredAccount?: string) {
     if (!injected) {
@@ -439,7 +457,9 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function connectWallet() {
-    if (!provider) {
+    const activeProvider = provider ?? bindWalletProviderDetails(await loadWalletProviderDetails());
+
+    if (!activeProvider) {
       setWallet({
         kind: "no-wallet"
       });
@@ -451,8 +471,8 @@ export function FirstPlanetSettlementApp() {
     });
 
     try {
-      const accounts = await requestAccounts(provider);
-      await refreshWallet(provider, accounts[0]);
+      const accounts = await requestAccounts(activeProvider);
+      await refreshWallet(activeProvider, accounts[0]);
     } catch (error) {
       setWallet({
         kind: "disconnected"
