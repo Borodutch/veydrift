@@ -2085,7 +2085,7 @@ async function readNativeBalanceForSettlement(
   }
 }
 
-function isUnsupportedProviderMethodError(error: unknown): boolean {
+export function isUnsupportedProviderMethodError(error: unknown): boolean {
   const code = errorCode(error);
   const message = errorMessage(error);
 
