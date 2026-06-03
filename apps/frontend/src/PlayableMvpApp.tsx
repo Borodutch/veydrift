@@ -3266,7 +3266,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     <div className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#05070f] text-slate-100">
       {topBar}
 
-      <div className="relative z-10 mx-auto flex max-w-[96rem] flex-col md:h-[calc(100dvh-52px)] md:flex-row md:overflow-hidden">
+      <div className="relative z-10 mx-auto flex max-w-[96rem] flex-col md:h-[calc(100dvh-2.75rem)] md:flex-row md:overflow-hidden">
         <NavBar
           account={account}
           active={page}
