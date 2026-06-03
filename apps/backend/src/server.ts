@@ -289,8 +289,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
-          return Response.json(withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet), {
-            headers: corsHeaders
+          const snapshot = indexer.snapshot();
+          return Response.json({
+            ...withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet),
+            indexer: snapshot,
+            liveReadSkippedAt: new Date().toISOString(),
+            source: "contract-state-indexer",
+            stale: !snapshot.safeToServeIndexedState
+          }, {
+            headers: {
+              ...corsHeaders,
+              "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
+            }
           });
         }
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);

@@ -533,11 +533,7 @@ export function FirstPlanetSettlementApp() {
           txHash
         });
 
-        const settlement = await waitForSettledPlanet(
-          settlementReadProvider(miniAppMode) ?? provider,
-          wallet.account,
-          settlementConfig
-        );
+        const settlement = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, wallet.account);
 
         setPlanet({
           kind: "success",
@@ -1092,27 +1088,25 @@ function buildSettlementConfig(): SettlementConfig {
   return address ? { address } : {};
 }
 
-async function waitForSettledPlanet(
-  provider: Eip1193Provider,
+async function waitForIndexedSettledPlanet(
+  apiUrl: string | undefined,
   account: string,
-  settlementConfig: SettlementConfig,
 ) {
-  let lastSettlement = await readSettlementState(provider, account, settlementConfig);
+  if (!apiUrl) {
+    throw new Error("Settlement is confirmed, but the game API is unavailable. Retry once backend indexing is reachable.");
+  }
 
   for (let attempt = 0; attempt < POST_SETTLEMENT_READ_ATTEMPTS; attempt += 1) {
-    if (
-      lastSettlement.kind === "settled"
-      && lastSettlement.planet.coordinates
-      && hasHydratedSettlementResources(lastSettlement.planet)
-    ) {
-      return lastSettlement;
+    const settlement = await fetchWalletSettlement(apiUrl, account);
+    const indexed = indexedSettlementState(settlement);
+    if (indexed.kind === "settled" && indexed.planet.coordinates) {
+      return indexed;
     }
 
     await delay(POST_SETTLEMENT_READ_INTERVAL_MS);
-    lastSettlement = await readSettlementState(provider, account, settlementConfig);
   }
 
-  throw new Error("Settlement is confirmed, but starting resources are still indexing. Retry once the backend catches up.");
+  throw new Error("Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.");
 }
 
 function delay(ms: number): Promise<void> {

@@ -240,7 +240,7 @@ export class SettlementIndexer {
   }
 
   settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
-    return this.rows<SettledPlanetEvent>(
+    return this.planetsFromRows(
       "SELECT event_json FROM contract_planets WHERE galaxy = ? AND system_number = ? ORDER BY position ASC",
       galaxy,
       system
@@ -282,7 +282,7 @@ export class SettlementIndexer {
   }
 
   settledPlanets(): SettledPlanetEvent[] {
-    return this.rows<SettledPlanetEvent>("SELECT event_json FROM contract_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
+    return this.planetsFromRows("SELECT event_json FROM contract_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
   }
 
   settledPlanetsByOwner(): Map<string, SettledPlanetEvent[]> {
@@ -296,7 +296,7 @@ export class SettlementIndexer {
 
   planet(planetId: string): SettledPlanetEvent | null {
     const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
-    return row ? parseEvent<SettledPlanetEvent>(row.event_json) : null;
+    return row ? this.withResourceSnapshot(parseEvent<SettledPlanetEvent>(row.event_json)) : null;
   }
 
   playerProfile(wallet: string): PlayerProfile {
@@ -334,7 +334,7 @@ export class SettlementIndexer {
   }
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
-    const planets = this.rows<SettledPlanetEvent>(
+    const planets = this.planetsFromRows(
       "SELECT event_json FROM contract_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
     );
@@ -351,7 +351,7 @@ export class SettlementIndexer {
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
-    const planets = this.rows<SettledPlanetEvent>(
+    const planets = this.planetsFromRows(
       "SELECT event_json FROM contract_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
     ).map((planet) => indexedManagedPlanet(
@@ -1319,6 +1319,7 @@ export class SettlementIndexer {
 
   private upsertPlanet(event: SettledPlanetEvent): void {
     const planetEvent = this.withKnownPlanetResources(event);
+    const placeholderResources = isZeroResourcePlaceholder(planetEvent);
     this.db.query(`
       INSERT INTO indexed_planets (planet_id, owner, galaxy, system, position, event_json)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -1394,6 +1395,11 @@ export class SettlementIndexer {
       planetEvent.lastSettledAt,
       JSON.stringify(planetEvent)
     );
+    if (placeholderResources) {
+      this.markStale(pendingPlanetResourcesReason(planetEvent.planetId));
+      return;
+    }
+
     this.upsertPlanetResourceSnapshot(
       planetEvent.planetId,
       planetEvent.resources,
@@ -1401,12 +1407,14 @@ export class SettlementIndexer {
       planetEvent.transactionHash,
       planetEvent.blockNumber
     );
+    this.clearPlanetResourcePendingIfResolved();
   }
 
   private updatePlanetResources(event: PlanetSettledEvent): void {
     const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
     if (!row) {
       this.upsertPlanetResourceSnapshot(event.planetId, event.resources, event.lastSettledAt, event.transactionHash, event.blockNumber);
+      this.markStale(`planet_identity_pending:${event.planetId}`);
       return;
     }
 
@@ -1437,6 +1445,21 @@ export class SettlementIndexer {
       },
       transactionHash: resources.transaction_hash
     };
+  }
+
+  private withResourceSnapshot(planet: SettledPlanetEvent): SettledPlanetEvent {
+    const resources = this.planetResourceSnapshot(planet.planetId);
+    return resources ? {
+      ...planet,
+      blockNumber: resources.block_number,
+      lastSettledAt: resources.last_settled_at,
+      resources: {
+        metal: resources.metal,
+        crystal: resources.crystal,
+        deuterium: resources.deuterium
+      },
+      transactionHash: resources.transaction_hash
+    } : planet;
   }
 
   private planetResourceSnapshot(planetId: string): PlanetResourceRow | null {
@@ -1475,6 +1498,17 @@ export class SettlementIndexer {
       transactionHash,
       blockNumber
     );
+  }
+
+  private clearPlanetResourcePendingIfResolved(): void {
+    const pending = this.metadata("pendingReconciliationReason");
+    if (!pending?.startsWith("planet_resources_pending:") && !pending?.startsWith("planet_identity_pending:")) return;
+    const planetsMissingResources = this.settledPlanets().some((planet) => (
+      isZeroResourcePlaceholder(planet) && !this.planetResourceSnapshot(planet.planetId)
+    ));
+    if (!planetsMissingResources) {
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'pendingReconciliationReason'").run();
+    }
   }
 
   private applyPlanetRenamedEvent(event: PlanetRenamedEvent): void {
@@ -1691,10 +1725,14 @@ export class SettlementIndexer {
     transactionHash: string,
     blockNumber: string
   ): void {
-    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
-    if (!row) return;
+    const planet = this.planet(planetId);
+    if (!planet) return;
 
-    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
+    if (isZeroResourcePlaceholder(planet) && !this.planetResourceSnapshot(planetId)) {
+      this.markStale(pendingPlanetResourcesReason(planetId));
+      return;
+    }
+
     this.upsertPlanet({
       ...planet,
       transactionHash,
@@ -1960,6 +1998,10 @@ export class SettlementIndexer {
     return (this.db.query(sql).all(...params) as EventRow[]).map((row) => parseEvent<T>(row.event_json));
   }
 
+  private planetsFromRows(sql: string, ...params: SQLQueryBindings[]): SettledPlanetEvent[] {
+    return this.rows<SettledPlanetEvent>(sql, ...params).map((planet) => this.withResourceSnapshot(planet));
+  }
+
   private staleReason(reconciliationInProgress: boolean): string | null {
     if (reconciliationInProgress) return "reconciliation_in_progress";
     const error = this.metadata("lastReconciliationError");
@@ -2063,6 +2105,10 @@ function isZeroResourcePlaceholder(event: SettledPlanetEvent): boolean {
     && event.resources.metal === "0"
     && event.resources.crystal === "0"
     && event.resources.deuterium === "0";
+}
+
+function pendingPlanetResourcesReason(planetId: string): string {
+  return `planet_resources_pending:${planetId}`;
 }
 
 function subtractResources(left: QueueState["cost"], right: QueueState["cost"]): QueueState["cost"] {

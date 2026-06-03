@@ -109,6 +109,38 @@ describe("settlement screen mode", () => {
     })).toEqual({ kind: "indexing" });
   });
 
+  test("keeps stale zero-resource indexed settlement in indexing state", () => {
+    expect(indexedSettlementState({
+      wallet: connected.account,
+      hasFirstPlanet: true,
+      homePlanetId: "7",
+      stale: true,
+      indexer: {
+        safeToServeIndexedState: false,
+        staleReason: "planet_resources_pending:7",
+      },
+      planet: {
+        planetId: "7",
+        owner: connected.account,
+        name: null,
+        galaxy: 2,
+        system: 44,
+        position: 9,
+        fields: 211,
+        temperature: -8,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        lastSettledAt: "0",
+        resources: {
+          metal: "0",
+          crystal: "0",
+          deuterium: "0",
+        },
+      },
+    })).toEqual({ kind: "indexing" });
+  });
+
   test("blocks settlement launch until funding info is ready and affordable", () => {
     expect(settlementLaunchBlocker(false, { status: "ready", funding: {
       affordable: true,
