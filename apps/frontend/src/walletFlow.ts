@@ -10,12 +10,19 @@ export type Eip1193Provider = {
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
 };
 
+type MetaMaskLockProbe = {
+  _metamask?: {
+    isUnlocked?: () => boolean | Promise<boolean>;
+  };
+};
+
 export type InjectedWindow = {
   ethereum?: Eip1193Provider;
 };
 
 const WALLET_READ_TIMEOUT_MS = 10_000;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
+export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock MetaMask and try again.";
 
 export type SettlementConfig = {
   address?: string;
@@ -663,6 +670,10 @@ export function walletRequestErrorMessage(error: unknown): string {
   const message = errorMessage(error);
   const code = errorCode(error);
 
+  if (/wallet is locked|metamask is locked|unlock metamask|unlock your wallet/i.test(message)) {
+    return WALLET_LOCKED_MESSAGE;
+  }
+
   if (/timed out reading .* from the wallet/i.test(message)) {
     return `${message} Unlock or reconnect MetaMask, then retry.`;
   }
@@ -680,6 +691,24 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   return message;
+}
+
+export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<void> {
+  const metamask = (provider as Eip1193Provider & MetaMaskLockProbe)._metamask;
+  if (typeof metamask?.isUnlocked !== "function") {
+    return;
+  }
+
+  let unlocked: boolean;
+  try {
+    unlocked = await metamask.isUnlocked();
+  } catch {
+    return;
+  }
+
+  if (!unlocked) {
+    throw new Error(WALLET_LOCKED_MESSAGE);
+  }
 }
 
 const buildingUpgradeRevertReasons: Record<string, string> = {
@@ -1624,6 +1653,7 @@ export async function sendStartBuildingUpgradeTransaction(
     data
   };
 
+  await assertWalletUnlocked(provider);
   await assertBuildingUpgradeCallSucceeds(options.readProvider ?? provider, account, contractAddress, data);
 
   return provider.request<string>({
@@ -1702,6 +1732,7 @@ export async function sendFinishBuildingUpgradeTransaction(
     data
   };
 
+  await assertWalletUnlocked(provider);
   if (options.readProvider) {
     await assertActiveBuildingConstructionReady(options.readProvider, account, contractAddress, planetId);
     await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
