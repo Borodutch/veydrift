@@ -570,6 +570,7 @@ const ALLIANCE_SELECTORS = {
   acceptInvite: "0xbf8e9176",
   requestJoinAlliance: "0xbc46277a",
   cancelJoinRequest: "0xc5c4bdcc",
+  dismissJoinRequest: "0xcd844a18",
   approveJoinRequest: "0x8ff388c7",
   kickMember: "0xbd0e667c",
   setMemberRole: "0xbfbb73f1"
@@ -1483,6 +1484,25 @@ export async function sendApproveAllianceJoinRequestTransaction(
   });
 }
 
+export async function sendDismissAllianceJoinRequestTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: contractAddress,
+        data: encodeUintAddressCall(ALLIANCE_SELECTORS.dismissJoinRequest, allianceId, playerAddress)
+      }
+    ]
+  });
+}
+
 export async function sendAllianceKickTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -1605,8 +1625,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  planetId: string,
-  options: TransactionPreflightOptions = {}
+  planetId: string
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
   const transaction = {
@@ -1614,8 +1633,6 @@ export async function sendFinishBuildingUpgradeTransaction(
     to: contractAddress,
     data
   };
-
-  await assertBuildingUpgradeCallSucceeds(options.readProvider ?? provider, account, contractAddress, data);
 
   return provider.request<string>({
     method: "eth_sendTransaction",

@@ -1859,6 +1859,16 @@ describe("Veydrift backend", () => {
 
   test("rebuilds the cache and marks occupied system coordinates", async () => {
     const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => {
+      chainReader.rebuildCalls += 1;
+      return [{
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123",
+        lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+      }];
+    };
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     const handler = createRequestHandler({
       config: configuredTestConfig,
@@ -1889,7 +1899,18 @@ describe("Veydrift backend", () => {
       data: abiWords(2n, 2n)
     });
     indexer.applyLog({
-      blockNumber: "0x82",
+      blockNumber: "0x84",
+      transactionHash: "0xsatdone",
+      logIndex: "0x0",
+      topics: [
+        shipCompletedTopic,
+        topic(7n),
+        topic(9n)
+      ],
+      data: abiWords(5n, 5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x85",
       transactionHash: "0xdefensedone",
       logIndex: "0x0",
       topics: [
@@ -1900,7 +1921,7 @@ describe("Veydrift backend", () => {
       data: abiWords(3n, 3n)
     });
     indexer.applyLog({
-      blockNumber: "0x83",
+      blockNumber: "0x86",
       transactionHash: "0xresearchdone",
       logIndex: "0x0",
       topics: [
@@ -1935,7 +1956,7 @@ describe("Veydrift backend", () => {
     });
     expect(occupiedPlanet.publicState).toMatchObject({
       resources: {
-        metal: "5000",
+        metal: "5064",
         crystal: "4900",
         deuterium: "4800"
       },
@@ -1952,7 +1973,8 @@ describe("Veydrift backend", () => {
       expect.objectContaining({ id: 0, level: 1 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 2 })
+      expect.objectContaining({ id: 0, count: 2 }),
+      expect.objectContaining({ id: 9, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, count: 3 })
