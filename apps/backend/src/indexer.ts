@@ -157,6 +157,17 @@ type PendingWithdrawalRow = {
   withdrawal_key: string;
 };
 
+type MoonBuildingQueueRow = {
+  crystal_cost: string;
+  deuterium_cost: string;
+  event_json: string;
+  metal_cost: string;
+  moon_building_id: number;
+  planet_id: string;
+  ready_at: string;
+  target_level: number;
+};
+
 type ResourceColumns = {
   metal: string;
   crystal: string;
@@ -719,6 +730,7 @@ export class SettlementIndexer {
         this.upsertPlanet(event);
       }
       this.applyCanonicalState(canonicalState);
+      this.replayEventDerivedQueueStateFromEventLogs();
       for (const event of debrisEvents) {
         this.upsertDebris(event);
       }
@@ -1131,6 +1143,24 @@ export class SettlementIndexer {
         cost.deuterium,
         queue.event_json
       );
+      if (queue.kind === "moon-building" && queue.planet_id && queue.target_level !== null) {
+        this.db.query(`
+          INSERT OR IGNORE INTO contract_moon_building_queues (
+            planet_id, moon_building_id, target_level, ready_at,
+            metal_cost, crystal_cost, deuterium_cost, event_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          queue.planet_id,
+          queue.item_id,
+          queue.target_level,
+          queue.ready_at,
+          cost.metal,
+          cost.crystal,
+          cost.deuterium,
+          queue.event_json
+        );
+      }
     }
 
     this.db.query(`
@@ -1152,10 +1182,40 @@ export class SettlementIndexer {
 
     for (const row of rows) {
       const log = parseEvent<IndexedRpcLog>(row.event_json);
-      if (isIndexedQueueCompletedLog(log)) {
+      if (isIndexedQueueStartedLog(log)) {
+        this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
+      } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      }
+    }
+  }
+
+  private replayEventDerivedQueueStateFromEventLogs(): void {
+    const activeEventQueues = new Set<string>();
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (isIndexedQueueStartedLog(log)) {
+        const event = decodeIndexedQueueStartedLog(log);
+        this.applyQueueStartedEvent(event, { settleResources: false });
+        activeEventQueues.add(queueKey(event));
+      } else if (isIndexedQueueCompletedLog(log)) {
+        const event = decodeIndexedQueueCompletedLog(log);
+        const key = queueKey(event);
+        if (activeEventQueues.has(key)) {
+          this.applyQueueCompletedEvent(event);
+          activeEventQueues.delete(key);
+        } else {
+          this.applyQueueCompletionEffects(event);
+        }
       }
     }
   }
@@ -1238,6 +1298,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_ship_counts").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
+    this.db.query("DELETE FROM contract_moon_building_queues").run();
   }
 
   private applyCanonicalState(state: CanonicalReconciliationState): void {
@@ -1591,14 +1652,19 @@ export class SettlementIndexer {
     );
   }
 
-  private applyQueueStartedEvent(event: IndexedQueueStartedEvent): void {
+  private applyQueueStartedEvent(
+    event: IndexedQueueStartedEvent,
+    options: { settleResources?: boolean } = {}
+  ): void {
     this.upsertQueue(event);
-    if (event.planetId) {
-      this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
-    } else if (event.queueKind === "research" && event.owner) {
-      const settlement = this.walletSettlement(event.owner);
-      if (settlement.homePlanetId) {
-        this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
+    if (options.settleResources !== false) {
+      if (event.planetId) {
+        this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
+      } else if (event.queueKind === "research" && event.owner) {
+        const settlement = this.walletSettlement(event.owner);
+        if (settlement.homePlanetId) {
+          this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
+        }
       }
     }
     this.touch();
@@ -1627,11 +1693,18 @@ export class SettlementIndexer {
   private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
     this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
     this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
+    this.applyQueueCompletionEffects(event);
+    this.touch();
+  }
+
+  private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent): void {
     if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
       this.upsertIndexedLevelAtLeast("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevelAtLeast("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-building" && event.planetId && event.level !== undefined) {
+      this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
       this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.upsertIndexedLevelAtLeast("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "defense" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
       this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
@@ -1650,7 +1723,6 @@ export class SettlementIndexer {
         ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
       `).run(event.owner, event.itemId, event.level);
     }
-    this.touch();
   }
 
   private upsertQueue(event: IndexedQueueStartedEvent): void {
@@ -1717,6 +1789,33 @@ export class SettlementIndexer {
       event.cost.deuterium,
       JSON.stringify(event)
     );
+
+    if (event.queueKind === "moon-building" && event.planetId && event.targetLevel !== undefined) {
+      this.db.query(`
+        INSERT INTO contract_moon_building_queues (
+          planet_id, moon_building_id, target_level, ready_at,
+          metal_cost, crystal_cost, deuterium_cost, event_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(planet_id) DO UPDATE SET
+          moon_building_id = excluded.moon_building_id,
+          target_level = excluded.target_level,
+          ready_at = excluded.ready_at,
+          metal_cost = excluded.metal_cost,
+          crystal_cost = excluded.crystal_cost,
+          deuterium_cost = excluded.deuterium_cost,
+          event_json = excluded.event_json
+      `).run(
+        event.planetId,
+        event.itemId,
+        event.targetLevel,
+        event.readyAt,
+        event.cost.metal,
+        event.cost.crystal,
+        event.cost.deuterium,
+        JSON.stringify(event)
+      );
+    }
   }
 
   private subtractPlanetResources(
@@ -1742,6 +1841,28 @@ export class SettlementIndexer {
   }
 
   private queueState(queueKeyValue: string): QueueState | null {
+    if (queueKeyValue.startsWith("moon-building:")) {
+      const row = this.db.query(`
+        SELECT planet_id, moon_building_id, target_level, ready_at, metal_cost, crystal_cost, deuterium_cost, event_json
+        FROM contract_moon_building_queues
+        WHERE planet_id = ?
+      `).get(queueKeyValue.slice("moon-building:".length)) as MoonBuildingQueueRow | null;
+      if (row) {
+        return {
+          active: true,
+          kind: "moon-building",
+          itemId: row.moon_building_id,
+          targetLevel: row.target_level,
+          readyAt: row.ready_at,
+          cost: {
+            metal: row.metal_cost,
+            crystal: row.crystal_cost,
+            deuterium: row.deuterium_cost
+          }
+        };
+      }
+    }
+
     const row = this.db.query(`
       SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost
       FROM contract_production_queues
