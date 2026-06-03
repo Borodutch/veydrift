@@ -2164,6 +2164,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       account,
       gameContract,
       planetId,
+      { readProvider: transactionReadProvider },
     ), () => refreshCollectedResourcesState({ planetId, previousLastSettledAt }));
   }, [
     account,
@@ -2173,6 +2174,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     provider,
     refreshCollectedResourcesState,
     runShipyardTransaction,
+    transactionReadProvider,
   ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
