@@ -61,6 +61,7 @@ import {
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
   sendCreateAllianceTransaction,
+  sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
@@ -1184,17 +1185,6 @@ describe("walletFlow", () => {
         ]
       },
       {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
         method: "eth_sendTransaction",
         params: [
           {
@@ -1276,30 +1266,29 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("blocks stale finish building upgrade transactions before wallet confirmation", async () => {
+  test("submits ready finish building upgrade transactions without a preflight call", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
       if (method === "eth_call") {
-        throw { code: 3, message: "execution reverted", data: "0x7e787175" };
+        throw new Error("eth_call should not block a ready finish click");
       }
-      throw new Error("eth_sendTransaction should not be called");
+      return "0xfinish";
     });
 
     await expect(
       sendFinishBuildingUpgradeTransaction(provider, account, contract, "1")
-    ).rejects.toThrow("No active building upgrade is waiting to be finished");
+    ).resolves.toBe("0xfinish");
 
     expect(requests).toEqual([
       {
-        method: "eth_call",
+        method: "eth_sendTransaction",
         params: [
           {
             from: account,
             to: contract,
             data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
-          },
-          "latest"
+          }
         ]
       }
     ]);
@@ -1491,6 +1480,9 @@ describe("walletFlow", () => {
     await expect(
       sendApproveAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
     ).resolves.toBe("0xalliance9");
+    await expect(
+      sendDismissAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+    ).resolves.toBe("0xalliance10");
 
     expect(requests[0]).toMatchObject({
       method: "eth_sendTransaction",
@@ -1567,6 +1559,16 @@ describe("walletFlow", () => {
           from: account,
           to: contract,
           data: `0x8ff388c7${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}`
+        }
+      ]
+    });
+    expect(requests[9]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: `0xcd844a18${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}`
         }
       ]
     });

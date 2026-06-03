@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allianceInviteAcceptanceState,
   allianceJoinRequestApprovalState,
+  allianceJoinRequestDismissalState,
   hasAllianceMembership,
   shouldShowAllianceInitialLoader,
   shouldShowAllianceRefreshIndicator,
@@ -107,9 +109,73 @@ describe("AlliancePage loading display", () => {
       reason: "Only officers and owners can approve applications.",
     });
   });
+
+  test("allows officers to dismiss stale join applications", () => {
+    const state = memberAllianceState();
+    const staleRequest = joinRequest("0x4444444444444444444444444444444444444444", {
+      allianceId: "8",
+      role: "member",
+      joinedAt: "1770000010",
+    });
+
+    expect(allianceJoinRequestApprovalState(state, staleRequest)).toEqual({
+      canApprove: false,
+      reason: "Applicant already joined another alliance.",
+    });
+    expect(allianceJoinRequestDismissalState(state, staleRequest)).toEqual({
+      canDismiss: true,
+      reason: null,
+    });
+  });
+
+  test("blocks join application dismissal for non-officer viewers", () => {
+    const state = memberAllianceState({
+      membership: {
+        allianceId: "7",
+        joinedAt: "1770000000",
+        role: "member",
+      },
+    });
+
+    expect(allianceJoinRequestDismissalState(state, joinRequest("0x3333333333333333333333333333333333333333"))).toEqual({
+      canDismiss: false,
+      reason: "Only officers and owners can dismiss applications.",
+    });
+  });
+
+  test("keeps valid invites acceptable while blocking stale acceptance reverts", () => {
+    const invite = allianceInvite("7");
+    const state = unaffiliatedAllianceState({
+      directory: [directoryAlliance("7", true)],
+      pendingInvites: [invite],
+    });
+
+    expect(allianceInviteAcceptanceState(state, invite)).toEqual({
+      canAccept: true,
+      reason: null,
+    });
+    expect(allianceInviteAcceptanceState(state, allianceInvite("8"))).toEqual({
+      canAccept: false,
+      reason: "This invitation is no longer pending.",
+    });
+    expect(allianceInviteAcceptanceState({
+      ...state,
+      directory: [directoryAlliance("7", false)],
+    }, invite)).toEqual({
+      canAccept: false,
+      reason: "This alliance is unavailable.",
+    });
+    expect(allianceInviteAcceptanceState(memberAllianceState({
+      directory: [directoryAlliance("7", true)],
+      pendingInvites: [invite],
+    }), invite)).toEqual({
+      canAccept: false,
+      reason: "You are already in an alliance.",
+    });
+  });
 });
 
-function unaffiliatedAllianceState(): ChainAllianceState {
+function unaffiliatedAllianceState(overrides: Partial<ChainAllianceState> = {}): ChainAllianceState {
   return allianceState({
     membership: {
       allianceId: "0",
@@ -117,6 +183,7 @@ function unaffiliatedAllianceState(): ChainAllianceState {
       role: "none",
     },
     profile: null,
+    ...overrides,
   });
 }
 
@@ -165,6 +232,27 @@ function joinRequest(
     requester,
     requesterMembership,
     requestedAt: "1770000001",
+  };
+}
+
+function allianceInvite(allianceId: string): ChainAllianceState["pendingInvites"][number] {
+  return {
+    allianceId,
+    invitedAt: "1770000001",
+    inviter: "0x2222222222222222222222222222222222222222",
+  };
+}
+
+function directoryAlliance(allianceId: string, active: boolean): ChainAllianceState["directory"][number] {
+  return {
+    active,
+    allianceId,
+    createdAt: "1770000000",
+    description: "Outer-rim coordination",
+    memberCount: 2,
+    name: "Veydrift Union",
+    owner: "0x2222222222222222222222222222222222222222",
+    tag: "VDFT",
   };
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildingFinishActionErrorLabel,
   infrastructureActionNoticeFor,
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
@@ -20,6 +21,9 @@ import { createInitialPlayableState } from "../src/playableMvp";
 import type { ChainInfrastructureState, ChainResearchState } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
+  const buildingFinishStateReadFailureLabel =
+    "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
+
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
       status: "pending",
@@ -67,6 +71,21 @@ describe("Playable MVP app display helpers", () => {
       label: "Building upgrade confirmed on-chain.",
       tone: "success",
     });
+  });
+
+  test("translates transient building finish state-read failures into recovery copy", () => {
+    expect(buildingFinishActionErrorLabel(
+      new Error("The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered."),
+    )).toBe(buildingFinishStateReadFailureLabel);
+
+    expect(buildingFinishActionErrorLabel(new Error("Internal JSON-RPC error.")))
+      .toBe(buildingFinishStateReadFailureLabel);
+  });
+
+  test("keeps actionable building finish preflight errors specific", () => {
+    expect(buildingFinishActionErrorLabel(
+      new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry."),
+    )).toBe("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
   });
 
   test("keeps loaded top bar energy available during infrastructure refresh", () => {

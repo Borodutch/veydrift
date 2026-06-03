@@ -7,7 +7,7 @@ import { NavBar, type Page } from "./components/NavBar";
 import { isOverviewResearchReadyToFinish, OverviewPage, type PlanetRenameActionState } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
-import { AlliancePage, allianceJoinRequestApprovalState } from "./components/AlliancePage";
+import { AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState } from "./components/AlliancePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
@@ -140,6 +140,7 @@ import {
   sendAllianceRoleTransaction,
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
+  sendDismissAllianceJoinRequestTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
@@ -184,6 +185,26 @@ export function researchStartTransactionLabel(
     ?? 0;
 
   return `${label} level ${currentLevel + 1} research`;
+}
+
+const buildingFinishStateReadFailureLabel =
+  "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
+
+export function buildingFinishActionErrorLabel(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Finish building upgrade transaction failed.";
+  }
+
+  const message = error.message.trim();
+  const normalizedMessage = message.toLowerCase();
+  if (
+    normalizedMessage.includes("wallet could not read the current game contract state")
+    || normalizedMessage.includes("internal json-rpc error")
+  ) {
+    return buildingFinishStateReadFailureLabel;
+  }
+
+  return message || "Finish building upgrade transaction failed.";
 }
 
 export function researchCompletionUnavailableReasonFor({
@@ -1789,7 +1810,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           account,
           gameContract,
           planetId,
-          { readProvider: transactionReadProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -1811,7 +1831,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         setBuildingAction({
           status: "error",
           buildingKey,
-          label: error instanceof Error ? error.message : "Finish building upgrade transaction failed.",
+          label: buildingFinishActionErrorLabel(error),
         });
       }
     });
@@ -2193,18 +2213,46 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleAcceptAllianceInvite = useCallback((allianceId: string) => {
-    if (!provider || !account || !allianceContract) {
+    if (!provider || !account || !apiBaseUrl || !allianceContract) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
       return;
     }
 
-    void runAllianceTransaction("Alliance invite acceptance", () => sendAcceptAllianceInviteTransaction(
-      provider,
-      account,
-      allianceContract,
-      allianceId,
-    ));
-  }, [account, allianceContract, provider, runAllianceTransaction]);
+    setAllianceAction({ status: "pending", label: "Refreshing alliance invitation..." });
+    setAllianceLoading(true);
+    void fetchAllianceState(apiBaseUrl, account)
+      .then((next) => {
+        setAllianceState(next);
+        const invite = next.pendingInvites.find((entry) => entry.allianceId === allianceId);
+        if (!invite) {
+          setAllianceAction({ status: "error", label: "This invitation is no longer pending." });
+          return;
+        }
+
+        const acceptance = allianceInviteAcceptanceState(next, invite);
+        if (!acceptance.canAccept) {
+          setAllianceAction({ status: "error", label: acceptance.reason ?? "This invitation cannot be accepted." });
+          return;
+        }
+
+        return runAllianceTransaction("Alliance invite acceptance", () => sendAcceptAllianceInviteTransaction(
+          provider,
+          account,
+          allianceContract,
+          invite.allianceId,
+        ));
+      })
+      .catch((error) => {
+        console.error(error);
+        setAllianceAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Alliance invitation could not be refreshed.",
+        });
+      })
+      .finally(() => {
+        setAllianceLoading(false);
+      });
+  }, [account, apiBaseUrl, allianceContract, provider, runAllianceTransaction]);
 
   const handleRequestAllianceJoin = useCallback((allianceId: string) => {
     if (!provider || !account || !allianceContract) {
@@ -2262,6 +2310,53 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         }
 
         return runAllianceTransaction("Alliance join approval", () => sendApproveAllianceJoinRequestTransaction(
+          provider,
+          account,
+          allianceContract,
+          next.membership.allianceId,
+          playerAddress,
+        ));
+      })
+      .catch((error) => {
+        console.error(error);
+        setAllianceAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Alliance application could not be refreshed.",
+        });
+      })
+      .finally(() => {
+        setAllianceLoading(false);
+      });
+  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
+  const handleDismissAllianceJoinRequest = useCallback((playerAddress: string) => {
+    if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    const currentAllianceId = allianceState.membership.allianceId;
+    setAllianceAction({ status: "pending", label: "Refreshing alliance application..." });
+    setAllianceLoading(true);
+    void fetchAllianceState(apiBaseUrl, account)
+      .then((next) => {
+        setAllianceState(next);
+        const request = next.allianceJoinRequests.find((entry) =>
+          entry.allianceId === currentAllianceId
+            && entry.requester.toLowerCase() === playerAddress.toLowerCase()
+        );
+        if (!request) {
+          setAllianceAction({ status: "error", label: "This application is no longer pending." });
+          return;
+        }
+
+        const dismissal = allianceJoinRequestDismissalState(next, request);
+        if (!dismissal.canDismiss) {
+          setAllianceAction({ status: "error", label: dismissal.reason ?? "This application cannot be dismissed." });
+          return;
+        }
+
+        return runAllianceTransaction("Alliance application dismissal", () => sendDismissAllianceJoinRequestTransaction(
           provider,
           account,
           allianceContract,
@@ -3077,6 +3172,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onCancelJoinRequest={handleCancelAllianceJoinRequest}
           onCreate={handleCreateAlliance}
+          onDismissJoinRequest={handleDismissAllianceJoinRequest}
           onJoinRequest={handleRequestAllianceJoin}
           onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
@@ -3149,6 +3245,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onCounterplay={handleCounterplay}
         onJoinAttack={handleJoinAttack}
+        buildingActionNotice={infrastructureActionNotice}
         isDefenseActionPending={defenseAction.status === "pending"}
         isResearchActionPending={researchAction.status === "pending"}
         onFinishBuilding={handleFinishBuildingUpgrade}
