@@ -101,6 +101,7 @@ import {
   fetchShipyardState,
   fetchResearchState,
   fetchRiftState,
+  assertWalletUnlocked,
   fetchWalletPlanets,
   fetchFleetMissionVisibility,
   fetchAllianceState,
@@ -1785,6 +1786,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           return;
         }
 
+        await assertWalletUnlocked(provider);
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionAwaitingWalletLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
@@ -1885,6 +1887,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           targetLevel: latestQueue?.targetLevel ?? activeBuildingQueue?.targetLevel,
         };
 
+        await assertWalletUnlocked(provider);
         setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: transactionAwaitingWalletLabel(label) });
         const txHash = await sendFinishBuildingUpgradeTransaction(
           provider,

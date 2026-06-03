@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   BASE_SEPOLIA,
+  assertWalletUnlocked,
   createJsonRpcProvider,
   decodeBoolResult,
   decodeUintResult,
@@ -89,6 +90,26 @@ describe("walletFlow", () => {
     expect(isUserRejected({ code: 4001 })).toBe(true);
     expect(isUserRejected({ message: "User denied transaction signature" })).toBe(true);
     expect(isUserRejected({ code: -32603 })).toBe(false);
+  });
+
+  test("detects locked MetaMask before transaction submission", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        throw new Error("eth_sendTransaction should not be called");
+      }),
+      _metamask: {
+        isUnlocked: async () => false,
+      },
+    } as Eip1193Provider;
+
+    await expect(assertWalletUnlocked(provider)).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+    await expect(
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
+    ).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+
+    expect(requests).toEqual([]);
   });
 
   test("detects injected wallet availability before Mini App fallback", async () => {
@@ -813,6 +834,9 @@ describe("walletFlow", () => {
     );
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
       "game API may be temporarily unavailable"
+    );
+    expect(walletRequestErrorMessage(new Error("MetaMask is locked"))).toBe(
+      "Wallet is locked. Please unlock MetaMask and try again."
     );
   });
 
