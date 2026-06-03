@@ -73,7 +73,9 @@ import {
   waitForStartedShipProductionState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
+  waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
+  type AllianceApplicationExpectation,
   type CollectedResourcesExpectation,
   type FinishedResearchExpectation,
   type StartedDefenseProductionExpectation,
@@ -1090,18 +1092,20 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const refreshAllianceState = useCallback(() => {
     if (!apiBaseUrl || !account) {
       setAllianceState(null);
-      return;
+      return Promise.resolve(null);
     }
 
     setAllianceLoading(true);
     setAllianceError(undefined);
-    fetchAllianceState(apiBaseUrl, account)
+    return fetchAllianceState(apiBaseUrl, account)
       .then((next) => {
         setAllianceState(next);
+        return next;
       })
       .catch((error) => {
         console.error(error);
         setAllianceError(error instanceof Error ? error.message : "Alliance state could not be loaded.");
+        return null;
       })
       .finally(() => {
         setAllianceLoading(false);
@@ -2036,8 +2040,26 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     });
   }, [receiptProvider, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, transactionActionGate]);
 
-  const runAllianceTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+  const waitForAllianceApplicationState = useCallback((
+    expectation: AllianceApplicationExpectation,
+  ) => {
+    if (!apiBaseUrl || !account) {
+      throw new Error("Alliance contract unavailable.");
+    }
+
+    return waitForAllianceApplicationCleared(
+      async () => fetchAllianceState(apiBaseUrl, account),
+      expectation,
+    );
+  }, [account, apiBaseUrl]);
+
+  const runAllianceTransaction = useCallback(async (
+    label: string,
+    send: () => Promise<string>,
+    afterReceipt?: (() => Promise<ChainAllianceState | null | undefined>) | undefined,
+  ) => {
     setAllianceAction({ status: "pending", label });
+    setAllianceLoading(true);
 
     try {
       const txHash = await send();
@@ -2045,14 +2067,20 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       if (receiptProvider) {
         await waitForReceipt(receiptProvider, txHash);
       }
+      const next = await (afterReceipt ? afterReceipt() : refreshAllianceState());
+      if (next) {
+        setAllianceState(next);
+      }
       setAllianceAction({ status: "success", label: `${label} confirmed.` });
-      refreshAllianceState();
     } catch (error) {
       console.error(error);
+      void refreshAllianceState();
       setAllianceAction({
         status: "error",
         label: error instanceof Error ? error.message : `${label} failed.`,
       });
+    } finally {
+      setAllianceLoading(false);
     }
   }, [receiptProvider, refreshAllianceState]);
 
@@ -2429,7 +2457,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           allianceContract,
           next.membership.allianceId,
           playerAddress,
-        ));
+        ), () => waitForAllianceApplicationState({
+          allianceId: next.membership.allianceId,
+          requester: playerAddress,
+        }));
       })
       .catch((error) => {
         console.error(error);
@@ -2441,7 +2472,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       .finally(() => {
         setAllianceLoading(false);
       });
-  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, waitForAllianceApplicationState]);
 
   const handleDismissAllianceJoinRequest = useCallback((playerAddress: string) => {
     if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
@@ -2476,7 +2507,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           allianceContract,
           next.membership.allianceId,
           playerAddress,
-        ));
+        ), () => waitForAllianceApplicationState({
+          allianceId: next.membership.allianceId,
+          requester: playerAddress,
+        }));
       })
       .catch((error) => {
         console.error(error);
@@ -2488,7 +2522,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       .finally(() => {
         setAllianceLoading(false);
       });
-  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, waitForAllianceApplicationState]);
 
   const handleKickAllianceMember = useCallback((playerAddress: string) => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
