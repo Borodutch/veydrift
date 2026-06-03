@@ -31,6 +31,7 @@ import {
   walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
 import {
+  infrastructureHeaderFinishAction,
   infrastructureFinishAction,
   infrastructureFinishButtonLabel,
   infrastructureUpgradeButtonLabel,
@@ -146,6 +147,32 @@ describe("Playable MVP app display helpers", () => {
     expect(ready.label).toBe("Finish upgrade");
     ready.onFinish?.();
     expect(calls).toBe(1);
+  });
+
+  test("keeps disabled infrastructure finish reasons out of the page header", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+    const onFinishBuilding = () => undefined;
+
+    expect(infrastructureHeaderFinishAction(infrastructureFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+      queue,
+    }))).toBeUndefined();
+
+    const ready = infrastructureFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+
+    expect(infrastructureHeaderFinishAction(ready)).toBe(ready);
   });
 
   test("keeps terminal infrastructure action notices visible", () => {
