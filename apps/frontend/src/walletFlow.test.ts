@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   BASE_SEPOLIA,
+  createJsonRpcProvider,
   decodeBoolResult,
   decodeUintResult,
   encodeQuantity,
@@ -1324,6 +1325,58 @@ describe("walletFlow", () => {
       }
     ]);
     expect(walletRequests).toEqual([]);
+  });
+
+  test("decodes JSON-RPC readonly preflight revert selectors", async () => {
+    const fetchCalls: unknown[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        error: {
+          code: 3,
+          message: "execution reverted",
+          data: "0x7e787175",
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        sendFinishBuildingUpgradeTransaction(
+          mockProvider(async () => {
+            throw new Error("eth_sendTransaction should not be called");
+          }),
+          account,
+          contract,
+          "1",
+          { readProvider: createJsonRpcProvider("https://example.invalid/rpc") },
+        )
+      ).rejects.toThrow("No active building upgrade is waiting to be finished");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(fetchCalls).toEqual([
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "latest"
+        ]
+      }
+    ]);
   });
 
   test("uses a readonly provider for ready finish building upgrade preflight when available", async () => {

@@ -10,4 +10,11 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("30_000");
     expect(source).not.toContain("2_500");
   });
+
+  test("uses the supplied read provider for standard wallet preflights when available", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("const transactionReadProvider = readProvider;");
+    expect(source).not.toContain("const transactionReadProvider = miniAppMode ? readProvider : undefined;");
+  });
 });

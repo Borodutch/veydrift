@@ -503,6 +503,7 @@ export function createJsonRpcProvider(rpcUrl: string): Eip1193Provider {
         error?: {
           code?: number | string;
           message?: string;
+          data?: unknown;
         };
       };
 
@@ -512,6 +513,9 @@ export function createJsonRpcProvider(rpcUrl: string): Eip1193Provider {
         };
         if (payload.error.code !== undefined) {
           error.code = payload.error.code;
+        }
+        if (payload.error.data !== undefined) {
+          (error as Error & { data?: unknown }).data = payload.error.data;
         }
         throw error;
       }
