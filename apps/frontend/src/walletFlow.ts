@@ -1671,8 +1671,14 @@ export async function sendStartBuildingUpgradeTransaction(
     data
   };
 
-  await assertWalletUnlocked(provider);
-  await assertBuildingUpgradeCallSucceeds(options.readProvider ?? provider, account, contractAddress, data);
+  const preflightProvider = options.readProvider ?? provider;
+  if (!options.readProvider) {
+    await assertWalletUnlocked(provider);
+  }
+  await assertBuildingUpgradeCallSucceeds(preflightProvider, account, contractAddress, data);
+  if (options.readProvider) {
+    await assertWalletUnlocked(provider);
+  }
 
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -1750,12 +1756,12 @@ export async function sendFinishBuildingUpgradeTransaction(
     data
   };
 
-  await assertWalletUnlocked(provider);
   if (options.readProvider) {
     await assertActiveBuildingConstructionReady(options.readProvider, account, contractAddress, planetId);
     await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
     await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
   }
+  await assertWalletUnlocked(provider);
 
   return provider.request<string>({
     method: "eth_sendTransaction",
