@@ -1313,6 +1313,28 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("checks building upgrade readonly preflight before probing wallet unlock state", async () => {
+    let unlockChecks = 0;
+    const walletProvider = withMetaMaskUnlockProbe(
+      mockProvider(async () => {
+        throw new Error("eth_sendTransaction should not be called");
+      }),
+      async () => {
+        unlockChecks += 1;
+        return true;
+      }
+    );
+    const readProvider = mockProvider(async () => {
+      throw { code: 3, message: "execution reverted", data: "0xcec62bc2" };
+    });
+
+    await expect(
+      sendStartBuildingUpgradeTransaction(walletProvider, account, contract, "1", 3, { readProvider })
+    ).rejects.toThrow("Another building is already upgrading");
+
+    expect(unlockChecks).toBe(0);
+  });
+
   test("submits ready finish building upgrade transactions without a wallet-backed preflight call", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
@@ -1386,6 +1408,33 @@ describe("walletFlow", () => {
       }
     ]);
     expect(walletRequests).toEqual([]);
+  });
+
+  test("checks finish building readonly preflight before probing wallet unlock state", async () => {
+    let unlockChecks = 0;
+    const walletProvider = withMetaMaskUnlockProbe(
+      mockProvider(async () => {
+        throw new Error("eth_sendTransaction should not be called");
+      }),
+      async () => {
+        unlockChecks += 1;
+        return true;
+      }
+    );
+    const readProvider = mockProvider(async ({ method, params }) => {
+      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
+      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
+        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
+      }
+      if (method === "eth_call") return "0x";
+      throw new Error("execution reverted: likely fail");
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).rejects.toThrow("This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
+
+    expect(unlockChecks).toBe(0);
   });
 
   test("blocks inactive building completion before finish preflights or wallet submission", async () => {
@@ -2360,6 +2409,16 @@ function mockProvider(handler: (args: { method: string; params?: unknown[] }) =>
   return {
     request: async <T,>(args: { method: string; params?: unknown[] }) => handler(args) as T
   };
+}
+
+function withMetaMaskUnlockProbe(
+  provider: Eip1193Provider,
+  isUnlocked: () => Promise<boolean>,
+): Eip1193Provider {
+  return {
+    ...provider,
+    _metamask: { isUnlocked },
+  } as Eip1193Provider;
 }
 
 function word(value: bigint): string {
