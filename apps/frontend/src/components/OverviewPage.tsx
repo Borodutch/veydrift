@@ -26,10 +26,11 @@ import {
   type PlanetSummary,
   type PlayerProfile,
   type PlayerQueuesResponse,
+  type QueueStateResponse,
   type WalletSettlementResponse
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
-import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { formatUserTimestamp, timestampToMs, type TimestampInput } from "../timestampFormat";
 import {
   actionNoticeForBuilding,
   buildingKeyForContractId,
@@ -194,8 +195,9 @@ export function OverviewPage({
     actionPending: isBuildingActionPending,
     actionPendingLabel: buildingActionPendingLabel,
     isBuildingReadyToFinish,
+    now,
     onFinishBuilding,
-    queue: buildingQueue,
+    queue: onChainQueues?.building ?? buildingQueue,
   });
   const pendingBuildingNotice = buildingActionPendingLabel
     ? {
@@ -741,26 +743,41 @@ export function OverviewPage({
 
 export function shouldShowOverviewBuildingFinishAction({
   isBuildingReadyToFinish,
+  now = Date.now(),
   onFinishBuilding,
+  queue,
 }: {
   isBuildingReadyToFinish?: boolean | undefined;
+  now?: number | undefined;
   onFinishBuilding?: (() => void) | undefined;
+  queue?: OverviewBuildingFinishQueue | null | undefined;
 }): boolean {
-  return Boolean(isBuildingReadyToFinish && onFinishBuilding);
+  if (!onFinishBuilding) return false;
+  if (isBuildingReadyToFinish !== undefined) return isBuildingReadyToFinish;
+
+  const readyAt = timestampToMs(queue?.readyAt);
+  const active = queue && ("active" in queue ? queue.active : true);
+  return Boolean(active && readyAt !== undefined && readyAt <= now);
 }
+
+type OverviewBuildingFinishQueue =
+  | Pick<QueueStateResponse, "active" | "readyAt">
+  | { readyAt: TimestampInput };
 
 export function overviewBuildingFinishAction({
   actionPending,
   actionPendingLabel,
   isBuildingReadyToFinish,
+  now = Date.now(),
   onFinishBuilding,
   queue,
 }: {
   actionPending?: boolean | undefined;
   actionPendingLabel?: string | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
+  now?: number | undefined;
   onFinishBuilding?: (() => void) | undefined;
-  queue?: BuildingQueueItem | undefined;
+  queue?: OverviewBuildingFinishQueue | null | undefined;
 }): {
   disabled: boolean;
   label: string;
@@ -768,10 +785,16 @@ export function overviewBuildingFinishAction({
   reason?: string | undefined;
   visible: boolean;
 } {
-  const visible = Boolean(queue && onFinishBuilding && (actionPending || isBuildingReadyToFinish));
+  const ready = shouldShowOverviewBuildingFinishAction({
+    isBuildingReadyToFinish,
+    now,
+    onFinishBuilding,
+    queue,
+  });
+  const visible = Boolean(queue && onFinishBuilding && (actionPending || ready));
   const reason = actionPending
     ? actionPendingLabel ?? "Building transaction is already in progress."
-    : isBuildingReadyToFinish
+    : ready
       ? undefined
       : undefined;
 

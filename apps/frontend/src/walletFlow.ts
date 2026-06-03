@@ -358,6 +358,7 @@ export type MissionShips = {
 export type ChainAllianceState = {
   wallet: string;
   allianceAvailable: boolean;
+  dismissJoinRequestAvailable?: boolean;
   unavailableReason?: string;
   membership: {
     allianceId: string;
@@ -735,172 +736,6 @@ export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<v
   }
 }
 
-const buildingUpgradeRevertReasons: Record<string, string> = {
-  "0xcec62bc2": "Another building is already upgrading. Finish the active building queue before starting a new upgrade.",
-  "0x7e787175": "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.",
-  "0x4499d03a": "The active building upgrade is not ready to finish yet. Refresh infrastructure state and retry.",
-  "0x2ab0f96f": "Not enough on-chain resources are available for this building upgrade. Refresh infrastructure state and retry.",
-  "0xb8f7e9ba": "This building upgrade is missing an on-chain prerequisite.",
-  "0x359b57cf": "This planet has no free fields for another building upgrade.",
-  "0x1aca3780": "This building is already at its maximum supported level.",
-  "0x9a3d4eb9": "No planet exists for this building upgrade.",
-  "0xab2bcfd3": "This wallet does not own the selected planet.",
-  "0xdfa1a408": "The selected building is not supported by the current game contract.",
-  "0x78e10c67": "Building upgrades are not supported by the current game contract deployment.",
-};
-
-const fleetMissionRevertReasons: Record<string, string> = {
-  "0x705f508b": "Selected origin planet does not have the requested ships. Refresh shipyard state and retry.",
-  "0x2ab0f96f": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and retry.",
-  "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Reduce cargo or add cargo ships.",
-  "0x57aab7e3": "All fleet slots are already in use. Wait for a fleet to return, then retry.",
-  "0x400d5197": "You cannot attack your own planet.",
-  "0xbb3f9d15": "Choose a target planet that is different from the origin planet.",
-  "0x9a3d4eb9": "The selected target planet no longer exists. Refresh galaxy state and choose a target again.",
-  "0xab2bcfd3": "This wallet does not own the selected origin planet. Refresh planets and retry.",
-  "0x524f409b": "Select at least one valid ship for this mission.",
-  "0x65dba1c3": "This target has reached the attack bashing limit. Choose another target or retry later.",
-  "0x3570048f": "This target is protected by score rules and cannot be attacked.",
-  "0x1fbd4a7a": "You cannot attack a planet owned by your alliance.",
-  "0xa3ab075a": "The selected debris field is empty. Refresh galaxy state and retry.",
-  "0x84c69485": "This mission type is not supported for the selected fleet action.",
-  "0xb85299a2": "The target attack is already too close to arrival for this fleet action.",
-  "0xb3439205": "A fleet mission involving this planet still needs resolution. Resolve it before launching another mission.",
-};
-
-function revertSelector(error: unknown): string | undefined {
-  const data = errorData(error);
-  return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
-    ? data.slice(0, 10).toLowerCase()
-    : undefined;
-}
-
-function fleetMissionRevertReason(error: unknown): string | undefined {
-  const message = errorMessage(error);
-  if (/INVALID_MISSION_SPEED/i.test(message)) {
-    return "Choose a valid mission speed between 10% and 100%.";
-  }
-
-  return fleetMissionRevertReasons[revertSelector(error) ?? ""];
-}
-
-async function assertBuildingUpgradeCallSucceeds(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-): Promise<void> {
-  try {
-    await provider.request({
-      method: "eth_call",
-      params: [{ from, to, data }, "latest"],
-    });
-  } catch (error) {
-    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
-    throw new Error(reason ?? walletRequestErrorMessage(error));
-  }
-}
-
-async function assertBuildingUpgradeEstimateSucceeds(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-): Promise<string | undefined> {
-  try {
-    const gas = await provider.request<unknown>({
-      method: "eth_estimateGas",
-      params: [{ from, to, data }],
-    });
-    return normalizedGasQuantity(gas);
-  } catch (error) {
-    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
-    throw new Error(reason ?? "This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
-  }
-}
-
-async function assertTransactionCallSucceeds(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-  fallbackReason: string,
-): Promise<void> {
-  try {
-    await provider.request({
-      method: "eth_call",
-      params: [{ from, to, data }, "latest"],
-    });
-  } catch (error) {
-    throw new Error(preflightFailureMessage(error, fallbackReason));
-  }
-}
-
-async function estimateTransactionGas(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-  fallbackReason: string,
-): Promise<string | undefined> {
-  try {
-    const gas = await provider.request<unknown>({
-      method: "eth_estimateGas",
-      params: [{ from, to, data }],
-    });
-    return normalizedGasQuantity(gas);
-  } catch (error) {
-    throw new Error(preflightFailureMessage(error, fallbackReason));
-  }
-}
-
-function preflightFailureMessage(error: unknown, fallbackReason: string): string {
-  const message = walletRequestErrorMessage(error);
-  return message === "The game contract rejected a wallet read. Retry sync after the latest deployment finishes, or reconnect your wallet on Base Sepolia."
-    ? fallbackReason
-    : message || fallbackReason;
-}
-
-function normalizedGasQuantity(value: unknown): string | undefined {
-  if (typeof value !== "string" || !/^0x[0-9a-fA-F]+$/.test(value)) {
-    return undefined;
-  }
-
-  return BigInt(value) > 0n ? value : undefined;
-}
-
-async function assertActiveBuildingConstructionReady(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  planetId: string,
-): Promise<void> {
-  const data = encodeGameCall(GAME_SELECTORS.activeBuildingConstruction, [planetId]);
-  try {
-    const result = await provider.request<string>({
-      method: "eth_call",
-      params: [{ from, to, data }, "latest"],
-    });
-    const words = abiWords(result);
-    const active = decodeAbiBool(words[0]);
-    if (!active) {
-      throw new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
-    }
-
-    const readyAt = decodeAbiUint(words[3]);
-    if (readyAt <= 0n) {
-      throw new Error("Building completion time is unavailable. Refresh infrastructure state before finishing.");
-    }
-    if (readyAt > BigInt(Math.floor(Date.now() / 1_000))) {
-      throw new Error("Building upgrade is not ready to finish yet.");
-    }
-  } catch (error) {
-    if (error instanceof Error) throw error;
-    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
-    throw new Error(reason ?? walletRequestErrorMessage(error));
-  }
-}
-
 function abiWords(hex: string): string[] {
   const clean = hex.replace(/^0x/, "");
   return clean.match(/.{1,64}/g) ?? [];
@@ -908,27 +743,6 @@ function abiWords(hex: string): string[] {
 
 function decodeAbiUint(word: string | undefined): bigint {
   return word ? BigInt(`0x${word}`) : 0n;
-}
-
-function decodeAbiBool(word: string | undefined): boolean {
-  return decodeAbiUint(word) !== 0n;
-}
-
-async function assertFleetMissionCallSucceeds(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-): Promise<void> {
-  try {
-    await provider.request({
-      method: "eth_call",
-      params: [{ from, to, data }, "latest"],
-    });
-  } catch (error) {
-    const reason = fleetMissionRevertReason(error);
-    throw new Error(reason ?? walletRequestErrorMessage(error));
-  }
 }
 
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
@@ -1719,7 +1533,7 @@ export async function sendStartBuildingUpgradeTransaction(
   contractAddress: string,
   planetId: string,
   buildingId: number,
-  options: TransactionPreflightOptions = {}
+  _options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
   const transaction = {
@@ -1728,14 +1542,7 @@ export async function sendStartBuildingUpgradeTransaction(
     data
   };
 
-  const preflightProvider = options.readProvider ?? provider;
-  if (!options.readProvider) {
-    await assertWalletUnlocked(provider);
-  }
-  await assertBuildingUpgradeCallSucceeds(preflightProvider, account, contractAddress, data);
-  if (options.readProvider) {
-    await assertWalletUnlocked(provider);
-  }
+  await assertWalletUnlocked(provider);
 
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -1804,7 +1611,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   account: string,
   contractAddress: string,
   planetId: string,
-  options: TransactionPreflightOptions = {}
+  _options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
   const transaction: TransactionRequest = {
@@ -1813,12 +1620,6 @@ export async function sendFinishBuildingUpgradeTransaction(
     data
   };
 
-  if (options.readProvider) {
-    await assertActiveBuildingConstructionReady(options.readProvider, account, contractAddress, planetId);
-    await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
-    const gas = await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
-    if (gas) transaction.gas = gas;
-  }
   await assertWalletUnlocked(provider);
 
   return provider.request<string>({
@@ -1927,7 +1728,7 @@ export async function sendCollectResourcesTransaction(
   account: string,
   contractAddress: string,
   planetId: string,
-  options: TransactionPreflightOptions = {}
+  _options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.collectResources, [planetId]);
   const transaction: TransactionRequest = {
@@ -1936,12 +1737,6 @@ export async function sendCollectResourcesTransaction(
     data
   };
 
-  if (options.readProvider) {
-    const fallbackReason = "This resource collection is likely to fail on-chain. Refresh resources and retry.";
-    await assertTransactionCallSucceeds(options.readProvider, account, contractAddress, data, fallbackReason);
-    const gas = await estimateTransactionGas(options.readProvider, account, contractAddress, data, fallbackReason);
-    if (gas) transaction.gas = gas;
-  }
   await assertWalletUnlocked(provider);
 
   return provider.request<string>({
@@ -1991,10 +1786,9 @@ export async function sendLaunchFleetMissionTransaction(
   account: string,
   contractAddress: string,
   params: Parameters<typeof encodeLaunchFleetMissionCall>[0],
-  options: TransactionPreflightOptions = {}
+  _options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
-  await assertFleetMissionCallSucceeds(options.readProvider ?? provider, account, contractAddress, data);
 
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -2539,18 +2333,6 @@ function errorCode(error: unknown): unknown {
     : undefined;
 }
 
-function errorData(error: unknown): unknown {
-  if (typeof error !== "object" || error === null) return undefined;
-  if ("data" in error) return (error as { data: unknown }).data;
-  if ("error" in error) {
-    const nested = (error as { error: unknown }).error;
-    if (typeof nested === "object" && nested !== null && "data" in nested) {
-      return (nested as { data: unknown }).data;
-    }
-  }
-  return undefined;
-}
-
 export async function fetchWalletSettlement(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
   return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, withWalletReadOptions("settlement", undefined, options), "Settlement");
 }
@@ -2560,7 +2342,7 @@ export async function fetchWalletPlanets(apiUrl: string, wallet: string, options
 }
 
 type WalletReadOptions = {
-  source?: "indexed" | "live";
+  source?: "indexed";
 };
 
 export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
@@ -2747,9 +2529,6 @@ function withWalletReadOptions(path: string, planetId: string | undefined, optio
   const params = new URLSearchParams();
   if (planetId && isContractPlanetId(planetId)) {
     params.set("planetId", planetId);
-  }
-  if (options.source === "live") {
-    params.set("source", "live");
   }
 
   const query = params.toString();

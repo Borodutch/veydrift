@@ -73,7 +73,9 @@ import {
   waitForStartedShipProductionState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
+  waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
+  type AllianceApplicationExpectation,
   type CollectedResourcesExpectation,
   type FinishedResearchExpectation,
   type StartedDefenseProductionExpectation,
@@ -145,8 +147,6 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
-  BASE_SEPOLIA,
-  createJsonRpcProvider,
   updatePlayerDisplayName,
   waitForReceipt,
   type ChainDefenseState,
@@ -176,8 +176,6 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
-
-const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -269,6 +267,16 @@ export function overviewResearchCompletionUnavailableReasonFor({
     : unavailableReason;
 }
 
+export function overviewBuildingReadyToFinishFlag({
+  activeBuildingQueue,
+  isBuildingReadyToFinish,
+}: {
+  activeBuildingQueue: QueueStateResponse | null | undefined;
+  isBuildingReadyToFinish: boolean;
+}): boolean | undefined {
+  return activeBuildingQueue ? isBuildingReadyToFinish : undefined;
+}
+
 export function buildingCompletionUnavailableReasonFor({
   canTransact,
   infrastructureState,
@@ -321,10 +329,10 @@ export async function infrastructureStateForCompletionRevalidation({
   loadInfrastructureState?: typeof fetchInfrastructureState;
 }): Promise<ChainInfrastructureState | null> {
   if (!apiBaseUrl || !account) return fallback;
-  return loadInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" });
+  return loadInfrastructureState(apiBaseUrl, account, activePlanetId);
 }
 
-export async function buildingCompletionUnavailableReasonAfterLiveRevalidation({
+export async function buildingCompletionUnavailableReasonAfterBackendRevalidation({
   account,
   activePlanetId,
   apiBaseUrl,
@@ -374,7 +382,118 @@ export async function researchStateForCompletionRevalidation({
   loadResearchState?: typeof fetchResearchState;
 }): Promise<ChainResearchState | null> {
   if (!apiBaseUrl || !account) return fallback;
-  return loadResearchState(apiBaseUrl, account, activePlanetId, { source: "live" });
+  return loadResearchState(apiBaseUrl, account, activePlanetId);
+}
+
+const researchStartLiveStateRequiredLabel =
+  "Can't verify the current research queue right now. Refresh research state and retry before starting research.";
+const researchStartActiveQueueLabel =
+  "Another research is already active. Finish or refresh the active research before starting a new one.";
+
+function activeResearchQueue(
+  queue: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined,
+): QueueStateResponse | undefined {
+  return queue?.active ? queue : undefined;
+}
+
+export function researchStateWithPreservedActiveQueue({
+  knownResearchQueue,
+  next,
+}: {
+  knownResearchQueue: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
+  next: ChainResearchState;
+}): ChainResearchState {
+  if (next.queue?.active) return next;
+  const queue = activeResearchQueue(knownResearchQueue);
+  return queue ? { ...next, queue } : next;
+}
+
+export function researchStartUnavailableReasonFor({
+  canTransact,
+  knownResearchQueue,
+  researchState,
+  walletResearchQueue,
+}: {
+  canTransact: boolean;
+  knownResearchQueue?: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
+  researchState: ChainResearchState | null;
+  walletResearchQueue?: PlayerQueuesResponse["research"] | undefined;
+}): string | undefined {
+  if (!canTransact) {
+    return "Wallet or game contract is unavailable.";
+  }
+
+  if (!researchState) {
+    return researchStartLiveStateRequiredLabel;
+  }
+
+  if (researchState.researchAvailable === false) {
+    return researchState.unavailableReason ?? "Research unavailable on this contract.";
+  }
+
+  if (!researchState.homePlanetId) {
+    return "No VeydriftGame home planet is available for research.";
+  }
+
+  if (
+    activeResearchQueue(researchState.queue)
+    || activeResearchQueue(walletResearchQueue)
+    || activeResearchQueue(knownResearchQueue)
+  ) {
+    return researchStartActiveQueueLabel;
+  }
+
+  return undefined;
+}
+
+export async function researchStartUnavailableReasonAfterLiveRevalidation({
+  account,
+  activePlanetId,
+  apiBaseUrl,
+  fallback,
+  knownResearchQueue,
+  loadResearchState = fetchResearchState,
+  loadWalletQueues = fetchWalletQueues,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  apiBaseUrl: string | undefined;
+  fallback: ChainResearchState | null;
+  knownResearchQueue?: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
+  loadResearchState?: typeof fetchResearchState;
+  loadWalletQueues?: typeof fetchWalletQueues;
+}): Promise<{
+  researchState: ChainResearchState | null;
+  queues: PlayerQueuesResponse | null;
+  unavailableReason: string | undefined;
+}> {
+  if (!apiBaseUrl || !account) {
+    return {
+      researchState: fallback,
+      queues: null,
+      unavailableReason: researchStartUnavailableReasonFor({
+        canTransact: true,
+        knownResearchQueue,
+        researchState: fallback,
+      }),
+    };
+  }
+
+  const [researchState, queues] = await Promise.all([
+    loadResearchState(apiBaseUrl, account, activePlanetId),
+    loadWalletQueues(apiBaseUrl, account, activePlanetId),
+  ]);
+
+  return {
+    researchState,
+    queues,
+    unavailableReason: researchStartUnavailableReasonFor({
+      canTransact: true,
+      knownResearchQueue,
+      researchState,
+      walletResearchQueue: queues.research,
+    }),
+  };
 }
 
 interface PlayableMvpAppProps {
@@ -482,8 +601,6 @@ export function infrastructureUnavailableReasonFor({
 }
 
 export function infrastructureLoadErrorFor({
-  activeBuildingQueue,
-  infrastructureChainState,
   infrastructureError,
   isWalletConnected,
 }: {
@@ -494,6 +611,20 @@ export function infrastructureLoadErrorFor({
 }): string | undefined {
   if (!isWalletConnected || !infrastructureError) return undefined;
   return infrastructureError;
+}
+
+export function hasInfrastructureDisplayState({
+  activeBuildingQueue,
+  homePlanetId,
+  infrastructureChainState,
+  onChainResources,
+}: {
+  activeBuildingQueue?: QueueStateResponse | null | undefined;
+  homePlanetId?: string | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  onChainResources?: PlayableState["resources"] | undefined;
+}): boolean {
+  return Boolean(onChainResources && homePlanetId && (infrastructureChainState || activeBuildingQueue?.active));
 }
 
 export function refreshedInfrastructureUnavailableReasonFor({
@@ -781,6 +912,23 @@ function settlementFromIndexedPlanets(
   };
 }
 
+export function walletSnapshotHydrationKey(apiBaseUrl: string | undefined, account: string | undefined): string | undefined {
+  return apiBaseUrl && account ? `${apiBaseUrl}\n${account.toLowerCase()}` : undefined;
+}
+
+export function canLoadIndexedPageState({
+  account,
+  apiBaseUrl,
+  hydratedWalletSnapshotKey,
+}: {
+  account: string | undefined;
+  apiBaseUrl: string | undefined;
+  hydratedWalletSnapshotKey: string | undefined;
+}): boolean {
+  const expectedKey = walletSnapshotHydrationKey(apiBaseUrl, account);
+  return expectedKey === undefined || hydratedWalletSnapshotKey === expectedKey;
+}
+
 function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
   return {
     wallet,
@@ -812,6 +960,71 @@ function mergeIndexedPlayerQueues(
     ship: fetchedQueues.ship ?? indexedQueues.ship,
     research: fetchedQueues.research ?? indexedQueues.research,
   };
+}
+
+function isActiveResearchQueue(queue: QueueStateResponse | null | undefined): queue is QueueStateResponse {
+  return Boolean(queue?.active && queue.kind === "research");
+}
+
+export function preserveActiveResearchQueue(
+  currentQueues: PlayerQueuesResponse | undefined,
+  nextQueues: PlayerQueuesResponse,
+): PlayerQueuesResponse {
+  if (isActiveResearchQueue(nextQueues.research) || !isActiveResearchQueue(currentQueues?.research)) {
+    return nextQueues;
+  }
+
+  return {
+    ...nextQueues,
+    research: currentQueues.research,
+  };
+}
+
+export function preserveActiveResearchState(
+  currentResearchState: ChainResearchState | null,
+  nextResearchState: ChainResearchState,
+): ChainResearchState {
+  if (isActiveResearchQueue(nextResearchState.queue) || !isActiveResearchQueue(currentResearchState?.queue)) {
+    return nextResearchState;
+  }
+
+  if (researchQueueCompletedInState(currentResearchState.queue, nextResearchState)) {
+    return nextResearchState;
+  }
+
+  return {
+    ...nextResearchState,
+    queue: currentResearchState.queue,
+  };
+}
+
+export function researchStateWithFallbackQueue(
+  researchState: ChainResearchState | null,
+  fallbackQueue: QueueStateResponse | null | undefined,
+): ChainResearchState | null {
+  if (!researchState || isActiveResearchQueue(researchState.queue) || !isActiveResearchQueue(fallbackQueue)) {
+    return researchState;
+  }
+
+  if (researchQueueCompletedInState(fallbackQueue, researchState)) {
+    return researchState;
+  }
+
+  return {
+    ...researchState,
+    queue: fallbackQueue,
+  };
+}
+
+function researchQueueCompletedInState(
+  queue: QueueStateResponse,
+  researchState: ChainResearchState,
+): boolean {
+  if (queue.itemId === undefined || queue.targetLevel === undefined) return false;
+  const currentLevel = researchState.technologies.find((technology) => technology.id === queue.itemId)?.level
+    ?? researchState.technologyLevels[queue.itemId.toString()]
+    ?? 0;
+  return currentLevel >= queue.targetLevel;
 }
 
 function playerQueuesFromIndexedPlanet(
@@ -863,6 +1076,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
   const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
   const [onChainError, setOnChainError] = useState<string | undefined>();
+  const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
   const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
@@ -899,8 +1113,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
-  const transactionReadProvider = readProvider ?? baseSepoliaReadProvider;
-  const receiptProvider = transactionReadProvider ?? provider;
+  const receiptProvider = readProvider ?? provider;
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -961,6 +1174,11 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
+  const pageStateHydrationReady = canLoadIndexedPageState({
+    account,
+    apiBaseUrl,
+    hydratedWalletSnapshotKey,
+  });
 
   useEffect(() => {
     setPlayerProfile(undefined);
@@ -1053,7 +1271,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
     try {
-      const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" });
+      const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
       setInfrastructureChainState(nextInfrastructure);
       return nextInfrastructure;
     } catch (error) {
@@ -1089,18 +1307,20 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const refreshAllianceState = useCallback(() => {
     if (!apiBaseUrl || !account) {
       setAllianceState(null);
-      return;
+      return Promise.resolve(null);
     }
 
     setAllianceLoading(true);
     setAllianceError(undefined);
-    fetchAllianceState(apiBaseUrl, account)
+    return fetchAllianceState(apiBaseUrl, account)
       .then((next) => {
         setAllianceState(next);
+        return next;
       })
       .catch((error) => {
         console.error(error);
         setAllianceError(error instanceof Error ? error.message : "Alliance state could not be loaded.");
+        return null;
       })
       .finally(() => {
         setAllianceLoading(false);
@@ -1138,7 +1358,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     setResearchError(undefined);
     fetchResearchState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
-        setResearchState(next);
+        setResearchState((current) => {
+          const preserved = preserveActiveResearchState(current, next);
+          return researchStateWithFallbackQueue(preserved, onChainQueues?.research) ?? preserved;
+        });
       })
       .catch((error) => {
         console.error(error);
@@ -1147,7 +1370,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       .finally(() => {
         setResearchLoading(false);
       });
-  }, [account, activePlanetId, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
   const refreshRiftState = useCallback(() => {
     if (!apiBaseUrl || !account) {
@@ -1168,7 +1391,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       .finally(() => {
         setRiftLoading(false);
       });
-  }, [account, activePlanetId, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
   const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }) => {
     if (!apiBaseUrl || !account) {
@@ -1178,6 +1401,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       setFleetVisibility(undefined);
       setOnChainError(undefined);
       setOnChainStatus(isWalletConnected ? "loading" : "local");
+      setHydratedWalletSnapshotKey(undefined);
       return;
     }
 
@@ -1202,10 +1426,11 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       }
       setOnChainSettlement(nextSettlement);
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
-      setOnChainQueues(queues);
+      setOnChainQueues((current) => preserveActiveResearchQueue(current, queues));
       setFleetVisibility(fleetVisibility);
       setOnChainError(undefined);
       setOnChainStatus("ready");
+      setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainStatus("error");
@@ -1227,9 +1452,9 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForFinishedBuildingState(
         async () => {
           const [settlement, queues, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletSettlement(apiBaseUrl, account),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { settlement, queues, infrastructure };
@@ -1288,8 +1513,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForCollectedResourcesState(
         async () => {
           const [settlement, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account, { source: "live" }),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletSettlement(apiBaseUrl, account),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { settlement, infrastructure };
@@ -1336,8 +1561,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForStartedDefenseProductionState(
         async () => {
           const [defense, queues] = await Promise.all([
-            fetchDefenseState(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchDefenseState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { defense, queues };
@@ -1376,8 +1601,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForStartedShipProductionState(
         async () => {
           const [shipyard, queues] = await Promise.all([
-            fetchShipyardState(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchShipyardState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { shipyard, queues };
@@ -1416,8 +1641,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForStartedResearchState(
         async () => {
           const [research, queues] = await Promise.all([
-            fetchResearchState(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchResearchState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { research, queues };
@@ -1456,8 +1681,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForFinishedResearchState(
         async () => {
           const [research, queues] = await Promise.all([
-            fetchResearchState(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchResearchState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { research, queues };
@@ -1538,8 +1763,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
 
   useEffect(() => {
     void refreshOnChainState();
+  }, [refreshOnChainState]);
+
+  useEffect(() => {
+    if (!pageStateHydrationReady) return;
     refreshInfrastructureState();
-  }, [refreshInfrastructureState, refreshOnChainState]);
+  }, [pageStateHydrationReady, refreshInfrastructureState]);
 
   useEffect(() => {
     if (!apiBaseUrl || !account || typeof window.EventSource === "undefined") {
@@ -1673,6 +1902,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
   }, [activeBuildingQueue, now, settledState.buildings, settledState.queue]);
+  const effectiveResearchState = useMemo(
+    () => researchStateWithFallbackQueue(researchState, onChainQueues?.research),
+    [onChainQueues?.research, researchState],
+  );
   const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
   const queueProgress = progress(buildingQueue, now);
   const researchProgress = progress(settledState.researchQueue, now);
@@ -1738,40 +1971,46 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   }, []);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "shipyard" || page === "galaxy") {
       refreshShipyardState();
     }
-  }, [page, refreshShipyardState]);
+  }, [page, pageStateHydrationReady, refreshShipyardState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "defenses" || page === "galaxy") {
       refreshDefenseState();
     }
-  }, [page, refreshDefenseState]);
+  }, [page, pageStateHydrationReady, refreshDefenseState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "alliance") {
       refreshAllianceState();
     }
-  }, [page, refreshAllianceState]);
+  }, [page, pageStateHydrationReady, refreshAllianceState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "research") {
       refreshResearchState();
     }
-  }, [page, refreshResearchState]);
+  }, [page, pageStateHydrationReady, refreshResearchState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "rift") {
       refreshRiftState();
     }
-  }, [page, refreshRiftState]);
+  }, [page, pageStateHydrationReady, refreshRiftState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "moon") {
       refreshInfrastructureState();
     }
-  }, [page, refreshInfrastructureState]);
+  }, [page, pageStateHydrationReady, refreshInfrastructureState]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1832,7 +2071,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           gameContract,
           planetId,
           building,
-          { readProvider: transactionReadProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -1868,7 +2106,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     refreshInfrastructureState,
     refreshOnChainState,
     runtimeConfig.status,
-    transactionReadProvider,
     transactionActionGate,
   ]);
 
@@ -1895,7 +2132,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
 
       try {
         const { infrastructureState: latestInfrastructureState, unavailableReason } =
-          await buildingCompletionUnavailableReasonAfterLiveRevalidation({
+          await buildingCompletionUnavailableReasonAfterBackendRevalidation({
             account,
             activePlanetId: planetId,
             apiBaseUrl,
@@ -1919,7 +2156,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           account,
           gameContract,
           planetId,
-          { readProvider: transactionReadProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -1957,7 +2193,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     provider,
     receiptProvider,
     refreshFinishedBuildingState,
-    transactionReadProvider,
     transactionActionGate,
   ]);
 
@@ -2033,8 +2268,26 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     });
   }, [receiptProvider, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, transactionActionGate]);
 
-  const runAllianceTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+  const waitForAllianceApplicationState = useCallback((
+    expectation: AllianceApplicationExpectation,
+  ) => {
+    if (!apiBaseUrl || !account) {
+      throw new Error("Alliance contract unavailable.");
+    }
+
+    return waitForAllianceApplicationCleared(
+      async () => fetchAllianceState(apiBaseUrl, account),
+      expectation,
+    );
+  }, [account, apiBaseUrl]);
+
+  const runAllianceTransaction = useCallback(async (
+    label: string,
+    send: () => Promise<string>,
+    afterReceipt?: (() => Promise<ChainAllianceState | null | undefined>) | undefined,
+  ) => {
     setAllianceAction({ status: "pending", label });
+    setAllianceLoading(true);
 
     try {
       const txHash = await send();
@@ -2042,14 +2295,20 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       if (receiptProvider) {
         await waitForReceipt(receiptProvider, txHash);
       }
+      const next = await (afterReceipt ? afterReceipt() : refreshAllianceState());
+      if (next) {
+        setAllianceState(next);
+      }
       setAllianceAction({ status: "success", label: `${label} confirmed.` });
-      refreshAllianceState();
     } catch (error) {
       console.error(error);
+      void refreshAllianceState();
       setAllianceAction({
         status: "error",
         label: error instanceof Error ? error.message : `${label} failed.`,
       });
+    } finally {
+      setAllianceLoading(false);
     }
   }, [receiptProvider, refreshAllianceState]);
 
@@ -2164,7 +2423,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       account,
       gameContract,
       planetId,
-      { readProvider: transactionReadProvider },
     ), () => refreshCollectedResourcesState({ planetId, previousLastSettledAt }));
   }, [
     account,
@@ -2174,7 +2432,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     provider,
     refreshCollectedResourcesState,
     runShipyardTransaction,
-    transactionReadProvider,
   ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
@@ -2428,7 +2685,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           allianceContract,
           next.membership.allianceId,
           playerAddress,
-        ));
+        ), () => waitForAllianceApplicationState({
+          allianceId: next.membership.allianceId,
+          requester: playerAddress,
+        }));
       })
       .catch((error) => {
         console.error(error);
@@ -2440,7 +2700,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       .finally(() => {
         setAllianceLoading(false);
       });
-  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, waitForAllianceApplicationState]);
 
   const handleDismissAllianceJoinRequest = useCallback((playerAddress: string) => {
     if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
@@ -2475,7 +2735,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           allianceContract,
           next.membership.allianceId,
           playerAddress,
-        ));
+        ), () => waitForAllianceApplicationState({
+          allianceId: next.membership.allianceId,
+          requester: playerAddress,
+        }));
       })
       .catch((error) => {
         console.error(error);
@@ -2487,7 +2750,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       .finally(() => {
         setAllianceLoading(false);
       });
-  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, waitForAllianceApplicationState]);
 
   const handleKickAllianceMember = useCallback((playerAddress: string) => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
@@ -2521,25 +2784,88 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleResearch = useCallback((technologyId: number, key: ResearchKey) => {
-    if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
+    if (!provider || !account || !gameContract || !effectiveResearchState?.homePlanetId) {
       setResearchAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
-    const currentLevel = researchState.technologies.find((technology) => technology.id === technologyId)?.level
-      ?? researchState.technologyLevels[technologyId.toString()]
-      ?? 0;
-    void runResearchTransaction(researchStartTransactionLabel(technologyId, key, researchState), () => sendStartResearchTransaction(
-      provider,
+    setResearchAction({ status: "pending", label: "Refreshing research queue..." });
+    const knownResearchQueue = activeResearchQueue(effectiveResearchState.queue)
+      ?? activeResearchQueue(researchState?.queue)
+      ?? activeResearchQueue(onChainQueues?.research);
+
+    void researchStartUnavailableReasonAfterLiveRevalidation({
       account,
-      gameContract,
-      researchState.homePlanetId ?? "0",
-      technologyId,
-    ), () => refreshStartedResearchState({
-      itemId: technologyId,
-      targetLevel: currentLevel + 1,
-    }));
-  }, [account, gameContract, provider, refreshStartedResearchState, researchState, runResearchTransaction]);
+      activePlanetId,
+      apiBaseUrl,
+      fallback: effectiveResearchState,
+      knownResearchQueue,
+    })
+      .then(({ queues, researchState: latestResearchState, unavailableReason }) => {
+        if (queues) {
+          setOnChainQueues(knownResearchQueue && !activeResearchQueue(queues.research)
+            ? { ...queues, research: knownResearchQueue }
+            : queues);
+        }
+        if (latestResearchState) {
+          setResearchState(
+            researchStateWithFallbackQueue(
+              latestResearchState,
+              activeResearchQueue(queues?.research) ?? knownResearchQueue,
+            ) ?? latestResearchState,
+          );
+          setResearchError(undefined);
+        }
+
+        if (unavailableReason) {
+          setResearchAction({ status: "error", label: unavailableReason });
+          return;
+        }
+
+        const stateForTransaction = researchStateWithFallbackQueue(
+          latestResearchState ?? effectiveResearchState,
+          activeResearchQueue(queues?.research),
+        ) ?? latestResearchState ?? effectiveResearchState;
+        const homePlanetId = stateForTransaction.homePlanetId;
+        if (!homePlanetId) {
+          setResearchAction({ status: "error", label: "No VeydriftGame home planet is available for research." });
+          return;
+        }
+
+        const currentLevel = stateForTransaction.technologies.find((technology) => technology.id === technologyId)?.level
+          ?? stateForTransaction.technologyLevels[technologyId.toString()]
+          ?? 0;
+
+        void runResearchTransaction(researchStartTransactionLabel(technologyId, key, stateForTransaction), () => sendStartResearchTransaction(
+          provider,
+          account,
+          gameContract,
+          homePlanetId,
+          technologyId,
+        ), () => refreshStartedResearchState({
+          itemId: technologyId,
+          targetLevel: currentLevel + 1,
+        }));
+      })
+      .catch((error) => {
+        console.error(error);
+        setResearchAction({
+          status: "error",
+          label: error instanceof Error ? error.message : researchStartLiveStateRequiredLabel,
+        });
+      });
+  }, [
+    account,
+    activePlanetId,
+    apiBaseUrl,
+    gameContract,
+    effectiveResearchState,
+    onChainQueues?.research,
+    provider,
+    refreshStartedResearchState,
+    researchState,
+    runResearchTransaction,
+  ]);
 
   const handleFinishResearch = useCallback(() => {
     console.info("Research completion click received", {
@@ -2547,15 +2873,15 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       hasGameContract: Boolean(gameContract),
       hasOverviewQueue: Boolean(onChainQueues?.research),
       hasProvider: Boolean(provider),
-      hasQueue: Boolean(researchState?.queue?.active),
-      itemId: researchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
-      targetLevel: researchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
+      hasQueue: Boolean(effectiveResearchState?.queue?.active),
+      itemId: effectiveResearchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
+      targetLevel: effectiveResearchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
     });
     const canTransact = Boolean(provider && account && gameContract);
     const unavailableReason = overviewResearchCompletionUnavailableReasonFor({
       canTransact,
       overviewQueue: onChainQueues?.research,
-      researchState,
+      researchState: effectiveResearchState,
     });
     if (unavailableReason) {
       console.info("Research completion blocked before wallet request", { reason: unavailableReason });
@@ -2565,15 +2891,15 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     if (!provider || !account || !gameContract) return;
 
     const expectation = {
-      itemId: researchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
-      targetLevel: researchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
+      itemId: effectiveResearchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
+      targetLevel: effectiveResearchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
     };
     void runResearchTransaction("Research completion", async () => {
       const latestResearchState = await researchStateForCompletionRevalidation({
         account,
         activePlanetId,
         apiBaseUrl,
-        fallback: researchState,
+        fallback: effectiveResearchState,
       });
       if (latestResearchState) {
         setResearchState(latestResearchState);
@@ -2585,7 +2911,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         researchState: latestResearchState,
       });
       if (latestUnavailableReason) {
-        console.info("Research completion blocked after live revalidation", { reason: latestUnavailableReason });
+        console.info("Research completion blocked after backend revalidation", { reason: latestUnavailableReason });
         throw new Error(latestUnavailableReason);
       }
 
@@ -2608,10 +2934,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     activePlanetId,
     apiBaseUrl,
     gameContract,
+    effectiveResearchState,
     onChainQueues?.research,
     provider,
     refreshFinishedResearchState,
-    researchState,
     runResearchTransaction,
   ]);
 
@@ -2853,9 +3179,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
             )
           : undefined,
       },
-      { readProvider: transactionReadProvider },
     ));
-  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels, transactionReadProvider]);
+  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleCounterplay = useCallback((hostileMissionId: string, mode: "acsDefend" | "intercept") => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -2879,9 +3204,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         missionType: missionTypeId(mode),
         ships,
       },
-      { readProvider: transactionReadProvider },
     ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState, transactionReadProvider]);
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
 
   const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
@@ -3014,10 +3338,9 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           missionType: missionTypeId(mode),
           ships,
         },
-        { readProvider: transactionReadProvider },
       )
     );
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState, transactionReadProvider]);
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState]);
 
   const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string) => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -3171,7 +3494,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
-          hasLoadedInfrastructureState={Boolean(onChainResources && onChainSettlement?.homePlanetId && infrastructureChainState)}
+          hasLoadedInfrastructureState={hasInfrastructureDisplayState({
+            activeBuildingQueue,
+            homePlanetId: onChainSettlement?.homePlanetId,
+            infrastructureChainState,
+            onChainResources,
+          })}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={infrastructureLoadErrorFor({
@@ -3243,7 +3571,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           onRefresh={refreshResearchState}
           onResearch={handleResearch}
           onSelectResearch={setSelectedResearchKey}
-          researchState={researchState}
+          researchState={effectiveResearchState}
           selectedResearchKey={selectedResearchKey}
           settledState={settledState}
           state={state}
@@ -3374,7 +3702,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
         isBuildingActionPending={buildingAction.status === "pending"}
-        isBuildingReadyToFinish={isBuildingReadyToFinish}
+        isBuildingReadyToFinish={overviewBuildingReadyToFinishFlag({
+          activeBuildingQueue,
+          isBuildingReadyToFinish,
+        })}
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}
