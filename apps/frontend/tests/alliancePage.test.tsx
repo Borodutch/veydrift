@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   allianceInviteAcceptanceState,
   allianceJoinRequestApprovalState,
+  allianceJoinRequestDismissalState,
   hasAllianceMembership,
   shouldShowAllianceInitialLoader,
   shouldShowAllianceRefreshIndicator,
@@ -106,6 +107,39 @@ describe("AlliancePage loading display", () => {
     expect(allianceJoinRequestApprovalState(state, joinRequest("0x3333333333333333333333333333333333333333"))).toEqual({
       canApprove: false,
       reason: "Only officers and owners can approve applications.",
+    });
+  });
+
+  test("allows officers to dismiss stale join applications", () => {
+    const state = memberAllianceState();
+    const staleRequest = joinRequest("0x4444444444444444444444444444444444444444", {
+      allianceId: "8",
+      role: "member",
+      joinedAt: "1770000010",
+    });
+
+    expect(allianceJoinRequestApprovalState(state, staleRequest)).toEqual({
+      canApprove: false,
+      reason: "Applicant already joined another alliance.",
+    });
+    expect(allianceJoinRequestDismissalState(state, staleRequest)).toEqual({
+      canDismiss: true,
+      reason: null,
+    });
+  });
+
+  test("blocks join application dismissal for non-officer viewers", () => {
+    const state = memberAllianceState({
+      membership: {
+        allianceId: "7",
+        joinedAt: "1770000000",
+        role: "member",
+      },
+    });
+
+    expect(allianceJoinRequestDismissalState(state, joinRequest("0x3333333333333333333333333333333333333333"))).toEqual({
+      canDismiss: false,
+      reason: "Only officers and owners can dismiss applications.",
     });
   });
 

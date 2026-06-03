@@ -235,6 +235,61 @@ contract VeydriftAllianceSystemTest is Test {
         alliances.approveJoinRequest(allianceId, member);
     }
 
+    function testOfficerCanDismissStaleJoinRequest() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+
+        vm.prank(enemy);
+        uint256 enemyAllianceId = alliances.createAlliance("RIVL", "Rivals", "");
+
+        _inviteAndAccept(allianceId, member);
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        vm.prank(recruit);
+        alliances.requestJoinAlliance(allianceId);
+        assertEq(alliances.allianceJoinRequests(allianceId).length, 1);
+
+        vm.prank(enemy);
+        alliances.inviteMember(enemyAllianceId, recruit);
+        vm.prank(recruit);
+        alliances.acceptInvite(enemyAllianceId);
+
+        vm.prank(member);
+        alliances.dismissJoinRequest(allianceId, recruit);
+
+        assertEq(alliances.allianceJoinRequests(allianceId).length, 0);
+        VeydriftAllianceSystem.JoinRequest memory request =
+            alliances.allianceJoinRequest(recruit, allianceId);
+        assertEq(request.active, false);
+
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.InvalidJoinRequest.selector, recruit, allianceId
+            )
+        );
+        alliances.approveJoinRequest(allianceId, recruit);
+    }
+
+    function testJoinRequestDismissalRequiresOfficer() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+
+        vm.prank(recruit);
+        alliances.requestJoinAlliance(allianceId);
+
+        vm.prank(enemy);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftAllianceSystem.NotAuthorized.selector, enemy, allianceId)
+        );
+        alliances.dismissJoinRequest(allianceId, recruit);
+
+        vm.prank(leader);
+        alliances.dismissJoinRequest(allianceId, recruit);
+        assertEq(alliances.allianceJoinRequests(allianceId).length, 0);
+    }
+
     function testOwnerOfficerMemberPermissionBoundaries() public {
         vm.prank(leader);
         uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "discord.gg/vdft");

@@ -46,6 +46,7 @@ interface AlliancePageProps {
   onApproveJoinRequest: (playerAddress: string) => void;
   onCancelJoinRequest: (allianceId: string) => void;
   onCreate: (tag: string, name: string, description: string) => void;
+  onDismissJoinRequest: (playerAddress: string) => void;
   onInvite: (playerAddress: string) => void;
   onJoinRequest: (allianceId: string) => void;
   onKick: (playerAddress: string) => void;
@@ -66,6 +67,7 @@ export function AlliancePage({
   onApproveJoinRequest,
   onCancelJoinRequest,
   onCreate,
+  onDismissJoinRequest,
   onInvite,
   onJoinRequest,
   onKick,
@@ -239,6 +241,7 @@ export function AlliancePage({
                   disabled={disabled}
                   requests={allianceState?.allianceJoinRequests ?? []}
                   onApproveJoinRequest={onApproveJoinRequest}
+                  onDismissJoinRequest={onDismissJoinRequest}
                   onOpenPlayer={setSelectedPlayer}
                 />
               ) : null}
@@ -308,6 +311,27 @@ export function allianceJoinRequestApprovalState(
   }
 
   return { canApprove: true, reason: null };
+}
+
+export function allianceJoinRequestDismissalState(
+  allianceState: ChainAllianceState | null,
+  request: JoinRequestEntry
+): { canDismiss: boolean; reason: string | null } {
+  if (!allianceState) {
+    return { canDismiss: false, reason: "Alliance state is still loading." };
+  }
+
+  const role = allianceState.membership.role;
+  if (role !== "owner" && role !== "officer") {
+    return { canDismiss: false, reason: "Only officers and owners can dismiss applications." };
+  }
+
+  const currentAllianceId = allianceState.membership.allianceId;
+  if (currentAllianceId === "0" || request.allianceId !== currentAllianceId) {
+    return { canDismiss: false, reason: "You are not managing this alliance." };
+  }
+
+  return { canDismiss: true, reason: null };
 }
 
 export function allianceInviteAcceptanceState(
@@ -721,12 +745,14 @@ function JoinRequests({
   disabled,
   requests,
   onApproveJoinRequest,
+  onDismissJoinRequest,
   onOpenPlayer,
 }: {
   allianceState: ChainAllianceState | null;
   disabled: boolean;
   requests: ChainAllianceState["allianceJoinRequests"];
   onApproveJoinRequest: (playerAddress: string) => void;
+  onDismissJoinRequest: (playerAddress: string) => void;
   onOpenPlayer: (playerAddress: string) => void;
 }) {
   return (
@@ -735,6 +761,7 @@ function JoinRequests({
         <div className="grid gap-2">
           {requests.map((request) => {
             const approval = allianceJoinRequestApprovalState(allianceState, request);
+            const dismissal = allianceJoinRequestDismissalState(allianceState, request);
             return (
               <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
                 <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
@@ -749,6 +776,14 @@ function JoinRequests({
                   type="button"
                 >
                   Approve Member
+                </button>
+                <button
+                  className="mt-2 w-full rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={disabled || !dismissal.canDismiss}
+                  onClick={() => onDismissJoinRequest(request.requester)}
+                  type="button"
+                >
+                  Dismiss application
                 </button>
               </div>
             );

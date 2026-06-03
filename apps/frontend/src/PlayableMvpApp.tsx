@@ -7,7 +7,7 @@ import { NavBar, type Page } from "./components/NavBar";
 import { isOverviewResearchReadyToFinish, OverviewPage, type PlanetRenameActionState } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
-import { AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState } from "./components/AlliancePage";
+import { AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState } from "./components/AlliancePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
@@ -140,6 +140,7 @@ import {
   sendAllianceRoleTransaction,
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
+  sendDismissAllianceJoinRequestTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
@@ -2309,6 +2310,53 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       });
   }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleDismissAllianceJoinRequest = useCallback((playerAddress: string) => {
+    if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    const currentAllianceId = allianceState.membership.allianceId;
+    setAllianceAction({ status: "pending", label: "Refreshing alliance application..." });
+    setAllianceLoading(true);
+    void fetchAllianceState(apiBaseUrl, account)
+      .then((next) => {
+        setAllianceState(next);
+        const request = next.allianceJoinRequests.find((entry) =>
+          entry.allianceId === currentAllianceId
+            && entry.requester.toLowerCase() === playerAddress.toLowerCase()
+        );
+        if (!request) {
+          setAllianceAction({ status: "error", label: "This application is no longer pending." });
+          return;
+        }
+
+        const dismissal = allianceJoinRequestDismissalState(next, request);
+        if (!dismissal.canDismiss) {
+          setAllianceAction({ status: "error", label: dismissal.reason ?? "This application cannot be dismissed." });
+          return;
+        }
+
+        return runAllianceTransaction("Alliance application dismissal", () => sendDismissAllianceJoinRequestTransaction(
+          provider,
+          account,
+          allianceContract,
+          next.membership.allianceId,
+          playerAddress,
+        ));
+      })
+      .catch((error) => {
+        console.error(error);
+        setAllianceAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Alliance application could not be refreshed.",
+        });
+      })
+      .finally(() => {
+        setAllianceLoading(false);
+      });
+  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
   const handleKickAllianceMember = useCallback((playerAddress: string) => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
@@ -3105,6 +3153,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onCancelJoinRequest={handleCancelAllianceJoinRequest}
           onCreate={handleCreateAlliance}
+          onDismissJoinRequest={handleDismissAllianceJoinRequest}
           onJoinRequest={handleRequestAllianceJoin}
           onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
