@@ -4,6 +4,7 @@ import type {
   ChainResearchState,
   FleetMissionVisibilityResponse,
   ChainInfrastructureState,
+  ChainAllianceState,
   ManagedPlanetResponse,
   PlayerQueuesResponse,
   WalletSettlementResponse,
@@ -78,6 +79,11 @@ export type WalletPlanetSyncSnapshot = {
   planetsResponse: WalletPlanetsResponse;
   queues: PlayerQueuesResponse;
   settlement: WalletSettlementResponse;
+};
+
+export type AllianceApplicationExpectation = {
+  allianceId: string;
+  requester: string;
 };
 
 export type HydratedWalletPlanetSnapshot = WalletPlanetSyncSnapshot & {
@@ -192,6 +198,16 @@ export function isFinishedResearchStateVisible(
     ?? snapshot.research.technologyLevels[expectation.itemId.toString()]
     ?? 0;
   return level >= expectation.targetLevel;
+}
+
+export function isAllianceApplicationCleared(
+  snapshot: ChainAllianceState,
+  expectation: AllianceApplicationExpectation,
+): boolean {
+  return !snapshot.allianceJoinRequests.some((request) =>
+    request.allianceId === expectation.allianceId
+      && request.requester.toLowerCase() === expectation.requester.toLowerCase()
+  );
 }
 
 function defenseQueueMatches(
@@ -351,6 +367,36 @@ export async function waitForFinishedResearchState(
   }
 
   throw new Error(finishedResearchTimeoutMessage(latest, expectation));
+}
+
+export async function waitForAllianceApplicationCleared(
+  load: () => Promise<ChainAllianceState>,
+  expectation: AllianceApplicationExpectation,
+  options: WaitOptions = {},
+): Promise<ChainAllianceState> {
+  const attempts = options.attempts ?? 8;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: ChainAllianceState | undefined;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      latest = await load();
+      lastError = undefined;
+      if (isAllianceApplicationCleared(latest, expectation)) {
+        return latest;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(allianceApplicationClearTimeoutMessage(latest, expectation, lastError));
 }
 
 export async function waitForCollectedResourcesState(
@@ -559,6 +605,26 @@ function finishedResearchTimeoutMessage(
   }
 
   return "Research transaction confirmed, but the completed research state is still syncing. Try refreshing the game state in a few seconds.";
+}
+
+function allianceApplicationClearTimeoutMessage(
+  snapshot: ChainAllianceState | undefined,
+  expectation: AllianceApplicationExpectation,
+  lastError?: unknown,
+): string {
+  const recovery = transientGameStateReadFailureMessage(lastError);
+  if (recovery) return recovery;
+
+  const stillVisible = snapshot?.allianceJoinRequests.some((request) =>
+    request.allianceId === expectation.allianceId
+      && request.requester.toLowerCase() === expectation.requester.toLowerCase()
+  ) ?? true;
+
+  if (stillVisible) {
+    return "Alliance application transaction confirmed, but the pending application is still syncing in the game API. Try refreshing Alliance state in a few seconds.";
+  }
+
+  return "Alliance application transaction confirmed, but Alliance state is still syncing. Try refreshing Alliance state in a few seconds.";
 }
 
 function walletPlanetHydrationTimeoutMessage(

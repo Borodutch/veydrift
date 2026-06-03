@@ -12,9 +12,12 @@ import {
   loadWalletPlanetSyncSnapshot,
   overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
+  preserveActiveResearchQueue,
+  preserveActiveResearchState,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
+  researchStateWithFallbackQueue,
   researchStartUnavailableReasonAfterLiveRevalidation,
   researchStartUnavailableReasonFor,
   researchStateForCompletionRevalidation,
@@ -29,7 +32,7 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainInfrastructureState, ChainResearchState, QueueStateResponse } from "../src/walletFlow";
+import type { ChainInfrastructureState, ChainResearchState, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
@@ -501,6 +504,49 @@ describe("Playable MVP app display helpers", () => {
       overviewQueue: readyOverviewQueue,
       researchState: null,
     })).toBe("No active research queue is available to complete.");
+  });
+
+  test("preserves active research queues when a background wallet poll returns an empty research queue", () => {
+    const activeResearch = activeResearchQueue();
+    const currentQueues = playerQueues({ research: activeResearch });
+    const emptyPollQueues = playerQueues({ research: null });
+
+    expect(preserveActiveResearchQueue(currentQueues, emptyPollQueues).research).toEqual(activeResearch);
+  });
+
+  test("preserves active research state during transient empty research refreshes", () => {
+    const activeResearch = activeResearchQueue({ targetLevel: 2 });
+    const currentState = researchState({ queue: activeResearch });
+    const emptyRefresh = researchState({ queue: null });
+
+    expect(preserveActiveResearchState(currentState, emptyRefresh).queue).toEqual(activeResearch);
+  });
+
+  test("clears preserved research queues once the refreshed research level confirms completion", () => {
+    const activeResearch = activeResearchQueue({ targetLevel: 2 });
+    const currentState = researchState({ queue: activeResearch });
+    const completedRefresh = researchState({
+      queue: null,
+      technologyLevels: { "0": 2 },
+      technologies: [
+        { id: 0, level: 2, cost: { metal: "0", crystal: "3200", deuterium: "1600" } },
+      ],
+    });
+
+    expect(preserveActiveResearchState(currentState, completedRefresh).queue).toBeNull();
+  });
+
+  test("uses a preserved wallet research queue to keep new research starts disabled", () => {
+    const activeResearch = activeResearchQueue({ itemId: 0, targetLevel: 2 });
+    const loadedResearch = researchState({ queue: null });
+    const effectiveResearchState = researchStateWithFallbackQueue(loadedResearch, activeResearch);
+
+    expect(effectiveResearchState?.queue).toEqual(activeResearch);
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_699_999_000_000,
+      researchState: effectiveResearchState,
+    })).toBe("Research is not ready to complete yet.");
   });
 
   test("lets Overview derive building readiness only when no canonical active building queue is available", () => {
@@ -1244,9 +1290,39 @@ function readyBuildingQueue(): QueueStateResponse {
   };
 }
 
+function activeResearchQueue({
+  itemId = 0,
+  targetLevel = 2,
+}: Partial<Pick<QueueStateResponse, "itemId" | "targetLevel">> = {}): QueueStateResponse {
+  return {
+    active: true,
+    kind: "research",
+    itemId,
+    targetLevel,
+    readyAt: "1700000600",
+    startedAt: "1699997000",
+    cost: { metal: "0", crystal: "1600", deuterium: "800" },
+  };
+}
+
+function playerQueues({
+  research,
+}: Partial<Pick<PlayerQueuesResponse, "research">> = {}): PlayerQueuesResponse {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: "7",
+    building: null,
+    defense: null,
+    ship: null,
+    research: research ?? null,
+  };
+}
+
 function researchState({
   queue,
-}: Partial<Pick<ChainResearchState, "queue">> = {}): ChainResearchState {
+  technologyLevels,
+  technologies,
+}: Partial<Pick<ChainResearchState, "queue" | "technologies" | "technologyLevels">> = {}): ChainResearchState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
@@ -1254,8 +1330,8 @@ function researchState({
     resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
     researchLabLevel: 1,
     researchNetworkLabLevels: [],
-    technologyLevels: { "0": 1 },
-    technologies: [
+    technologyLevels: technologyLevels ?? { "0": 1 },
+    technologies: technologies ?? [
       { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
     ],
     queue: queue ?? null,

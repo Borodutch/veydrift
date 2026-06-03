@@ -18,10 +18,27 @@ describe("TopBar", () => {
     expect(resourceRow?.props?.className).toContain("_1.75rem_1.75rem]");
     expect(collectButton?.props?.className).toContain("h-7 w-7");
     expect(collectButton?.props?.className).toContain("col-start-6");
-    expect(collectButton?.props?.className).toContain("sm:w-auto");
+    expect(collectButton?.props?.className).toContain("lg:w-auto");
     expect(collectButton?.props?.title).toBe("Collect accrued resources: Metal +10 / Crystal +5");
     expect(supportLink?.props?.className).toContain("h-7 w-7");
     expect(supportLink?.props?.className).toContain("sm:hidden");
+  });
+
+  test("keeps desktop actions icon-only until wide layouts have room for labels", () => {
+    const topBar = renderTopBar();
+    const collectButton = buttonWithLabel(topBar, "Collect accrued resources: Metal +10 / Crystal +5");
+    const desktopSupportLink = linksWithLabel(topBar, "Telegram support").find((link) =>
+      typeof link.props?.className === "string" && link.props.className.includes("sm:inline-flex")
+    );
+
+    expect(collectButton?.props?.className).toContain("w-7");
+    expect(collectButton?.props?.className).toContain("lg:w-auto");
+    expect(collectButton?.props?.className).not.toContain("sm:w-auto");
+    expect(visibleText(collectButton)).toContain("Collect");
+    expect(desktopSupportLink?.props?.className).toContain("w-7");
+    expect(desktopSupportLink?.props?.className).toContain("lg:w-auto");
+    expect(desktopSupportLink?.props?.className).toContain("lg:px-2");
+    expect(visibleText(desktopSupportLink)).toContain("Telegram");
   });
 
   test("renders abbreviated mobile resource labels and full desktop labels", () => {
@@ -105,6 +122,10 @@ function buttonWithLabel(node: ComponentChildren, label: string): VNode | undefi
 
 function linkWithLabel(node: ComponentChildren, label: string): VNode | undefined {
   return elementNodes(node).find((item) => item.type === "a" && item.props?.["aria-label"] === label);
+}
+
+function linksWithLabel(node: ComponentChildren, label: string): VNode[] {
+  return elementNodes(node).filter((item) => item.type === "a" && item.props?.["aria-label"] === label);
 }
 
 function elementNodes(node: ComponentChildren): VNode[] {

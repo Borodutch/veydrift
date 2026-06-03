@@ -946,7 +946,8 @@ function enrichAllianceState(
   state: AllianceState,
   indexer: SettlementIndexer | undefined
 ): AllianceState {
-  if (!indexer) return state;
+  const dismissJoinRequestAvailable = process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED === "true";
+  if (!indexer) return { ...state, dismissJoinRequestAvailable };
 
   const displayNameField = <Key extends string>(key: Key, wallet: `0x${string}`): Record<Key, string> | Record<string, never> => {
     const displayName = indexer.playerProfile(wallet).displayName;
@@ -955,6 +956,7 @@ function enrichAllianceState(
 
   return {
     ...state,
+    dismissJoinRequestAvailable,
     profile: state.profile
       ? {
           ...state.profile,
