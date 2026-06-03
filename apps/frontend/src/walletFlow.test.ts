@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   BASE_SEPOLIA,
-  createJsonRpcProvider,
+  assertWalletUnlocked,
   decodeBoolResult,
   decodeUintResult,
   encodeQuantity,
@@ -89,6 +89,48 @@ describe("walletFlow", () => {
     expect(isUserRejected({ code: 4001 })).toBe(true);
     expect(isUserRejected({ message: "User denied transaction signature" })).toBe(true);
     expect(isUserRejected({ code: -32603 })).toBe(false);
+  });
+
+  test("detects locked MetaMask before transaction submission", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        throw new Error("eth_sendTransaction should not be called");
+      }),
+      _metamask: {
+        isUnlocked: async () => false,
+      },
+    } as Eip1193Provider;
+
+    await expect(assertWalletUnlocked(provider)).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+    await expect(
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
+    ).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+
+    expect(requests).toEqual([]);
+  });
+
+  test("detects locked MetaMask from empty accounts when the unlock probe is unavailable", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        throw new Error("eth_sendTransaction should not be called");
+      }),
+      _metamask: {},
+    } as Eip1193Provider;
+
+    await expect(assertWalletUnlocked(provider)).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+    await expect(
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
+    ).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_accounts", params: undefined },
+    ]);
   });
 
   test("detects injected wallet availability before Mini App fallback", async () => {
@@ -306,14 +348,6 @@ describe("walletFlow", () => {
     expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");
     expect(requests).toEqual([
       {
-        method: "eth_call",
-        params: [{
-          from: account,
-          to: contract,
-          data: missionData,
-        }, "latest"],
-      },
-      {
         method: "eth_sendTransaction",
         params: [{
           from: account,
@@ -348,7 +382,7 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("preflights fleet launches and reports stale ship counts before opening wallet submit", async () => {
+  test("submits fleet launches without browser-side contract preflight reads", async () => {
     const ships = {
       smallCargo: 1,
       lightFighter: 0,
@@ -371,7 +405,7 @@ describe("walletFlow", () => {
       if (method === "eth_call") {
         throw { code: 3, message: "execution reverted", data: "0x705f508b" };
       }
-      throw new Error("eth_sendTransaction should not be called");
+      return "0xfleet";
     });
 
     await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
@@ -379,11 +413,11 @@ describe("walletFlow", () => {
       targetPlanetId: 9,
       missionType: 3,
       ships,
-    })).rejects.toThrow("Selected origin planet does not have the requested ships");
+    })).resolves.toBe("0xfleet");
 
     expect(requests).toEqual([
       {
-        method: "eth_call",
+        method: "eth_sendTransaction",
         params: [{
           from: account,
           to: contract,
@@ -393,7 +427,7 @@ describe("walletFlow", () => {
             missionType: 3,
             ships,
           }),
-        }, "latest"],
+        }],
       },
     ]);
   });
@@ -814,6 +848,9 @@ describe("walletFlow", () => {
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
       "game API may be temporarily unavailable"
     );
+    expect(walletRequestErrorMessage(new Error("MetaMask is locked"))).toBe(
+      "Wallet is locked. Please unlock MetaMask and try again."
+    );
   });
 
   test("reports unconfigured settlement when no address is present", async () => {
@@ -1165,17 +1202,6 @@ describe("walletFlow", () => {
         ]
       },
       {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [7, 0])
-          },
-          "latest"
-        ]
-      },
-      {
         method: "eth_sendTransaction",
         params: [
           {
@@ -1238,30 +1264,29 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("blocks building upgrade transactions before wallet confirmation when contract preflight reverts", async () => {
+  test("submits building upgrade transactions without browser-side contract preflight reads", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
       if (method === "eth_call") {
         throw { code: 3, message: "execution reverted", data: "0xcec62bc2" };
       }
-      throw new Error("eth_sendTransaction should not be called");
+      return "0xbuild";
     });
 
     await expect(
       sendStartBuildingUpgradeTransaction(provider, account, contract, "1", 3)
-    ).rejects.toThrow("Another building is already upgrading");
+    ).resolves.toBe("0xbuild");
 
     expect(requests).toEqual([
       {
-        method: "eth_call",
+        method: "eth_sendTransaction",
         params: [
           {
             from: account,
             to: contract,
             data: encodeGameCall("0x165715e3", [1, 3])
-          },
-          "latest"
+          }
         ]
       }
     ]);
@@ -1295,130 +1320,24 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("blocks stale ready finish building upgrades before opening the wallet when readonly preflight reverts", async () => {
-    const walletRequests: unknown[] = [];
-    const readonlyRequests: unknown[] = [];
-    const walletProvider = mockProvider(async ({ method, params }) => {
-      walletRequests.push({ method, params });
-      throw new Error("eth_sendTransaction should not be called");
-    });
-    const readProvider = mockProvider(async ({ method, params }) => {
-      readonlyRequests.push({ method, params });
-      throw { code: 3, message: "execution reverted", data: "0x7e787175" };
-    });
-
-    await expect(
-      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "1", { readProvider })
-    ).rejects.toThrow("No active building upgrade is waiting to be finished");
-
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
-          },
-          "latest"
-        ]
-      }
-    ]);
-    expect(walletRequests).toEqual([]);
-  });
-
-  test("decodes JSON-RPC readonly preflight revert selectors", async () => {
-    const fetchCalls: unknown[] = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      fetchCalls.push(JSON.parse(String(init?.body)));
-      return new Response(JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        error: {
-          code: 3,
-          message: "execution reverted",
-          data: "0x7e787175",
-        },
-      }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }) as typeof fetch;
-
-    try {
-      await expect(
-        sendFinishBuildingUpgradeTransaction(
-          mockProvider(async () => {
-            throw new Error("eth_sendTransaction should not be called");
-          }),
-          account,
-          contract,
-          "1",
-          { readProvider: createJsonRpcProvider("https://example.invalid/rpc") },
-        )
-      ).rejects.toThrow("No active building upgrade is waiting to be finished");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-
-    expect(fetchCalls).toEqual([
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
-          },
-          "latest"
-        ]
-      }
-    ]);
-  });
-
-  test("uses a readonly provider for ready finish building upgrade preflight when available", async () => {
+  test("ignores readonly providers for finish building upgrade transaction submissions", async () => {
     const walletRequests: unknown[] = [];
     const readonlyRequests: unknown[] = [];
     const walletProvider = mockProvider(async ({ method, params }) => {
       walletRequests.push({ method, params });
       if (method === "eth_sendTransaction") return "0xfinish";
-      throw new Error("wallet reads should not be used for finish preflight");
+      throw new Error("wallet reads should not be used for finish submission");
     });
     const readProvider = mockProvider(async ({ method, params }) => {
       readonlyRequests.push({ method, params });
-      return "0x";
+      throw new Error("readonly provider should not be used for finish submission");
     });
 
     await expect(
       sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
     ).resolves.toBe("0xfinish");
 
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      }
-    ]);
+    expect(readonlyRequests).toEqual([]);
     expect(walletRequests).toEqual([
       {
         method: "eth_sendTransaction",
@@ -1433,47 +1352,36 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("blocks likely-failing ready finish building upgrades before opening the wallet when readonly gas estimation fails", async () => {
+  test("ignores readonly providers for resource collection transaction submissions", async () => {
     const walletRequests: unknown[] = [];
     const readonlyRequests: unknown[] = [];
     const walletProvider = mockProvider(async ({ method, params }) => {
       walletRequests.push({ method, params });
-      throw new Error("eth_sendTransaction should not be called");
+      if (method === "eth_sendTransaction") return "0xcollect";
+      throw new Error("wallet reads should not be used for resource collection submission");
     });
     const readProvider = mockProvider(async ({ method, params }) => {
       readonlyRequests.push({ method, params });
-      if (method === "eth_call") return "0x";
-      throw new Error("execution reverted: likely fail");
+      throw new Error("readonly provider should not be used for resource collection submission");
     });
 
     await expect(
-      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
-    ).rejects.toThrow("This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
+      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).resolves.toBe("0xcollect");
 
-    expect(readonlyRequests).toEqual([
+    expect(readonlyRequests).toEqual([]);
+    expect(walletRequests).toEqual([
       {
-        method: "eth_call",
+        method: "eth_sendTransaction",
         params: [
           {
             from: account,
             to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
-          },
-          "latest"
-        ]
-      },
-      {
-        method: "eth_estimateGas",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
           }
         ]
       }
     ]);
-    expect(walletRequests).toEqual([]);
   });
 
   test("submits moon building and Jump Gate transactions", async () => {
@@ -1777,22 +1685,22 @@ describe("walletFlow", () => {
 
     try {
       await fetchWalletSettlement("https://api.example.test", account);
-      await fetchWalletSettlement("https://api.example.test", account, { source: "live" });
-      await fetchWalletPlanets("https://api.example.test///", account, { source: "live" });
+      await fetchWalletSettlement("https://api.example.test", account);
+      await fetchWalletPlanets("https://api.example.test///", account);
       await fetchWalletQueues("https://api.example.test///", account);
-      await fetchWalletQueues("https://api.example.test///", account, "7", { source: "live" });
+      await fetchWalletQueues("https://api.example.test///", account, "7");
       await fetchInfrastructureState("https://api.example.test", account);
-      await fetchInfrastructureState("https://api.example.test", account, undefined, { source: "live" });
+      await fetchInfrastructureState("https://api.example.test", account, undefined);
       await fetchMoonState("https://api.example.test", account, "7");
-      await fetchMoonState("https://api.example.test", account, "7", { source: "live" });
+      await fetchMoonState("https://api.example.test", account, "7");
       await fetchMoonState("https://api.example.test", account, "8:37:9");
       await fetchResearchState("https://api.example.test", account, "7");
-      await fetchResearchState("https://api.example.test", account, "7", { source: "live" });
-      await fetchFleetMissionVisibility("https://api.example.test", account, { source: "live" });
+      await fetchResearchState("https://api.example.test", account, "7");
+      await fetchFleetMissionVisibility("https://api.example.test", account);
       await fetchShipyardState("https://api.example.test", account, "4");
-      await fetchShipyardState("https://api.example.test", account, "4", { source: "live" });
+      await fetchShipyardState("https://api.example.test", account, "4");
       await fetchShipyardState("https://api.example.test", account, "8:37:9");
-      await fetchDefenseState("https://api.example.test", account, "4", { source: "live" });
+      await fetchDefenseState("https://api.example.test", account, "4");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1807,7 +1715,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/settlement?source=live`,
+        url: `https://api.example.test/wallet/${account}/settlement`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1815,7 +1723,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/planets?source=live`,
+        url: `https://api.example.test/wallet/${account}/planets`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1831,7 +1739,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/queues?planetId=7&source=live`,
+        url: `https://api.example.test/wallet/${account}/queues?planetId=7`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1847,7 +1755,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/infrastructure?source=live`,
+        url: `https://api.example.test/wallet/${account}/infrastructure`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1863,7 +1771,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/moon?planetId=7&source=live`,
+        url: `https://api.example.test/wallet/${account}/moon?planetId=7`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1887,7 +1795,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/research?planetId=7&source=live`,
+        url: `https://api.example.test/wallet/${account}/research?planetId=7`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1895,7 +1803,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/fleet-visibility?source=live`,
+        url: `https://api.example.test/wallet/${account}/fleet-visibility`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1911,7 +1819,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/shipyard?planetId=4&source=live`,
+        url: `https://api.example.test/wallet/${account}/shipyard?planetId=4`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1927,7 +1835,7 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/defenses?planetId=4&source=live`,
+        url: `https://api.example.test/wallet/${account}/defenses?planetId=4`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -1937,7 +1845,7 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("uses a readonly provider for Mini App building preflight when the wallet only supports sends", async () => {
+  test("ignores readonly providers for Mini App building transaction submissions", async () => {
     const walletRequests: unknown[] = [];
     const readonlyRequests: unknown[] = [];
     const walletProvider = mockProvider(async ({ method, params }) => {
@@ -1954,19 +1862,7 @@ describe("walletFlow", () => {
       sendStartBuildingUpgradeTransaction(walletProvider, account, contract, "7", 0, { readProvider })
     ).resolves.toBe("0xtx1");
 
-    expect(readonlyRequests).toEqual([
-      {
-        method: "eth_call",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x165715e3", [7, 0])
-          },
-          "latest"
-        ]
-      }
-    ]);
+    expect(readonlyRequests).toEqual([]);
     expect(walletRequests).toEqual([
       {
         method: "eth_sendTransaction",
