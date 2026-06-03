@@ -175,6 +175,7 @@ import {
   transactionConfirmingLabel,
   transactionSyncingLabel,
 } from "./transactionActionGate";
+import { timestampToMs } from "./timestampFormat";
 
 const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
@@ -232,8 +233,8 @@ export function researchCompletionUnavailableReasonFor({
     return "No active research queue is available to complete.";
   }
 
-  const readyAt = Number(queue.readyAt) * 1_000;
-  if (!Number.isFinite(readyAt) || readyAt <= 0) {
+  const readyAt = timestampToMs(queue.readyAt);
+  if (readyAt === undefined) {
     return "Research completion time is unavailable. Refresh research state before completing.";
   }
 
@@ -292,8 +293,8 @@ export function buildingCompletionUnavailableReasonFor({
     return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
   }
 
-  const readyAt = Number(queue.readyAt) * 1_000;
-  if (!Number.isFinite(readyAt) || readyAt <= 0) {
+  const readyAt = timestampToMs(queue.readyAt);
+  if (readyAt === undefined) {
     return "Building completion time is unavailable. Refresh infrastructure state before finishing.";
   }
 

@@ -253,6 +253,40 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
+  test("allows research completion with normalized millisecond readyAt values", () => {
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_600_000,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600000",
+          startedAt: "1699997000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+    })).toBeUndefined();
+
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_600_000,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600001",
+          startedAt: "1699997000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+    })).toBe("Research is not ready to complete yet.");
+  });
+
   test("revalidates research completion against live research state before wallet submission", async () => {
     const fallback = researchState();
     const latest = researchState({
@@ -376,6 +410,36 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_000_000,
     })).toBeUndefined();
+  });
+
+  test("allows building completion revalidation with normalized millisecond readyAt values", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: {
+          ...readyBuildingQueue(),
+          readyAt: "1700000000000",
+          startedAt: "1699997000000",
+        },
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: {
+          ...readyBuildingQueue(),
+          readyAt: "1700000000001",
+          startedAt: "1699997000000",
+        },
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe("Building upgrade is not ready to finish yet.");
   });
 
   test("revalidates building completion against live infrastructure state before wallet submission", async () => {
