@@ -154,7 +154,7 @@ function buildMiniAppManifestConfig(surface: MiniAppSurface): MiniAppManifestCon
   return {
     version: "1",
     name: "Veydrift",
-    homeUrl: surface.PUBLIC_SITE_URL,
+    homeUrl: surface.MINIAPP_LAUNCH_URL,
     iconUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/icon.png`,
     splashImageUrl: surface.MINIAPP_SPLASH,
     splashBackgroundColor: "#05070d",

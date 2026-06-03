@@ -15,7 +15,7 @@ describe("Farcaster Mini App metadata", () => {
     const manifest = buildMiniAppManifest(productionMiniAppSurface, productionAccountAssociation);
 
     expect(accountAssociationDomain(manifest.accountAssociation)).toBe("veydrift.com");
-    expect(manifest.miniapp.homeUrl).toBe("https://veydrift.com");
+    expect(manifest.miniapp.homeUrl).toBe("https://veydrift.com/?miniApp=true");
     expect(manifest.frame).toEqual(manifest.miniapp);
     expect(manifest.miniapp.canonicalDomain).toBe("veydrift.com");
     expect(manifest.miniapp.requiredChains).toEqual(["eip155:8453"]);
@@ -26,7 +26,7 @@ describe("Farcaster Mini App metadata", () => {
     const manifest = buildMiniAppManifest(testMiniAppSurface, testAccountAssociation);
 
     expect(accountAssociationDomain(manifest.accountAssociation)).toBe("test.veydrift.com");
-    expect(manifest.miniapp.homeUrl).toBe("https://test.veydrift.com");
+    expect(manifest.miniapp.homeUrl).toBe("https://test.veydrift.com/?miniApp=true");
     expect(manifest.miniapp.iconUrl).toBe("https://test.veydrift.com/assets/miniapp/icon.png");
     expect("imageUrl" in manifest.miniapp).toBe(false);
     expect("buttonTitle" in manifest.miniapp).toBe(false);

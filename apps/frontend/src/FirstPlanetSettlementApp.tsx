@@ -27,7 +27,7 @@ import {
   readSettlementState,
   requestAccounts,
   fetchWalletSettlement,
-  getAvailableWalletProvider,
+  getAvailableWalletProviderDetails,
   sendSettlementTransaction,
   settlementContractConfigured,
   waitForReceipt,
@@ -139,10 +139,14 @@ export function FirstPlanetSettlementApp() {
     let cleanupProvider: (() => void) | undefined;
 
     void (async () => {
-      const injected = await getAvailableWalletProvider(window as typeof window & { ethereum?: Eip1193Provider });
+      const walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
       if (disposed) return;
 
+      const injected = walletProvider?.provider;
       setProvider(injected);
+      if (walletProvider?.source === "farcaster") {
+        setMiniAppMode(true);
+      }
 
       if (!injected) {
         setWallet({
