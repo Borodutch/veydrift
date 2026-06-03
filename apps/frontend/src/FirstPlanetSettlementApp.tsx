@@ -43,6 +43,8 @@ import {
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
+const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
+const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
 const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
 type SettlementConfigState =
@@ -75,6 +77,17 @@ export function shouldAttemptFarcasterNetworkSetup(input: {
     && input.lastAttemptedChainId !== input.chainId;
 }
 
+export function shouldRetryFarcasterWalletProviderProbe(input: {
+  attempt: number;
+  maxAttempts?: number;
+  miniAppMode: boolean;
+  providerAvailable: boolean;
+}): boolean {
+  return input.miniAppMode
+    && !input.providerAvailable
+    && input.attempt < (input.maxAttempts ?? FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS);
+}
+
 type SettlementFunding =
   | { status: "idle" }
   | { status: "loading" }
@@ -82,6 +95,11 @@ type SettlementFunding =
   | { status: "error"; message: string };
 
 type SettlementLaunchMode = "standard" | "mini-app";
+type WalletProviderDetails = Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>;
+type WalletProviderContext = {
+  miniAppMode: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+};
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -169,7 +187,7 @@ export function FirstPlanetSettlementApp() {
     let disposed = false;
 
     void (async () => {
-      const walletProvider = await loadWalletProviderDetails();
+      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
       if (disposed) return;
       bindWalletProviderDetails(walletProvider);
 
@@ -186,6 +204,26 @@ export function FirstPlanetSettlementApp() {
       walletProviderCleanup.current = undefined;
     };
   }, []);
+
+  useEffect(() => {
+    if (!miniAppMode || provider || wallet.kind !== "no-wallet") {
+      return;
+    }
+
+    let disposed = false;
+
+    void (async () => {
+      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: true });
+      if (disposed || !walletProvider?.provider) return;
+
+      bindWalletProviderDetails(walletProvider);
+      setWallet({ kind: "disconnected" });
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [miniAppMode, provider, wallet.kind]);
 
   useEffect(() => {
     if (!provider || settlementConfigState.status !== "ready") {
@@ -210,14 +248,32 @@ export function FirstPlanetSettlementApp() {
     void connectWallet();
   }, [miniAppMode, provider, settlementConfigState.status, walletProviderSource]);
 
-  async function loadWalletProviderDetails() {
-    return getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+  async function loadWalletProviderDetails({
+    waitForFarcasterProvider = false,
+  }: { waitForFarcasterProvider?: boolean } = {}): Promise<WalletProviderDetails> {
+    let walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+
+    for (
+      let attempt = 1;
+      shouldRetryFarcasterWalletProviderProbe({
+        attempt,
+        miniAppMode: waitForFarcasterProvider,
+        providerAvailable: Boolean(walletProvider?.provider),
+      });
+      attempt += 1
+    ) {
+      await delay(FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS);
+      walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+    }
+
+    return walletProvider;
   }
 
   function bindWalletProviderDetails(
-    walletProvider: Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>,
+    walletProvider: WalletProviderDetails,
   ) {
     const injected = walletProvider?.provider;
+    const providerContext = walletProviderContext(walletProvider?.source);
     setProvider(injected);
     setWalletProviderSource(walletProvider?.source);
     if (walletProvider?.source === "farcaster") {
@@ -235,7 +291,7 @@ export function FirstPlanetSettlementApp() {
       const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
 
       if (nextAccounts[0]) {
-        void refreshWallet(injected, nextAccounts[0]);
+        void refreshWallet(injected, nextAccounts[0], providerContext);
       } else {
         setWallet({
           kind: "disconnected"
@@ -248,7 +304,7 @@ export function FirstPlanetSettlementApp() {
     };
 
     const handleChainChanged = () => {
-      void refreshWallet(injected);
+      void refreshWallet(injected, undefined, providerContext);
     };
 
     injected.on?.("accountsChanged", handleAccountsChanged);
@@ -262,7 +318,14 @@ export function FirstPlanetSettlementApp() {
     return injected;
   }
 
-  async function refreshWallet(injected = provider, preferredAccount?: string) {
+  function walletProviderContext(source = walletProviderSource): WalletProviderContext {
+    return {
+      miniAppMode: miniAppMode || source === "farcaster",
+      walletProviderSource: source,
+    };
+  }
+
+  async function refreshWallet(injected = provider, preferredAccount?: string, context = walletProviderContext()) {
     if (!injected) {
       setWallet({
         kind: "no-wallet"
@@ -302,8 +365,8 @@ export function FirstPlanetSettlementApp() {
         if (shouldAttemptFarcasterNetworkSetup({
           chainId,
           lastAttemptedChainId: farcasterNetworkSetupAttempted.current,
-          miniAppMode,
-          walletProviderSource,
+          miniAppMode: context.miniAppMode,
+          walletProviderSource: context.walletProviderSource,
         })) {
           farcasterNetworkSetupAttempted.current = chainId;
           setWallet({
@@ -317,7 +380,7 @@ export function FirstPlanetSettlementApp() {
 
           try {
             await ensureBaseSepoliaNetwork(injected);
-            await refreshWallet(injected, accounts[0]);
+            await refreshWallet(injected, accounts[0], context);
           } catch (error) {
             console.error("Mini App Base Sepolia setup failed", error);
             setWallet({
@@ -457,7 +520,15 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function connectWallet() {
-    const activeProvider = provider ?? bindWalletProviderDetails(await loadWalletProviderDetails());
+    setWallet({
+      kind: "connecting"
+    });
+
+    const walletProvider = provider
+      ? undefined
+      : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+    const activeProvider = provider ?? bindWalletProviderDetails(walletProvider);
+    const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
 
     if (!activeProvider) {
       setWallet({
@@ -466,13 +537,9 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
-    setWallet({
-      kind: "connecting"
-    });
-
     try {
       const accounts = await requestAccounts(activeProvider);
-      await refreshWallet(activeProvider, accounts[0]);
+      await refreshWallet(activeProvider, accounts[0], providerContext);
     } catch (error) {
       setWallet({
         kind: "disconnected"
