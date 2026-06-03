@@ -341,6 +341,35 @@ export function buildingCompletionUnavailableReasonFor({
   return undefined;
 }
 
+export function buildingFinishUnavailableReasonForDisplay({
+  activeBuildingQueue,
+  canTransact,
+  canVerifyWithReadonlyProvider = false,
+  infrastructureState,
+  isBuildingReadyToFinish,
+  isDisplayedBuildingQueueReady,
+  now = Date.now(),
+}: {
+  activeBuildingQueue: QueueStateResponse | null | undefined;
+  canTransact: boolean;
+  canVerifyWithReadonlyProvider?: boolean;
+  infrastructureState: ChainInfrastructureState | null;
+  isBuildingReadyToFinish: boolean;
+  isDisplayedBuildingQueueReady: boolean;
+  now?: number;
+}): string | undefined {
+  if (!activeBuildingQueue?.active || !isDisplayedBuildingQueueReady || isBuildingReadyToFinish) {
+    return undefined;
+  }
+
+  return buildingCompletionUnavailableReasonFor({
+    canTransact,
+    canVerifyWithReadonlyProvider,
+    infrastructureState,
+    now,
+  });
+}
+
 export async function infrastructureStateForCompletionRevalidation({
   account,
   activePlanetId,
@@ -1931,11 +1960,13 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     });
   }, [infrastructureChainState, now]);
   const buildingFinishUnavailableReason = useMemo(() => {
-    if (!activeBuildingQueue?.active || !isDisplayedBuildingQueueReady || isBuildingReadyToFinish) return undefined;
-
-    return buildingCompletionUnavailableReasonFor({
+    return buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue,
       canTransact: Boolean(provider && account && gameContract),
+      canVerifyWithReadonlyProvider: Boolean(readProvider),
       infrastructureState: infrastructureChainState,
+      isBuildingReadyToFinish,
+      isDisplayedBuildingQueueReady,
       now,
     });
   }, [
@@ -1947,6 +1978,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     isDisplayedBuildingQueueReady,
     now,
     provider,
+    readProvider,
   ]);
   const buildingQueue = useMemo(() => {
     if (activeBuildingQueue?.active) {
