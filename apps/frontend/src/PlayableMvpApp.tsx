@@ -383,6 +383,117 @@ export async function researchStateForCompletionRevalidation({
   return loadResearchState(apiBaseUrl, account, activePlanetId);
 }
 
+const researchStartLiveStateRequiredLabel =
+  "Can't verify the current research queue right now. Refresh research state and retry before starting research.";
+const researchStartActiveQueueLabel =
+  "Another research is already active. Finish or refresh the active research before starting a new one.";
+
+function activeResearchQueue(
+  queue: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined,
+): QueueStateResponse | undefined {
+  return queue?.active ? queue : undefined;
+}
+
+export function researchStateWithPreservedActiveQueue({
+  knownResearchQueue,
+  next,
+}: {
+  knownResearchQueue: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
+  next: ChainResearchState;
+}): ChainResearchState {
+  if (next.queue?.active) return next;
+  const queue = activeResearchQueue(knownResearchQueue);
+  return queue ? { ...next, queue } : next;
+}
+
+export function researchStartUnavailableReasonFor({
+  canTransact,
+  knownResearchQueue,
+  researchState,
+  walletResearchQueue,
+}: {
+  canTransact: boolean;
+  knownResearchQueue?: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
+  researchState: ChainResearchState | null;
+  walletResearchQueue?: PlayerQueuesResponse["research"] | undefined;
+}): string | undefined {
+  if (!canTransact) {
+    return "Wallet or game contract is unavailable.";
+  }
+
+  if (!researchState) {
+    return researchStartLiveStateRequiredLabel;
+  }
+
+  if (researchState.researchAvailable === false) {
+    return researchState.unavailableReason ?? "Research unavailable on this contract.";
+  }
+
+  if (!researchState.homePlanetId) {
+    return "No VeydriftGame home planet is available for research.";
+  }
+
+  if (
+    activeResearchQueue(researchState.queue)
+    || activeResearchQueue(walletResearchQueue)
+    || activeResearchQueue(knownResearchQueue)
+  ) {
+    return researchStartActiveQueueLabel;
+  }
+
+  return undefined;
+}
+
+export async function researchStartUnavailableReasonAfterLiveRevalidation({
+  account,
+  activePlanetId,
+  apiBaseUrl,
+  fallback,
+  knownResearchQueue,
+  loadResearchState = fetchResearchState,
+  loadWalletQueues = fetchWalletQueues,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  apiBaseUrl: string | undefined;
+  fallback: ChainResearchState | null;
+  knownResearchQueue?: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
+  loadResearchState?: typeof fetchResearchState;
+  loadWalletQueues?: typeof fetchWalletQueues;
+}): Promise<{
+  researchState: ChainResearchState | null;
+  queues: PlayerQueuesResponse | null;
+  unavailableReason: string | undefined;
+}> {
+  if (!apiBaseUrl || !account) {
+    return {
+      researchState: fallback,
+      queues: null,
+      unavailableReason: researchStartUnavailableReasonFor({
+        canTransact: true,
+        knownResearchQueue,
+        researchState: fallback,
+      }),
+    };
+  }
+
+  const [researchState, queues] = await Promise.all([
+    loadResearchState(apiBaseUrl, account, activePlanetId),
+    loadWalletQueues(apiBaseUrl, account, activePlanetId),
+  ]);
+
+  return {
+    researchState,
+    queues,
+    unavailableReason: researchStartUnavailableReasonFor({
+      canTransact: true,
+      knownResearchQueue,
+      researchState,
+      walletResearchQueue: queues.research,
+    }),
+  };
+}
+
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
   readProvider?: Eip1193Provider | undefined;
@@ -488,8 +599,6 @@ export function infrastructureUnavailableReasonFor({
 }
 
 export function infrastructureLoadErrorFor({
-  activeBuildingQueue,
-  infrastructureChainState,
   infrastructureError,
   isWalletConnected,
 }: {
@@ -500,6 +609,20 @@ export function infrastructureLoadErrorFor({
 }): string | undefined {
   if (!isWalletConnected || !infrastructureError) return undefined;
   return infrastructureError;
+}
+
+export function hasInfrastructureDisplayState({
+  activeBuildingQueue,
+  homePlanetId,
+  infrastructureChainState,
+  onChainResources,
+}: {
+  activeBuildingQueue?: QueueStateResponse | null | undefined;
+  homePlanetId?: string | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  onChainResources?: PlayableState["resources"] | undefined;
+}): boolean {
+  return Boolean(onChainResources && homePlanetId && (infrastructureChainState || activeBuildingQueue?.active));
 }
 
 export function refreshedInfrastructureUnavailableReasonFor({
@@ -1166,7 +1289,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     setResearchError(undefined);
     fetchResearchState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
-        setResearchState(next);
+        setResearchState((current) => researchStateWithPreservedActiveQueue({
+          knownResearchQueue: activeResearchQueue(current?.queue) ?? activeResearchQueue(onChainQueues?.research),
+          next,
+        }));
       })
       .catch((error) => {
         console.error(error);
@@ -1175,7 +1301,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       .finally(() => {
         setResearchLoading(false);
       });
-  }, [account, activePlanetId, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
   const refreshRiftState = useCallback(() => {
     if (!apiBaseUrl || !account) {
@@ -2560,20 +2686,75 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       return;
     }
 
-    const currentLevel = researchState.technologies.find((technology) => technology.id === technologyId)?.level
-      ?? researchState.technologyLevels[technologyId.toString()]
-      ?? 0;
-    void runResearchTransaction(researchStartTransactionLabel(technologyId, key, researchState), () => sendStartResearchTransaction(
-      provider,
+    setResearchAction({ status: "pending", label: "Refreshing research queue..." });
+    const knownResearchQueue = activeResearchQueue(researchState.queue) ?? activeResearchQueue(onChainQueues?.research);
+
+    void researchStartUnavailableReasonAfterLiveRevalidation({
       account,
-      gameContract,
-      researchState.homePlanetId ?? "0",
-      technologyId,
-    ), () => refreshStartedResearchState({
-      itemId: technologyId,
-      targetLevel: currentLevel + 1,
-    }));
-  }, [account, gameContract, provider, refreshStartedResearchState, researchState, runResearchTransaction]);
+      activePlanetId,
+      apiBaseUrl,
+      fallback: researchState,
+      knownResearchQueue,
+    })
+      .then(({ queues, researchState: latestResearchState, unavailableReason }) => {
+        if (queues) {
+          setOnChainQueues(knownResearchQueue && !activeResearchQueue(queues.research)
+            ? { ...queues, research: knownResearchQueue }
+            : queues);
+        }
+        if (latestResearchState) {
+          setResearchState(researchStateWithPreservedActiveQueue({
+            knownResearchQueue: activeResearchQueue(queues?.research) ?? knownResearchQueue,
+            next: latestResearchState,
+          }));
+          setResearchError(undefined);
+        }
+
+        if (unavailableReason) {
+          setResearchAction({ status: "error", label: unavailableReason });
+          return;
+        }
+
+        const stateForTransaction = latestResearchState ?? researchState;
+        const homePlanetId = stateForTransaction.homePlanetId;
+        if (!homePlanetId) {
+          setResearchAction({ status: "error", label: "No VeydriftGame home planet is available for research." });
+          return;
+        }
+
+        const currentLevel = stateForTransaction.technologies.find((technology) => technology.id === technologyId)?.level
+          ?? stateForTransaction.technologyLevels[technologyId.toString()]
+          ?? 0;
+
+        void runResearchTransaction(researchStartTransactionLabel(technologyId, key, stateForTransaction), () => sendStartResearchTransaction(
+          provider,
+          account,
+          gameContract,
+          homePlanetId,
+          technologyId,
+        ), () => refreshStartedResearchState({
+          itemId: technologyId,
+          targetLevel: currentLevel + 1,
+        }));
+      })
+      .catch((error) => {
+        console.error(error);
+        setResearchAction({
+          status: "error",
+          label: error instanceof Error ? error.message : researchStartLiveStateRequiredLabel,
+        });
+      });
+  }, [
+    account,
+    activePlanetId,
+    apiBaseUrl,
+    gameContract,
+    onChainQueues?.research,
+    provider,
+    refreshStartedResearchState,
+    researchState,
+    runResearchTransaction,
+  ]);
 
   const handleFinishResearch = useCallback(() => {
     console.info("Research completion click received", {
@@ -3202,7 +3383,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
-          hasLoadedInfrastructureState={Boolean(onChainResources && onChainSettlement?.homePlanetId && infrastructureChainState)}
+          hasLoadedInfrastructureState={hasInfrastructureDisplayState({
+            activeBuildingQueue,
+            homePlanetId: onChainSettlement?.homePlanetId,
+            infrastructureChainState,
+            onChainResources,
+          })}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={infrastructureLoadErrorFor({
