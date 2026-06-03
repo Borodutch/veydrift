@@ -747,6 +747,23 @@ async function assertBuildingUpgradeCallSucceeds(
   }
 }
 
+async function assertBuildingUpgradeEstimateSucceeds(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+): Promise<void> {
+  try {
+    await provider.request({
+      method: "eth_estimateGas",
+      params: [{ from, to, data }],
+    });
+  } catch (error) {
+    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
+    throw new Error(reason ?? "This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
+  }
+}
+
 async function assertFleetMissionCallSucceeds(
   provider: Eip1193Provider,
   from: string,
@@ -1641,6 +1658,7 @@ export async function sendFinishBuildingUpgradeTransaction(
 
   if (options.readProvider) {
     await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
+    await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
   }
 
   return provider.request<string>({
