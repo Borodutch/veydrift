@@ -1,7 +1,8 @@
 import type { EnergyBalance, Resources, QueueItem } from "../playableMvp";
 import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
+import { energyExplanationTitle } from "../topBarEnergyInfo";
 import { shortAddress } from "../walletFlow";
-import { Download } from "lucide-preact";
+import { Download, Info } from "lucide-preact";
 import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
 
@@ -226,6 +227,7 @@ function EnergyPip({
   const tone = current < 0 ? "text-red-300" : "text-lime-300";
   const showShortageFactor = current < 0 && required > 0 && scaleBps < BPS;
   const productionPercent = Math.floor((scaleBps * 100) / BPS);
+  const energyExplanation = energyExplanationTitle({ produced, required, scaleBps });
 
   return (
     <div
@@ -250,6 +252,14 @@ function EnergyPip({
             <span className="hidden sm:inline">{productionPercent}% output</span>
           </span>
         )}
+        <button
+          aria-label={energyExplanation}
+          className="inline-grid h-5 w-5 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
+          title={energyExplanation}
+          type="button"
+        >
+          <Info aria-hidden="true" size={12} strokeWidth={2.25} />
+        </button>
       </span>
     </div>
   );

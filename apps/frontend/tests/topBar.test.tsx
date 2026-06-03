@@ -56,6 +56,20 @@ describe("TopBar", () => {
     expect(text).toContain("Collect");
   });
 
+  test("renders an energy explanation info control", () => {
+    const topBar = renderTopBar();
+    const energyInfo = elementNodes(topBar).find(
+      (item) => item.type === "button"
+        && typeof item.props?.title === "string"
+        && item.props.title.includes("Energy powers mines")
+    );
+
+    expect(energyInfo?.props?.["aria-label"]).toBe(energyInfo?.props?.title);
+    expect(energyInfo?.props?.title).toContain("100 produced / 125 required");
+    expect(energyInfo?.props?.title).toContain("Shortage 25");
+    expect(energyInfo?.props?.title).toContain("Resource production is reduced to 80%.");
+  });
+
   test("shows compact nonzero collectable deltas next to mobile resources", () => {
     const topBar = renderTopBar();
     const text = visibleText(topBar).replace(/\s+/g, "");
