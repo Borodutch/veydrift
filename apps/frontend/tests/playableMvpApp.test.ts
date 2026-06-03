@@ -3,6 +3,7 @@ import {
   buildingCompletionUnavailableReasonFor,
   buildingCompletionUnavailableReasonAfterLiveRevalidation,
   buildingFinishActionErrorLabel,
+  hasInfrastructureDisplayState,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
   infrastructureLoadErrorFor,
@@ -647,6 +648,20 @@ describe("Playable MVP app display helpers", () => {
       infrastructureError: "Infrastructure request failed with 503.",
       isWalletConnected: true,
     })).toBe("Infrastructure request failed with 503.");
+
+    expect(hasInfrastructureDisplayState({
+      activeBuildingQueue: activeBuilding,
+      homePlanetId: "7",
+      infrastructureChainState: null,
+      onChainResources: { metal: 500, crystal: 300, deuterium: 100 },
+    })).toBe(true);
+
+    expect(hasInfrastructureDisplayState({
+      activeBuildingQueue: null,
+      homePlanetId: "7",
+      infrastructureChainState: null,
+      onChainResources: { metal: 500, crystal: 300, deuterium: 100 },
+    })).toBe(false);
   });
 
   test("allows building transactions from refreshed live infrastructure resources", () => {
