@@ -962,6 +962,71 @@ function mergeIndexedPlayerQueues(
   };
 }
 
+function isActiveResearchQueue(queue: QueueStateResponse | null | undefined): queue is QueueStateResponse {
+  return Boolean(queue?.active && queue.kind === "research");
+}
+
+export function preserveActiveResearchQueue(
+  currentQueues: PlayerQueuesResponse | undefined,
+  nextQueues: PlayerQueuesResponse,
+): PlayerQueuesResponse {
+  if (isActiveResearchQueue(nextQueues.research) || !isActiveResearchQueue(currentQueues?.research)) {
+    return nextQueues;
+  }
+
+  return {
+    ...nextQueues,
+    research: currentQueues.research,
+  };
+}
+
+export function preserveActiveResearchState(
+  currentResearchState: ChainResearchState | null,
+  nextResearchState: ChainResearchState,
+): ChainResearchState {
+  if (isActiveResearchQueue(nextResearchState.queue) || !isActiveResearchQueue(currentResearchState?.queue)) {
+    return nextResearchState;
+  }
+
+  if (researchQueueCompletedInState(currentResearchState.queue, nextResearchState)) {
+    return nextResearchState;
+  }
+
+  return {
+    ...nextResearchState,
+    queue: currentResearchState.queue,
+  };
+}
+
+export function researchStateWithFallbackQueue(
+  researchState: ChainResearchState | null,
+  fallbackQueue: QueueStateResponse | null | undefined,
+): ChainResearchState | null {
+  if (!researchState || isActiveResearchQueue(researchState.queue) || !isActiveResearchQueue(fallbackQueue)) {
+    return researchState;
+  }
+
+  if (researchQueueCompletedInState(fallbackQueue, researchState)) {
+    return researchState;
+  }
+
+  return {
+    ...researchState,
+    queue: fallbackQueue,
+  };
+}
+
+function researchQueueCompletedInState(
+  queue: QueueStateResponse,
+  researchState: ChainResearchState,
+): boolean {
+  if (queue.itemId === undefined || queue.targetLevel === undefined) return false;
+  const currentLevel = researchState.technologies.find((technology) => technology.id === queue.itemId)?.level
+    ?? researchState.technologyLevels[queue.itemId.toString()]
+    ?? 0;
+  return currentLevel >= queue.targetLevel;
+}
+
 function playerQueuesFromIndexedPlanet(
   wallet: string,
   homePlanetId: string | null,
@@ -1293,10 +1358,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     setResearchError(undefined);
     fetchResearchState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
-        setResearchState((current) => researchStateWithPreservedActiveQueue({
-          knownResearchQueue: activeResearchQueue(current?.queue) ?? activeResearchQueue(onChainQueues?.research),
-          next,
-        }));
+        setResearchState((current) => {
+          const preserved = preserveActiveResearchState(current, next);
+          return researchStateWithFallbackQueue(preserved, onChainQueues?.research) ?? preserved;
+        });
       })
       .catch((error) => {
         console.error(error);
@@ -1326,7 +1391,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       .finally(() => {
         setRiftLoading(false);
       });
-  }, [account, activePlanetId, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
   const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }) => {
     if (!apiBaseUrl || !account) {
@@ -1361,7 +1426,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       }
       setOnChainSettlement(nextSettlement);
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
-      setOnChainQueues(queues);
+      setOnChainQueues((current) => preserveActiveResearchQueue(current, queues));
       setFleetVisibility(fleetVisibility);
       setOnChainError(undefined);
       setOnChainStatus("ready");
@@ -1837,6 +1902,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
   }, [activeBuildingQueue, now, settledState.buildings, settledState.queue]);
+  const effectiveResearchState = useMemo(
+    () => researchStateWithFallbackQueue(researchState, onChainQueues?.research),
+    [onChainQueues?.research, researchState],
+  );
   const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
   const queueProgress = progress(buildingQueue, now);
   const researchProgress = progress(settledState.researchQueue, now);
@@ -2715,19 +2784,21 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleResearch = useCallback((technologyId: number, key: ResearchKey) => {
-    if (!provider || !account || !gameContract || !researchState?.homePlanetId) {
+    if (!provider || !account || !gameContract || !effectiveResearchState?.homePlanetId) {
       setResearchAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
     setResearchAction({ status: "pending", label: "Refreshing research queue..." });
-    const knownResearchQueue = activeResearchQueue(researchState.queue) ?? activeResearchQueue(onChainQueues?.research);
+    const knownResearchQueue = activeResearchQueue(effectiveResearchState.queue)
+      ?? activeResearchQueue(researchState?.queue)
+      ?? activeResearchQueue(onChainQueues?.research);
 
     void researchStartUnavailableReasonAfterLiveRevalidation({
       account,
       activePlanetId,
       apiBaseUrl,
-      fallback: researchState,
+      fallback: effectiveResearchState,
       knownResearchQueue,
     })
       .then(({ queues, researchState: latestResearchState, unavailableReason }) => {
@@ -2737,10 +2808,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
             : queues);
         }
         if (latestResearchState) {
-          setResearchState(researchStateWithPreservedActiveQueue({
-            knownResearchQueue: activeResearchQueue(queues?.research) ?? knownResearchQueue,
-            next: latestResearchState,
-          }));
+          setResearchState(
+            researchStateWithFallbackQueue(
+              latestResearchState,
+              activeResearchQueue(queues?.research) ?? knownResearchQueue,
+            ) ?? latestResearchState,
+          );
           setResearchError(undefined);
         }
 
@@ -2749,7 +2822,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           return;
         }
 
-        const stateForTransaction = latestResearchState ?? researchState;
+        const stateForTransaction = researchStateWithFallbackQueue(
+          latestResearchState ?? effectiveResearchState,
+          activeResearchQueue(queues?.research),
+        ) ?? latestResearchState ?? effectiveResearchState;
         const homePlanetId = stateForTransaction.homePlanetId;
         if (!homePlanetId) {
           setResearchAction({ status: "error", label: "No VeydriftGame home planet is available for research." });
@@ -2783,6 +2859,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     activePlanetId,
     apiBaseUrl,
     gameContract,
+    effectiveResearchState,
     onChainQueues?.research,
     provider,
     refreshStartedResearchState,
@@ -2796,15 +2873,15 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       hasGameContract: Boolean(gameContract),
       hasOverviewQueue: Boolean(onChainQueues?.research),
       hasProvider: Boolean(provider),
-      hasQueue: Boolean(researchState?.queue?.active),
-      itemId: researchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
-      targetLevel: researchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
+      hasQueue: Boolean(effectiveResearchState?.queue?.active),
+      itemId: effectiveResearchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
+      targetLevel: effectiveResearchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
     });
     const canTransact = Boolean(provider && account && gameContract);
     const unavailableReason = overviewResearchCompletionUnavailableReasonFor({
       canTransact,
       overviewQueue: onChainQueues?.research,
-      researchState,
+      researchState: effectiveResearchState,
     });
     if (unavailableReason) {
       console.info("Research completion blocked before wallet request", { reason: unavailableReason });
@@ -2814,15 +2891,15 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     if (!provider || !account || !gameContract) return;
 
     const expectation = {
-      itemId: researchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
-      targetLevel: researchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
+      itemId: effectiveResearchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
+      targetLevel: effectiveResearchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
     };
     void runResearchTransaction("Research completion", async () => {
       const latestResearchState = await researchStateForCompletionRevalidation({
         account,
         activePlanetId,
         apiBaseUrl,
-        fallback: researchState,
+        fallback: effectiveResearchState,
       });
       if (latestResearchState) {
         setResearchState(latestResearchState);
@@ -2857,10 +2934,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     activePlanetId,
     apiBaseUrl,
     gameContract,
+    effectiveResearchState,
     onChainQueues?.research,
     provider,
     refreshFinishedResearchState,
-    researchState,
     runResearchTransaction,
   ]);
 
@@ -3494,7 +3571,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           onRefresh={refreshResearchState}
           onResearch={handleResearch}
           onSelectResearch={setSelectedResearchKey}
-          researchState={researchState}
+          researchState={effectiveResearchState}
           selectedResearchKey={selectedResearchKey}
           settledState={settledState}
           state={state}
