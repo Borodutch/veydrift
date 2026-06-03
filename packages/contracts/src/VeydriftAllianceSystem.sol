@@ -132,6 +132,9 @@ contract VeydriftAllianceSystem {
         uint256 indexed allianceId, address indexed requester, uint64 requestedAt
     );
     event AllianceJoinRequestCancelled(uint256 indexed allianceId, address indexed requester);
+    event AllianceJoinRequestDismissed(
+        uint256 indexed allianceId, address indexed manager, address indexed requester
+    );
     event AllianceJoinRequestApproved(
         uint256 indexed allianceId, address indexed approver, address indexed requester
     );
@@ -252,6 +255,12 @@ contract VeydriftAllianceSystem {
     function cancelJoinRequest(uint256 allianceId) external {
         _removeJoinRequest(allianceId, msg.sender);
         emit AllianceJoinRequestCancelled(allianceId, msg.sender);
+    }
+
+    function dismissJoinRequest(uint256 allianceId, address player) external {
+        _requireOfficer(allianceId, msg.sender);
+        _removeJoinRequest(allianceId, player);
+        emit AllianceJoinRequestDismissed(allianceId, msg.sender, player);
     }
 
     function approveJoinRequest(uint256 allianceId, address player) external {

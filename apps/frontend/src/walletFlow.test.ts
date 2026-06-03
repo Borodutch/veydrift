@@ -61,6 +61,7 @@ import {
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
   sendCreateAllianceTransaction,
+  sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
@@ -1491,6 +1492,9 @@ describe("walletFlow", () => {
     await expect(
       sendApproveAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
     ).resolves.toBe("0xalliance9");
+    await expect(
+      sendDismissAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+    ).resolves.toBe("0xalliance10");
 
     expect(requests[0]).toMatchObject({
       method: "eth_sendTransaction",
@@ -1567,6 +1571,16 @@ describe("walletFlow", () => {
           from: account,
           to: contract,
           data: `0x8ff388c7${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}`
+        }
+      ]
+    });
+    expect(requests[9]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: `0xcd844a18${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}`
         }
       ]
     });
