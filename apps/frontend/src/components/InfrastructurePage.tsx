@@ -1,4 +1,4 @@
-import { Info, X } from "lucide-preact";
+import { Hammer, Info, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
@@ -21,7 +21,7 @@ import {
   formatSigned,
   mineSolarPlantPrerequisiteFor,
 } from "../buildingDetails";
-import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
+import { buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
 import {
   InspectCatalogTile,
@@ -34,7 +34,6 @@ import {
   SingleItemQueueProgress,
   useInspectDetailSelection,
 } from "./InspectProgressLayout";
-import { OptimizedImage } from "./OptimizedImage";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -136,6 +135,7 @@ export function InfrastructurePage({
     onFinishBuilding,
     queue: activeBuildingQueue,
   });
+  const headerFinishAction = infrastructureHeaderFinishAction(finishAction);
 
   const { detailPanelRef, selectInspectItem: handleSelectBuilding } = useInspectDetailSelection<BuildingKey>((key) => {
     setLocalSelectedKey(key);
@@ -161,20 +161,19 @@ export function InfrastructurePage({
           <>
           {settledState.queue?.kind === "building" ? (
             <ActiveBuildingBadge
-              asset={buildingQueueAsset(settledState.queue.key)}
               label={buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)}
             />
           ) : null}
-          {finishAction.visible ? (
+          {headerFinishAction ? (
             <button
-              aria-label={finishAction.reason ?? "Finish building upgrade"}
+              aria-label={headerFinishAction.reason ?? "Finish building upgrade"}
               className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={finishAction.disabled}
-              onClick={finishAction.onFinish}
-              title={finishAction.reason ?? "Finish building upgrade"}
+              disabled={headerFinishAction.disabled}
+              onClick={headerFinishAction.onFinish}
+              title={headerFinishAction.reason ?? "Finish building upgrade"}
               type="button"
             >
-              {finishAction.label}
+              {headerFinishAction.label}
             </button>
           ) : null}
           </>
@@ -268,21 +267,11 @@ export function InfrastructureRefreshErrorPanel({ reason }: { reason: string }) 
   );
 }
 
-function ActiveBuildingBadge({ asset, label }: { asset?: string | undefined; label: string }) {
+function ActiveBuildingBadge({ label }: { label: string }) {
   return (
-    <span className="inline-flex min-w-0 items-center gap-2 rounded border border-amber-300/20 bg-amber-300/10 py-1 pl-1 pr-2.5 text-xs text-amber-300">
-      {asset ? (
-        <span className="h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-white/5">
-          <OptimizedImage
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-            sizes="icon"
-            src={asset}
-          />
-        </span>
-      ) : null}
-      <span className="min-w-0 truncate">Building: {label}</span>
+    <span className="inline-flex max-w-full min-w-0 items-center gap-2 rounded border border-amber-300/20 bg-amber-300/10 px-2.5 py-1.5 text-xs font-semibold leading-5 text-amber-200">
+      <Hammer aria-hidden="true" className="shrink-0" size={14} strokeWidth={2.2} />
+      <span className="min-w-0 break-words">Building: {label}</span>
     </span>
   );
 }
@@ -562,6 +551,11 @@ export function infrastructureFinishAction({
     reason,
     visible,
   };
+}
+
+export function infrastructureHeaderFinishAction(action: ReturnType<typeof infrastructureFinishAction>) {
+  if (!action.visible || action.disabled) return undefined;
+  return action;
 }
 
 export function ActiveBuildingQueueDetail({
