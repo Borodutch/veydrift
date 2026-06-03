@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Planet, Coordinates, PublicQueueState } from "../types";
+import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
@@ -225,24 +225,24 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Public Resources
               </h3>
-              <ResourceBars planet={planet} />
+              <ResourceBars resources={planet.publicState?.resources} />
             </div>
 
-            <PublicIndexedPanel
+            <PublicStatePanel
               title="Buildings"
-              rows={indexedRows(planet.publicState?.buildings, buildingCatalog, "level")}
+              rows={publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")}
             />
-            <PublicIndexedPanel
+            <PublicStatePanel
               title="Fleet"
-              rows={indexedRows(planet.publicState?.fleet, shipCatalog, "count")}
+              rows={publicStateRows(planet.publicState?.fleet, shipCatalog, "count")}
             />
-            <PublicIndexedPanel
+            <PublicStatePanel
               title="Defenses"
-              rows={indexedRows(planet.publicState?.defenses, defenseCatalog, "count")}
+              rows={publicStateRows(planet.publicState?.defenses, defenseCatalog, "count")}
             />
-            <PublicIndexedPanel
+            <PublicStatePanel
               title="Research"
-              rows={indexedRows(planet.publicState?.research, researchCatalog, "level")}
+              rows={publicStateRows(planet.publicState?.research, researchCatalog, "level")}
             />
 
             <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
@@ -353,6 +353,43 @@ export function publicProductionRows(planet: Planet): ProductionMetricRow[] {
   ];
 }
 
+export function publicResourceRows(resources: PublicPlanetState["resources"] | undefined): ProductionMetricRow[] | null {
+  if (!resources) return null;
+
+  const values = {
+    metal: publicResourceValue(resources.metal),
+    crystal: publicResourceValue(resources.crystal),
+    deuterium: publicResourceValue(resources.deuterium),
+  };
+  const max = Math.max(1, values.metal, values.crystal, values.deuterium);
+
+  return [
+    {
+      label: "Metal",
+      value: values.metal.toLocaleString(),
+      fillPercent: values.metal / max * 100,
+      color: "bg-slate-400",
+    },
+    {
+      label: "Crystal",
+      value: values.crystal.toLocaleString(),
+      fillPercent: values.crystal / max * 100,
+      color: "bg-signal",
+    },
+    {
+      label: "Deuterium",
+      value: values.deuterium.toLocaleString(),
+      fillPercent: values.deuterium / max * 100,
+      color: "bg-blue-400",
+    },
+  ];
+}
+
+function publicResourceValue(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function formatProductionMultiplier(resourceIndex: number): string {
   return `${(resourceIndex / 2).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
 }
@@ -422,24 +459,28 @@ function PublicRecordRows({
   );
 }
 
-function ResourceBars({ planet }: { planet: Planet }) {
-  const publicResources = planet.publicState?.resources;
-  const metal = publicResources ? Number(publicResources.metal) : planet.resources.metal;
-  const crystal = publicResources ? Number(publicResources.crystal) : planet.resources.crystal;
-  const deuterium = publicResources ? Number(publicResources.deuterium) : planet.resources.deuterium;
-  const max = Math.max(300, metal, crystal, deuterium, planet.resources.energy);
+function ResourceBars({
+  resources,
+}: {
+  resources: PublicPlanetState["resources"] | undefined;
+}) {
+  const rows = publicResourceRows(resources);
+  if (!rows) {
+    return (
+      <PublicRecordRows rows={[{ label: "Resources", value: "Public resource state unavailable", tone: "muted" }]} />
+    );
+  }
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <ResourceBar label="Metal" value={metal} max={max} color="bg-slate-400" />
-      <ResourceBar label="Crystal" value={crystal} max={max} color="bg-signal" />
-      <ResourceBar label="Deuterium" value={deuterium} max={max} color="bg-blue-400" />
-      <ResourceBar label="Energy" value={planet.resources.energy} max={max} color="bg-ember" />
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {rows.map((row) => (
+        <ProductionMetric key={row.label} {...row} />
+      ))}
     </div>
   );
 }
 
-function PublicIndexedPanel({ rows, title }: { rows: PlanetRecordRow[]; title: string }) {
+function PublicStatePanel({ rows, title }: { rows: PlanetRecordRow[]; title: string }) {
   return (
     <div className="rounded-lg border border-white/10 bg-white/5 p-4">
       <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -450,7 +491,7 @@ function PublicIndexedPanel({ rows, title }: { rows: PlanetRecordRow[]; title: s
   );
 }
 
-export function indexedRows(
+export function publicStateRows(
   rows: Array<{ id: number; level?: number; count?: number }> | null | undefined,
   catalog: readonly { id?: number; label: string }[],
   valueKind: "level" | "count"
@@ -519,34 +560,6 @@ function sameCoordinates(homeCoords: Coordinates | undefined, planet: Coordinate
       && homeCoords.galaxy === planet.galaxy
       && homeCoords.system === planet.system
       && homeCoords.position === planet.position
-  );
-}
-
-function ResourceBar({
-  label,
-  value,
-  max,
-  color,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  color: string;
-}) {
-  const pct = Math.min(100, Math.max(0, (value / max) * 100));
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-slate-500">{label}</span>
-        <span className="text-xs font-medium text-slate-300">{value}</span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-        <div
-          className={`h-full rounded-full ${color}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
   );
 }
 

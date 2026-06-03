@@ -1,6 +1,6 @@
 import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Check, Pencil, Trash2, X } from "lucide-preact";
+import { ArrowRight, Check, Pencil, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
 import {
   buildingQueueAsset,
@@ -30,6 +30,11 @@ import {
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import {
+  actionNoticeForBuilding,
+  buildingKeyForContractId,
+  type InfrastructureActionNotice,
+} from "../buildingActionNotice";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
@@ -67,6 +72,8 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
+  buildingActionNotice?: InfrastructureActionNotice | undefined;
+  buildingActionPendingLabel?: string | undefined;
   isBuildingActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
@@ -109,6 +116,8 @@ export function OverviewPage({
   planet,
   homePlanet,
   isWalletConnected,
+  buildingActionNotice,
+  buildingActionPendingLabel,
   isBuildingActionPending = false,
   isBuildingReadyToFinish,
   onFinishBuilding,
@@ -181,10 +190,26 @@ export function OverviewPage({
     onFinishResearch,
     queue: onChainQueues?.research,
   });
-  const showBuildingFinishAction = shouldShowOverviewBuildingFinishAction({
+  const buildingFinishAction = overviewBuildingFinishAction({
+    actionPending: isBuildingActionPending,
+    actionPendingLabel: buildingActionPendingLabel,
     isBuildingReadyToFinish,
     onFinishBuilding,
+    queue: buildingQueue,
   });
+  const pendingBuildingNotice = buildingActionPendingLabel
+    ? {
+        buildingKey: buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId),
+        label: buildingActionPendingLabel,
+        tone: "pending" as const,
+      }
+    : undefined;
+  const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
+  const scopedBuildingNotice = overviewBuildingActionNoticeFor(buildingActionNotice, buildingNoticeKey);
+  const overviewBuildingNotice = overviewBuildingActionNoticeFor(
+    scopedBuildingNotice ?? pendingBuildingNotice,
+    buildingNoticeKey,
+  );
 
   const planetName = homePlanet?.name
     ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
@@ -296,6 +321,85 @@ export function OverviewPage({
 
   return (
     <div className="grid gap-3">
+      {isWalletConnected && (
+        <div className="rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">Commander</p>
+              <p className="mt-1 break-words text-base font-semibold text-white">{playerLabel}</p>
+              {playerProfile?.displayName ? (
+                <p className="mt-1 text-xs text-slate-500">{playerProfile.fallbackName}</p>
+              ) : null}
+              {playerStatusLabel && !playerPanelOpen ? (
+                <p className={`mt-1 text-xs ${playerStatusTone}`}>{playerStatusLabel}</p>
+              ) : null}
+            </div>
+            {onUpdatePlayerDisplayName ? (
+              <button
+                aria-expanded={playerPanelOpen}
+                aria-label="Edit player display name"
+                className="inline-flex h-8 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+                disabled={playerProfileBusy}
+                onClick={() => {
+                  setPlayerPanelOpen((open) => !open);
+                  setPlayerDraft(playerProfile?.displayName ?? "");
+                  setPlayerValidation(undefined);
+                }}
+                type="button"
+              >
+                <Pencil aria-hidden="true" size={12} strokeWidth={2} />
+                Edit
+              </button>
+            ) : null}
+          </div>
+          {onUpdatePlayerDisplayName && playerPanelOpen ? (
+            <form className="mt-3 grid gap-2 rounded border border-white/10 bg-black/30 p-3" onSubmit={handlePlayerSubmit}>
+              <label className="grid gap-1 text-xs font-medium text-slate-200">
+                Display name
+                <input
+                  className="h-9 rounded border border-white/10 bg-[#080d18]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+                  disabled={playerProfileBusy}
+                  maxLength={32}
+                  onInput={(event) => {
+                    setPlayerDraft(event.currentTarget.value);
+                    setPlayerValidation(undefined);
+                  }}
+                  placeholder="Enter display name"
+                  value={playerDraft}
+                />
+              </label>
+              <p className="text-[11px] leading-4 text-slate-300">
+                Your wallet signs a free ownership proof; no transaction or gas is required.
+              </p>
+              {(playerValidation || playerStatusLabel) && (
+                <p className={`text-xs ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
+                  {playerValidation ?? playerStatusLabel}
+                </p>
+              )}
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  className="inline-flex h-8 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+                  disabled={playerProfileBusy}
+                  onClick={() => setPlayerPanelOpen(false)}
+                  type="button"
+                >
+                  <X aria-hidden="true" size={13} strokeWidth={2} />
+                  Cancel
+                </button>
+                <button
+                  className="inline-flex h-8 items-center gap-1 rounded border border-cyan-300/40 bg-cyan-300/10 px-2.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+                  disabled={!canEditPlayerProfile || playerProfileBusy}
+                  type="submit"
+                >
+                  <Check aria-hidden="true" size={13} strokeWidth={2} />
+                  {playerProfileBusy ? "Signing" : "Save name"}
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </div>
+      )}
+
       {/* Planet hero — compact, no wasted space */}
       <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
         <div className={`relative ${renamePanelOpen ? "min-h-56" : "h-28 sm:h-32"}`}>
@@ -320,7 +424,7 @@ export function OverviewPage({
           <div className={`relative flex ${renamePanelOpen ? "min-h-56" : "h-full"} flex-col justify-end p-3 sm:p-4`}>
             <p className="text-[11px] font-medium text-slate-400">{planetSubhead}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="min-w-0 break-words text-base font-semibold text-white">
+              <h2 className="m-0 min-w-0 break-words text-base font-semibold text-white">
                 {planetName}
               </h2>
               <div className="flex shrink-0 items-center gap-1.5">
@@ -432,85 +536,6 @@ export function OverviewPage({
         </div>
       )}
 
-      {isWalletConnected && (
-        <div className="rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">Commander</p>
-              <p className="mt-1 break-words text-base font-semibold text-white">{playerLabel}</p>
-              {playerProfile?.displayName ? (
-                <p className="mt-1 text-xs text-slate-500">{playerProfile.fallbackName}</p>
-              ) : null}
-              {playerStatusLabel && !playerPanelOpen ? (
-                <p className={`mt-1 text-xs ${playerStatusTone}`}>{playerStatusLabel}</p>
-              ) : null}
-            </div>
-            {onUpdatePlayerDisplayName ? (
-              <button
-                aria-expanded={playerPanelOpen}
-                aria-label="Edit player display name"
-                className="inline-flex h-8 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-                disabled={playerProfileBusy}
-                onClick={() => {
-                  setPlayerPanelOpen((open) => !open);
-                  setPlayerDraft(playerProfile?.displayName ?? "");
-                  setPlayerValidation(undefined);
-                }}
-                type="button"
-              >
-                <Pencil aria-hidden="true" size={12} strokeWidth={2} />
-                Edit
-              </button>
-            ) : null}
-          </div>
-          {onUpdatePlayerDisplayName && playerPanelOpen ? (
-            <form className="mt-3 grid gap-2 rounded border border-white/10 bg-black/30 p-3" onSubmit={handlePlayerSubmit}>
-              <label className="grid gap-1 text-xs font-medium text-slate-200">
-                Display name
-                <input
-                  className="h-9 rounded border border-white/10 bg-[#080d18]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-                  disabled={playerProfileBusy}
-                  maxLength={32}
-                  onInput={(event) => {
-                    setPlayerDraft(event.currentTarget.value);
-                    setPlayerValidation(undefined);
-                  }}
-                  placeholder="Enter display name"
-                  value={playerDraft}
-                />
-              </label>
-              <p className="text-[11px] leading-4 text-slate-300">
-                Your wallet signs a free ownership proof; no transaction or gas is required.
-              </p>
-              {(playerValidation || playerStatusLabel) && (
-                <p className={`text-xs ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
-                  {playerValidation ?? playerStatusLabel}
-                </p>
-              )}
-              <div className="flex flex-wrap justify-end gap-2">
-                <button
-                  className="inline-flex h-8 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-                  disabled={playerProfileBusy}
-                  onClick={() => setPlayerPanelOpen(false)}
-                  type="button"
-                >
-                  <X aria-hidden="true" size={13} strokeWidth={2} />
-                  Cancel
-                </button>
-                <button
-                  className="inline-flex h-8 items-center gap-1 rounded border border-cyan-300/40 bg-cyan-300/10 px-2.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-                  disabled={!canEditPlayerProfile || playerProfileBusy}
-                  type="submit"
-                >
-                  <Check aria-hidden="true" size={13} strokeWidth={2} />
-                  {playerProfileBusy ? "Signing" : "Save name"}
-                </button>
-              </div>
-            </form>
-          ) : null}
-        </div>
-      )}
-
       {isWalletConnected && fleetVisibility && (
         <div className="grid gap-3 lg:grid-cols-4">
           <MissionPanel
@@ -562,9 +587,9 @@ export function OverviewPage({
                 />
               )}
               <OverviewBuildingFinishButton
-                disabled={isBuildingActionPending}
-                onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
+                action={buildingFinishAction}
               />
+              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
             </div>
           ) : buildingQueue ? (
             <div className="grid gap-2">
@@ -578,12 +603,12 @@ export function OverviewPage({
                 now={now}
               />
               <OverviewBuildingFinishButton
-                disabled={isBuildingActionPending}
-                onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
+                action={buildingFinishAction}
               />
+              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
             </div>
           ) : (
-            <EmptyQueue action={<QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>}>
+            <EmptyQueue actionLabel="Build" onAction={() => onNavigate("infrastructure")}>
               No active construction.
             </EmptyQueue>
           )}
@@ -609,7 +634,7 @@ export function OverviewPage({
               <OverviewDefenseFinishButton action={defenseFinishAction} />
             </div>
           ) : (
-            <EmptyQueue action={<QuickLink onClick={() => onNavigate("defenses")}>Defenses</QuickLink>}>
+            <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
               No active defense production.
             </EmptyQueue>
           )}
@@ -662,8 +687,8 @@ export function OverviewPage({
               <OverviewResearchActionNotice actionState={researchAction} />
             </div>
           ) : (
-            <div className="grid gap-2">
-              <EmptyQueue action={<QuickLink onClick={() => onNavigate("research")}>Research</QuickLink>}>
+            <div className="flex min-h-0 flex-1 flex-col gap-2">
+              <EmptyQueue actionLabel="Research" onAction={() => onNavigate("research")}>
                 No active research.
               </EmptyQueue>
               <OverviewResearchActionNotice actionState={researchAction} />
@@ -694,7 +719,7 @@ export function OverviewPage({
               now={now}
             />
           ) : (
-            <EmptyQueue action={<QuickLink onClick={() => onNavigate("shipyard")}>Shipyard</QuickLink>}>
+            <EmptyQueue actionLabel="Shipyard" onAction={() => onNavigate("shipyard")}>
               No active ship production.
             </EmptyQueue>
           )}
@@ -718,6 +743,49 @@ export function shouldShowOverviewBuildingFinishAction({
   onFinishBuilding?: (() => void) | undefined;
 }): boolean {
   return Boolean(isBuildingReadyToFinish && onFinishBuilding);
+}
+
+export function overviewBuildingFinishAction({
+  actionPending,
+  actionPendingLabel,
+  isBuildingReadyToFinish,
+  onFinishBuilding,
+  queue,
+}: {
+  actionPending?: boolean | undefined;
+  actionPendingLabel?: string | undefined;
+  isBuildingReadyToFinish?: boolean | undefined;
+  onFinishBuilding?: (() => void) | undefined;
+  queue?: BuildingQueueItem | undefined;
+}): {
+  disabled: boolean;
+  label: string;
+  onFinish?: (() => void) | undefined;
+  reason?: string | undefined;
+  visible: boolean;
+} {
+  const visible = Boolean(queue && onFinishBuilding);
+  const reason = actionPending
+    ? actionPendingLabel ?? "Building transaction is already in progress."
+    : isBuildingReadyToFinish
+      ? undefined
+      : "Building upgrade is not ready to finish yet.";
+
+  return {
+    disabled: Boolean(reason),
+    label: reason ?? "Finish upgrade",
+    onFinish: visible && !reason ? onFinishBuilding : undefined,
+    reason,
+    visible,
+  };
+}
+
+export function overviewBuildingActionNoticeFor(
+  actionNotice: InfrastructureActionNotice | undefined,
+  buildingKey: BuildingQueueItem["key"] | undefined,
+): InfrastructureActionNotice | undefined {
+  if (!buildingKey) return actionNotice;
+  return actionNoticeForBuilding(actionNotice, buildingKey);
 }
 
 export function overviewDefenseFinishAction({
@@ -775,23 +843,43 @@ export function overviewResearchFinishAction({
 }
 
 function OverviewBuildingFinishButton({
-  disabled = false,
-  onFinishBuilding,
+  action,
 }: {
-  disabled?: boolean | undefined;
-  onFinishBuilding?: (() => void) | undefined;
+  action: ReturnType<typeof overviewBuildingFinishAction>;
 }) {
-  if (!onFinishBuilding) return null;
+  if (!action.visible) return null;
 
   return (
     <button
+      aria-label={action.reason ?? "Finish building upgrade"}
       className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-      disabled={disabled}
-      onClick={onFinishBuilding}
+      disabled={action.disabled}
+      onClick={action.onFinish}
+      title={action.reason ?? "Finish building upgrade"}
       type="button"
     >
-      Finish upgrade
+      {action.label}
     </button>
+  );
+}
+
+function OverviewBuildingActionNotice({
+  notice,
+}: {
+  notice?: InfrastructureActionNotice | undefined;
+}) {
+  if (!notice) return null;
+  const className = notice.tone === "error"
+    ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
+    : notice.tone === "pending"
+      ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"
+      : "border-emerald-300/20 bg-emerald-300/10 text-emerald-100";
+  const role = notice.tone === "error" ? "alert" : "status";
+
+  return (
+    <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${className}`} role={role}>
+      {notice.label}
+    </div>
   );
 }
 
@@ -980,7 +1068,7 @@ function QueuePanel({
   children: preact.ComponentChildren;
 }) {
   return (
-    <div className="flex min-h-32 w-full min-w-0 max-w-[calc(100vw-1.5rem)] flex-col rounded-lg border border-white/10 bg-[#101624] p-3 sm:max-w-none sm:p-4">
+    <div className="flex min-h-[8.5rem] w-full min-w-0 flex-col rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-white">{label}</h3>
         {tag && (
@@ -1071,16 +1159,18 @@ function formatMissionSnapshotTime(value: string, now: number): string {
 }
 
 function EmptyQueue({
-  action,
+  actionLabel,
   children,
+  onAction,
 }: {
-  action: preact.ComponentChildren;
+  actionLabel: string;
   children: preact.ComponentChildren;
+  onAction: () => void;
 }) {
   return (
-    <div className="flex min-h-20 flex-1 flex-col justify-between gap-3 text-xs leading-5 text-slate-400">
-      <p className="mb-0">{children}</p>
-      {action}
+    <div className="flex min-h-0 flex-1 flex-col gap-3 text-xs leading-5 text-slate-400">
+      <p className="min-w-0 break-words">{children}</p>
+      <QuickLink onClick={onAction}>{actionLabel}</QuickLink>
     </div>
   );
 }
@@ -1088,11 +1178,12 @@ function EmptyQueue({
 function QuickLink({ children, onClick }: { children: string; onClick: () => void }) {
   return (
     <button
-      className="flex h-9 w-full items-center justify-center rounded-md border border-white/15 bg-white/10 px-3 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:bg-white/20 hover:text-white"
+      className="mt-auto flex min-h-9 w-full min-w-0 items-center justify-center gap-1.5 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold leading-4 text-slate-200 transition hover:border-cyan-300/40 hover:bg-white/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/45"
       onClick={onClick}
       type="button"
     >
-      {children}
+      <span className="min-w-0 truncate">{children}</span>
+      <ArrowRight aria-hidden="true" className="shrink-0" size={13} strokeWidth={2} />
     </button>
   );
 }

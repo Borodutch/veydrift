@@ -5,6 +5,8 @@ import {
 } from "../src/overviewHeroImage";
 import {
   isOverviewResearchReadyToFinish,
+  overviewBuildingActionNoticeFor,
+  overviewBuildingFinishAction,
   overviewDefenseFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
@@ -49,6 +51,18 @@ const homePlanet: Planet = {
 };
 
 describe("overview planet hero image", () => {
+  test("renders commander identity before the current planet block", () => {
+    const commanderIndex = overviewSource.indexOf(">Commander<");
+    const planetHeroIndex = overviewSource.indexOf("Planet hero");
+    const missionPanelIndex = overviewSource.indexOf("<MissionPanel");
+
+    expect(commanderIndex).toBeGreaterThanOrEqual(0);
+    expect(planetHeroIndex).toBeGreaterThanOrEqual(0);
+    expect(missionPanelIndex).toBeGreaterThanOrEqual(0);
+    expect(commanderIndex).toBeLessThan(planetHeroIndex);
+    expect(planetHeroIndex).toBeLessThan(missionPanelIndex);
+  });
+
   test("uses the disconnected default only for local preview state", () => {
     expect(overviewHeroImage(undefined, false, undefined, undefined)).toBe(DISCONNECTED_HERO_IMAGE);
     expect(overviewHeroImage(undefined, true, undefined, "1:42:7")).toBeUndefined();
@@ -79,6 +93,16 @@ describe("overview queue progress display", () => {
     expect(overviewQueueItemLabelClassName).not.toContain("truncate");
     expect(overviewQueueItemLabelClassName).toContain("break-words");
     expect(overviewQueueItemRemainingClassName).not.toContain("shrink-0");
+  });
+
+  test("uses the shared anchored empty-action layout for production queue cards", () => {
+    for (const actionLabel of ["Build", "Defenses", "Research", "Shipyard"]) {
+      expect(overviewSource).toContain(`actionLabel="${actionLabel}"`);
+    }
+
+    expect(overviewSource).toContain("mt-auto flex min-h-9 w-full min-w-0");
+    expect(overviewSource).toContain("<ArrowRight");
+    expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
   });
 
   test("renders ready queues as complete even when the source payload was indeterminate", () => {
@@ -226,6 +250,71 @@ describe("overview queue progress display", () => {
     expect(shouldShowOverviewBuildingFinishAction({
       isBuildingReadyToFinish: true,
     })).toBe(false);
+  });
+
+  test("keeps building finish controls visible with reasons while not ready or pending", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+    let calls = 0;
+    const onFinishBuilding = () => {
+      calls += 1;
+    };
+
+    const notReady = overviewBuildingFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+      queue,
+    });
+    expect(notReady).toEqual({
+      disabled: true,
+      label: "Building upgrade is not ready to finish yet.",
+      onFinish: undefined,
+      reason: "Building upgrade is not ready to finish yet.",
+      visible: true,
+    });
+
+    const pending = overviewBuildingFinishAction({
+      actionPending: true,
+      actionPendingLabel: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(pending).toEqual({
+      disabled: true,
+      label: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
+      onFinish: undefined,
+      reason: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
+      visible: true,
+    });
+
+    const ready = overviewBuildingFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(ready.disabled).toBe(false);
+    expect(ready.label).toBe("Finish upgrade");
+    ready.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("shows building finish action notices for the active overview queue", () => {
+    const notice = {
+      buildingKey: "shipyard" as const,
+      label: "Can't check game state right now.",
+      tone: "error" as const,
+    };
+
+    expect(overviewBuildingActionNoticeFor(notice, "shipyard")).toBe(notice);
+    expect(overviewBuildingActionNoticeFor(notice, "metalMine")).toBeUndefined();
+    expect(overviewBuildingActionNoticeFor(notice, undefined)).toBe(notice);
   });
 
   test("shows and invokes the ready defense completion action on Overview", () => {

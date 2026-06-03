@@ -323,8 +323,8 @@ export function getPlanet(
   return planetFromCoordinates(galaxy, system, position);
 }
 
-export const GALAXY_COUNT = 5;
-export const SYSTEM_COUNT = 200;
+export const GALAXY_COUNT = 9;
+export const SYSTEM_COUNT = 499;
 export const POSITION_COUNT = 15;
 
 function planetFromCoordinates(galaxy: number, system: number, position: number): Planet {
