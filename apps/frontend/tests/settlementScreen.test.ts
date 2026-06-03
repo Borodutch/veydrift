@@ -212,6 +212,8 @@ describe("settlement screen mode", () => {
     expect(source).toContain("void connectWallet()");
     expect(source).toContain("await ensureBaseSepoliaNetwork(injected)");
     expect(source).toContain("Retry Base Sepolia");
+    expect(source).toContain("networkSwitchPending");
+    expect(source).toContain("disabled={networkSwitchPending}");
     expect(source).not.toContain("Unsupported Mini App network");
   });
 });

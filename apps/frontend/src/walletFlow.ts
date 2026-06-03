@@ -8,9 +8,13 @@ export type Eip1193Provider = {
   }): Promise<T>;
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+  providers?: Eip1193Provider[];
+  isRabby?: boolean;
+  isOkxWallet?: boolean;
+  isOKExWallet?: boolean;
 };
 
-type MetaMaskLockProbe = {
+type WalletLockProbe = {
   _metamask?: {
     isUnlocked?: () => boolean | Promise<boolean>;
   };
@@ -18,11 +22,12 @@ type MetaMaskLockProbe = {
 
 export type InjectedWindow = {
   ethereum?: Eip1193Provider;
+  okxwallet?: Eip1193Provider;
 };
 
 const WALLET_READ_TIMEOUT_MS = 10_000;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
-export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock MetaMask and try again.";
+export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock your wallet and try again.";
 
 export type SettlementConfig = {
   address?: string;
@@ -614,7 +619,13 @@ export type AvailableWalletProvider = {
 export function getInjectedProvider(
   globalWindow: InjectedWindow | undefined,
 ): Eip1193Provider | undefined {
-  return globalWindow?.ethereum;
+  const ethereum = globalWindow?.ethereum;
+  const injectedProviders = ethereum?.providers?.filter(isEip1193Provider) ?? [];
+  const preferredProvider = injectedProviders.find((provider) => provider.isRabby)
+    ?? injectedProviders.find((provider) => provider.isOkxWallet || provider.isOKExWallet)
+    ?? (isEip1193Provider(globalWindow?.okxwallet) ? globalWindow.okxwallet : undefined);
+
+  return preferredProvider ?? ethereum;
 }
 
 export async function getAvailableWalletProviderDetails(
@@ -683,7 +694,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/timed out reading .* from the wallet/i.test(message)) {
-    return `${message} Unlock or reconnect MetaMask, then retry.`;
+    return `${message} Unlock or reconnect your wallet, then retry.`;
   }
 
   if (/timed out reading .* from the game api/i.test(message)) {
@@ -702,11 +713,11 @@ export function walletRequestErrorMessage(error: unknown): string {
 }
 
 export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<void> {
-  const metamask = (provider as Eip1193Provider & MetaMaskLockProbe)._metamask;
+  const lockProbe = (provider as Eip1193Provider & WalletLockProbe)._metamask;
 
-  if (typeof metamask?.isUnlocked === "function") {
+  if (typeof lockProbe?.isUnlocked === "function") {
     try {
-      const unlocked = await metamask.isUnlocked();
+      const unlocked = await lockProbe.isUnlocked();
       if (!unlocked) {
         throw new Error(WALLET_LOCKED_MESSAGE);
       }
@@ -718,7 +729,7 @@ export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<v
     }
   }
 
-  if (!metamask) {
+  if (!lockProbe && !isAccountProbeWallet(provider)) {
     return;
   }
 
@@ -734,6 +745,10 @@ export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<v
   if (accounts.length === 0) {
     throw new Error(WALLET_LOCKED_MESSAGE);
   }
+}
+
+function isAccountProbeWallet(provider: Eip1193Provider): boolean {
+  return Boolean(provider.isRabby || provider.isOkxWallet || provider.isOKExWallet);
 }
 
 const buildingUpgradeRevertReasons: Record<string, string> = {
@@ -1197,18 +1212,9 @@ export async function getChainId(provider: Eip1193Provider): Promise<string> {
 
 export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promise<void> {
   try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [
-        {
-          chainId: BASE_SEPOLIA.chainIdHex
-        }
-      ]
-    });
+    await switchToBaseSepolia(provider);
   } catch (error) {
-    const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
-
-    if (code !== 4902 && code !== "4902") {
+    if (!isUnknownChainError(error)) {
       throw error;
     }
 
@@ -1218,7 +1224,33 @@ export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promi
         BASE_SEPOLIA
       ]
     });
+    await switchToBaseSepolia(provider);
   }
+}
+
+function switchToBaseSepolia(provider: Eip1193Provider): Promise<unknown> {
+  return provider.request({
+    method: "wallet_switchEthereumChain",
+    params: [
+      {
+        chainId: BASE_SEPOLIA.chainIdHex
+      }
+    ]
+  });
+}
+
+function isUnknownChainError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { code?: unknown; message?: unknown };
+  if (candidate.code === 4902 || candidate.code === "4902") {
+    return true;
+  }
+
+  return typeof candidate.message === "string"
+    && /unknown chain|unrecognized chain|chain .*not (?:been )?added|wallet_addEthereumChain/i.test(candidate.message);
 }
 
 export async function readSettlementState(
