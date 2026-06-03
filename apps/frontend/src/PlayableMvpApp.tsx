@@ -2291,9 +2291,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           : { status: "pending", label: `${label} confirmed. Rechecking game state after a temporary API/RPC outage.` });
       } catch (error) {
         console.error(error);
+        const message = error instanceof Error ? error.message : `${label} failed.`;
         setShipyardAction({
           status: "error",
-          label: error instanceof Error ? error.message : `${label} failed.`,
+          label: `${label} failed: ${message}`,
         });
       }
     });
@@ -2478,6 +2479,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
 
   const handleCollectResources = useCallback(() => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setShipyardAction({
+        status: "error",
+        label: "Resource collection failed: Wallet, game contract, or home planet is unavailable.",
+      });
       return;
     }
 
@@ -3469,16 +3474,24 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     setPage("research");
   }, []);
 
+  const collectResourcesActionLabel = shipyardAction.status !== "idle"
+    && shipyardAction.label.startsWith("Resource collection")
+    ? shipyardAction.label
+    : undefined;
+  const collectResourcesActionStatus = collectResourcesActionLabel && shipyardAction.status !== "idle"
+    ? shipyardAction.status
+    : undefined;
+  const collectResourcesPending = shipyardAction.status === "pending" && Boolean(collectResourcesActionLabel);
   const topBar = (
     <TopBar
       canCollectResources={isCollectReady}
       caps={caps}
       energy={topBarEnergy}
       isWalletConnected={isWalletConnected}
-      collectResourcesPending={shipyardAction.status === "pending" && shipyardAction.label.startsWith("Resource collection:")}
-      collectResourcesPendingLabel={shipyardAction.status === "pending" && shipyardAction.label.startsWith("Resource collection:")
-        ? shipyardAction.label
-        : undefined}
+      collectResourcesActionLabel={collectResourcesActionLabel}
+      collectResourcesActionStatus={collectResourcesActionStatus}
+      collectResourcesPending={collectResourcesPending}
+      collectResourcesPendingLabel={collectResourcesPending ? shipyardAction.label : undefined}
       onCollectResources={handleCollectResources}
       queue={isWalletConnected ? undefined : settledState.queue}
       rates={rates}

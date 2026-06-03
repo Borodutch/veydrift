@@ -22,6 +22,8 @@ interface TopBarProps {
   coordinates?: string | undefined;
   isWalletConnected: boolean;
   canCollectResources?: boolean | undefined;
+  collectResourcesActionLabel?: string | undefined;
+  collectResourcesActionStatus?: "error" | "pending" | "success" | undefined;
   collectResourcesPending?: boolean | undefined;
   collectResourcesPendingLabel?: string | undefined;
   energy?: EnergyBalance | undefined;
@@ -42,6 +44,8 @@ export function TopBar({
   energy,
   isWalletConnected,
   canCollectResources = false,
+  collectResourcesActionLabel,
+  collectResourcesActionStatus,
   collectResourcesPending = false,
   collectResourcesPendingLabel,
   onCollectResources,
@@ -56,6 +60,11 @@ export function TopBar({
   const collectTitle = collectResourcesPending
     ? collectResourcesPendingLabel ?? "Resource collection pending"
     : collectResourcesTitle(resourceDeltas, canCollectResources);
+  const collectFeedbackClass = collectResourcesActionStatus === "error"
+    ? "text-rose-200"
+    : collectResourcesActionStatus === "success"
+      ? "text-emerald-200"
+      : "text-cyan-100";
 
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
@@ -161,6 +170,16 @@ export function TopBar({
             </span>
           )}
         </div>
+
+        {collectResourcesActionLabel && (
+          <p
+            className={`w-full min-w-0 truncate text-center text-[11px] leading-4 sm:text-left ${collectFeedbackClass}`}
+            role={collectResourcesActionStatus === "error" ? "alert" : "status"}
+            title={collectResourcesActionLabel}
+          >
+            {collectResourcesActionLabel}
+          </p>
+        )}
       </div>
     </div>
   );
