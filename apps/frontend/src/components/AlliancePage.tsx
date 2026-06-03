@@ -331,6 +331,10 @@ export function allianceJoinRequestDismissalState(
     return { canDismiss: false, reason: "You are not managing this alliance." };
   }
 
+  if (!allianceState.dismissJoinRequestAvailable) {
+    return { canDismiss: false, reason: "Application dismissal is unavailable on this alliance deployment." };
+  }
+
   return { canDismiss: true, reason: null };
 }
 
@@ -762,6 +766,7 @@ function JoinRequests({
           {requests.map((request) => {
             const approval = allianceJoinRequestApprovalState(allianceState, request);
             const dismissal = allianceJoinRequestDismissalState(allianceState, request);
+            const showDismissAction = Boolean(allianceState?.dismissJoinRequestAvailable);
             return (
               <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
                 <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
@@ -777,14 +782,16 @@ function JoinRequests({
                 >
                   Approve Member
                 </button>
-                <button
-                  className="mt-2 w-full rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={disabled || !dismissal.canDismiss}
-                  onClick={() => onDismissJoinRequest(request.requester)}
-                  type="button"
-                >
-                  Dismiss application
-                </button>
+                {showDismissAction ? (
+                  <button
+                    className="mt-2 w-full rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled || !dismissal.canDismiss}
+                    onClick={() => onDismissJoinRequest(request.requester)}
+                    type="button"
+                  >
+                    Dismiss application
+                  </button>
+                ) : null}
               </div>
             );
           })}
