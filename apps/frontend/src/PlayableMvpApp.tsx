@@ -488,8 +488,6 @@ export function infrastructureUnavailableReasonFor({
 }
 
 export function infrastructureLoadErrorFor({
-  activeBuildingQueue,
-  infrastructureChainState,
   infrastructureError,
   isWalletConnected,
 }: {
@@ -500,6 +498,20 @@ export function infrastructureLoadErrorFor({
 }): string | undefined {
   if (!isWalletConnected || !infrastructureError) return undefined;
   return infrastructureError;
+}
+
+export function hasInfrastructureDisplayState({
+  activeBuildingQueue,
+  homePlanetId,
+  infrastructureChainState,
+  onChainResources,
+}: {
+  activeBuildingQueue?: QueueStateResponse | null | undefined;
+  homePlanetId?: string | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  onChainResources?: PlayableState["resources"] | undefined;
+}): boolean {
+  return Boolean(onChainResources && homePlanetId && (infrastructureChainState || activeBuildingQueue?.active));
 }
 
 export function refreshedInfrastructureUnavailableReasonFor({
@@ -3202,7 +3214,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
-          hasLoadedInfrastructureState={Boolean(onChainResources && onChainSettlement?.homePlanetId && infrastructureChainState)}
+          hasLoadedInfrastructureState={hasInfrastructureDisplayState({
+            activeBuildingQueue,
+            homePlanetId: onChainSettlement?.homePlanetId,
+            infrastructureChainState,
+            onChainResources,
+          })}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={infrastructureLoadErrorFor({
