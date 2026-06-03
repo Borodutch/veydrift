@@ -17,5 +17,8 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("baseSepoliaReadProvider");
     expect(source).not.toContain("transactionReadProvider");
     expect(source).toContain("const receiptProvider = readProvider ?? provider;");
+    expect(source).toContain("sendStartBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          building,\n          { readProvider },\n        )");
+    expect(source).toContain("sendFinishBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          { readProvider },\n        )");
+    expect(source).toContain("sendCollectResourcesTransaction(\n      provider,\n      account,\n      gameContract,\n      planetId,\n      { readProvider },\n    )");
   });
 });

@@ -2071,6 +2071,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           gameContract,
           planetId,
           building,
+          { readProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -2101,6 +2102,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     onChainResources,
     onChainSettlement?.homePlanetId,
     provider,
+    readProvider,
     receiptProvider,
     refreshLiveInfrastructureState,
     refreshInfrastructureState,
@@ -2156,6 +2158,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           account,
           gameContract,
           planetId,
+          { readProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -2191,6 +2194,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     buildingQueue?.key,
     onChainSettlement?.homePlanetId,
     provider,
+    readProvider,
     receiptProvider,
     refreshFinishedBuildingState,
     transactionActionGate,
@@ -2423,6 +2427,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       account,
       gameContract,
       planetId,
+      { readProvider },
     ), () => refreshCollectedResourcesState({ planetId, previousLastSettledAt }));
   }, [
     account,
@@ -2430,6 +2435,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     onChainSettlement?.homePlanetId,
     onChainSettlement?.planet?.lastSettledAt,
     provider,
+    readProvider,
     refreshCollectedResourcesState,
     runShipyardTransaction,
   ]);
