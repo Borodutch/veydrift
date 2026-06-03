@@ -709,7 +709,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBe(buildingFinishLiveStateRequiredLabel);
+    })).toBe(infrastructureBackendSyncPausedLabel);
 
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
@@ -718,7 +718,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBe(buildingFinishLiveStateRequiredLabel);
+    })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
   test("allows indexed ready building queues after backend revalidation without readonly preflight gating", () => {
@@ -731,6 +731,55 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_000_000,
     })).toBeUndefined();
+  });
+
+  test("allows indexed ready building queues to verify while infrastructure detail state is still loading", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: null,
+      now: 1_700_000_000_000,
+    })).toBe(true);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: null,
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      infrastructureState: null,
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
+  test("keeps stale infrastructure sync blocked even when an indexed wallet queue is ready", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        queue: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(false);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        queue: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
+    expect(infrastructureBackendSyncPausedLabel).not.toContain("Syncing building queue");
   });
 
   test("keeps displayed building finish verification open when backend indexed queue is ready", () => {
@@ -750,7 +799,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("pauses displayed ready building finish actions while backend infrastructure sync is degraded", () => {
+  test("routes degraded ready building finish actions to backend-unavailable copy", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(infrastructureBackendSyncPausedReasonFor({
@@ -783,6 +832,32 @@ describe("Playable MVP app display helpers", () => {
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
     })).toBe(infrastructureBackendSyncPausedLabel);
+    expect(infrastructureBackendSyncPausedLabel).toContain("Infrastructure API is temporarily unavailable");
+    expect(infrastructureBackendSyncPausedLabel).not.toContain("Syncing building queue");
+  });
+
+  test("does not show queue catch-up copy for shared wallet building queues", () => {
+    const readyQueue = readyBuildingQueue();
+    const walletPaths = ["Farcaster mobile", "Rabby", "OKX", "MetaMask", "generic injected wallet"];
+
+    for (const walletPath of walletPaths) {
+      const unavailableReason = buildingFinishUnavailableReasonForDisplay({
+        activeBuildingQueue: readyQueue,
+        backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+        canTransact: true,
+        infrastructureState: infrastructureState({
+          queue: readyQueue,
+          source: "contract-state-indexer",
+          stale: false,
+        }),
+        isBuildingReadyToFinish: true,
+        isDisplayedBuildingQueueReady: true,
+        now: 1_700_000_000_000,
+      });
+
+      expect(`${walletPath}: ${unavailableReason}`).not.toContain("Syncing building queue");
+      expect(unavailableReason).toBe(infrastructureBackendSyncPausedLabel);
+    }
   });
 
   test("does not let backend building finish verification bypass wallet availability", () => {
@@ -901,6 +976,34 @@ describe("Playable MVP app display helpers", () => {
 
     expect(result).toEqual({
       infrastructureState: latest,
+      unavailableReason: undefined,
+    });
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+    ]]);
+  });
+
+  test("uses the indexed wallet building queue when completion revalidation has no infrastructure detail yet", async () => {
+    const readyQueue = readyBuildingQueue();
+    const calls: unknown[][] = [];
+
+    const result = await buildingCompletionUnavailableReasonAfterBackendRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: null,
+      knownBuildingQueue: readyQueue,
+      loadInfrastructureState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(null);
+      }) as never,
+      now: 1_700_000_000_000,
+    });
+
+    expect(result).toEqual({
+      infrastructureState: null,
       unavailableReason: undefined,
     });
     expect(calls).toEqual([[
