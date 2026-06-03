@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   indexedSettlementState,
+  noWalletDetectedMessage,
   settlementLaunchBlocker,
   shouldAttemptFarcasterNetworkSetup,
   shouldAutoConnectFarcasterWallet,
@@ -21,6 +22,12 @@ describe("settlement screen mode", () => {
   test("shows only the core pre-settlement actions after state is known", () => {
     expect(preSettlementMode({ kind: "disconnected" }, { kind: "idle" })).toBe("connect");
     expect(preSettlementMode(connected, { kind: "not-settled" })).toBe("settle");
+  });
+
+  test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
+    expect(noWalletDetectedMessage(false)).toBe("Open the bridge with an injected EVM wallet or browser wallet.");
+    expect(noWalletDetectedMessage(false)).not.toMatch(/metamask/i);
+    expect(noWalletDetectedMessage(true)).toContain("Farcaster/Base client");
   });
 
   test("preserves minimal network, transaction, and error states", () => {

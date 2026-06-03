@@ -746,9 +746,7 @@ function FlowBody({
     return (
       <StateMessage
         title="No pilot wallet detected"
-        body={miniAppMode
-          ? "This Farcaster client does not expose a Base wallet. Open Veydrift in a Farcaster/Base client with wallet support, or use a browser wallet."
-          : "Open the bridge with an injected EVM wallet such as Rabby, OKX Wallet, or MetaMask."}
+        body={noWalletDetectedMessage(miniAppMode)}
         action={<PrimaryButton onClick={onConnect}>Check again</PrimaryButton>}
         tone="warning"
       />
@@ -859,6 +857,12 @@ function FlowBody({
       tone={actionBlocked ? "warning" : "ready"}
     />
   );
+}
+
+export function noWalletDetectedMessage(miniAppMode: boolean): string {
+  return miniAppMode
+    ? "This Farcaster client does not expose a Base wallet. Open Veydrift in a Farcaster/Base client with wallet support, or use a browser wallet."
+    : "Open the bridge with an injected EVM wallet or browser wallet.";
 }
 
 export function settlementLaunchBlocker(
