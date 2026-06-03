@@ -325,6 +325,42 @@ export async function infrastructureStateForCompletionRevalidation({
   return loadInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" });
 }
 
+export async function buildingCompletionUnavailableReasonAfterLiveRevalidation({
+  account,
+  activePlanetId,
+  apiBaseUrl,
+  fallback,
+  loadInfrastructureState = fetchInfrastructureState,
+  now = Date.now(),
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  apiBaseUrl: string | undefined;
+  fallback: ChainInfrastructureState | null;
+  loadInfrastructureState?: typeof fetchInfrastructureState;
+  now?: number;
+}): Promise<{
+  infrastructureState: ChainInfrastructureState | null;
+  unavailableReason: string | undefined;
+}> {
+  const infrastructureState = await infrastructureStateForCompletionRevalidation({
+    account,
+    activePlanetId,
+    apiBaseUrl,
+    fallback,
+    loadInfrastructureState,
+  });
+
+  return {
+    infrastructureState,
+    unavailableReason: buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState,
+      now,
+    }),
+  };
+}
+
 export async function researchStateForCompletionRevalidation({
   account,
   activePlanetId,
@@ -1855,30 +1891,18 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         });
         return;
       }
-      if (!isBuildingReadyToFinish) {
-        setBuildingAction({
-          status: "error",
-          buildingKey,
-          label: "Building upgrade is not ready to finish yet.",
-        });
-        return;
-      }
-
       const label = "Building completion";
       let completionBuildingKey = buildingKey;
       setBuildingAction({ status: "pending", buildingKey, label: "Refreshing infrastructure state" });
 
       try {
-        const latestInfrastructureState = await infrastructureStateForCompletionRevalidation({
-          account,
-          activePlanetId: planetId,
-          apiBaseUrl,
-          fallback: infrastructureChainState,
-        });
-        const unavailableReason = buildingCompletionUnavailableReasonFor({
-          canTransact: true,
-          infrastructureState: latestInfrastructureState,
-        });
+        const { infrastructureState: latestInfrastructureState, unavailableReason } =
+          await buildingCompletionUnavailableReasonAfterLiveRevalidation({
+            account,
+            activePlanetId: planetId,
+            apiBaseUrl,
+            fallback: infrastructureChainState,
+          });
         if (unavailableReason) {
           setBuildingAction({ status: "error", buildingKey, label: unavailableReason });
           return;
@@ -1931,7 +1955,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     apiBaseUrl,
     gameContract,
     infrastructureChainState,
-    isBuildingReadyToFinish,
     buildingQueue?.key,
     onChainSettlement?.homePlanetId,
     provider,

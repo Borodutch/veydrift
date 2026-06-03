@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildingCompletionUnavailableReasonFor,
+  buildingCompletionUnavailableReasonAfterLiveRevalidation,
   buildingFinishActionErrorLabel,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
@@ -513,6 +514,46 @@ describe("Playable MVP app display helpers", () => {
     });
 
     expect(result).toBe(latest);
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+      { source: "live" },
+    ]]);
+  });
+
+  test("uses live building completion revalidation even when the local queue snapshot is stale", async () => {
+    const fallback = infrastructureState({
+      queue: {
+        ...readyBuildingQueue(),
+        readyAt: "1700000600",
+      },
+      source: "contract-state-indexer",
+      stale: true,
+    });
+    const latest = infrastructureState({
+      queue: readyBuildingQueue(),
+      source: "live-rpc",
+      stale: false,
+    });
+    const calls: unknown[][] = [];
+
+    const result = await buildingCompletionUnavailableReasonAfterLiveRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback,
+      loadInfrastructureState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(latest);
+      }) as never,
+      now: 1_700_000_000_000,
+    });
+
+    expect(result).toEqual({
+      infrastructureState: latest,
+      unavailableReason: undefined,
+    });
     expect(calls).toEqual([[
       "https://api.test",
       "0x2222222222222222222222222222222222222222",
