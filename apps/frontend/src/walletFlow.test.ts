@@ -1407,6 +1407,16 @@ describe("walletFlow", () => {
           },
           "latest"
         ]
+      },
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
       }
     ]);
     expect(walletRequests).toEqual([
@@ -1421,6 +1431,49 @@ describe("walletFlow", () => {
         ]
       }
     ]);
+  });
+
+  test("blocks likely-failing ready finish building upgrades before opening the wallet when readonly gas estimation fails", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = mockProvider(async ({ method, params }) => {
+      walletRequests.push({ method, params });
+      throw new Error("eth_sendTransaction should not be called");
+    });
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      if (method === "eth_call") return "0x";
+      throw new Error("execution reverted: likely fail");
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).rejects.toThrow("This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
+
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+    expect(walletRequests).toEqual([]);
   });
 
   test("submits moon building and Jump Gate transactions", async () => {
