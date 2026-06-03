@@ -196,7 +196,7 @@ const buildingFinishStateReadFailureLabel =
 const buildingFinishLiveStateRequiredLabel =
   "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
 const buildingWalletConfirmationLabel = (label: string) =>
-  `${label}: unlock MetaMask if needed, then confirm in your wallet.`;
+  `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {

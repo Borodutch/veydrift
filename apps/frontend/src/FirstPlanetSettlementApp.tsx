@@ -92,6 +92,7 @@ export function FirstPlanetSettlementApp() {
   const [wallet, setWallet] = useState<WalletState>({
     kind: "loading"
   });
+  const [networkSwitchPending, setNetworkSwitchPending] = useState(false);
   const [walletProviderSource, setWalletProviderSource] = useState<"injected" | "farcaster" | undefined>();
   const [planet, setPlanet] = useState<PlanetState>({
     kind: "idle"
@@ -451,10 +452,11 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function switchNetwork() {
-    if (!provider) {
+    if (!provider || networkSwitchPending) {
       return;
     }
 
+    setNetworkSwitchPending(true);
     setPlanet({
       kind: "checking"
     });
@@ -476,6 +478,8 @@ export function FirstPlanetSettlementApp() {
         kind: isUserRejected(error) ? "rejected" : "error",
         message: isUserRejected(error) ? "Network switch was rejected." : walletRequestErrorMessage(error)
       });
+    } finally {
+      setNetworkSwitchPending(false);
     }
   }
 
@@ -675,6 +679,7 @@ export function FirstPlanetSettlementApp() {
             settlementFunding={settlementFunding}
             settlementReady={settlementContractConfigured(settlementConfig)}
             wallet={wallet}
+            networkSwitchPending={networkSwitchPending}
             miniAppMode={miniAppMode}
           />
         </div>
@@ -710,6 +715,7 @@ function FlowBody({
   settlementFunding,
   settlementReady,
   wallet,
+  networkSwitchPending,
   miniAppMode
 }: {
   mode: ReturnType<typeof preSettlementMode>;
@@ -720,6 +726,7 @@ function FlowBody({
   settlementFunding: SettlementFunding;
   settlementReady: boolean;
   wallet: WalletState;
+  networkSwitchPending: boolean;
   miniAppMode: boolean;
 }) {
   if (mode === "resolving") {
@@ -732,7 +739,7 @@ function FlowBody({
         title="No pilot wallet detected"
         body={miniAppMode
           ? "This Farcaster client does not expose a Base wallet. Open Veydrift in a Farcaster/Base client with wallet support, or use a browser wallet."
-          : "Open the bridge with MetaMask or another injected EVM wallet."}
+          : "Open the bridge with an injected EVM wallet such as Rabby, OKX Wallet, or MetaMask."}
         action={<PrimaryButton onClick={onConnect}>Check again</PrimaryButton>}
         tone="warning"
       />
@@ -756,7 +763,11 @@ function FlowBody({
         <StateMessage
           title="Base Sepolia required"
           body={miniAppUnsupportedChainMessage(wallet.chainId)}
-          action={<PrimaryButton onClick={onSwitchNetwork}>Retry Base Sepolia</PrimaryButton>}
+          action={
+            <PrimaryButton disabled={networkSwitchPending} onClick={onSwitchNetwork}>
+              {networkSwitchPending ? "Requesting Base Sepolia" : "Retry Base Sepolia"}
+            </PrimaryButton>
+          }
           tone="warning"
         />
       );
@@ -766,7 +777,11 @@ function FlowBody({
       <StateMessage
         title="Wrong network"
         body={`Current chain ${wallet.chainId}. Switch to Base Sepolia to enter the settlement sector.`}
-        action={<PrimaryButton onClick={onSwitchNetwork}>Switch network</PrimaryButton>}
+        action={
+          <PrimaryButton disabled={networkSwitchPending} onClick={onSwitchNetwork}>
+            {networkSwitchPending ? "Switching network" : "Switch network"}
+          </PrimaryButton>
+        }
         tone="warning"
       />
     );

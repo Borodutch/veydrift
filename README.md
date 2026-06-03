@@ -227,7 +227,7 @@ existing `veydrift` EasyPanel project:
 
 - `veydrift/frontend` remains the production coming-soon service for
   `https://veydrift.com`.
-- `veydrift/frontend-test` serves the MetaMask settlement test frontend at
+- `veydrift/frontend-test` serves the injected-wallet settlement test frontend at
   `https://test.veydrift.com`.
 - `veydrift/backend-test` serves the test API at
   `https://api-test.veydrift.com`.
@@ -260,7 +260,7 @@ bun run serve
 
 The test build sets `VITE_VEYDRIFT_SURFACE=settlement`, uses
 `https://test.veydrift.com` for canonical/social URLs, and emits `noindex`
-robots metadata so the MetaMask first-planet flow can be reviewed separately from the quiet
+robots metadata so the injected-wallet first-planet flow can be reviewed separately from the quiet
 production `veydrift.com` surface. Configure the frontend test service with:
 
 ```text

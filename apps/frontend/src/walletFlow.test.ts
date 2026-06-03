@@ -92,7 +92,30 @@ describe("walletFlow", () => {
     expect(isUserRejected({ code: -32603 })).toBe(false);
   });
 
-  test("detects locked MetaMask before transaction submission", async () => {
+  test("selects Rabby from a multi-provider injected wallet", () => {
+    const metamaskProvider = mockProvider(async () => []);
+    const rabbyProvider = {
+      ...mockProvider(async () => []),
+      isRabby: true,
+    };
+    const ethereum = {
+      ...metamaskProvider,
+      providers: [metamaskProvider, rabbyProvider],
+    };
+
+    expect(getInjectedProvider({ ethereum })).toBe(rabbyProvider);
+  });
+
+  test("uses OKX Wallet named provider when no ethereum provider is injected", () => {
+    const okxwallet = {
+      ...mockProvider(async () => []),
+      isOkxWallet: true,
+    };
+
+    expect(getInjectedProvider({ okxwallet })).toBe(okxwallet);
+  });
+
+  test("detects locked wallet before transaction submission", async () => {
     const requests: unknown[] = [];
     const provider = {
       ...mockProvider(async ({ method, params }) => {
@@ -104,15 +127,15 @@ describe("walletFlow", () => {
       },
     } as Eip1193Provider;
 
-    await expect(assertWalletUnlocked(provider)).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+    await expect(assertWalletUnlocked(provider)).rejects.toThrow("Wallet is locked. Please unlock your wallet and try again.");
     await expect(
       sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
-    ).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+    ).rejects.toThrow("Wallet is locked. Please unlock your wallet and try again.");
 
     expect(requests).toEqual([]);
   });
 
-  test("detects locked MetaMask from empty accounts when the unlock probe is unavailable", async () => {
+  test("detects locked wallet from empty accounts when the unlock probe is unavailable", async () => {
     const requests: unknown[] = [];
     const provider = {
       ...mockProvider(async ({ method, params }) => {
@@ -123,14 +146,92 @@ describe("walletFlow", () => {
       _metamask: {},
     } as Eip1193Provider;
 
-    await expect(assertWalletUnlocked(provider)).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+    await expect(assertWalletUnlocked(provider)).rejects.toThrow("Wallet is locked. Please unlock your wallet and try again.");
     await expect(
       sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
-    ).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+    ).rejects.toThrow("Wallet is locked. Please unlock your wallet and try again.");
 
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
       { method: "eth_accounts", params: undefined },
+    ]);
+  });
+
+  test("checks Rabby-style providers for accounts before transaction submission", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [account];
+        if (method === "eth_call") return "0x";
+        if (method === "eth_sendTransaction") return "0xabc";
+        throw new Error(`Unexpected method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+
+    await expect(sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)).resolves.toBe("0xabc");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 0]),
+          },
+          "latest",
+        ],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
+    ]);
+  });
+
+  test("checks OKX-style providers for accounts before transaction submission", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [account];
+        if (method === "eth_call") return "0x";
+        if (method === "eth_sendTransaction") return "0xdef";
+        throw new Error(`Unexpected method ${method}`);
+      }),
+      isOkxWallet: true,
+    } as Eip1193Provider;
+
+    await expect(sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)).resolves.toBe("0xdef");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 0]),
+          },
+          "latest",
+        ],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
     ]);
   });
 
@@ -590,9 +691,14 @@ describe("walletFlow", () => {
   });
 
   test("adds Base Sepolia when the wallet does not know the chain", async () => {
+    const calls: string[] = [];
     const params: unknown[] = [];
     const provider = mockProvider(async ({ method, params: requestParams }) => {
+      calls.push(method);
       if (method === "wallet_switchEthereumChain") {
+        if (calls.filter((call) => call === "wallet_switchEthereumChain").length > 1) {
+          return null;
+        }
         throw { code: 4902 };
       }
 
@@ -602,7 +708,42 @@ describe("walletFlow", () => {
 
     await ensureBaseSepoliaNetwork(provider);
 
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
+      "wallet_switchEthereumChain",
+    ]);
     expect(params).toEqual([BASE_SEPOLIA]);
+  });
+
+  test("adds Base Sepolia on wallet unknown-chain messages before retrying switch", async () => {
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "wallet_switchEthereumChain" && calls.length === 1) {
+        throw { code: -32603, message: "Unrecognized chain ID. Try wallet_addEthereumChain first." };
+      }
+      return null;
+    });
+
+    await ensureBaseSepoliaNetwork(provider);
+
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
+      "wallet_switchEthereumChain",
+    ]);
+  });
+
+  test("surfaces rejected Base Sepolia switch requests without adding the chain", async () => {
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      throw { code: 4001, message: "User rejected the request." };
+    });
+
+    await expect(ensureBaseSepoliaNetwork(provider)).rejects.toMatchObject({ code: 4001 });
+    expect(calls).toEqual(["wallet_switchEthereumChain"]);
   });
 
   test("explains Farcaster Mini App wrong-chain state after switch/add fallback", () => {
@@ -845,13 +986,13 @@ describe("walletFlow", () => {
     );
     expect(walletRequestErrorMessage(new Error("execution reverted"))).toContain("game contract rejected");
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
-      "Unlock or reconnect MetaMask"
+      "Unlock or reconnect your wallet"
     );
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
       "game API may be temporarily unavailable"
     );
     expect(walletRequestErrorMessage(new Error("MetaMask is locked"))).toBe(
-      "Wallet is locked. Please unlock MetaMask and try again."
+      "Wallet is locked. Please unlock your wallet and try again."
     );
   });
 
