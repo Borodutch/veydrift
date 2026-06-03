@@ -14,6 +14,8 @@ import {
   PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
   formatAllianceLabel,
+  formatAttackBlockReason,
+  formatAttackRuleLabels,
   formatGalaxyAllianceIdentityLabel,
   formatGalaxyCommanderLabel,
   formatMoonChanceLabel,
@@ -275,6 +277,29 @@ describe("tester universe display data", () => {
 
     expect(formatGalaxyCommanderLabel(planet!)).toBe("Nova Prime");
     expect(formatGalaxyAllianceIdentityLabel(planet?.alliance ?? null)).toBe("No alliance");
+  });
+
+  test("galaxy attack intel uses clear target and loot copy", () => {
+    const sameAllianceStatus = {
+      allowed: false,
+      blockedReason: "same_alliance" as const,
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+      defenderHonorStatus: "honorable" as const,
+      plunderBps: 7500,
+      relation: "weaker" as const,
+    };
+
+    expect(formatAttackBlockReason(sameAllianceStatus)).toBe("Attack blocked: target belongs to your alliance.");
+    expect(formatAttackRuleLabels(sameAllianceStatus)).toEqual([
+      "Weaker target",
+      "Honor target",
+      "Loot: 75%",
+    ]);
+    expect(formatAttackRuleLabels(sameAllianceStatus).join(" ")).not.toMatch(/\bHonorable\b|plunder/i);
+    expect(formatAttackBlockReason({
+      allowed: false,
+      blockedReason: "same_alliance",
+    })).toBe("Attack blocked: target belongs to your alliance.");
   });
 
   test("galaxy occupancy summary avoids implementation wording", () => {
