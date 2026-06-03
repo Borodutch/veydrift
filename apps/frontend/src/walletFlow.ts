@@ -28,6 +28,9 @@ export type InjectedWindow = {
 const WALLET_READ_TIMEOUT_MS = 10_000;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
 export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock your wallet and try again.";
+export const WALLET_ACCOUNT_UNAVAILABLE_MESSAGE = "Wallet account is unavailable. Reconnect your wallet, then retry.";
+export const WALLET_CONNECTION_REJECTED_MESSAGE = "Wallet connection was rejected. Reconnect your wallet, then retry.";
+export const WALLET_ACCOUNT_MISMATCH_MESSAGE = "The selected wallet account changed. Reconnect the active wallet, then retry.";
 
 export type SettlementConfig = {
   address?: string;
@@ -752,6 +755,55 @@ export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<v
   if (accounts.length === 0) {
     throw new Error(WALLET_LOCKED_MESSAGE);
   }
+}
+
+async function assertAccountProbeWalletReady(provider: Eip1193Provider, account: string): Promise<void> {
+  if (!isAccountProbeWallet(provider)) {
+    return;
+  }
+
+  let accounts: string[];
+  try {
+    accounts = await readWalletRequest<string[]>(provider, {
+      method: "eth_accounts",
+    }, "wallet accounts");
+  } catch {
+    return;
+  }
+
+  if (accountListIncludes(accounts, account)) {
+    return;
+  }
+
+  if (accounts.length > 0) {
+    throw new Error(WALLET_ACCOUNT_MISMATCH_MESSAGE);
+  }
+
+  let requestedAccounts: string[];
+  try {
+    requestedAccounts = await readWalletRequest<string[]>(provider, {
+      method: "eth_requestAccounts",
+    }, "wallet account authorization");
+  } catch (error) {
+    if (isUserRejected(error)) {
+      throw new Error(WALLET_CONNECTION_REJECTED_MESSAGE);
+    }
+    const code = errorCode(error);
+    if (code === 4100 || code === "4100") {
+      throw new Error(WALLET_ACCOUNT_UNAVAILABLE_MESSAGE);
+    }
+    throw error;
+  }
+
+  if (accountListIncludes(requestedAccounts, account)) {
+    return;
+  }
+
+  throw new Error(requestedAccounts.length > 0 ? WALLET_ACCOUNT_MISMATCH_MESSAGE : WALLET_ACCOUNT_UNAVAILABLE_MESSAGE);
+}
+
+function accountListIncludes(accounts: string[], account: string): boolean {
+  return accounts.some((candidate) => candidate.toLowerCase() === account.toLowerCase());
 }
 
 function isAccountProbeWallet(provider: Eip1193Provider): boolean {
@@ -1931,13 +1983,19 @@ export async function sendCollectResourcesTransaction(
     data
   };
 
+  const accountProbeReadyChecked = isAccountProbeWallet(provider);
+  if (accountProbeReadyChecked) {
+    await assertAccountProbeWalletReady(provider, account);
+  }
   if (options.readProvider) {
     const fallbackReason = "This resource collection is likely to fail on-chain. Refresh resources and retry.";
     await assertTransactionCallSucceeds(options.readProvider, account, contractAddress, data, fallbackReason);
     const gas = await estimateTransactionGas(options.readProvider, account, contractAddress, data, fallbackReason);
     if (gas) transaction.gas = gas;
   }
-  await assertWalletUnlocked(provider);
+  if (!accountProbeReadyChecked) {
+    await assertWalletUnlocked(provider);
+  }
 
   return provider.request<string>({
     method: "eth_sendTransaction",
