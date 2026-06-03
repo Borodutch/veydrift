@@ -294,7 +294,7 @@ export function buildingCompletionUnavailableReasonFor({
     return buildingFinishLiveStateRequiredLabel;
   }
 
-  if (infrastructureState.source === "contract-state-indexer" || infrastructureState.stale === true) {
+  if (infrastructureState.stale === true) {
     return buildingFinishLiveStateRequiredLabel;
   }
 
