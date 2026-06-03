@@ -475,6 +475,7 @@ describe("moon chance report event decoding", () => {
     const allianceContractAddress = "0x2222222222222222222222222222222222222222";
     const wallet = "0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE" as Address;
     const requester = "0x3333333333333333333333333333333333333333" as Address;
+    const eligibleRequester = "0x4444444444444444444444444444444444444444" as Address;
     const reader = new VeydriftGameReader(
       {
         ...readerConfig,
@@ -490,6 +491,9 @@ describe("moon chance report event decoding", () => {
           if (selector === "0xad642b52") {
             if (call.data.toLowerCase().includes(requester.slice(2).toLowerCase())) {
               return dataWords([word(2n), word(1n), word(1_779_816_700n)]) as T;
+            }
+            if (call.data.toLowerCase().includes(eligibleRequester.slice(2).toLowerCase())) {
+              return dataWords([word(0n), word(0n), word(0n)]) as T;
             }
             return dataWords([word(1n), word(3n), word(1_779_816_676n)]) as T;
           }
@@ -514,13 +518,16 @@ describe("moon chance report event decoding", () => {
             if (call.data.toLowerCase().includes(requester.slice(2).toLowerCase())) {
               return dataWords([word(1n), word(1n), addressWord(requester), word(1_779_816_690n)]) as T;
             }
+            if (call.data.toLowerCase().includes(eligibleRequester.slice(2).toLowerCase())) {
+              return dataWords([word(1n), word(1n), addressWord(eligibleRequester), word(1_779_816_691n)]) as T;
+            }
             return dataWords([word(0n), word(0n), word(0n), word(0n)]) as T;
           }
           if (selector === "0x2a1ef311") {
             return addressArrayResult([wallet]) as T;
           }
           if (selector === "0x2953e5ce") {
-            return addressArrayResult([requester]) as T;
+            return addressArrayResult([requester, eligibleRequester]) as T;
           }
 
           throw new Error(`Unexpected selector ${selector}`);
@@ -564,12 +571,12 @@ describe("moon chance report event decoding", () => {
       allianceJoinRequests: [
         {
           allianceId: "1",
-          requester,
-          requestedAt: "1779816690",
+          requester: eligibleRequester,
+          requestedAt: "1779816691",
           requesterMembership: {
-            allianceId: "2",
-            role: "member",
-            joinedAt: "1779816700"
+            allianceId: "0",
+            role: "none",
+            joinedAt: "0"
           }
         }
       ]
