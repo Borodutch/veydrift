@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
-import { formatMissingResources } from "../buildingDetails";
+import { formatMissingResources, formatNumber } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
 import {
@@ -249,6 +249,10 @@ export function shipProductionItems({
     const disabled = Boolean(blockedReason) || actionPending;
     const combatStats = shipCombatStats(ship);
     const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
+    const detailStats = shipSpecRows(ship);
+    if (ship.key === "solarSatellite" && chainShip?.energyPerUnit) {
+      detailStats.push({ label: "E/unit", value: formatNumber(Number(chainShip.energyPerUnit)) });
+    }
 
     return {
       actionLabel: "Build",
@@ -259,7 +263,7 @@ export function shipProductionItems({
       countValue: owned,
       detailNote: stats || "Production unit",
       description: ship.description,
-      detailStats: shipSpecRows(ship),
+      detailStats,
       disabled,
       durationSeconds,
       group: ship.group,

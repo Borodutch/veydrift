@@ -108,6 +108,7 @@ export function TopBar({
                   produced={energy.produced}
                   required={energy.required}
                   scaleBps={energy.scaleBps}
+                  sources={energy.sources}
                 />
               )}
             </>
@@ -237,16 +238,18 @@ function EnergyPip({
   produced,
   required,
   scaleBps,
+  sources,
 }: {
   produced: number;
   required: number;
   scaleBps: number;
+  sources?: EnergyBalance["sources"] | undefined;
 }) {
   const current = produced - required;
   const tone = current < 0 ? "text-red-300" : "text-lime-300";
   const showShortageFactor = current < 0 && required > 0 && scaleBps < BPS;
   const productionPercent = Math.floor((scaleBps * 100) / BPS);
-  const energyExplanation = energyExplanationTitle({ produced, required, scaleBps });
+  const energyExplanation = energyExplanationTitle({ produced, required, scaleBps, sources });
 
   return (
     <div
@@ -292,6 +295,20 @@ function EnergyPip({
               <dt className="text-slate-500">Balance</dt>
               <dd className={`text-right font-semibold ${current < 0 ? "text-red-200" : "text-lime-200"}`}>{format(current)}</dd>
             </dl>
+            {sources && (
+              <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
+                <dt className="text-slate-500">Production in total</dt>
+                <dd className="text-right font-semibold text-slate-100">{format(produced)}</dd>
+                <dt className="text-slate-500">By Solar Plant</dt>
+                <dd className="text-right font-semibold text-slate-100">{format(sources.solarPlant)}</dd>
+                <dt className="text-slate-500">By Fusion Generator</dt>
+                <dd className="text-right font-semibold text-slate-100">{format(sources.fusionReactor)} from {format(sources.fusionReactorDeuteriumConsumed)} DEUT/h</dd>
+                <dt className="text-slate-500">By Solar Satellites</dt>
+                <dd className="text-right font-semibold text-slate-100">
+                  {format(sources.solarSatellites)} from {format(sources.solarSatelliteCount)} satellites ({format(sources.solarSatelliteEnergy)} E/Sat)
+                </dd>
+              </dl>
+            )}
             <p className={`mt-2 text-[11px] leading-4 ${showShortageFactor ? "text-red-200" : "text-slate-400"}`}>
               {showShortageFactor
                 ? `Insufficient energy reduces mine output to ${productionPercent}% until you add more energy production or reduce consumption.`

@@ -75,6 +75,35 @@ describe("contract state adapters", () => {
     });
   });
 
+  test("converts indexed energy source details for the top bar popup", () => {
+    expect(energyBalanceFromChain({
+      produced: "110",
+      required: "11",
+      scaleBps: "10000",
+      sources: {
+        solarPlant: "22",
+        fusionReactor: "0",
+        fusionReactorDeuteriumConsumed: "0",
+        solarSatellites: "88",
+        solarSatelliteCount: 4,
+        solarSatelliteEnergy: "22",
+      },
+    })).toEqual({
+      deuteriumConsumed: 0,
+      produced: 110,
+      required: 11,
+      scaleBps: 10000,
+      sources: {
+        solarPlant: 22,
+        fusionReactor: 0,
+        fusionReactorDeuteriumConsumed: 0,
+        solarSatellites: 88,
+        solarSatelliteCount: 4,
+        solarSatelliteEnergy: 22,
+      },
+    });
+  });
+
   test("indexed infrastructure levels do not turn zero placeholder costs into no-cost upgrades", () => {
     const indexedState: ChainInfrastructureState = {
       ...infrastructureState,

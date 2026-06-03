@@ -115,6 +115,14 @@ export function energyBalanceFromChain(
     produced: Number(value.produced),
     required: Number(value.required),
     scaleBps: Number(value.scaleBps),
+    ...(value.sources ? { sources: {
+      solarPlant: Number(value.sources.solarPlant),
+      fusionReactor: Number(value.sources.fusionReactor),
+      fusionReactorDeuteriumConsumed: Number(value.sources.fusionReactorDeuteriumConsumed),
+      solarSatellites: Number(value.sources.solarSatellites),
+      solarSatelliteCount: value.sources.solarSatelliteCount,
+      solarSatelliteEnergy: Number(value.sources.solarSatelliteEnergy),
+    } } : {}),
   };
 }
 

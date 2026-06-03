@@ -437,7 +437,10 @@ export class SettlementIndexer {
   }
 
   shipRows(planetId: string): ShipyardState["ships"] {
-    return deriveShipRows((id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id));
+    return deriveShipRows(
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      this.planet(planetId)?.temperature
+    );
   }
 
   defenseRows(planetId: string): DefenseState["defenses"] {

@@ -43,6 +43,14 @@ describe("canonical Veydrift formula conformance", () => {
       produced: 753,
       required: 217,
       scaleBps: 10_000,
+      sources: {
+        solarPlant: 753,
+        fusionReactor: 0,
+        fusionReactorDeuteriumConsumed: 0,
+        solarSatellites: 0,
+        solarSatelliteCount: 0,
+        solarSatelliteEnergy: 21,
+      },
     });
     expect(productionCapacityPerHour(buildings, profile)).toEqual({
       metal: 241,
@@ -60,6 +68,14 @@ describe("canonical Veydrift formula conformance", () => {
       produced: 108,
       required: 217,
       scaleBps: 4_976,
+      sources: {
+        solarPlant: 0,
+        fusionReactor: 0,
+        fusionReactorDeuteriumConsumed: 0,
+        solarSatellites: 108,
+        solarSatelliteCount: 3,
+        solarSatelliteEnergy: 36,
+      },
     });
   });
 
@@ -98,6 +114,14 @@ describe("canonical Veydrift formula conformance", () => {
       produced: 69,
       required: 79,
       scaleBps: 8_734,
+      sources: {
+        solarPlant: 0,
+        fusionReactor: 69,
+        fusionReactorDeuteriumConsumed: 25,
+        solarSatellites: 0,
+        solarSatelliteCount: 0,
+        solarSatelliteEnergy: 21,
+      },
     });
     expect(fusionReactorEnergyProduction(1, 3)).toBe(32);
     expect(fusionReactorDeuteriumConsumption(1)).toBe(11);
