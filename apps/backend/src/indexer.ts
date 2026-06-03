@@ -730,6 +730,7 @@ export class SettlementIndexer {
         this.upsertPlanet(event);
       }
       this.applyCanonicalState(canonicalState);
+      this.replayEventDerivedQueueStateFromEventLogs();
       for (const event of debrisEvents) {
         this.upsertDebris(event);
       }
@@ -1181,10 +1182,40 @@ export class SettlementIndexer {
 
     for (const row of rows) {
       const log = parseEvent<IndexedRpcLog>(row.event_json);
-      if (isIndexedQueueCompletedLog(log)) {
+      if (isIndexedQueueStartedLog(log)) {
+        this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
+      } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      }
+    }
+  }
+
+  private replayEventDerivedQueueStateFromEventLogs(): void {
+    const activeEventQueues = new Set<string>();
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (isIndexedQueueStartedLog(log)) {
+        const event = decodeIndexedQueueStartedLog(log);
+        this.applyQueueStartedEvent(event, { settleResources: false });
+        activeEventQueues.add(queueKey(event));
+      } else if (isIndexedQueueCompletedLog(log)) {
+        const event = decodeIndexedQueueCompletedLog(log);
+        const key = queueKey(event);
+        if (activeEventQueues.has(key)) {
+          this.applyQueueCompletedEvent(event);
+          activeEventQueues.delete(key);
+        } else {
+          this.applyQueueCompletionEffects(event);
+        }
       }
     }
   }
@@ -1621,14 +1652,19 @@ export class SettlementIndexer {
     );
   }
 
-  private applyQueueStartedEvent(event: IndexedQueueStartedEvent): void {
+  private applyQueueStartedEvent(
+    event: IndexedQueueStartedEvent,
+    options: { settleResources?: boolean } = {}
+  ): void {
     this.upsertQueue(event);
-    if (event.planetId) {
-      this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
-    } else if (event.queueKind === "research" && event.owner) {
-      const settlement = this.walletSettlement(event.owner);
-      if (settlement.homePlanetId) {
-        this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
+    if (options.settleResources !== false) {
+      if (event.planetId) {
+        this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
+      } else if (event.queueKind === "research" && event.owner) {
+        const settlement = this.walletSettlement(event.owner);
+        if (settlement.homePlanetId) {
+          this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
+        }
       }
     }
     this.touch();
@@ -1657,6 +1693,11 @@ export class SettlementIndexer {
   private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
     this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
     this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
+    this.applyQueueCompletionEffects(event);
+    this.touch();
+  }
+
+  private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent): void {
     if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
       this.upsertIndexedLevelAtLeast("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevelAtLeast("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
@@ -1682,7 +1723,6 @@ export class SettlementIndexer {
         ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
       `).run(event.owner, event.itemId, event.level);
     }
-    this.touch();
   }
 
   private upsertQueue(event: IndexedQueueStartedEvent): void {
