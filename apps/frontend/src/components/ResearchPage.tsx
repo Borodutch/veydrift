@@ -286,6 +286,17 @@ export function ResearchLoadErrorPanel({
   );
 }
 
+export function researchRefreshErrorLabel({
+  error,
+  researchState,
+}: {
+  error: string | undefined;
+  researchState: ChainResearchState | null;
+}): string | undefined {
+  if (!error || !researchState) return undefined;
+  return `Refreshing research state: ${error}`;
+}
+
 function ResearchStatusPanel({
   actionState,
   error,
@@ -307,6 +318,11 @@ function ResearchStatusPanel({
 
   if (loading) {
     return null;
+  }
+
+  const refreshError = researchRefreshErrorLabel({ error, researchState });
+  if (refreshError) {
+    return <Notice tone="neutral">{refreshError}</Notice>;
   }
 
   if (error) {

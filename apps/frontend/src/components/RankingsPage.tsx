@@ -30,6 +30,16 @@ export function primaryRankingEntries(data: HighscoreResponse | null): Highscore
   return data?.rankings.total ?? [];
 }
 
+export function shouldShowRankingsInitialLoader({
+  hasLoadedData,
+  loading,
+}: {
+  hasLoadedData: boolean;
+  loading: boolean;
+}): boolean {
+  return loading && !hasLoadedData;
+}
+
 export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
@@ -49,7 +59,6 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
       .then(setData)
       .catch((nextError) => {
         console.error(nextError);
-        setData(null);
         setError(nextError instanceof Error ? nextError.message : "Rankings could not be loaded.");
       })
       .finally(() => setLoading(false));
@@ -112,6 +121,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         currentAllianceId={currentAllianceId}
         currentWallet={currentWallet}
         entries={entries}
+        hasLoadedData={Boolean(data)}
         loading={loading}
         onSelectAlliance={onSelectAlliance}
         onSelectPlanet={onSelectPlanet}
@@ -131,6 +141,7 @@ export function RankingsTable({
   currentAllianceId,
   currentWallet,
   entries,
+  hasLoadedData = entries.length > 0,
   loading,
   onSelectAlliance,
   onSelectPlanet,
@@ -139,6 +150,7 @@ export function RankingsTable({
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   entries: HighscoreEntry[];
+  hasLoadedData?: boolean | undefined;
   loading: boolean;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
@@ -152,7 +164,7 @@ export function RankingsTable({
           </span>
         ))}
       </div>
-      {loading && entries.length === 0 ? (
+      {shouldShowRankingsInitialLoader({ hasLoadedData, loading }) ? (
         <div className="p-3">
           <VeydriftLoader label="Loading rankings" />
         </div>

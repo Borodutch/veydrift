@@ -3,6 +3,7 @@ import {
   buildingCompletionUnavailableReasonFor,
   buildingCompletionUnavailableReasonAfterBackendRevalidation,
   buildingFinishActionErrorLabel,
+  canLoadIndexedPageState,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
   infrastructureLoadErrorFor,
@@ -16,6 +17,7 @@ import {
   researchStateForCompletionRevalidation,
   researchStartTransactionLabel,
   topBarEnergyFor,
+  walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
 import {
   infrastructureFinishAction,
@@ -36,6 +38,28 @@ describe("Playable MVP app display helpers", () => {
       status: "pending",
       label: "Waiting for wallet confirmation",
     })).toBeUndefined();
+  });
+
+  test("gates page state refreshes until the current wallet snapshot is hydrated", () => {
+    const apiBaseUrl = "https://api.test";
+    const account = "0x2222222222222222222222222222222222222222";
+    const hydratedWalletSnapshotKey = walletSnapshotHydrationKey(apiBaseUrl, account);
+
+    expect(canLoadIndexedPageState({
+      account,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey,
+    })).toBe(true);
+    expect(canLoadIndexedPageState({
+      account,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey: walletSnapshotHydrationKey(apiBaseUrl, "0x3333333333333333333333333333333333333333"),
+    })).toBe(false);
+    expect(canLoadIndexedPageState({
+      account: undefined,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey: undefined,
+    })).toBe(true);
   });
 
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {

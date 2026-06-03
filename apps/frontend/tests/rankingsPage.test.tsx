@@ -5,6 +5,7 @@ import {
   primaryRankingEntries,
   rankingsColumnLabels,
   RankingsTable,
+  shouldShowRankingsInitialLoader,
 } from "../src/components/RankingsPage";
 import type { HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
@@ -137,6 +138,27 @@ describe("RankingsPage", () => {
 
     expect(primaryRankingEntries(data)).toEqual([entry]);
     expect(primaryRankingEntries(null)).toEqual([]);
+  });
+
+  test("keeps an empty loaded ranking category visible during background refresh", () => {
+    expect(shouldShowRankingsInitialLoader({
+      hasLoadedData: false,
+      loading: true,
+    })).toBe(true);
+    expect(shouldShowRankingsInitialLoader({
+      hasLoadedData: true,
+      loading: true,
+    })).toBe(false);
+
+    const table = RankingsTable({
+      entries: [],
+      hasLoadedData: true,
+      loading: true,
+    });
+    const text = visibleText(table);
+
+    expect(text).toContain("No settled commanders indexed yet");
+    expect(text).not.toContain("Loading rankings");
   });
 });
 
