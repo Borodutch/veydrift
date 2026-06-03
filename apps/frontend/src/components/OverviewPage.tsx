@@ -399,7 +399,7 @@ export function OverviewPage({
           <div className={`relative flex ${renamePanelOpen ? "min-h-56" : "h-full"} flex-col justify-end p-3 sm:p-4`}>
             <p className="text-[11px] font-medium text-slate-400">{planetSubhead}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="min-w-0 break-words text-base font-semibold text-white">
+              <h2 className="m-0 min-w-0 break-words text-base font-semibold text-white">
                 {planetName}
               </h2>
               <div className="flex shrink-0 items-center gap-1.5">
