@@ -251,6 +251,35 @@ describe("overview queue progress display", () => {
     })).toBe(false);
   });
 
+  test("derives the ready building finish action from the overview queue when needed", () => {
+    const onFinishBuilding = () => undefined;
+
+    expect(shouldShowOverviewBuildingFinishAction({
+      now: 1_700_000_000_000,
+      onFinishBuilding,
+      queue: {
+        active: true,
+        readyAt: "1700000000",
+      },
+    })).toBe(true);
+    expect(shouldShowOverviewBuildingFinishAction({
+      now: 1_700_000_000_000,
+      onFinishBuilding,
+      queue: {
+        active: true,
+        readyAt: "1700000000000",
+      },
+    })).toBe(true);
+    expect(shouldShowOverviewBuildingFinishAction({
+      now: 1_699_999_999_000,
+      onFinishBuilding,
+      queue: {
+        active: true,
+        readyAt: "1700000000",
+      },
+    })).toBe(false);
+  });
+
   test("shows building finish action notices for the active overview queue", () => {
     const notice = {
       buildingKey: "shipyard" as const,

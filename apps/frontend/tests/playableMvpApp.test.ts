@@ -5,6 +5,7 @@ import {
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
@@ -18,7 +19,7 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainInfrastructureState, ChainResearchState } from "../src/walletFlow";
+import type { ChainInfrastructureState, ChainResearchState, QueueStateResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
@@ -307,6 +308,27 @@ describe("Playable MVP app display helpers", () => {
       overviewQueue: readyOverviewQueue,
       researchState: null,
     })).toBe("No active research queue is available to complete.");
+  });
+
+  test("lets Overview derive building readiness only when no canonical active building queue is available", () => {
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: null,
+      isBuildingReadyToFinish: false,
+    })).toBeUndefined();
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000600",
+      }),
+      isBuildingReadyToFinish: false,
+    })).toBe(false);
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000000",
+      }),
+      isBuildingReadyToFinish: true,
+    })).toBe(true);
   });
 
   test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
@@ -858,6 +880,18 @@ function researchState({
       { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
     ],
     queue: queue ?? null,
+  };
+}
+
+function buildingQueue(overrides: Partial<QueueStateResponse> = {}): QueueStateResponse {
+  return {
+    active: true,
+    cost: { metal: "60", crystal: "15", deuterium: "0" },
+    itemId: 0,
+    kind: "building",
+    readyAt: "1700000000",
+    targetLevel: 2,
+    ...overrides,
   };
 }
 

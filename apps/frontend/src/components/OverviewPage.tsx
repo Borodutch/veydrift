@@ -26,10 +26,11 @@ import {
   type PlanetSummary,
   type PlayerProfile,
   type PlayerQueuesResponse,
+  type QueueStateResponse,
   type WalletSettlementResponse
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
-import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { formatUserTimestamp, timestampToMs, type TimestampInput } from "../timestampFormat";
 import {
   actionNoticeForBuilding,
   buildingKeyForContractId,
@@ -190,7 +191,9 @@ export function OverviewPage({
   });
   const showBuildingFinishAction = shouldShowOverviewBuildingFinishAction({
     isBuildingReadyToFinish,
+    now,
     onFinishBuilding,
+    queue: onChainQueues?.building ?? buildingQueue,
   });
   const overviewBuildingNotice = overviewBuildingActionNoticeFor(
     buildingActionNotice,
@@ -725,13 +728,26 @@ export function OverviewPage({
 
 export function shouldShowOverviewBuildingFinishAction({
   isBuildingReadyToFinish,
+  now = Date.now(),
   onFinishBuilding,
+  queue,
 }: {
   isBuildingReadyToFinish?: boolean | undefined;
+  now?: number | undefined;
   onFinishBuilding?: (() => void) | undefined;
+  queue?: OverviewBuildingFinishQueue | null | undefined;
 }): boolean {
-  return Boolean(isBuildingReadyToFinish && onFinishBuilding);
+  if (!onFinishBuilding) return false;
+  if (isBuildingReadyToFinish !== undefined) return isBuildingReadyToFinish;
+
+  const readyAt = timestampToMs(queue?.readyAt);
+  const active = queue && ("active" in queue ? queue.active : true);
+  return Boolean(active && readyAt !== undefined && readyAt <= now);
 }
+
+type OverviewBuildingFinishQueue =
+  | Pick<QueueStateResponse, "active" | "readyAt">
+  | { readyAt: TimestampInput };
 
 export function overviewBuildingActionNoticeFor(
   actionNotice: InfrastructureActionNotice | undefined,
