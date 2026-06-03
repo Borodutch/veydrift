@@ -605,12 +605,13 @@ describe("walletFlow", () => {
     expect(params).toEqual([BASE_SEPOLIA]);
   });
 
-  test("explains Quorum/Farcaster Mini App wrong-chain state without network switching", () => {
+  test("explains Farcaster Mini App wrong-chain state after switch/add fallback", () => {
     const message = miniAppUnsupportedChainMessage("0x2105");
 
     expect(message).toContain("Base mainnet (0x2105)");
     expect(message).toContain("requires Base Sepolia (0x14a34)");
-    expect(message).toContain("does not expose a safe network switch");
+    expect(message).toContain("ask the Farcaster wallet to switch or add Base Sepolia");
+    expect(message).toContain("host rejects that request");
     expect(message).toContain("desktop browser wallet flow");
   });
 

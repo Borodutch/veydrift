@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { indexedSettlementState, settlementLaunchBlocker } from "../src/FirstPlanetSettlementApp";
+import {
+  indexedSettlementState,
+  settlementLaunchBlocker,
+  shouldAttemptFarcasterNetworkSetup,
+  shouldAutoConnectFarcasterWallet,
+} from "../src/FirstPlanetSettlementApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "../src/settlementScreen";
 
 const connected = {
@@ -111,6 +116,57 @@ describe("settlement screen mode", () => {
     } })).toBeUndefined();
   });
 
+  test("auto-connects only the Farcaster wallet provider in Mini App mode", () => {
+    expect(shouldAutoConnectFarcasterWallet({
+      alreadyAttempted: false,
+      miniAppMode: true,
+      providerAvailable: true,
+      settlementConfigReady: true,
+      walletProviderSource: "farcaster",
+    })).toBe(true);
+    expect(shouldAutoConnectFarcasterWallet({
+      alreadyAttempted: false,
+      miniAppMode: true,
+      providerAvailable: true,
+      settlementConfigReady: true,
+      walletProviderSource: "injected",
+    })).toBe(false);
+    expect(shouldAutoConnectFarcasterWallet({
+      alreadyAttempted: true,
+      miniAppMode: true,
+      providerAvailable: true,
+      settlementConfigReady: true,
+      walletProviderSource: "farcaster",
+    })).toBe(false);
+  });
+
+  test("attempts Farcaster Base Sepolia setup once per observed wrong chain", () => {
+    expect(shouldAttemptFarcasterNetworkSetup({
+      chainId: "0x2105",
+      lastAttemptedChainId: undefined,
+      miniAppMode: true,
+      walletProviderSource: "farcaster",
+    })).toBe(true);
+    expect(shouldAttemptFarcasterNetworkSetup({
+      chainId: "0x2105",
+      lastAttemptedChainId: "0x2105",
+      miniAppMode: true,
+      walletProviderSource: "farcaster",
+    })).toBe(false);
+    expect(shouldAttemptFarcasterNetworkSetup({
+      chainId: "0x2105",
+      lastAttemptedChainId: undefined,
+      miniAppMode: true,
+      walletProviderSource: "injected",
+    })).toBe(false);
+    expect(shouldAttemptFarcasterNetworkSetup({
+      chainId: "0x14a34",
+      lastAttemptedChainId: undefined,
+      miniAppMode: true,
+      walletProviderSource: "farcaster",
+    })).toBe(false);
+  });
+
   test("keeps a Mini App settlement read-provider fallback for unsupported wallet reads", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
@@ -119,5 +175,16 @@ describe("settlement screen mode", () => {
     expect(source).toContain("isUnsupportedProviderMethodError(error)");
     expect(source).toContain("setMiniAppMode(true)");
     expect(source).toContain("settlementTransactionOptions(launchMode === \"mini-app\")");
+  });
+
+  test("auto-binds Farcaster wallet and retries Base Sepolia setup in Mini App mode", async () => {
+    const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("farcasterAutoConnectAttempted");
+    expect(source).toContain("input.walletProviderSource === \"farcaster\"");
+    expect(source).toContain("void connectWallet()");
+    expect(source).toContain("await ensureBaseSepoliaNetwork(injected)");
+    expect(source).toContain("Retry Base Sepolia");
+    expect(source).not.toContain("Unsupported Mini App network");
   });
 });
