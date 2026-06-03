@@ -80,6 +80,7 @@ interface InfrastructurePageProps {
   actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
+  finishUnavailableReason?: string | undefined;
   hasLoadedInfrastructureState?: boolean | undefined;
   isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
@@ -100,6 +101,7 @@ export function InfrastructurePage({
   actionPendingLabel,
   actionUnavailableReason,
   chainCosts,
+  finishUnavailableReason,
   hasLoadedInfrastructureState = false,
   isActionPending = false,
   isBuildingReadyToFinish,
@@ -124,7 +126,7 @@ export function InfrastructurePage({
   const initialLoadError = showInitialLoadError ? loadError : undefined;
   const activeBuildingQueue = settledState.queue?.kind === "building" ? settledState.queue : undefined;
   const finishAction = infrastructureFinishAction({
-    actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
+    actionUnavailableReason: finishUnavailableReason ?? actionUnavailableReason ?? actionPendingLabel,
     isActionPending,
     isBuildingReadyToFinish,
     onFinishBuilding,
@@ -208,6 +210,7 @@ export function InfrastructurePage({
             actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
+            finishUnavailableReason={finishUnavailableReason}
             isActionPending={isActionPending}
             isBuildingReadyToFinish={isBuildingReadyToFinish}
             onFinishBuilding={onFinishBuilding}
@@ -292,6 +295,7 @@ function BuildingDetailPanel({
   actionUnavailableReason,
   building,
   chainCost,
+  finishUnavailableReason,
   isActionPending,
   isBuildingReadyToFinish,
   onFinishBuilding,
@@ -306,6 +310,7 @@ function BuildingDetailPanel({
   actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
+  finishUnavailableReason?: string | undefined;
   isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   now: number;
@@ -347,7 +352,7 @@ function BuildingDetailPanel({
   });
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
   const finishAction = infrastructureFinishAction({
-    actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
+    actionUnavailableReason: finishUnavailableReason ?? actionUnavailableReason ?? actionPendingLabel,
     binary,
     isActionPending,
     isBuildingReadyToFinish,

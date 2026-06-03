@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildingCompletionUnavailableReasonFor,
   buildingCompletionUnavailableReasonAfterBackendRevalidation,
+  buildingCompletionReadyToFinishFlag,
   buildingFinishActionErrorLabel,
   canLoadIndexedPageState,
   hasInfrastructureDisplayState,
@@ -10,6 +11,7 @@ import {
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  liveInfrastructureBuildingCompletionQueue,
   overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
   preserveActiveResearchQueue,
@@ -567,6 +569,41 @@ describe("Playable MVP app display helpers", () => {
         readyAt: "1700000000",
       }),
       isBuildingReadyToFinish: true,
+    })).toBe(true);
+  });
+
+  test("keeps Overview finish disabled when ready wallet queues lack live infrastructure verification", () => {
+    const readyWalletQueue = buildingQueue({
+      readyAt: "1700000000",
+    });
+    const unverifiedInfrastructure = infrastructureState({
+      queue: null,
+      source: "contract-state-indexer",
+      stale: true,
+    });
+
+    expect(liveInfrastructureBuildingCompletionQueue(unverifiedInfrastructure)).toBeNull();
+    expect(buildingCompletionReadyToFinishFlag({
+      infrastructureState: unverifiedInfrastructure,
+      now: 1_700_000_000_000,
+    })).toBe(false);
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: readyWalletQueue,
+      isBuildingReadyToFinish: buildingCompletionReadyToFinishFlag({
+        infrastructureState: unverifiedInfrastructure,
+        now: 1_700_000_000_000,
+      }),
+    })).toBe(false);
+
+    const liveInfrastructure = infrastructureState({
+      queue: readyWalletQueue,
+      source: "live-rpc",
+      stale: false,
+    });
+    expect(liveInfrastructureBuildingCompletionQueue(liveInfrastructure)).toBe(readyWalletQueue);
+    expect(buildingCompletionReadyToFinishFlag({
+      infrastructureState: liveInfrastructure,
+      now: 1_700_000_000_000,
     })).toBe(true);
   });
 
