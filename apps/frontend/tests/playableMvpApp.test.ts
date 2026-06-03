@@ -12,6 +12,7 @@ import {
   infrastructureActionNoticeFor,
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
+  isTransientResourceCollectionSuccess,
   loadWalletPlanetSyncSnapshot,
   overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
@@ -163,6 +164,28 @@ describe("Playable MVP app display helpers", () => {
       label: "Building upgrade confirmed on-chain.",
       tone: "success",
     });
+  });
+
+  test("treats only completed resource collection success as transient top-bar feedback", () => {
+    expect(isTransientResourceCollectionSuccess({
+      status: "success",
+      label: "Resource collection confirmed.",
+    })).toBe(true);
+
+    expect(isTransientResourceCollectionSuccess({
+      status: "error",
+      label: "Resource collection failed: Unlock or reconnect your wallet, then retry.",
+    })).toBe(false);
+
+    expect(isTransientResourceCollectionSuccess({
+      status: "pending",
+      label: "Resource collection confirmed. Rechecking game state after a temporary API/RPC outage.",
+    })).toBe(false);
+
+    expect(isTransientResourceCollectionSuccess({
+      status: "success",
+      label: "Ship production confirmed.",
+    })).toBe(false);
   });
 
   test("translates transient building finish state-read failures into recovery copy", () => {
