@@ -17,6 +17,7 @@ import type {
   PlayerQueuesResponse,
   QueueStateResponse,
 } from "./walletFlow";
+import { timestampToMs } from "./timestampFormat";
 
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
 
@@ -137,8 +138,8 @@ export function isBuildingQueueReadyToFinish(
   queue: QueueStateResponse | null | undefined,
   now = Date.now(),
 ): boolean {
-  if (!queue?.active || !queue.readyAt) return false;
-  return Number(queue.readyAt) * 1_000 <= now;
+  const readyAt = queueTimestampMs(queue?.readyAt);
+  return Boolean(queue?.active && readyAt !== undefined && readyAt <= now);
 }
 
 export function buildingQueueItemForDisplay(
@@ -228,10 +229,7 @@ function zeroResearchLevels(): PlayableState["research"] {
 }
 
 function queueTimestampMs(value: string | null | undefined): number | undefined {
-  if (!value) return undefined;
-  const timestamp = Number(value);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return undefined;
-  return timestamp * 1_000;
+  return timestampToMs(value);
 }
 
 function toResources(resources: ChainInfrastructureState["resources"] | ChainInfrastructureState["buildings"][number]["cost"] | null | undefined): Resources | undefined {

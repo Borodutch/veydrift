@@ -1,6 +1,6 @@
 import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Check, Pencil, Trash2, X } from "lucide-preact";
+import { ArrowRight, Check, Pencil, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
 import {
   buildingQueueAsset,
@@ -30,6 +30,11 @@ import {
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import {
+  actionNoticeForBuilding,
+  buildingKeyForContractId,
+  type InfrastructureActionNotice,
+} from "../buildingActionNotice";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
@@ -67,6 +72,7 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
+  buildingActionNotice?: InfrastructureActionNotice | undefined;
   isBuildingActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
@@ -109,6 +115,7 @@ export function OverviewPage({
   planet,
   homePlanet,
   isWalletConnected,
+  buildingActionNotice,
   isBuildingActionPending = false,
   isBuildingReadyToFinish,
   onFinishBuilding,
@@ -185,6 +192,10 @@ export function OverviewPage({
     isBuildingReadyToFinish,
     onFinishBuilding,
   });
+  const overviewBuildingNotice = overviewBuildingActionNoticeFor(
+    buildingActionNotice,
+    buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId),
+  );
 
   const planetName = homePlanet?.name
     ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
@@ -565,6 +576,7 @@ export function OverviewPage({
                 disabled={isBuildingActionPending}
                 onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
               />
+              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
             </div>
           ) : buildingQueue ? (
             <div className="grid gap-2">
@@ -581,9 +593,10 @@ export function OverviewPage({
                 disabled={isBuildingActionPending}
                 onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
               />
+              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
             </div>
           ) : (
-            <EmptyQueue action={<QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>}>
+            <EmptyQueue actionLabel="Build" onAction={() => onNavigate("infrastructure")}>
               No active construction.
             </EmptyQueue>
           )}
@@ -609,7 +622,7 @@ export function OverviewPage({
               <OverviewDefenseFinishButton action={defenseFinishAction} />
             </div>
           ) : (
-            <EmptyQueue action={<QuickLink onClick={() => onNavigate("defenses")}>Defenses</QuickLink>}>
+            <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
               No active defense production.
             </EmptyQueue>
           )}
@@ -662,8 +675,8 @@ export function OverviewPage({
               <OverviewResearchActionNotice actionState={researchAction} />
             </div>
           ) : (
-            <div className="grid gap-2">
-              <EmptyQueue action={<QuickLink onClick={() => onNavigate("research")}>Research</QuickLink>}>
+            <div className="flex min-h-0 flex-1 flex-col gap-2">
+              <EmptyQueue actionLabel="Research" onAction={() => onNavigate("research")}>
                 No active research.
               </EmptyQueue>
               <OverviewResearchActionNotice actionState={researchAction} />
@@ -694,7 +707,7 @@ export function OverviewPage({
               now={now}
             />
           ) : (
-            <EmptyQueue action={<QuickLink onClick={() => onNavigate("shipyard")}>Shipyard</QuickLink>}>
+            <EmptyQueue actionLabel="Shipyard" onAction={() => onNavigate("shipyard")}>
               No active ship production.
             </EmptyQueue>
           )}
@@ -718,6 +731,14 @@ export function shouldShowOverviewBuildingFinishAction({
   onFinishBuilding?: (() => void) | undefined;
 }): boolean {
   return Boolean(isBuildingReadyToFinish && onFinishBuilding);
+}
+
+export function overviewBuildingActionNoticeFor(
+  actionNotice: InfrastructureActionNotice | undefined,
+  buildingKey: BuildingQueueItem["key"] | undefined,
+): InfrastructureActionNotice | undefined {
+  if (!buildingKey) return actionNotice;
+  return actionNoticeForBuilding(actionNotice, buildingKey);
 }
 
 export function overviewDefenseFinishAction({
@@ -792,6 +813,24 @@ function OverviewBuildingFinishButton({
     >
       Finish upgrade
     </button>
+  );
+}
+
+function OverviewBuildingActionNotice({
+  notice,
+}: {
+  notice?: InfrastructureActionNotice | undefined;
+}) {
+  if (!notice) return null;
+  const className = notice.tone === "error"
+    ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
+    : "border-emerald-300/20 bg-emerald-300/10 text-emerald-100";
+  const role = notice.tone === "error" ? "alert" : "status";
+
+  return (
+    <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${className}`} role={role}>
+      {notice.label}
+    </div>
   );
 }
 
@@ -980,7 +1019,7 @@ function QueuePanel({
   children: preact.ComponentChildren;
 }) {
   return (
-    <div className="flex min-h-32 w-full min-w-0 max-w-[calc(100vw-1.5rem)] flex-col rounded-lg border border-white/10 bg-[#101624] p-3 sm:max-w-none sm:p-4">
+    <div className="flex min-h-[8.5rem] w-full min-w-0 flex-col rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-white">{label}</h3>
         {tag && (
@@ -1071,16 +1110,18 @@ function formatMissionSnapshotTime(value: string, now: number): string {
 }
 
 function EmptyQueue({
-  action,
+  actionLabel,
   children,
+  onAction,
 }: {
-  action: preact.ComponentChildren;
+  actionLabel: string;
   children: preact.ComponentChildren;
+  onAction: () => void;
 }) {
   return (
-    <div className="flex min-h-20 flex-1 flex-col justify-between gap-3 text-xs leading-5 text-slate-400">
-      <p className="mb-0">{children}</p>
-      {action}
+    <div className="flex min-h-0 flex-1 flex-col gap-3 text-xs leading-5 text-slate-400">
+      <p className="min-w-0 break-words">{children}</p>
+      <QuickLink onClick={onAction}>{actionLabel}</QuickLink>
     </div>
   );
 }
@@ -1088,11 +1129,12 @@ function EmptyQueue({
 function QuickLink({ children, onClick }: { children: string; onClick: () => void }) {
   return (
     <button
-      className="flex h-9 w-full items-center justify-center rounded-md border border-white/15 bg-white/10 px-3 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:bg-white/20 hover:text-white"
+      className="mt-auto flex min-h-9 w-full min-w-0 items-center justify-center gap-1.5 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold leading-4 text-slate-200 transition hover:border-cyan-300/40 hover:bg-white/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/45"
       onClick={onClick}
       type="button"
     >
-      {children}
+      <span className="min-w-0 truncate">{children}</span>
+      <ArrowRight aria-hidden="true" className="shrink-0" size={13} strokeWidth={2} />
     </button>
   );
 }
