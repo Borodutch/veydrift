@@ -20,13 +20,14 @@ import {
   getChainId,
   getCurrentAccounts,
   isBaseSepoliaChain,
+  isUnsupportedProviderMethodError,
   isUserRejected,
   miniAppUnsupportedChainMessage,
   readSettlementFundingState,
   readSettlementState,
   requestAccounts,
   fetchWalletSettlement,
-  getAvailableWalletProvider,
+  getAvailableWalletProviderDetails,
   sendSettlementTransaction,
   settlementContractConfigured,
   waitForReceipt,
@@ -53,6 +54,8 @@ type SettlementFunding =
   | { status: "loading" }
   | { status: "ready"; funding: SettlementFundingState }
   | { status: "error"; message: string };
+
+type SettlementLaunchMode = "standard" | "mini-app";
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -136,10 +139,14 @@ export function FirstPlanetSettlementApp() {
     let cleanupProvider: (() => void) | undefined;
 
     void (async () => {
-      const injected = await getAvailableWalletProvider(window as typeof window & { ethereum?: Eip1193Provider });
+      const walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
       if (disposed) return;
 
+      const injected = walletProvider?.provider;
       setProvider(injected);
+      if (walletProvider?.source === "farcaster") {
+        setMiniAppMode(true);
+      }
 
       if (!injected) {
         setWallet({
@@ -288,8 +295,7 @@ export function FirstPlanetSettlementApp() {
     }
 
     try {
-      const readProvider = settlementReadProvider(miniAppMode) ?? injected;
-      const settlement = await readSettlementState(readProvider, connectedAccount, settlementConfig);
+      const { settlement } = await readSettlementStateWithMiniAppFallback(injected, connectedAccount);
 
       if (settlement.kind === "unconfigured") {
         setSettlementFunding({ status: "idle" });
@@ -329,7 +335,7 @@ export function FirstPlanetSettlementApp() {
     try {
       setSettlementFunding({
         status: "ready",
-        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig, settlementTransactionOptions(miniAppMode))
+        funding: await readSettlementFundingWithMiniAppFallback(injected, connectedAccount)
       });
     } catch (error) {
       setSettlementFunding({
@@ -401,8 +407,8 @@ export function FirstPlanetSettlementApp() {
 
       const label = "First planet settlement";
 
-      const canLaunch = await refreshSettlementLaunchInfo(provider, wallet.account, planet);
-      if (!canLaunch) {
+      const launchMode = await refreshSettlementLaunchInfo(provider, wallet.account, planet);
+      if (!launchMode) {
         return;
       }
 
@@ -412,7 +418,12 @@ export function FirstPlanetSettlementApp() {
       });
 
       try {
-        const txHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig, settlementTransactionOptions(miniAppMode));
+        const txHash = await sendSettlementTransaction(
+          provider,
+          wallet.account,
+          settlementConfig,
+          settlementTransactionOptions(launchMode === "mini-app")
+        );
         setPlanet({
           kind: "pending",
           label: transactionConfirmingLabel(label, txHash),
@@ -448,17 +459,16 @@ export function FirstPlanetSettlementApp() {
     injected: Eip1193Provider,
     connectedAccount: string,
     currentPlanet: PlanetState,
-  ): Promise<boolean> {
+  ): Promise<SettlementLaunchMode | undefined> {
     setSettlementFunding({ status: "loading" });
 
     try {
-      const readProvider = settlementReadProvider(miniAppMode) ?? injected;
-      const settlement = await readSettlementState(readProvider, connectedAccount, settlementConfig);
+      const { settlement, launchMode } = await readSettlementStateWithMiniAppFallback(injected, connectedAccount);
 
       if (settlement.kind === "unconfigured") {
         setSettlementFunding({ status: "idle" });
         setPlanet({ kind: "contract-unconfigured" });
-        return false;
+        return undefined;
       }
 
       if (settlement.kind === "settled") {
@@ -467,7 +477,7 @@ export function FirstPlanetSettlementApp() {
           kind: "already-settled",
           planet: settlement.planet,
         });
-        return false;
+        return undefined;
       }
 
       if (settlement.kind === "legacy-settled") {
@@ -481,18 +491,70 @@ export function FirstPlanetSettlementApp() {
 
       const nextFunding: SettlementFunding = {
         status: "ready",
-        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig, settlementTransactionOptions(miniAppMode)),
+        funding: await readSettlementFundingWithMiniAppFallback(injected, connectedAccount, launchMode),
       };
       setSettlementFunding(nextFunding);
 
-      return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding) === undefined;
+      return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding) === undefined
+        ? launchMode
+        : undefined;
     } catch (error) {
       setPlanet(currentPlanet.kind === "legacy-settled" ? currentPlanet : { kind: "not-settled" });
       setSettlementFunding({
         status: "error",
         message: walletRequestErrorMessage(error),
       });
-      return false;
+      return undefined;
+    }
+  }
+
+  async function readSettlementStateWithMiniAppFallback(
+    injected: Eip1193Provider,
+    connectedAccount: string,
+  ): Promise<{ settlement: Awaited<ReturnType<typeof readSettlementState>>; launchMode: SettlementLaunchMode }> {
+    const readProvider = settlementReadProvider(miniAppMode) ?? injected;
+    try {
+      return {
+        launchMode: miniAppMode ? "mini-app" : "standard",
+        settlement: await readSettlementState(readProvider, connectedAccount, settlementConfig),
+      };
+    } catch (error) {
+      if (!miniAppMode && isUnsupportedProviderMethodError(error)) {
+        setMiniAppMode(true);
+        return {
+          launchMode: "mini-app",
+          settlement: await readSettlementState(baseSepoliaReadProvider, connectedAccount, settlementConfig),
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  async function readSettlementFundingWithMiniAppFallback(
+    injected: Eip1193Provider,
+    connectedAccount: string,
+    preferredLaunchMode: SettlementLaunchMode = miniAppMode ? "mini-app" : "standard",
+  ): Promise<SettlementFundingState> {
+    try {
+      return await readSettlementFundingState(
+        injected,
+        connectedAccount,
+        settlementConfig,
+        settlementTransactionOptions(preferredLaunchMode === "mini-app")
+      );
+    } catch (error) {
+      if (!miniAppMode && preferredLaunchMode === "standard" && isUnsupportedProviderMethodError(error)) {
+        setMiniAppMode(true);
+        return await readSettlementFundingState(
+          injected,
+          connectedAccount,
+          settlementConfig,
+          settlementTransactionOptions(true)
+        );
+      }
+
+      throw error;
     }
   }
 
