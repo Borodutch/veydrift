@@ -144,6 +144,8 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
+  BASE_SEPOLIA,
+  createJsonRpcProvider,
   updatePlayerDisplayName,
   waitForReceipt,
   type ChainDefenseState,
@@ -172,6 +174,8 @@ import {
   transactionConfirmingLabel,
   transactionSyncingLabel,
 } from "./transactionActionGate";
+
+const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -855,7 +859,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
-  const transactionReadProvider = readProvider;
+  const transactionReadProvider = readProvider ?? baseSepoliaReadProvider;
   const receiptProvider = transactionReadProvider ?? provider;
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
