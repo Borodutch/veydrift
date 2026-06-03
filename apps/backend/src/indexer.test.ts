@@ -13,6 +13,8 @@ const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
+const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
+const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
@@ -811,6 +813,197 @@ describe("SettlementIndexer", () => {
         expect.objectContaining({ id: 2, level: 1 })
       ])
     });
+  });
+
+  test("persists every production queue kind from indexed contract events", () => {
+    const db = new Database(":memory:");
+    try {
+      const indexer = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { database: db });
+      indexer.applyEvent(planet);
+
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xqueue-building",
+        logIndex: "0x0",
+        topics: [buildingStartedTopic, topic(7n), topic(4n)],
+        data: abiWords(2n, 1770002000n, 1200n, 400n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x91",
+        transactionHash: "0xqueue-defense",
+        logIndex: "0x0",
+        topics: [defenseQueuedTopic, topic(7n), topic(1n)],
+        data: abiWords(5n, 1770002100n, 1000n, 300n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x92",
+        transactionHash: "0xqueue-ship",
+        logIndex: "0x0",
+        topics: [shipQueuedTopic, topic(7n), topic(2n)],
+        data: abiWords(3n, 1770002200n, 6000n, 3000n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x93",
+        transactionHash: "0xqueue-research",
+        logIndex: "0x0",
+        topics: [researchQueuedTopic, addressTopic(player), topic(5n)],
+        data: abiWords(1n, 1770002300n, 800n, 200n, 100n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x94",
+        transactionHash: "0xqueue-moon",
+        logIndex: "0x0",
+        topics: [moonBuildingStartedTopic, topic(7n), topic(2n)],
+        data: abiWords(1n, 1770002400n, 2_000_000n, 4_000_000n, 2_000_000n)
+      });
+
+      expect(db.query(`
+        SELECT queue_key, queue_kind, planet_id, owner, item_id, target_level, quantity, ready_at, metal_cost, crystal_cost, deuterium_cost
+        FROM contract_production_queues
+        ORDER BY queue_key ASC
+      `).all()).toEqual([
+        {
+          queue_key: "building:7",
+          queue_kind: "building",
+          planet_id: "7",
+          owner: null,
+          item_id: 4,
+          target_level: 2,
+          quantity: null,
+          ready_at: "1770002000",
+          metal_cost: "1200",
+          crystal_cost: "400",
+          deuterium_cost: "0"
+        },
+        {
+          queue_key: "defense:7",
+          queue_kind: "defense",
+          planet_id: "7",
+          owner: null,
+          item_id: 1,
+          target_level: null,
+          quantity: 5,
+          ready_at: "1770002100",
+          metal_cost: "1000",
+          crystal_cost: "300",
+          deuterium_cost: "0"
+        },
+        {
+          queue_key: "moon-building:7",
+          queue_kind: "moon-building",
+          planet_id: "7",
+          owner: null,
+          item_id: 2,
+          target_level: 1,
+          quantity: null,
+          ready_at: "1770002400",
+          metal_cost: "2000000",
+          crystal_cost: "4000000",
+          deuterium_cost: "2000000"
+        },
+        {
+          queue_key: `research:${player}`,
+          queue_kind: "research",
+          planet_id: null,
+          owner: player,
+          item_id: 5,
+          target_level: 1,
+          quantity: null,
+          ready_at: "1770002300",
+          metal_cost: "800",
+          crystal_cost: "200",
+          deuterium_cost: "100"
+        },
+        {
+          queue_key: "ship:7",
+          queue_kind: "ship",
+          planet_id: "7",
+          owner: null,
+          item_id: 2,
+          target_level: null,
+          quantity: 3,
+          ready_at: "1770002200",
+          metal_cost: "6000",
+          crystal_cost: "3000",
+          deuterium_cost: "0"
+        }
+      ]);
+      expect(db.query(`
+        SELECT planet_id, moon_building_id, target_level, ready_at, metal_cost, crystal_cost, deuterium_cost
+        FROM contract_moon_building_queues
+      `).get()).toEqual({
+        planet_id: "7",
+        moon_building_id: 2,
+        target_level: 1,
+        ready_at: "1770002400",
+        metal_cost: "2000000",
+        crystal_cost: "4000000",
+        deuterium_cost: "2000000"
+      });
+      expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
+        building: { kind: "building", itemId: 4, targetLevel: 2 },
+        defense: { kind: "defense", itemId: 1, quantity: 5 },
+        ship: { kind: "ship", itemId: 2, quantity: 3 },
+        research: { kind: "research", itemId: 5, targetLevel: 1 }
+      });
+      expect(indexer.moonState(player, planet.planetId).queue).toMatchObject({
+        kind: "moon-building",
+        itemId: 2,
+        targetLevel: 1
+      });
+
+      indexer.applyLog({
+        blockNumber: "0x95",
+        transactionHash: "0xcomplete-building",
+        logIndex: "0x0",
+        topics: [buildingCompletedTopic, topic(7n), topic(4n)],
+        data: abiWords(2n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x96",
+        transactionHash: "0xcomplete-defense",
+        logIndex: "0x0",
+        topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+        data: abiWords(5n, 9n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x97",
+        transactionHash: "0xcomplete-ship",
+        logIndex: "0x0",
+        topics: [shipCompletedTopic, topic(7n), topic(2n)],
+        data: abiWords(3n, 8n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x98",
+        transactionHash: "0xcomplete-research",
+        logIndex: "0x0",
+        topics: [researchCompletedTopic, addressTopic(player), topic(5n)],
+        data: abiWords(1n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x99",
+        transactionHash: "0xcomplete-moon",
+        logIndex: "0x0",
+        topics: [moonBuildingCompletedTopic, topic(7n), topic(2n)],
+        data: abiWords(1n)
+      });
+
+      expect(db.query("SELECT COUNT(*) AS count FROM contract_production_queues").get()).toEqual({ count: 0 });
+      expect(db.query("SELECT COUNT(*) AS count FROM contract_moon_building_queues").get()).toEqual({ count: 0 });
+      expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 4)).toMatchObject({ level: 2 });
+      expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({ count: 9 });
+      expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 2)).toMatchObject({ count: 8 });
+      expect(indexer.technologyLevels(player)).toMatchObject({ "5": 1 });
+      expect(indexer.moonState(player, planet.planetId).buildings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 2, level: 1 })
+      ]));
+    } finally {
+      db.close();
+    }
   });
 
   test("indexes rift deposits and withdrawal lifecycle", () => {
