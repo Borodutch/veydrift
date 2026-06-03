@@ -901,7 +901,7 @@ export function miniAppUnsupportedChainMessage(chainId: string): string {
     ? `Base mainnet (${BASE_MAINNET_CHAIN_ID_HEX})`
     : `chain ${chainId}`;
 
-  return `${currentChain} is active in this Farcaster client, but test.veydrift.com requires Base Sepolia (${BASE_SEPOLIA.chainIdHex}). This Mini App host does not expose a safe network switch for Veydrift test transactions; open Veydrift in a Farcaster client with Base Sepolia support or use the desktop browser wallet flow.`;
+  return `${currentChain} is active in this Farcaster client, but test.veydrift.com requires Base Sepolia (${BASE_SEPOLIA.chainIdHex}). Veydrift can ask the Farcaster wallet to switch or add Base Sepolia; if the host rejects that request, use a Farcaster client with Base Sepolia support or open the desktop browser wallet flow.`;
 }
 
 export function shortAddress(address: string): string {

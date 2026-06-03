@@ -49,6 +49,32 @@ type SettlementConfigState =
   | { status: "loading"; apiUrl?: string; config: SettlementConfig }
   | { status: "ready"; apiUrl?: string; config: SettlementConfig };
 
+export function shouldAutoConnectFarcasterWallet(input: {
+  miniAppMode: boolean;
+  providerAvailable: boolean;
+  settlementConfigReady: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+  alreadyAttempted: boolean;
+}): boolean {
+  return input.providerAvailable
+    && input.miniAppMode
+    && input.walletProviderSource === "farcaster"
+    && input.settlementConfigReady
+    && !input.alreadyAttempted;
+}
+
+export function shouldAttemptFarcasterNetworkSetup(input: {
+  miniAppMode: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+  chainId: string;
+  lastAttemptedChainId: string | undefined;
+}): boolean {
+  return input.miniAppMode
+    && input.walletProviderSource === "farcaster"
+    && !isBaseSepoliaChain(input.chainId)
+    && input.lastAttemptedChainId !== input.chainId;
+}
+
 type SettlementFunding =
   | { status: "idle" }
   | { status: "loading" }
@@ -66,6 +92,7 @@ export function FirstPlanetSettlementApp() {
   const [wallet, setWallet] = useState<WalletState>({
     kind: "loading"
   });
+  const [walletProviderSource, setWalletProviderSource] = useState<"injected" | "farcaster" | undefined>();
   const [planet, setPlanet] = useState<PlanetState>({
     kind: "idle"
   });
@@ -74,6 +101,8 @@ export function FirstPlanetSettlementApp() {
   ));
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
+  const farcasterAutoConnectAttempted = useRef(false);
+  const farcasterNetworkSetupAttempted = useRef<string>();
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -144,6 +173,7 @@ export function FirstPlanetSettlementApp() {
 
       const injected = walletProvider?.provider;
       setProvider(injected);
+      setWalletProviderSource(walletProvider?.source);
       if (walletProvider?.source === "farcaster") {
         setMiniAppMode(true);
       }
@@ -198,6 +228,21 @@ export function FirstPlanetSettlementApp() {
     void refreshWallet(provider, account);
   }, [provider, settlementConfig.address, settlementConfigState.apiUrl, settlementConfigState.status]);
 
+  useEffect(() => {
+    if (!shouldAutoConnectFarcasterWallet({
+      alreadyAttempted: farcasterAutoConnectAttempted.current,
+      miniAppMode,
+      providerAvailable: Boolean(provider),
+      settlementConfigReady: settlementConfigState.status === "ready",
+      walletProviderSource,
+    })) {
+      return;
+    }
+
+    farcasterAutoConnectAttempted.current = true;
+    void connectWallet();
+  }, [miniAppMode, provider, settlementConfigState.status, walletProviderSource]);
+
   async function refreshWallet(injected = provider, preferredAccount?: string) {
     if (!injected) {
       setWallet({
@@ -235,6 +280,40 @@ export function FirstPlanetSettlementApp() {
       const chainId = await getChainId(injected);
 
       if (!isBaseSepoliaChain(chainId)) {
+        if (shouldAttemptFarcasterNetworkSetup({
+          chainId,
+          lastAttemptedChainId: farcasterNetworkSetupAttempted.current,
+          miniAppMode,
+          walletProviderSource,
+        })) {
+          farcasterNetworkSetupAttempted.current = chainId;
+          setWallet({
+            kind: "wrong-network",
+            account: accounts[0],
+            chainId
+          });
+          setPlanet({
+            kind: "checking"
+          });
+
+          try {
+            await ensureBaseSepoliaNetwork(injected);
+            await refreshWallet(injected, accounts[0]);
+          } catch (error) {
+            console.error("Mini App Base Sepolia setup failed", error);
+            setWallet({
+              kind: "wrong-network",
+              account: accounts[0],
+              chainId
+            });
+            setPlanet({
+              kind: "idle"
+            });
+            setSettlementFunding({ status: "idle" });
+          }
+          return;
+        }
+
         setWallet({
           kind: "wrong-network",
           account: accounts[0],
@@ -376,14 +455,6 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
-    if (miniAppMode && wallet.kind === "wrong-network") {
-      setPlanet({
-        kind: "error",
-        message: miniAppUnsupportedChainMessage(wallet.chainId),
-      });
-      return;
-    }
-
     setPlanet({
       kind: "checking"
     });
@@ -392,6 +463,15 @@ export function FirstPlanetSettlementApp() {
       await ensureBaseSepoliaNetwork(provider);
       await refreshWallet(provider, account);
     } catch (error) {
+      if (miniAppMode && wallet.kind === "wrong-network") {
+        farcasterNetworkSetupAttempted.current = undefined;
+        setWallet(wallet);
+        setPlanet({
+          kind: "idle"
+        });
+        return;
+      }
+
       setPlanet({
         kind: isUserRejected(error) ? "rejected" : "error",
         message: isUserRejected(error) ? "Network switch was rejected." : walletRequestErrorMessage(error)
@@ -674,8 +754,9 @@ function FlowBody({
     if (miniAppMode) {
       return (
         <StateMessage
-          title="Unsupported Mini App network"
+          title="Base Sepolia required"
           body={miniAppUnsupportedChainMessage(wallet.chainId)}
+          action={<PrimaryButton onClick={onSwitchNetwork}>Retry Base Sepolia</PrimaryButton>}
           tone="warning"
         />
       );
