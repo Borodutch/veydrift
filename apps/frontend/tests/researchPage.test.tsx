@@ -274,6 +274,37 @@ describe("Research page load-error display", () => {
     });
   });
 
+  test("shows time to afford for research actions when production rates are available", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 700, crystal: 2_000, deuterium: 1_000 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 2_300, deuterium: 1_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      productionRates: { metal: 300, crystal: 600, deuterium: 0 },
+      researchState: researchState({
+        resources: { metal: "700", crystal: "2000", deuterium: "1000" },
+      }),
+      state,
+    });
+
+    expect(status).toMatchObject({
+      disabled: true,
+      reason: "Requires 900 more Metal, 300 more Crystal (affordable in 3h)",
+    });
+  });
+
   test("reports every missing resource for research actions", () => {
     const state = {
       ...createInitialPlayableState(10_000),

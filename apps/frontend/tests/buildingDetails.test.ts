@@ -7,6 +7,7 @@ import {
   formatBuildingRequirements,
   formatCost,
   formatDuration,
+  formatMissingResources,
   formatNumber,
   mineSolarPlantPrerequisiteFor,
 } from "../src/buildingDetails";
@@ -41,6 +42,20 @@ describe("building detail helpers", () => {
       reason: "Requires 50 more Metal",
       targetLevel: 1,
     });
+  });
+
+  test("appends time to afford when production rates are available", () => {
+    expect(formatMissingResources(
+      { metal: 20, crystal: 50, deuterium: 0 },
+      { metal: 80, crystal: 80, deuterium: 0 },
+      { metal: 30, crystal: 60, deuterium: 0 },
+    )).toBe("Requires 60 more Metal, 30 more Crystal (affordable in 2h)");
+
+    expect(formatMissingResources(
+      { metal: 20, crystal: 50, deuterium: 0 },
+      { metal: 80, crystal: 50, deuterium: 10 },
+      { metal: 30, crystal: 60, deuterium: 0 },
+    )).toBe("Requires 60 more Metal, 10 more Deuterium (time unavailable: no Deuterium production)");
   });
 
   test("uses action unavailable reason before local affordability", () => {

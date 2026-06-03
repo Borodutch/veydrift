@@ -68,6 +68,7 @@ interface ResearchPageProps {
   onRefresh: () => void;
   onResearch: (technologyId: number, key: ResearchKey) => void;
   onSelectResearch?: ((key: ResearchKey) => void) | undefined;
+  productionRates?: Resources | undefined;
   researchState: ChainResearchState | null;
   selectedResearchKey?: ResearchKey | undefined;
   settledState: PlayableState;
@@ -86,6 +87,7 @@ export function ResearchPage({
   onRefresh,
   onResearch,
   onSelectResearch,
+  productionRates,
   researchState,
   selectedResearchKey,
   settledState,
@@ -180,6 +182,7 @@ export function ResearchPage({
                     key: research.key,
                     loading,
                     now,
+                    productionRates,
                     researchState,
                     state: viewState,
                   });
@@ -214,6 +217,7 @@ export function ResearchPage({
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
             onOpenRequirement={onOpenRequirement}
             queue={queue}
+            productionRates={productionRates}
             research={selectedResearch}
             researchState={researchState}
             state={viewState}
@@ -396,6 +400,7 @@ function ResearchDetailPanel({
   onResearch,
   onOpenRequirement,
   queue,
+  productionRates,
   research,
   researchState,
   state,
@@ -410,6 +415,7 @@ function ResearchDetailPanel({
   onResearch: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   queue: ReturnType<typeof researchQueueForDisplay>;
+  productionRates?: Resources | undefined;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
   state: PlayableState;
@@ -423,6 +429,7 @@ function ResearchDetailPanel({
     key: research.key,
     loading,
     now,
+    productionRates,
     researchState,
     state,
   });
@@ -532,6 +539,7 @@ export function researchActionStatus({
   key,
   loading,
   now,
+  productionRates,
   researchState,
   state,
 }: {
@@ -543,6 +551,7 @@ export function researchActionStatus({
   key: ResearchKey;
   loading: boolean;
   now: number;
+  productionRates?: Resources | undefined;
   researchState: ChainResearchState | null;
   state: PlayableState;
 }) {
@@ -591,7 +600,7 @@ export function researchActionStatus({
                       : !cost
                         ? "Research cost unavailable"
                       : !affordable
-                        ? formatMissingResources(state.resources, cost)
+                        ? formatMissingResources(state.resources, cost, productionRates)
                         : `Ready for Level ${targetLevel}`;
 
   const completionReady = reason === `Ready to complete Level ${targetLevel}`;
