@@ -7,7 +7,7 @@ import { NavBar, type Page } from "./components/NavBar";
 import { isOverviewResearchReadyToFinish, OverviewPage, type PlanetRenameActionState } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
-import { AlliancePage, allianceJoinRequestApprovalState } from "./components/AlliancePage";
+import { AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState } from "./components/AlliancePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
@@ -2193,18 +2193,46 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleAcceptAllianceInvite = useCallback((allianceId: string) => {
-    if (!provider || !account || !allianceContract) {
+    if (!provider || !account || !apiBaseUrl || !allianceContract) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
       return;
     }
 
-    void runAllianceTransaction("Alliance invite acceptance", () => sendAcceptAllianceInviteTransaction(
-      provider,
-      account,
-      allianceContract,
-      allianceId,
-    ));
-  }, [account, allianceContract, provider, runAllianceTransaction]);
+    setAllianceAction({ status: "pending", label: "Refreshing alliance invitation..." });
+    setAllianceLoading(true);
+    void fetchAllianceState(apiBaseUrl, account)
+      .then((next) => {
+        setAllianceState(next);
+        const invite = next.pendingInvites.find((entry) => entry.allianceId === allianceId);
+        if (!invite) {
+          setAllianceAction({ status: "error", label: "This invitation is no longer pending." });
+          return;
+        }
+
+        const acceptance = allianceInviteAcceptanceState(next, invite);
+        if (!acceptance.canAccept) {
+          setAllianceAction({ status: "error", label: acceptance.reason ?? "This invitation cannot be accepted." });
+          return;
+        }
+
+        return runAllianceTransaction("Alliance invite acceptance", () => sendAcceptAllianceInviteTransaction(
+          provider,
+          account,
+          allianceContract,
+          invite.allianceId,
+        ));
+      })
+      .catch((error) => {
+        console.error(error);
+        setAllianceAction({
+          status: "error",
+          label: error instanceof Error ? error.message : "Alliance invitation could not be refreshed.",
+        });
+      })
+      .finally(() => {
+        setAllianceLoading(false);
+      });
+  }, [account, apiBaseUrl, allianceContract, provider, runAllianceTransaction]);
 
   const handleRequestAllianceJoin = useCallback((allianceId: string) => {
     if (!provider || !account || !allianceContract) {

@@ -14,6 +14,7 @@ type AllianceActionState =
   | { status: "error"; label: string };
 
 type DirectoryEntry = ChainAllianceState["directory"][number];
+type InviteEntry = ChainAllianceState["pendingInvites"][number];
 type JoinRequestEntry = ChainAllianceState["allianceJoinRequests"][number];
 type RosterMember = ChainAllianceState["members"][number];
 
@@ -226,6 +227,7 @@ export function AlliancePage({
                 onOpenPlayer={setSelectedPlayer}
               />
               <PendingInvites
+                allianceState={allianceState}
                 disabled={disabled}
                 invites={allianceState?.pendingInvites ?? []}
                 directory={directory}
@@ -306,6 +308,31 @@ export function allianceJoinRequestApprovalState(
   }
 
   return { canApprove: true, reason: null };
+}
+
+export function allianceInviteAcceptanceState(
+  allianceState: ChainAllianceState | null,
+  invite: InviteEntry
+): { canAccept: boolean; reason: string | null } {
+  if (!allianceState) {
+    return { canAccept: false, reason: "Alliance state is still loading." };
+  }
+
+  if (allianceState.membership.allianceId !== "0") {
+    return { canAccept: false, reason: "You are already in an alliance." };
+  }
+
+  const pendingInvite = allianceState.pendingInvites.find((entry) => entry.allianceId === invite.allianceId);
+  if (!pendingInvite) {
+    return { canAccept: false, reason: "This invitation is no longer pending." };
+  }
+
+  const alliance = allianceState.directory.find((entry) => entry.allianceId === invite.allianceId);
+  if (!alliance?.active) {
+    return { canAccept: false, reason: "This alliance is unavailable." };
+  }
+
+  return { canAccept: true, reason: null };
 }
 
 function MyAllianceSection({
@@ -646,11 +673,13 @@ function AllianceDetailsPanel({
 }
 
 function PendingInvites({
+  allianceState,
   directory,
   disabled,
   invites,
   onAcceptInvite,
 }: {
+  allianceState: ChainAllianceState | null;
   directory: DirectoryEntry[];
   disabled: boolean;
   invites: ChainAllianceState["pendingInvites"];
@@ -662,13 +691,15 @@ function PendingInvites({
         <div className="grid gap-2">
           {invites.map((invite) => {
             const alliance = directory.find((entry) => entry.allianceId === invite.allianceId);
+            const acceptance = allianceInviteAcceptanceState(allianceState, invite);
             return (
               <div className="rounded border border-white/10 bg-black/20 p-3" key={invite.allianceId}>
                 <p className="text-sm font-semibold text-white">{alliance ? allianceDisplayName(alliance) : `Alliance #${invite.allianceId}`}</p>
                 <p className="mt-1 text-sm text-slate-400">Invited by {playerLabel(invite.inviterDisplayName, invite.inviter)}</p>
+                {acceptance.reason ? <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{acceptance.reason}</p> : null}
                 <button
                   className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={disabled}
+                  disabled={disabled || !acceptance.canAccept}
                   onClick={() => onAcceptInvite(invite.allianceId)}
                   type="button"
                 >
