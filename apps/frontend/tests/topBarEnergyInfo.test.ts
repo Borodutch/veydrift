@@ -7,7 +7,7 @@ describe("top bar energy info", () => {
       produced: 120,
       required: 80,
       scaleBps: 10_000,
-    })).toBe("Energy powers mines and other production buildings. 120 produced / 80 required. Surplus 40 Resource production is fully powered.");
+    })).toBe("Energy powers mines. Solar Plant and Solar Satellites produce it; mines consume it. 120 produced / 80 consumed. Surplus 40 Mine output is fully powered.");
   });
 
   test("explains reduced output during an energy shortage", () => {
@@ -15,6 +15,6 @@ describe("top bar energy info", () => {
       produced: 60,
       required: 100,
       scaleBps: 6_000,
-    })).toBe("Energy powers mines and other production buildings. 60 produced / 100 required. Shortage 40 Resource production is reduced to 60%.");
+    })).toBe("Energy powers mines. Solar Plant and Solar Satellites produce it; mines consume it. 60 produced / 100 consumed. Shortage 40 Mine output is reduced to 60% until energy production catches up.");
   });
 });

@@ -16,15 +16,16 @@ export function energyExplanationTitle({
     ? `Shortage ${format(Math.abs(current))}`
     : `Surplus ${format(current)}`;
   const details = [
-    "Energy powers mines and other production buildings.",
-    `${format(produced)} produced / ${format(required)} required.`,
+    "Energy powers mines.",
+    "Solar Plant and Solar Satellites produce it; mines consume it.",
+    `${format(produced)} produced / ${format(required)} consumed.`,
     status,
   ];
 
   if (current < 0 && required > 0 && scaleBps < BPS) {
-    details.push(`Resource production is reduced to ${productionPercent}%.`);
+    details.push(`Mine output is reduced to ${productionPercent}% until energy production catches up.`);
   } else {
-    details.push("Resource production is fully powered.");
+    details.push("Mine output is fully powered.");
   }
 
   return details.join(" ");

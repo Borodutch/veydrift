@@ -252,14 +252,34 @@ function EnergyPip({
             <span className="hidden sm:inline">{productionPercent}% output</span>
           </span>
         )}
-        <button
-          aria-label={energyExplanation}
-          className="inline-grid h-5 w-5 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
-          title={energyExplanation}
-          type="button"
-        >
-          <Info aria-hidden="true" size={12} strokeWidth={2.25} />
-        </button>
+        <details className="group relative inline-flex shrink-0">
+          <summary
+            aria-label={energyExplanation}
+            className="inline-grid h-5 w-5 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
+            title="Energy explanation"
+          >
+            <Info aria-hidden="true" size={12} strokeWidth={2.25} />
+          </summary>
+          <div className="fixed left-2 right-2 top-12 z-50 whitespace-normal rounded border border-cyan-300/25 bg-[#111827] p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-72">
+            <div className="font-semibold text-cyan-100">Energy</div>
+            <p className="mt-1">
+              Energy powers mines. Solar Plant and Solar Satellites produce it; mines consume it.
+            </p>
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
+              <dt className="text-slate-500">Produced</dt>
+              <dd className="text-right font-semibold text-slate-100">{format(produced)}</dd>
+              <dt className="text-slate-500">Consumed</dt>
+              <dd className="text-right font-semibold text-slate-100">{format(required)}</dd>
+              <dt className="text-slate-500">Balance</dt>
+              <dd className={`text-right font-semibold ${current < 0 ? "text-red-200" : "text-lime-200"}`}>{format(current)}</dd>
+            </dl>
+            <p className={`mt-2 text-[11px] leading-4 ${showShortageFactor ? "text-red-200" : "text-slate-400"}`}>
+              {showShortageFactor
+                ? `Insufficient energy reduces mine output to ${productionPercent}% until you add more energy production or reduce consumption.`
+                : "Mine output is fully powered."}
+            </p>
+          </div>
+        </details>
       </span>
     </div>
   );

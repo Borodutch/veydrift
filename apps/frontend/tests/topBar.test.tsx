@@ -59,15 +59,22 @@ describe("TopBar", () => {
   test("renders an energy explanation info control", () => {
     const topBar = renderTopBar();
     const energyInfo = elementNodes(topBar).find(
-      (item) => item.type === "button"
-        && typeof item.props?.title === "string"
-        && item.props.title.includes("Energy powers mines")
+      (item) => item.type === "summary"
+        && typeof item.props?.["aria-label"] === "string"
+        && item.props["aria-label"].includes("Energy powers mines")
     );
+    const energyDetails = elementNodes(topBar).find((item) => item.type === "details");
+    const panelText = visibleText(energyDetails);
 
-    expect(energyInfo?.props?.["aria-label"]).toBe(energyInfo?.props?.title);
-    expect(energyInfo?.props?.title).toContain("100 produced / 125 required");
-    expect(energyInfo?.props?.title).toContain("Shortage 25");
-    expect(energyInfo?.props?.title).toContain("Resource production is reduced to 80%.");
+    expect(energyInfo?.props?.title).toBe("Energy explanation");
+    expect(energyInfo?.props?.["aria-label"]).toContain("100 produced / 125 consumed");
+    expect(energyInfo?.props?.["aria-label"]).toContain("Shortage 25");
+    expect(energyInfo?.props?.["aria-label"]).toContain("Mine output is reduced to 80%");
+    expect(panelText).toContain("Solar Plant and Solar Satellites produce it");
+    expect(panelText).toContain("Produced 100");
+    expect(panelText).toContain("Consumed 125");
+    expect(panelText).toContain("Balance -25");
+    expect(panelText).toContain("Insufficient energy reduces mine output to 80%");
   });
 
   test("shows compact nonzero collectable deltas next to mobile resources", () => {
@@ -84,6 +91,18 @@ describe("TopBar", () => {
     expect(visibleText(renderTopBar({ resourceStatus: "loading" }))).not.toContain("Resources loading");
     expect(visibleText(renderTopBar({ resourceStatus: "error" }))).toContain("Metal");
     expect(visibleText(renderTopBar({ resourceStatus: "error" }))).not.toContain("Resources unavailable");
+  });
+
+  test("explains normal powered energy without low-energy impact copy", () => {
+    const topBar = renderTopBar({
+      energy: { produced: 160, required: 120, scaleBps: 10_000 },
+    });
+    const energyDetails = elementNodes(topBar).find((item) => item.type === "details");
+    const panelText = visibleText(energyDetails);
+
+    expect(panelText).toContain("Balance 40");
+    expect(panelText).toContain("Mine output is fully powered.");
+    expect(panelText).not.toContain("Insufficient energy");
   });
 });
 
