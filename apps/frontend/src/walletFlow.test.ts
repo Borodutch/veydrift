@@ -1520,6 +1520,7 @@ describe("walletFlow", () => {
       if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
         return activeBuildingConstructionResult({ active: true, readyAt: 1n });
       }
+      if (method === "eth_estimateGas") return "0xc350";
       return "0x";
     });
 
@@ -1568,7 +1569,8 @@ describe("walletFlow", () => {
           {
             from: account,
             to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007",
+            gas: "0xc350"
           }
         ]
       }
@@ -1633,7 +1635,7 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([]);
   });
 
-  test("ignores readonly providers for resource collection transaction submissions", async () => {
+  test("preflights resource collection before wallet confirmation when a readonly provider is available", async () => {
     const walletRequests: unknown[] = [];
     const readonlyRequests: unknown[] = [];
     const walletProvider = mockProvider(async ({ method, params }) => {
@@ -1643,17 +1645,28 @@ describe("walletFlow", () => {
     });
     const readProvider = mockProvider(async ({ method, params }) => {
       readonlyRequests.push({ method, params });
-      throw new Error("readonly provider should not be used for resource collection submission");
+      if (method === "eth_estimateGas") return "0x5208";
+      return "0x";
     });
 
     await expect(
       sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
     ).resolves.toBe("0xcollect");
 
-    expect(readonlyRequests).toEqual([]);
-    expect(walletRequests).toEqual([
+    expect(readonlyRequests).toEqual([
       {
-        method: "eth_sendTransaction",
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_estimateGas",
         params: [
           {
             from: account,
@@ -1663,6 +1676,62 @@ describe("walletFlow", () => {
         ]
       }
     ]);
+    expect(walletRequests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007",
+            gas: "0x5208"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("blocks likely-failing resource collection before opening the wallet", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = mockProvider(async ({ method, params }) => {
+      walletRequests.push({ method, params });
+      throw new Error("eth_sendTransaction should not be called");
+    });
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      if (method === "eth_call") return "0x";
+      throw new Error("execution reverted: likely fail");
+    });
+
+    await expect(
+      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).rejects.toThrow("This resource collection is likely to fail on-chain. Refresh resources and retry.");
+
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+    expect(walletRequests).toEqual([]);
   });
 
   test("submits moon building and Jump Gate transactions", async () => {
