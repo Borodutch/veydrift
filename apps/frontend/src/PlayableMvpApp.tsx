@@ -569,6 +569,12 @@ type ShipyardActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
+export const resourceCollectionSuccessFeedbackMs = 4_000;
+
+export function isTransientResourceCollectionSuccess(action: ShipyardActionState): boolean {
+  return action.status === "success" && action.label === "Resource collection confirmed.";
+}
+
 type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
 type RiftActionState = ShipyardActionState;
@@ -1238,6 +1244,17 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     apiBaseUrl,
     hydratedWalletSnapshotKey,
   });
+
+  useEffect(() => {
+    if (!isTransientResourceCollectionSuccess(shipyardAction)) return;
+
+    const timer = window.setTimeout(() => {
+      setShipyardAction((current) =>
+        isTransientResourceCollectionSuccess(current) ? { status: "idle" } : current
+      );
+    }, resourceCollectionSuccessFeedbackMs);
+    return () => window.clearTimeout(timer);
+  }, [shipyardAction]);
 
   useEffect(() => {
     setPlayerProfile(undefined);
