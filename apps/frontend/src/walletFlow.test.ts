@@ -1304,6 +1304,10 @@ describe("walletFlow", () => {
     });
     const readProvider = mockProvider(async ({ method, params }) => {
       readonlyRequests.push({ method, params });
+      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
+      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
+        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
+      }
       throw { code: 3, message: "execution reverted", data: "0x7e787175" };
     });
 
@@ -1312,6 +1316,17 @@ describe("walletFlow", () => {
     ).rejects.toThrow("No active building upgrade is waiting to be finished");
 
     expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "latest"
+        ]
+      },
       {
         method: "eth_call",
         params: [
@@ -1327,11 +1342,55 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([]);
   });
 
+  test("blocks inactive building completion before finish preflights or wallet submission", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = mockProvider(async ({ method, params }) => {
+      walletRequests.push({ method, params });
+      throw new Error("eth_sendTransaction should not be called");
+    });
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      return activeBuildingConstructionResult({ active: false });
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "1", { readProvider })
+    ).rejects.toThrow("No active building upgrade is waiting to be finished");
+
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "latest"
+        ]
+      }
+    ]);
+    expect(walletRequests).toEqual([]);
+  });
+
   test("decodes JSON-RPC readonly preflight revert selectors", async () => {
     const fetchCalls: unknown[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      fetchCalls.push(JSON.parse(String(init?.body)));
+      const body = JSON.parse(String(init?.body));
+      fetchCalls.push(body);
+      const data = String(body.params?.[0]?.data ?? "");
+      if (data.startsWith("0xb8e835ab")) {
+        return new Response(JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: activeBuildingConstructionResult({ active: true, readyAt: 1n }),
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -1371,6 +1430,19 @@ describe("walletFlow", () => {
           {
             from: account,
             to: contract,
+            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "latest"
+        ]
+      },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
             data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
           },
           "latest"
@@ -1389,6 +1461,10 @@ describe("walletFlow", () => {
     });
     const readProvider = mockProvider(async ({ method, params }) => {
       readonlyRequests.push({ method, params });
+      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
+      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
+        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
+      }
       return "0x";
     });
 
@@ -1397,6 +1473,17 @@ describe("walletFlow", () => {
     ).resolves.toBe("0xfinish");
 
     expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
       {
         method: "eth_call",
         params: [
@@ -1442,6 +1529,10 @@ describe("walletFlow", () => {
     });
     const readProvider = mockProvider(async ({ method, params }) => {
       readonlyRequests.push({ method, params });
+      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
+      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
+        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
+      }
       if (method === "eth_call") return "0x";
       throw new Error("execution reverted: likely fail");
     });
@@ -1451,6 +1542,17 @@ describe("walletFlow", () => {
     ).rejects.toThrow("This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
 
     expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
       {
         method: "eth_call",
         params: [
@@ -2216,4 +2318,22 @@ function mockProvider(handler: (args: { method: string; params?: unknown[] }) =>
 
 function word(value: bigint): string {
   return value.toString(16).padStart(64, "0");
+}
+
+function activeBuildingConstructionResult({
+  active,
+  readyAt = 1n,
+}: {
+  active: boolean;
+  readyAt?: bigint;
+}): string {
+  return `0x${[
+    word(active ? 1n : 0n),
+    word(0n),
+    word(2n),
+    word(readyAt),
+    word(60n),
+    word(15n),
+    word(0n),
+  ].join("")}`;
 }
