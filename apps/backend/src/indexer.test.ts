@@ -229,6 +229,60 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("repairs materialized building levels from stored completion logs on startup", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const first = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+
+      first.applyEvent(planet);
+      first.applyLog({
+        blockNumber: "0x2869251",
+        transactionHash: "0x7ff7ffb3a61c90be59598960d8bfd95ecc455cfba667e206499e9c0f1c2eede4",
+        logIndex: "0x46",
+        topics: [
+          buildingCompletedTopic,
+          topic(1n),
+          topic(10n)
+        ],
+        data: abiWords(1n)
+      });
+
+      const staleDb = new Database(databasePath);
+      try {
+        staleDb.query("UPDATE indexed_building_levels SET level = 0 WHERE planet_id = ? AND building_id = ?").run("1", 10);
+        staleDb.query("UPDATE contract_building_levels SET level = 0 WHERE planet_id = ? AND building_id = ?").run("1", 10);
+        expect(staleDb.query("SELECT level FROM contract_building_levels WHERE planet_id = ? AND building_id = ?").get("1", 10)).toEqual({
+          level: 0
+        });
+      } finally {
+        staleDb.close();
+      }
+
+      const repaired = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+
+      expect(repaired.infrastructureRows("1").find((building) => building.id === 10)?.level).toBe(1);
+      const repairedDb = new Database(databasePath, { readonly: true });
+      try {
+        expect(repairedDb.query("SELECT level FROM contract_building_levels WHERE planet_id = ? AND building_id = ?").get("1", 10)).toEqual({
+          level: 1
+        });
+      } finally {
+        repairedDb.close();
+      }
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("applies combat ship count changes to indexed ship rows", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

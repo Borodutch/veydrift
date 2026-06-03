@@ -1138,6 +1138,26 @@ export class SettlementIndexer {
       SELECT wallet, home_planet_id, ?
       FROM contract_players
     `).run(now);
+
+    this.replayMaterializedStateFromEventLogs();
+  }
+
+  private replayMaterializedStateFromEventLogs(): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (isIndexedQueueCompletedLog(log)) {
+        this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+      } else if (isShipCountChangedLog(log)) {
+        this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      }
+    }
   }
 
   private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
