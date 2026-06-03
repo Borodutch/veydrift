@@ -93,6 +93,19 @@ describe("TopBar", () => {
     expect(visibleText(renderTopBar({ resourceStatus: "error" }))).not.toContain("Resources unavailable");
   });
 
+  test("surfaces resource collection wallet errors in the top bar", () => {
+    const label = "Resource collection failed: Unlock or reconnect your wallet, then retry.";
+    const topBar = renderTopBar({
+      collectResourcesActionLabel: label,
+      collectResourcesActionStatus: "error",
+    });
+    const feedback = elementNodes(topBar).find((item) => item.type === "p" && item.props?.children === label);
+
+    expect(visibleText(topBar)).toContain(label);
+    expect(feedback?.props?.role).toBe("alert");
+    expect(feedback?.props?.className).toContain("text-rose-200");
+  });
+
   test("explains normal powered energy without low-energy impact copy", () => {
     const topBar = renderTopBar({
       energy: { produced: 160, required: 120, scaleBps: 10_000 },

@@ -1833,6 +1833,67 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("checks Rabby-style providers before submitting resource collection", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = {
+      ...mockProvider(async ({ method, params }) => {
+        walletRequests.push({ method, params });
+        if (method === "eth_accounts") return [account];
+        if (method === "eth_sendTransaction") return "0xrabbycollect";
+        throw new Error(`Unexpected wallet method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      if (method === "eth_estimateGas") return "0x5208";
+      return "0x";
+    });
+
+    await expect(
+      sendCollectResourcesTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).resolves.toBe("0xrabbycollect");
+
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+    expect(walletRequests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007",
+            gas: "0x5208"
+          }
+        ]
+      }
+    ]);
+  });
+
   test("blocks likely-failing resource collection before opening the wallet", async () => {
     const walletRequests: unknown[] = [];
     const readonlyRequests: unknown[] = [];
