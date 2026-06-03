@@ -1081,7 +1081,7 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(503);
   });
 
-  test("returns stale indexed shipyard context for transient RPC rate limits", async () => {
+  test("returns indexed shipyard context before transient RPC rate limit fallbacks", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
       indexer: testIndexer(),
@@ -1098,10 +1098,9 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({
       wallet: player,
       homePlanetId: "7",
-      degraded: true,
       stale: true,
       source: "contract-state-indexer",
-      detail: "RPC HTTP 429",
+      detail: "shipyard loaded from DB-indexed contract state before live RPC.",
       resources: {
         metal: "5000",
         crystal: "4900",
@@ -2721,63 +2720,37 @@ describe("Veydrift backend", () => {
     }));
   });
 
-  test("allows explicit live wallet reads to bypass indexed warm state", async () => {
-    const baseReader = new MockChainReader();
+  test("ignores client live-read requests for canonical warm indexed wallet state", async () => {
     const chainReader = new MockChainReader();
-    let settlementLiveReadCalled = false;
-    let planetsLiveReadCalled = false;
-    let queuesLiveReadCalled = false;
-    let infrastructureLiveReadCalled = false;
-    let shipyardLiveReadCalled = false;
-    let defenseLiveReadCalled = false;
-    let researchLiveReadCalled = false;
-    let moonLiveReadCalled = false;
-    let riftLiveReadCalled = false;
-    chainReader.getWalletSettlement = async (wallet: Address) => {
-      settlementLiveReadCalled = true;
-      return baseReader.getWalletSettlement(wallet);
+    chainReader.getWalletSettlement = async () => {
+      throw new Error("client source=live must not bypass indexed settlement");
     };
-    chainReader.getWalletPlanets = async (wallet: Address) => {
-      planetsLiveReadCalled = true;
-      return baseReader.getWalletPlanets(wallet);
+    chainReader.getWalletPlanets = async () => {
+      throw new Error("client source=live must not bypass indexed planets");
     };
-    chainReader.getPlayerQueues = async (wallet: Address, planetId?: bigint) => {
-      queuesLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getPlayerQueues(wallet);
+    chainReader.getPlayerQueues = async () => {
+      throw new Error("client source=live must not bypass indexed queues");
     };
-    chainReader.getInfrastructureState = async (wallet: Address, planetId?: bigint) => {
-      infrastructureLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getInfrastructureState(wallet);
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("client source=live must not bypass indexed infrastructure");
     };
-    chainReader.getShipyardState = async (wallet: Address, planetId?: bigint) => {
-      shipyardLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getShipyardState(wallet);
+    chainReader.getShipyardState = async () => {
+      throw new Error("client source=live must not bypass indexed shipyard");
     };
-    chainReader.getDefenseState = async (wallet: Address, planetId?: bigint) => {
-      defenseLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getDefenseState(wallet);
+    chainReader.getDefenseState = async () => {
+      throw new Error("client source=live must not bypass indexed defenses");
     };
-    chainReader.getResearchState = async (wallet: Address, planetId?: bigint) => {
-      researchLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getResearchState(wallet);
+    chainReader.getResearchState = async () => {
+      throw new Error("client source=live must not bypass indexed research");
     };
-    chainReader.getMoonState = async (wallet: Address, planetId?: bigint) => {
-      moonLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getMoonState(wallet);
+    chainReader.getMoonState = async () => {
+      throw new Error("client source=live must not bypass indexed moon");
     };
-    chainReader.getRiftState = async (wallet: Address, planetId?: bigint) => {
-      riftLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getRiftState(wallet);
+    chainReader.getRiftState = async () => {
+      throw new Error("client source=live must not bypass indexed rift");
     };
     chainReader.listSettledPlanetEvents = async () => {
-      throw new Error("explicit live reads should not rebuild the warm index");
+      throw new Error("client source=live should not rebuild the warm index");
     };
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     indexer.applyEvent({
@@ -2812,49 +2785,36 @@ describe("Veydrift backend", () => {
     const riftBody = await riftResponse.json();
 
     expect(settlementResponse.status).toBe(200);
-    expect(settlementResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(settlementLiveReadCalled).toBe(true);
     expect(settlementBody.homePlanetId).toBe(planet.planetId);
     expect(planetsResponse.status).toBe(200);
-    expect(planetsResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(planetsLiveReadCalled).toBe(true);
     expect(planetsBody.planets).toHaveLength(1);
     expect(queuesResponse.status).toBe(200);
-    expect(queuesResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(queuesLiveReadCalled).toBe(true);
-    expect(queuesBody.building).toMatchObject({
-      active: true,
-      kind: "building"
-    });
+    expect(queuesResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(queuesBody).toMatchObject({ source: "contract-state-indexer", building: null });
     expect(infrastructureResponse.status).toBe(200);
-    expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(infrastructureLiveReadCalled).toBe(true);
+    expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(infrastructureBody).toMatchObject({
+      source: "contract-state-indexer",
       infrastructureAvailable: true,
       resources: {
         metal: "5000"
       }
     });
     expect(shipyardResponse.status).toBe(200);
-    expect(shipyardResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(shipyardLiveReadCalled).toBe(true);
-    expect(shipyardBody.shipyardLevel).toBe(1);
+    expect(shipyardResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(shipyardBody).toMatchObject({ source: "contract-state-indexer", shipyardLevel: 0 });
     expect(defensesResponse.status).toBe(200);
-    expect(defensesResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(defenseLiveReadCalled).toBe(true);
-    expect(defensesBody.missileSiloLevel).toBe(2);
+    expect(defensesResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(defensesBody).toMatchObject({ source: "contract-state-indexer", missileSiloLevel: 0 });
     expect(researchResponse.status).toBe(200);
-    expect(researchResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(researchLiveReadCalled).toBe(true);
-    expect(researchBody.researchLabLevel).toBe(1);
+    expect(researchResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(researchBody).toMatchObject({ source: "contract-state-indexer", researchLabLevel: 0 });
     expect(moonResponse.status).toBe(200);
-    expect(moonResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(moonLiveReadCalled).toBe(true);
-    expect(moonBody.moon?.exists).toBe(true);
+    expect(moonResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(moonBody).toMatchObject({ source: "contract-state-indexer", moon: null });
     expect(riftResponse.status).toBe(200);
-    expect(riftResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(riftLiveReadCalled).toBe(true);
-    expect(riftBody.riftAvailable).toBe(true);
+    expect(riftResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(riftBody).toMatchObject({ source: "contract-state-indexer", riftAvailable: true, unlocked: false });
   });
 
   test("serves indexed planet detail without live chain reads when warm", async () => {

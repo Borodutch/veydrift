@@ -103,7 +103,6 @@ import {
   fetchShipyardState,
   fetchResearchState,
   fetchRiftState,
-  assertWalletUnlocked,
   fetchWalletPlanets,
   fetchFleetMissionVisibility,
   fetchAllianceState,
@@ -148,8 +147,6 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
-  BASE_SEPOLIA,
-  createJsonRpcProvider,
   updatePlayerDisplayName,
   waitForReceipt,
   type ChainDefenseState,
@@ -179,8 +176,6 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
-
-const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -272,6 +267,16 @@ export function overviewResearchCompletionUnavailableReasonFor({
     : unavailableReason;
 }
 
+export function overviewBuildingReadyToFinishFlag({
+  activeBuildingQueue,
+  isBuildingReadyToFinish,
+}: {
+  activeBuildingQueue: QueueStateResponse | null | undefined;
+  isBuildingReadyToFinish: boolean;
+}): boolean | undefined {
+  return activeBuildingQueue ? isBuildingReadyToFinish : undefined;
+}
+
 export function buildingCompletionUnavailableReasonFor({
   canTransact,
   infrastructureState,
@@ -324,10 +329,10 @@ export async function infrastructureStateForCompletionRevalidation({
   loadInfrastructureState?: typeof fetchInfrastructureState;
 }): Promise<ChainInfrastructureState | null> {
   if (!apiBaseUrl || !account) return fallback;
-  return loadInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" });
+  return loadInfrastructureState(apiBaseUrl, account, activePlanetId);
 }
 
-export async function buildingCompletionUnavailableReasonAfterLiveRevalidation({
+export async function buildingCompletionUnavailableReasonAfterBackendRevalidation({
   account,
   activePlanetId,
   apiBaseUrl,
@@ -377,7 +382,7 @@ export async function researchStateForCompletionRevalidation({
   loadResearchState?: typeof fetchResearchState;
 }): Promise<ChainResearchState | null> {
   if (!apiBaseUrl || !account) return fallback;
-  return loadResearchState(apiBaseUrl, account, activePlanetId, { source: "live" });
+  return loadResearchState(apiBaseUrl, account, activePlanetId);
 }
 
 interface PlayableMvpAppProps {
@@ -485,8 +490,6 @@ export function infrastructureUnavailableReasonFor({
 }
 
 export function infrastructureLoadErrorFor({
-  activeBuildingQueue,
-  infrastructureChainState,
   infrastructureError,
   isWalletConnected,
 }: {
@@ -497,6 +500,20 @@ export function infrastructureLoadErrorFor({
 }): string | undefined {
   if (!isWalletConnected || !infrastructureError) return undefined;
   return infrastructureError;
+}
+
+export function hasInfrastructureDisplayState({
+  activeBuildingQueue,
+  homePlanetId,
+  infrastructureChainState,
+  onChainResources,
+}: {
+  activeBuildingQueue?: QueueStateResponse | null | undefined;
+  homePlanetId?: string | null | undefined;
+  infrastructureChainState: ChainInfrastructureState | null;
+  onChainResources?: PlayableState["resources"] | undefined;
+}): boolean {
+  return Boolean(onChainResources && homePlanetId && (infrastructureChainState || activeBuildingQueue?.active));
 }
 
 export function refreshedInfrastructureUnavailableReasonFor({
@@ -784,6 +801,23 @@ function settlementFromIndexedPlanets(
   };
 }
 
+export function walletSnapshotHydrationKey(apiBaseUrl: string | undefined, account: string | undefined): string | undefined {
+  return apiBaseUrl && account ? `${apiBaseUrl}\n${account.toLowerCase()}` : undefined;
+}
+
+export function canLoadIndexedPageState({
+  account,
+  apiBaseUrl,
+  hydratedWalletSnapshotKey,
+}: {
+  account: string | undefined;
+  apiBaseUrl: string | undefined;
+  hydratedWalletSnapshotKey: string | undefined;
+}): boolean {
+  const expectedKey = walletSnapshotHydrationKey(apiBaseUrl, account);
+  return expectedKey === undefined || hydratedWalletSnapshotKey === expectedKey;
+}
+
 function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
   return {
     wallet,
@@ -866,6 +900,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
   const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
   const [onChainError, setOnChainError] = useState<string | undefined>();
+  const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
   const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
@@ -902,8 +937,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
-  const transactionReadProvider = readProvider ?? baseSepoliaReadProvider;
-  const receiptProvider = transactionReadProvider ?? provider;
+  const receiptProvider = readProvider ?? provider;
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -964,6 +998,11 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
+  const pageStateHydrationReady = canLoadIndexedPageState({
+    account,
+    apiBaseUrl,
+    hydratedWalletSnapshotKey,
+  });
 
   useEffect(() => {
     setPlayerProfile(undefined);
@@ -1056,7 +1095,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
     try {
-      const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" });
+      const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
       setInfrastructureChainState(nextInfrastructure);
       return nextInfrastructure;
     } catch (error) {
@@ -1183,6 +1222,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       setFleetVisibility(undefined);
       setOnChainError(undefined);
       setOnChainStatus(isWalletConnected ? "loading" : "local");
+      setHydratedWalletSnapshotKey(undefined);
       return;
     }
 
@@ -1211,6 +1251,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       setFleetVisibility(fleetVisibility);
       setOnChainError(undefined);
       setOnChainStatus("ready");
+      setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
     } catch (error) {
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainStatus("error");
@@ -1232,9 +1273,9 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForFinishedBuildingState(
         async () => {
           const [settlement, queues, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletSettlement(apiBaseUrl, account),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { settlement, queues, infrastructure };
@@ -1293,8 +1334,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForCollectedResourcesState(
         async () => {
           const [settlement, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account, { source: "live" }),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchWalletSettlement(apiBaseUrl, account),
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { settlement, infrastructure };
@@ -1341,8 +1382,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForStartedDefenseProductionState(
         async () => {
           const [defense, queues] = await Promise.all([
-            fetchDefenseState(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchDefenseState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { defense, queues };
@@ -1381,8 +1422,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForStartedShipProductionState(
         async () => {
           const [shipyard, queues] = await Promise.all([
-            fetchShipyardState(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchShipyardState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { shipyard, queues };
@@ -1421,8 +1462,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForStartedResearchState(
         async () => {
           const [research, queues] = await Promise.all([
-            fetchResearchState(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchResearchState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { research, queues };
@@ -1461,8 +1502,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       const snapshot = await waitForFinishedResearchState(
         async () => {
           const [research, queues] = await Promise.all([
-            fetchResearchState(apiBaseUrl, account, activePlanetId, { source: "live" }),
-            fetchWalletQueues(apiBaseUrl, account, activePlanetId, { source: "live" }),
+            fetchResearchState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
           ]);
 
           return { research, queues };
@@ -1543,8 +1584,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
 
   useEffect(() => {
     void refreshOnChainState();
+  }, [refreshOnChainState]);
+
+  useEffect(() => {
+    if (!pageStateHydrationReady) return;
     refreshInfrastructureState();
-  }, [refreshInfrastructureState, refreshOnChainState]);
+  }, [pageStateHydrationReady, refreshInfrastructureState]);
 
   useEffect(() => {
     if (!apiBaseUrl || !account || typeof window.EventSource === "undefined") {
@@ -1743,40 +1788,46 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   }, []);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "shipyard" || page === "galaxy") {
       refreshShipyardState();
     }
-  }, [page, refreshShipyardState]);
+  }, [page, pageStateHydrationReady, refreshShipyardState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "defenses" || page === "galaxy") {
       refreshDefenseState();
     }
-  }, [page, refreshDefenseState]);
+  }, [page, pageStateHydrationReady, refreshDefenseState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "alliance") {
       refreshAllianceState();
     }
-  }, [page, refreshAllianceState]);
+  }, [page, pageStateHydrationReady, refreshAllianceState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "research") {
       refreshResearchState();
     }
-  }, [page, refreshResearchState]);
+  }, [page, pageStateHydrationReady, refreshResearchState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "rift") {
       refreshRiftState();
     }
-  }, [page, refreshRiftState]);
+  }, [page, pageStateHydrationReady, refreshRiftState]);
 
   useEffect(() => {
+    if (!pageStateHydrationReady) return;
     if (page === "moon") {
       refreshInfrastructureState();
     }
-  }, [page, refreshInfrastructureState]);
+  }, [page, pageStateHydrationReady, refreshInfrastructureState]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1830,7 +1881,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           return;
         }
 
-        await assertWalletUnlocked(provider);
         setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
@@ -1838,7 +1888,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           gameContract,
           planetId,
           building,
-          { readProvider: transactionReadProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -1874,7 +1923,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     refreshInfrastructureState,
     refreshOnChainState,
     runtimeConfig.status,
-    transactionReadProvider,
     transactionActionGate,
   ]);
 
@@ -1901,7 +1949,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
 
       try {
         const { infrastructureState: latestInfrastructureState, unavailableReason } =
-          await buildingCompletionUnavailableReasonAfterLiveRevalidation({
+          await buildingCompletionUnavailableReasonAfterBackendRevalidation({
             account,
             activePlanetId: planetId,
             apiBaseUrl,
@@ -1919,14 +1967,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           targetLevel: latestQueue?.targetLevel ?? activeBuildingQueue?.targetLevel,
         };
 
-        await assertWalletUnlocked(provider);
         setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendFinishBuildingUpgradeTransaction(
           provider,
           account,
           gameContract,
           planetId,
-          { readProvider: transactionReadProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -1964,7 +2010,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     provider,
     receiptProvider,
     refreshFinishedBuildingState,
-    transactionReadProvider,
     transactionActionGate,
   ]);
 
@@ -2620,7 +2665,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         researchState: latestResearchState,
       });
       if (latestUnavailableReason) {
-        console.info("Research completion blocked after live revalidation", { reason: latestUnavailableReason });
+        console.info("Research completion blocked after backend revalidation", { reason: latestUnavailableReason });
         throw new Error(latestUnavailableReason);
       }
 
@@ -2888,9 +2933,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
             )
           : undefined,
       },
-      { readProvider: transactionReadProvider },
     ));
-  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels, transactionReadProvider]);
+  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleCounterplay = useCallback((hostileMissionId: string, mode: "acsDefend" | "intercept") => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -2914,9 +2958,8 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         missionType: missionTypeId(mode),
         ships,
       },
-      { readProvider: transactionReadProvider },
     ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState, transactionReadProvider]);
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
 
   const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
@@ -3049,10 +3092,9 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           missionType: missionTypeId(mode),
           ships,
         },
-        { readProvider: transactionReadProvider },
       )
     );
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState, transactionReadProvider]);
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState]);
 
   const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string) => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -3206,7 +3248,12 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
-          hasLoadedInfrastructureState={Boolean(onChainResources && onChainSettlement?.homePlanetId && infrastructureChainState)}
+          hasLoadedInfrastructureState={hasInfrastructureDisplayState({
+            activeBuildingQueue,
+            homePlanetId: onChainSettlement?.homePlanetId,
+            infrastructureChainState,
+            onChainResources,
+          })}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
           loadError={infrastructureLoadErrorFor({
@@ -3409,7 +3456,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
         isBuildingActionPending={buildingAction.status === "pending"}
-        isBuildingReadyToFinish={isBuildingReadyToFinish}
+        isBuildingReadyToFinish={overviewBuildingReadyToFinishFlag({
+          activeBuildingQueue,
+          isBuildingReadyToFinish,
+        })}
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}

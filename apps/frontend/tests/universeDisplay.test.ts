@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -703,6 +704,28 @@ describe("tester universe display data", () => {
     );
   });
 
+  test("Fusion Reactor asset exists with responsive variants", () => {
+    const fusionReactorAsset = buildingCatalog.find((building) => building.key === "fusionReactor")?.asset;
+
+    expect(fusionReactorAsset).toBeDefined();
+    expect(existsSync(join(PUBLIC_DIR, fusionReactorAsset!.replace("/assets/", "assets/")))).toBe(true);
+
+    for (const width of VARIANT_WIDTHS) {
+      const variant = fusionReactorAsset!.replace("/assets/game/", `/assets/game/sizes/${width}/`);
+      expect(getSrcSet(fusionReactorAsset!)).toContain(`${variant} ${width}w`);
+      expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/")))).toBe(true);
+    }
+  });
+
+  test("Fusion Reactor does not reuse Solar Plant artwork", async () => {
+    const solarPlantAsset = buildingCatalog.find((building) => building.key === "solarPlant")?.asset;
+    const fusionReactorAsset = buildingCatalog.find((building) => building.key === "fusionReactor")?.asset;
+
+    expect(solarPlantAsset).toBeDefined();
+    expect(fusionReactorAsset).toBeDefined();
+    expect(await assetHash(solarPlantAsset!)).not.toBe(await assetHash(fusionReactorAsset!));
+  });
+
   test("galaxy planet thumbnails use bundled style-pass assets and responsive variants", () => {
     for (const type of PLANET_TYPES) {
       const image = planetImageForType(type);
@@ -725,3 +748,8 @@ describe("tester universe display data", () => {
     expect(isImageReady(null)).toBe(false);
   });
 });
+
+async function assetHash(asset: string): Promise<string> {
+  const bytes = await Bun.file(join(PUBLIC_DIR, asset.replace("/assets/", "assets/"))).arrayBuffer();
+  return createHash("sha256").update(Buffer.from(bytes)).digest("hex");
+}
