@@ -259,6 +259,53 @@ export function overviewResearchCompletionUnavailableReasonFor({
     : unavailableReason;
 }
 
+export function buildingCompletionUnavailableReasonFor({
+  canTransact,
+  infrastructureState,
+  now = Date.now(),
+}: {
+  canTransact: boolean;
+  infrastructureState: ChainInfrastructureState | null;
+  now?: number;
+}): string | undefined {
+  if (!canTransact) {
+    return "Wallet or game contract is unavailable.";
+  }
+
+  const queue = infrastructureState?.queue;
+  if (!queue?.active) {
+    return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
+  }
+
+  const readyAt = Number(queue.readyAt) * 1_000;
+  if (!Number.isFinite(readyAt) || readyAt <= 0) {
+    return "Building completion time is unavailable. Refresh infrastructure state before finishing.";
+  }
+
+  if (readyAt > now) {
+    return "Building upgrade is not ready to finish yet.";
+  }
+
+  return undefined;
+}
+
+export async function infrastructureStateForCompletionRevalidation({
+  account,
+  activePlanetId,
+  apiBaseUrl,
+  fallback,
+  loadInfrastructureState = fetchInfrastructureState,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  apiBaseUrl: string | undefined;
+  fallback: ChainInfrastructureState | null;
+  loadInfrastructureState?: typeof fetchInfrastructureState;
+}): Promise<ChainInfrastructureState | null> {
+  if (!apiBaseUrl || !account) return fallback;
+  return loadInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "live" });
+}
+
 export async function researchStateForCompletionRevalidation({
   account,
   activePlanetId,
@@ -1798,13 +1845,33 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       }
 
       const label = "Building completion";
-      setBuildingAction({ status: "pending", buildingKey, label: transactionAwaitingWalletLabel(label) });
-      const expectation = {
-        itemId: activeBuildingQueue?.itemId,
-        targetLevel: activeBuildingQueue?.targetLevel,
-      };
+      let completionBuildingKey = buildingKey;
+      setBuildingAction({ status: "pending", buildingKey, label: "Refreshing infrastructure state" });
 
       try {
+        const latestInfrastructureState = await infrastructureStateForCompletionRevalidation({
+          account,
+          activePlanetId: planetId,
+          apiBaseUrl,
+          fallback: infrastructureChainState,
+        });
+        const unavailableReason = buildingCompletionUnavailableReasonFor({
+          canTransact: true,
+          infrastructureState: latestInfrastructureState,
+        });
+        if (unavailableReason) {
+          setBuildingAction({ status: "error", buildingKey, label: unavailableReason });
+          return;
+        }
+
+        const latestQueue = latestInfrastructureState?.queue;
+        completionBuildingKey = buildingKeyForContractId(latestQueue?.itemId) ?? buildingKey;
+        const expectation = {
+          itemId: latestQueue?.itemId ?? activeBuildingQueue?.itemId,
+          targetLevel: latestQueue?.targetLevel ?? activeBuildingQueue?.targetLevel,
+        };
+
+        setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: transactionAwaitingWalletLabel(label) });
         const txHash = await sendFinishBuildingUpgradeTransaction(
           provider,
           account,
@@ -1813,24 +1880,24 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         );
         setBuildingAction({
           status: "pending",
-          buildingKey,
+          buildingKey: completionBuildingKey,
           label: transactionConfirmingLabel(label, txHash),
         });
         await waitForReceipt(receiptProvider ?? provider, txHash);
-        setBuildingAction({ status: "pending", buildingKey, label: transactionSyncingLabel(label) });
+        setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: transactionSyncingLabel(label) });
         const synced = await refreshFinishedBuildingState(expectation);
         setBuildingAction(synced
-          ? { status: "success", buildingKey, label: "Building upgrade finished." }
+          ? { status: "success", buildingKey: completionBuildingKey, label: "Building upgrade finished." }
           : {
               status: "pending",
-              buildingKey,
+              buildingKey: completionBuildingKey,
               label: "Building completion confirmed. Rechecking game state after a temporary API/RPC outage.",
             });
       } catch (error) {
         console.error(error);
         setBuildingAction({
           status: "error",
-          buildingKey,
+          buildingKey: completionBuildingKey,
           label: buildingFinishActionErrorLabel(error),
         });
       }
@@ -1839,7 +1906,9 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     account,
     activeBuildingQueue,
     activePlanetId,
+    apiBaseUrl,
     gameContract,
+    infrastructureChainState,
     isBuildingReadyToFinish,
     buildingQueue?.key,
     onChainSettlement?.homePlanetId,
