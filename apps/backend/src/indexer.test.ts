@@ -845,6 +845,54 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("applies post-settlement resource logs that arrive before the planet start log", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    }, 100n);
+
+    expect(indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsettled",
+      logIndex: "0x1",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(9100n, 8200n, 7300n, 1770000500n)
+    })).toMatchObject({
+      applied: true,
+      duplicate: false,
+      ignored: false
+    });
+    expect(indexer.walletSettlement(player)).toMatchObject({
+      hasFirstPlanet: false,
+      homePlanetId: null,
+      planet: null
+    });
+
+    expect(indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsettled",
+      logIndex: "0x0",
+      topics: [planetStartedTopic, addressTopic(player), topic(BigInt(planet.planetId))],
+      data: abiWords(BigInt(planet.galaxy), BigInt(planet.system), BigInt(planet.position), BigInt(planet.fields), 1n)
+    })).toMatchObject({
+      applied: true,
+      duplicate: false,
+      ignored: false
+    });
+
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      transactionHash: "0xsettled",
+      blockNumber: "130",
+      lastSettledAt: "1770000500",
+      resources: {
+        metal: "9100",
+        crystal: "8200",
+        deuterium: "7300"
+      }
+    });
+  });
+
   test("rebuild reconciles stale levels and queues from canonical on-chain snapshots", async () => {
     const currentPlanet: SettledPlanetEvent = {
       ...planet,

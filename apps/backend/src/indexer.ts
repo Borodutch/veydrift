@@ -1388,6 +1388,9 @@ export class SettlementIndexer {
       event.transactionHash,
       event.blockNumber
     );
+    if (event.lastSettledAt === "0") {
+      this.applyLatestRecordedPlanetSettledEvent(event.planetId);
+    }
   }
 
   private updatePlanetResources(event: PlanetSettledEvent): void {
@@ -1402,6 +1405,23 @@ export class SettlementIndexer {
       lastSettledAt: event.lastSettledAt,
       resources: event.resources
     });
+  }
+
+  private applyLatestRecordedPlanetSettledEvent(planetId: string): void {
+    const logs = (this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+    `).all() as EventRow[])
+      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
+      .filter(isPlanetSettledLog)
+      .map((log) => ({ log, event: decodePlanetSettledLog(log) }))
+      .filter(({ event }) => event.planetId === planetId)
+      .sort((left, right) => compareIndexedLogsDescending(left.log, right.log));
+    const latest = logs[0]?.event;
+    if (latest) {
+      this.updatePlanetResources(latest);
+    }
   }
 
   private applyPlanetRenamedEvent(event: PlanetRenamedEvent): void {
@@ -2006,6 +2026,25 @@ function blockNumberToDecimal(blockNumber: string): string {
     return BigInt(blockNumber).toString();
   } catch {
     return blockNumber;
+  }
+}
+
+function compareIndexedLogsDescending(left: IndexedRpcLog, right: IndexedRpcLog): number {
+  const blockDiff = compareBigIntsDescending(bigIntOrZero(left.blockNumber), bigIntOrZero(right.blockNumber));
+  if (blockDiff !== 0) return blockDiff;
+  return compareBigIntsDescending(bigIntOrZero(left.logIndex ?? "0x0"), bigIntOrZero(right.logIndex ?? "0x0"));
+}
+
+function compareBigIntsDescending(left: bigint, right: bigint): number {
+  if (left === right) return 0;
+  return left > right ? -1 : 1;
+}
+
+function bigIntOrZero(value: string): bigint {
+  try {
+    return BigInt(value);
+  } catch {
+    return 0n;
   }
 }
 
