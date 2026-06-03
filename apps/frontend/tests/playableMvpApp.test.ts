@@ -657,7 +657,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Building upgrade is not ready to finish yet.");
   });
 
-  test("blocks building completion transactions when canonical infrastructure state cannot be verified", () => {
+  test("blocks building completion transactions when backend infrastructure state is missing or stale", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: null,
@@ -669,14 +669,13 @@ describe("Playable MVP app display helpers", () => {
       infrastructureState: infrastructureState({
         queue: readyBuildingQueue(),
         source: "contract-state-indexer",
-        stale: false,
+        stale: true,
       }),
       now: 1_700_000_000_000,
     })).toBe(buildingFinishLiveStateRequiredLabel);
 
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
-      canVerifyWithReadonlyProvider: true,
       infrastructureState: infrastructureState({
         queue: readyBuildingQueue(),
         stale: true,
@@ -685,10 +684,9 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
-  test("allows indexed ready building queues to reach readonly completion preflight", () => {
+  test("allows indexed ready building queues after backend revalidation without readonly preflight gating", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
-      canVerifyWithReadonlyProvider: true,
       infrastructureState: infrastructureState({
         queue: readyBuildingQueue(),
         source: "contract-state-indexer",
@@ -698,13 +696,12 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("keeps displayed building finish verification open when readonly preflight can verify indexed queues", () => {
+  test("keeps displayed building finish verification open when backend indexed queue is ready", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue: readyQueue,
       canTransact: true,
-      canVerifyWithReadonlyProvider: true,
       infrastructureState: infrastructureState({
         queue: readyQueue,
         source: "contract-state-indexer",
@@ -716,13 +713,12 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("does not let readonly building finish verification bypass wallet availability", () => {
+  test("does not let backend building finish verification bypass wallet availability", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue: readyQueue,
       canTransact: false,
-      canVerifyWithReadonlyProvider: true,
       infrastructureState: infrastructureState({
         queue: readyQueue,
         source: "contract-state-indexer",
@@ -822,7 +818,6 @@ describe("Playable MVP app display helpers", () => {
       account: "0x2222222222222222222222222222222222222222",
       activePlanetId: "7",
       apiBaseUrl: "https://api.test",
-      canVerifyWithReadonlyProvider: true,
       fallback,
       loadInfrastructureState: ((...args: unknown[]) => {
         calls.push(args);
