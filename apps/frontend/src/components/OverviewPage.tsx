@@ -407,7 +407,7 @@ export function OverviewPage({
                   <button
                     aria-expanded={renamePanelOpen}
                     aria-label="Rename planet"
-                    className="relative inline-grid h-5 w-5 place-items-center rounded text-slate-200/80 transition after:absolute after:-inset-1.5 after:content-[''] hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"
+                    className="relative inline-grid h-5 w-5 translate-y-px place-items-center self-center rounded text-slate-200/80 transition after:absolute after:-inset-1.5 after:content-[''] hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"
                     disabled={renameBusy}
                     onClick={() => {
                       setRenamePanelOpen((open) => !open);

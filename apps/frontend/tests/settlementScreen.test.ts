@@ -110,4 +110,14 @@ describe("settlement screen mode", () => {
       startPriceWei: 1n,
     } })).toBeUndefined();
   });
+
+  test("keeps a Mini App settlement read-provider fallback for unsupported wallet reads", async () => {
+    const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("readSettlementStateWithMiniAppFallback");
+    expect(source).toContain("readSettlementFundingWithMiniAppFallback");
+    expect(source).toContain("isUnsupportedProviderMethodError(error)");
+    expect(source).toContain("setMiniAppMode(true)");
+    expect(source).toContain("settlementTransactionOptions(launchMode === \"mini-app\")");
+  });
 });
