@@ -20,6 +20,21 @@ describe("backend config", () => {
     });
   });
 
+  test("accepts Base Sepolia websocket RPC aliases", () => {
+    expect(resolveWsRpcUrl({
+      BASE_SEPOLIA_WS_RPC_URL: "wss://base.example/ws"
+    })).toEqual({
+      wsRpcSource: "custom-url",
+      wsRpcUrl: "wss://base.example/ws"
+    });
+    expect(resolveWsRpcUrl({
+      ALCHEMY_BASE_SEPOLIA_WS_RPC_URL: "wss://alchemy-rpc.example/ws"
+    })).toEqual({
+      wsRpcSource: "alchemy-url",
+      wsRpcUrl: "wss://alchemy-rpc.example/ws"
+    });
+  });
+
   test("derives Base Sepolia websocket URL from an Alchemy HTTPS RPC URL", () => {
     expect(resolveWsRpcUrl({
       VEYDRIFT_RPC_URL: "https://base-sepolia.g.alchemy.com/v2/secret-key"

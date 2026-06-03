@@ -305,6 +305,14 @@ export function resolveWsRpcUrl(
     return { wsRpcUrl: env.VEYDRIFT_WS_RPC_URL, wsRpcSource: "custom-url" };
   }
 
+  if (env.BASE_SEPOLIA_WS_RPC_URL) {
+    return { wsRpcUrl: env.BASE_SEPOLIA_WS_RPC_URL, wsRpcSource: "custom-url" };
+  }
+
+  if (env.ALCHEMY_BASE_SEPOLIA_WS_RPC_URL) {
+    return { wsRpcUrl: env.ALCHEMY_BASE_SEPOLIA_WS_RPC_URL, wsRpcSource: "alchemy-url" };
+  }
+
   if (env.ALCHEMY_BASE_SEPOLIA_WS_URL) {
     return { wsRpcUrl: env.ALCHEMY_BASE_SEPOLIA_WS_URL, wsRpcSource: "alchemy-url" };
   }

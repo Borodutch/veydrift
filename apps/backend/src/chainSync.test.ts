@@ -193,6 +193,12 @@ describe("ChainSyncService", () => {
       }
     };
     const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+    const syncStatusBlocks: Array<string | null> = [];
+    service.addListener((event) => {
+      if (event.kind === "sync-status") {
+        syncStatusBlocks.push(event.blockNumber);
+      }
+    });
 
     service.start();
     const socket = MockWebSocket.instances[0];
@@ -225,6 +231,7 @@ describe("ChainSyncService", () => {
     });
     expect(staleReasons).toEqual(["websocket head gap 124-127"]);
     expect(reconcileReasons).toEqual(["websocket head gap 124-127"]);
+    expect(syncStatusBlocks).toEqual(expect.arrayContaining(["123", "127"]));
     service.stop();
   });
 
