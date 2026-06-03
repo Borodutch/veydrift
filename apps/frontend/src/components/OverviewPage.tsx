@@ -569,7 +569,7 @@ export function OverviewPage({
           tag={onChainQueues?.building?.active ? "Active" : undefined}
         >
           {onChainQueues?.building?.active ? (
-            <div className="grid gap-2">
+            <QueuePanelContent>
               {buildingQueue ? (
                 <QueueItemDisplay
                   label={onChainBuildingQueue.label}
@@ -592,9 +592,9 @@ export function OverviewPage({
                 action={buildingFinishAction}
               />
               <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
-            </div>
+            </QueuePanelContent>
           ) : buildingQueue ? (
-            <div className="grid gap-2">
+            <QueuePanelContent>
               <QueueItemDisplay
                 label={localBuildingLabel ?? buildingQueue.label}
                 remaining={formatDurationUntil(buildingQueue.readyAt, now)}
@@ -608,7 +608,7 @@ export function OverviewPage({
                 action={buildingFinishAction}
               />
               <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
-            </div>
+            </QueuePanelContent>
           ) : (
             <EmptyQueue actionLabel="Build" onAction={() => onNavigate("infrastructure")}>
               No active construction.
@@ -622,7 +622,7 @@ export function OverviewPage({
           tag={onChainQueues?.defense?.active ? "Active" : undefined}
         >
           {onChainQueues?.defense?.active ? (
-            <div className="grid gap-2">
+            <QueuePanelContent>
               <QueueItemDisplay
                 label={onChainDefenseQueue.label}
                 remaining={queueRemaining(onChainQueues.defense.readyAt, now)}
@@ -634,7 +634,7 @@ export function OverviewPage({
                 now={now}
               />
               <OverviewDefenseFinishButton action={defenseFinishAction} />
-            </div>
+            </QueuePanelContent>
           ) : (
             <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
               No active defense production.
@@ -648,7 +648,7 @@ export function OverviewPage({
           tag={onChainQueues?.research?.active ? "Active" : undefined}
         >
           {onChainResearchQueue ? (
-            <div className="grid gap-2">
+            <QueuePanelContent>
               <QueueItemDisplay
                 label={`${onChainResearchQueue.label} Level ${onChainResearchQueue.targetLevel}`}
                 remaining={formatDurationUntil(onChainResearchQueue.readyAt, now)}
@@ -661,9 +661,9 @@ export function OverviewPage({
               />
               <OverviewResearchFinishButton action={researchFinishAction} />
               <OverviewResearchActionNotice actionState={researchAction} />
-            </div>
+            </QueuePanelContent>
           ) : onChainQueues?.research?.active ? (
-            <div className="grid gap-2">
+            <QueuePanelContent>
               <QueueItemDisplay
                 label={`${onChainQueues.research.kind === "research" ? "Research" : onChainQueues.research.kind} level ${onChainQueues.research.targetLevel}`}
                 remaining={queueRemaining(onChainQueues.research.readyAt, now)}
@@ -673,9 +673,9 @@ export function OverviewPage({
               />
               <OverviewResearchFinishButton action={researchFinishAction} />
               <OverviewResearchActionNotice actionState={researchAction} />
-            </div>
+            </QueuePanelContent>
           ) : settledState.researchQueue ? (
-            <div className="grid gap-2">
+            <QueuePanelContent>
               <QueueItemDisplay
                 label={settledState.researchQueue.label}
                 remaining={formatDurationUntil(settledState.researchQueue.readyAt, now)}
@@ -687,14 +687,14 @@ export function OverviewPage({
                 now={now}
               />
               <OverviewResearchActionNotice actionState={researchAction} />
-            </div>
+            </QueuePanelContent>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col gap-2">
+            <QueuePanelContent>
               <EmptyQueue actionLabel="Research" onAction={() => onNavigate("research")}>
                 No active research.
               </EmptyQueue>
               <OverviewResearchActionNotice actionState={researchAction} />
-            </div>
+            </QueuePanelContent>
           )}
         </QueuePanel>
 
@@ -704,22 +704,26 @@ export function OverviewPage({
           tag={onChainQueues?.ship?.active ? "Active" : undefined}
         >
           {onChainQueues?.ship?.active ? (
-            <QueueItemDisplay
-              label={`${onChainQueues.ship.kind === "ship" ? "Ship" : onChainQueues.ship.kind}${onChainQueues.ship.quantity ? ` ×${onChainQueues.ship.quantity}` : ""}`}
-              remaining={queueRemaining(onChainQueues.ship.readyAt, now)}
-              indeterminate
-              color="bg-emerald-300"
-            />
+            <QueuePanelContent>
+              <QueueItemDisplay
+                label={`${onChainQueues.ship.kind === "ship" ? "Ship" : onChainQueues.ship.kind}${onChainQueues.ship.quantity ? ` ×${onChainQueues.ship.quantity}` : ""}`}
+                remaining={queueRemaining(onChainQueues.ship.readyAt, now)}
+                indeterminate
+                color="bg-emerald-300"
+              />
+            </QueuePanelContent>
           ) : settledState.queue?.kind === "ship" ? (
-            <QueueItemDisplay
-              label={settledState.queue.label}
-              remaining={formatDurationUntil(settledState.queue.readyAt, now)}
-              progress={shipProgress}
-              readyAt={settledState.queue.readyAt}
-              startedAt={settledState.queue.startedAt}
-              color="bg-emerald-300"
-              now={now}
-            />
+            <QueuePanelContent>
+              <QueueItemDisplay
+                label={settledState.queue.label}
+                remaining={formatDurationUntil(settledState.queue.readyAt, now)}
+                progress={shipProgress}
+                readyAt={settledState.queue.readyAt}
+                startedAt={settledState.queue.startedAt}
+                color="bg-emerald-300"
+                now={now}
+              />
+            </QueuePanelContent>
           ) : (
             <EmptyQueue actionLabel="Shipyard" onAction={() => onNavigate("shipyard")}>
               No active ship production.
@@ -781,18 +785,18 @@ export function overviewBuildingFinishAction({
   reason?: string | undefined;
   visible: boolean;
 } {
-  const visible = Boolean(queue && onFinishBuilding);
   const ready = shouldShowOverviewBuildingFinishAction({
     isBuildingReadyToFinish,
     now,
     onFinishBuilding,
     queue,
   });
+  const visible = Boolean(queue && onFinishBuilding && (actionPending || ready));
   const reason = actionPending
     ? actionPendingLabel ?? "Building transaction is already in progress."
     : ready
       ? undefined
-      : "Building upgrade is not ready to finish yet.";
+      : undefined;
 
   return {
     disabled: Boolean(reason),
@@ -875,7 +879,7 @@ function OverviewBuildingFinishButton({
   return (
     <button
       aria-label={action.reason ?? "Finish building upgrade"}
-      className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
       disabled={action.disabled}
       onClick={action.onFinish}
       title={action.reason ?? "Finish building upgrade"}
@@ -915,7 +919,7 @@ function OverviewDefenseFinishButton({
 
   return (
     <button
-      className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-rose-300/40 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-rose-300/40 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
       disabled={action.disabled}
       onClick={action.onFinish}
       type="button"
@@ -934,7 +938,7 @@ function OverviewResearchFinishButton({
 
   return (
     <button
-      className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
       disabled={action.disabled}
       onClick={action.onFinish}
       type="button"
@@ -1100,6 +1104,12 @@ function QueuePanel({
       </div>
       <div className="mt-3 flex flex-1 flex-col">{children}</div>
     </div>
+  );
+}
+
+function QueuePanelContent({ children }: { children: preact.ComponentChildren }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2">{children}</div>
   );
 }
 

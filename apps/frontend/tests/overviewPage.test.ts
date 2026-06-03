@@ -95,12 +95,16 @@ describe("overview queue progress display", () => {
     expect(overviewQueueItemRemainingClassName).not.toContain("shrink-0");
   });
 
-  test("uses the shared anchored empty-action layout for production queue cards", () => {
+  test("uses the shared anchored action layout for production queue cards", () => {
     for (const actionLabel of ["Build", "Defenses", "Research", "Shipyard"]) {
       expect(overviewSource).toContain(`actionLabel="${actionLabel}"`);
     }
 
+    expect(overviewSource.match(/<QueuePanelContent>/g)?.length).toBeGreaterThanOrEqual(8);
+    expect(overviewSource).toContain("function QueuePanelContent");
+    expect(overviewSource).toContain("flex min-h-0 flex-1 flex-col gap-2");
     expect(overviewSource).toContain("mt-auto flex min-h-9 w-full min-w-0");
+    expect(overviewSource.match(/mt-auto flex h-9 w-full/g)?.length).toBeGreaterThanOrEqual(3);
     expect(overviewSource).toContain("<ArrowRight");
     expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
   });
@@ -281,7 +285,7 @@ describe("overview queue progress display", () => {
     })).toBe(false);
   });
 
-  test("keeps building finish controls visible with reasons while not ready or pending", () => {
+  test("hides not-ready building finish controls but keeps pending and ready states visible", () => {
     const queue = {
       kind: "building" as const,
       key: "solarPlant" as const,
@@ -301,11 +305,11 @@ describe("overview queue progress display", () => {
       queue,
     });
     expect(notReady).toEqual({
-      disabled: true,
-      label: "Building upgrade is not ready to finish yet.",
+      disabled: false,
+      label: "Finish upgrade",
       onFinish: undefined,
-      reason: "Building upgrade is not ready to finish yet.",
-      visible: true,
+      reason: undefined,
+      visible: false,
     });
 
     const pending = overviewBuildingFinishAction({
