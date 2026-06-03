@@ -29,6 +29,11 @@ import {
   galaxyActionsForSlot,
   type GalaxyAction,
 } from "../galaxyActions";
+import {
+  commitCoordinateDraft,
+  coordinateDraftAfterExternalValueChange,
+  sanitizeCoordinateDraft,
+} from "../galaxyCoordinateInput";
 import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
@@ -510,41 +515,6 @@ function CoordinateInput({
   );
 }
 
-export function sanitizeCoordinateDraft(value: string): string {
-  return value.replace(/\D/g, "");
-}
-
-export function parseCoordinateDraft(value: string): number | null {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-export function commitCoordinateDraft(
-  draft: string,
-  currentValue: number,
-  max: number
-): { draft: string; value: number | null } {
-  const parsed = parseCoordinateDraft(draft);
-
-  if (parsed === null) {
-    return { draft: String(currentValue), value: null };
-  }
-
-  const nextValue = clampInteger(parsed, 1, max);
-  return {
-    draft: String(nextValue),
-    value: nextValue === currentValue ? null : nextValue,
-  };
-}
-
-export function coordinateDraftAfterExternalValueChange(
-  currentDraft: string,
-  externalValue: number,
-  focused: boolean
-): string {
-  return focused ? currentDraft : String(externalValue);
-}
-
 function clampInteger(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
@@ -943,20 +913,20 @@ export function formatAttackBlockReason(status: AttackProtectionStatus | undefin
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit";
   if (status.blockedReason === "score_protection") return "Attack blocked by score protection";
-  if (status.blockedReason === "same_alliance") return "Attack blocked by alliance rules";
+  if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
   return "Attack blocked";
 }
 
 export function formatAttackRuleLabels(status: AttackProtectionStatus | undefined): string[] {
   if (!status) return [];
   const labels: string[] = [];
-  if (status.relation === "stronger") labels.push("Stronger");
-  if (status.relation === "weaker") labels.push("Weaker");
-  if (status.defenderHonorStatus === "honorable") labels.push("Honorable");
-  if (status.defenderHonorStatus === "bandit") labels.push("Bandit");
-  if (status.defenderInactive) labels.push("Inactive");
+  if (status.relation === "stronger") labels.push("Stronger target");
+  if (status.relation === "weaker") labels.push("Weaker target");
+  if (status.defenderHonorStatus === "honorable") labels.push("Honor target");
+  if (status.defenderHonorStatus === "bandit") labels.push("Bandit target");
+  if (status.defenderInactive) labels.push("Inactive target");
   if (status.plunderBps && status.plunderBps !== 5000) {
-    labels.push(`${Math.floor(status.plunderBps / 100)}% plunder`);
+    labels.push(`Loot: ${Math.floor(status.plunderBps / 100)}%`);
   }
   return labels;
 }
