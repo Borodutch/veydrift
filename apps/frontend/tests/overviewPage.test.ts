@@ -5,6 +5,7 @@ import {
 } from "../src/overviewHeroImage";
 import {
   isOverviewResearchReadyToFinish,
+  overviewBuildingActionNoticeFor,
   overviewDefenseFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
@@ -238,6 +239,32 @@ describe("overview queue progress display", () => {
     expect(shouldShowOverviewBuildingFinishAction({
       isBuildingReadyToFinish: true,
     })).toBe(false);
+  });
+
+  test("surfaces building completion action feedback on the compact Overview card", () => {
+    expect(overviewBuildingActionNoticeFor({ status: "idle" })).toBeUndefined();
+    expect(overviewBuildingActionNoticeFor({
+      status: "pending",
+      label: "Building completion: waiting for wallet confirmation.",
+    })).toEqual({
+      label: "Building completion: waiting for wallet confirmation.",
+      tone: "pending",
+    });
+    expect(overviewBuildingActionNoticeFor({
+      status: "error",
+      label: "No active building upgrade is waiting to be finished.",
+    })).toEqual({
+      label: "No active building upgrade is waiting to be finished.",
+      tone: "error",
+    });
+    expect(overviewBuildingActionNoticeFor({
+      status: "success",
+      label: "Building upgrade finished.",
+    })).toEqual({
+      label: "Building upgrade finished.",
+      tone: "success",
+    });
+    expect(overviewSource).toContain("OverviewBuildingActionNotice");
   });
 
   test("shows and invokes the ready defense completion action on Overview", () => {

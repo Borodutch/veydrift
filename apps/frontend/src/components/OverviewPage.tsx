@@ -30,6 +30,7 @@ import {
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import type { BuildingActionState } from "../buildingActionNotice";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
@@ -67,6 +68,7 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
+  buildingAction?: BuildingActionState | undefined;
   isBuildingActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
@@ -109,6 +111,7 @@ export function OverviewPage({
   planet,
   homePlanet,
   isWalletConnected,
+  buildingAction = { status: "idle" },
   isBuildingActionPending = false,
   isBuildingReadyToFinish,
   onFinishBuilding,
@@ -561,6 +564,7 @@ export function OverviewPage({
                   indeterminate
                 />
               )}
+              <OverviewBuildingActionNotice actionState={buildingAction} />
               <OverviewBuildingFinishButton
                 disabled={isBuildingActionPending}
                 onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
@@ -577,6 +581,7 @@ export function OverviewPage({
                 thumbnailSrc={localBuildingAsset}
                 now={now}
               />
+              <OverviewBuildingActionNotice actionState={buildingAction} />
               <OverviewBuildingFinishButton
                 disabled={isBuildingActionPending}
                 onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
@@ -793,6 +798,36 @@ function OverviewBuildingFinishButton({
       Finish upgrade
     </button>
   );
+}
+
+function OverviewBuildingActionNotice({
+  actionState,
+}: {
+  actionState: BuildingActionState;
+}) {
+  const notice = overviewBuildingActionNoticeFor(actionState);
+  if (!notice) return null;
+  const className = notice.tone === "error"
+    ? "border-rose-300/20 bg-rose-300/5 text-rose-100"
+    : notice.tone === "success"
+      ? "border-emerald-300/20 bg-emerald-300/5 text-emerald-100"
+      : "border-white/10 bg-white/5 text-slate-200";
+
+  return (
+    <div className={`rounded-md border px-3 py-2 text-xs ${className}`}>
+      {notice.label}
+    </div>
+  );
+}
+
+export function overviewBuildingActionNoticeFor(
+  actionState: BuildingActionState,
+): { label: string; tone: "error" | "pending" | "success" } | undefined {
+  if (actionState.status === "idle") return undefined;
+  return {
+    label: actionState.label,
+    tone: actionState.status,
+  };
 }
 
 function OverviewDefenseFinishButton({

@@ -3161,6 +3161,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         playerProfile={playerProfile}
         playerProfileAction={playerProfileAction}
         homePlanet={homePlanetIdentity}
+        buildingAction={buildingAction}
         buildingQueue={buildingQueue}
         isBuildingActionPending={buildingAction.status === "pending"}
         isBuildingReadyToFinish={isBuildingReadyToFinish}
