@@ -845,6 +845,44 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("keeps first-settlement resources when resource log arrives before planet metadata", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xsettle",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(5000n, 4900n, 4800n, 1770000123n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xsettle",
+      logIndex: "0x1",
+      topics: [planetStartedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 211n, signedWord(-8n))
+    });
+
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      blockNumber: "144",
+      lastSettledAt: "1770000123",
+      planetId: "7",
+      resources: {
+        metal: "5000",
+        crystal: "4900",
+        deuterium: "4800"
+      },
+      transactionHash: "0xsettle"
+    });
+    expect(indexer.snapshot()).toMatchObject({
+      indexedPlanets: 1
+    });
+  });
+
   test("rebuild reconciles stale levels and queues from canonical on-chain snapshots", async () => {
     const currentPlanet: SettledPlanetEvent = {
       ...planet,
@@ -982,6 +1020,10 @@ describe("SettlementIndexer", () => {
 
 function abiWords(...values: bigint[]): string {
   return `0x${values.map((value) => value.toString(16).padStart(64, "0")).join("")}`;
+}
+
+function signedWord(value: bigint): bigint {
+  return value >= 0n ? value : (1n << 256n) + value;
 }
 
 function abiString(value: string): string {

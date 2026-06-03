@@ -362,6 +362,12 @@ export function FirstPlanetSettlementApp() {
             kind: "already-settled",
             planet: indexedSettlement.planet
           });
+        } else if (indexedSettlement.kind === "indexing") {
+          setSettlementFunding({ status: "idle" });
+          setPlanet({
+            kind: "pending",
+            label: "Settlement confirmed. Indexing starting resources before opening planetary overview."
+          });
         } else {
           setPlanet({
             kind: "not-settled"
@@ -384,10 +390,17 @@ export function FirstPlanetSettlementApp() {
         });
       } else if (settlement.kind === "settled") {
         setSettlementFunding({ status: "idle" });
-        setPlanet({
-          kind: "already-settled",
-          planet: settlement.planet
-        });
+        if (hasHydratedSettlementResources(settlement.planet)) {
+          setPlanet({
+            kind: "already-settled",
+            planet: settlement.planet
+          });
+        } else {
+          setPlanet({
+            kind: "pending",
+            label: "Settlement confirmed. Indexing starting resources before opening planetary overview."
+          });
+        }
       } else if (settlement.kind === "legacy-settled") {
         setPlanet({
           kind: "legacy-settled",
@@ -929,6 +942,7 @@ function formatEth(wei: bigint): string {
 
 type IndexedSettlementState =
   | { kind: "settled"; planet: PlanetSummary }
+  | { kind: "indexing" }
   | { kind: "not-settled" };
 
 async function readIndexedSettlementState(
@@ -942,6 +956,10 @@ async function readIndexedSettlementState(
 
 export function indexedSettlementState(settlement: WalletSettlementResponse): IndexedSettlementState {
   if (settlement.homePlanetId || settlement.hasFirstPlanet) {
+    if (!hasHydratedIndexedSettlementResources(settlement)) {
+      return { kind: "indexing" };
+    }
+
     return {
       kind: "settled",
       planet: planetSummaryFromIndexedSettlement(settlement),
@@ -975,6 +993,22 @@ function planetSummaryFromIndexedSettlement(settlement: WalletSettlementResponse
   }
 
   return summary;
+}
+
+function hasHydratedIndexedSettlementResources(settlement: WalletSettlementResponse): boolean {
+  const planet = settlement.planet;
+  if (!planet) return false;
+
+  const lastSettledAt = Number(planet.lastSettledAt);
+  return Number.isFinite(lastSettledAt)
+    && lastSettledAt > 0
+    && hasHydratedSettlementResources(planet);
+}
+
+function hasHydratedSettlementResources(planet: Pick<PlanetSummary, "resources">): boolean {
+  const resources = planet.resources;
+  return Boolean(resources)
+    && !(resources?.metal === "0" && resources.crystal === "0" && resources.deuterium === "0");
 }
 
 function StateMessage({
@@ -1066,7 +1100,11 @@ async function waitForSettledPlanet(
   let lastSettlement = await readSettlementState(provider, account, settlementConfig);
 
   for (let attempt = 0; attempt < POST_SETTLEMENT_READ_ATTEMPTS; attempt += 1) {
-    if (lastSettlement.kind === "settled" && lastSettlement.planet.coordinates) {
+    if (
+      lastSettlement.kind === "settled"
+      && lastSettlement.planet.coordinates
+      && hasHydratedSettlementResources(lastSettlement.planet)
+    ) {
       return lastSettlement;
     }
 
@@ -1074,7 +1112,7 @@ async function waitForSettledPlanet(
     lastSettlement = await readSettlementState(provider, account, settlementConfig);
   }
 
-  throw new Error("Settlement is confirmed, but the planet is still syncing. Retry once the chain read catches up.");
+  throw new Error("Settlement is confirmed, but starting resources are still indexing. Retry once the backend catches up.");
 }
 
 function delay(ms: number): Promise<void> {
