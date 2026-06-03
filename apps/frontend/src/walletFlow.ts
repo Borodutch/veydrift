@@ -735,6 +735,20 @@ export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<v
   }
 }
 
+const buildingUpgradeRevertReasons: Record<string, string> = {
+  "0xcec62bc2": "Another building is already upgrading. Finish the active building queue before starting a new upgrade.",
+  "0x7e787175": "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.",
+  "0x4499d03a": "The active building upgrade is not ready to finish yet. Refresh infrastructure state and retry.",
+  "0x2ab0f96f": "Not enough on-chain resources are available for this building upgrade. Refresh infrastructure state and retry.",
+  "0xb8f7e9ba": "This building upgrade is missing an on-chain prerequisite.",
+  "0x359b57cf": "This planet has no free fields for another building upgrade.",
+  "0x1aca3780": "This building is already at its maximum supported level.",
+  "0x9a3d4eb9": "No planet exists for this building upgrade.",
+  "0xab2bcfd3": "This wallet does not own the selected planet.",
+  "0xdfa1a408": "The selected building is not supported by the current game contract.",
+  "0x78e10c67": "Building upgrades are not supported by the current game contract deployment.",
+};
+
 function abiWords(hex: string): string[] {
   const clean = hex.replace(/^0x/, "");
   return clean.match(/.{1,64}/g) ?? [];
@@ -742,6 +756,83 @@ function abiWords(hex: string): string[] {
 
 function decodeAbiUint(word: string | undefined): bigint {
   return word ? BigInt(`0x${word}`) : 0n;
+}
+
+function decodeAbiBool(word: string | undefined): boolean {
+  return decodeAbiUint(word) !== 0n;
+}
+
+function revertSelector(error: unknown): string | undefined {
+  const data = errorData(error);
+  return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
+    ? data.slice(0, 10).toLowerCase()
+    : undefined;
+}
+
+async function assertBuildingUpgradeCallSucceeds(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+): Promise<void> {
+  try {
+    await provider.request({
+      method: "eth_call",
+      params: [{ from, to, data }, "latest"],
+    });
+  } catch (error) {
+    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
+    throw new Error(reason ?? walletRequestErrorMessage(error));
+  }
+}
+
+async function assertBuildingUpgradeEstimateSucceeds(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+): Promise<void> {
+  try {
+    await provider.request({
+      method: "eth_estimateGas",
+      params: [{ from, to, data }],
+    });
+  } catch (error) {
+    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
+    throw new Error(reason ?? "This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
+  }
+}
+
+async function assertActiveBuildingConstructionReady(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  planetId: string,
+): Promise<void> {
+  const data = encodeGameCall(GAME_SELECTORS.activeBuildingConstruction, [planetId]);
+  try {
+    const result = await provider.request<string>({
+      method: "eth_call",
+      params: [{ from, to, data }, "latest"],
+    });
+    const words = abiWords(result);
+    const active = decodeAbiBool(words[0]);
+    if (!active) {
+      throw new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
+    }
+
+    const readyAt = decodeAbiUint(words[3]);
+    if (readyAt <= 0n) {
+      throw new Error("Building completion time is unavailable. Refresh infrastructure state before finishing.");
+    }
+    if (readyAt > BigInt(Math.floor(Date.now() / 1_000))) {
+      throw new Error("Building upgrade is not ready to finish yet.");
+    }
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
+    throw new Error(reason ?? walletRequestErrorMessage(error));
+  }
 }
 
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
@@ -1532,7 +1623,7 @@ export async function sendStartBuildingUpgradeTransaction(
   contractAddress: string,
   planetId: string,
   buildingId: number,
-  _options: TransactionPreflightOptions = {}
+  options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
   const transaction = {
@@ -1541,7 +1632,14 @@ export async function sendStartBuildingUpgradeTransaction(
     data
   };
 
-  await assertWalletUnlocked(provider);
+  const preflightProvider = options.readProvider ?? provider;
+  if (!options.readProvider) {
+    await assertWalletUnlocked(provider);
+  }
+  await assertBuildingUpgradeCallSucceeds(preflightProvider, account, contractAddress, data);
+  if (options.readProvider) {
+    await assertWalletUnlocked(provider);
+  }
 
   return provider.request<string>({
     method: "eth_sendTransaction",
@@ -1610,7 +1708,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   account: string,
   contractAddress: string,
   planetId: string,
-  _options: TransactionPreflightOptions = {}
+  options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
   const transaction: TransactionRequest = {
@@ -1619,6 +1717,11 @@ export async function sendFinishBuildingUpgradeTransaction(
     data
   };
 
+  if (options.readProvider) {
+    await assertActiveBuildingConstructionReady(options.readProvider, account, contractAddress, planetId);
+    await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
+    await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
+  }
   await assertWalletUnlocked(provider);
 
   return provider.request<string>({
@@ -2329,6 +2432,12 @@ function errorMessage(error: unknown): string {
 function errorCode(error: unknown): unknown {
   return typeof error === "object" && error !== null && "code" in error
     ? (error as { code: unknown }).code
+    : undefined;
+}
+
+function errorData(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "data" in error
+    ? (error as { data: unknown }).data
     : undefined;
 }
 
