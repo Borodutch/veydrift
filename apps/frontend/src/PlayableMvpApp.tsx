@@ -279,10 +279,12 @@ export function overviewBuildingReadyToFinishFlag({
 
 export function buildingCompletionUnavailableReasonFor({
   canTransact,
+  canVerifyWithReadonlyProvider = false,
   infrastructureState,
   now = Date.now(),
 }: {
   canTransact: boolean;
+  canVerifyWithReadonlyProvider?: boolean;
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): string | undefined {
@@ -294,7 +296,7 @@ export function buildingCompletionUnavailableReasonFor({
     return buildingFinishLiveStateRequiredLabel;
   }
 
-  if (infrastructureState.source === "contract-state-indexer" || infrastructureState.stale === true) {
+  if (!canVerifyWithReadonlyProvider && (infrastructureState.source === "contract-state-indexer" || infrastructureState.stale === true)) {
     return buildingFinishLiveStateRequiredLabel;
   }
 
@@ -336,6 +338,7 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
   account,
   activePlanetId,
   apiBaseUrl,
+  canVerifyWithReadonlyProvider = false,
   fallback,
   loadInfrastructureState = fetchInfrastructureState,
   now = Date.now(),
@@ -343,6 +346,7 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
   account: string | undefined;
   activePlanetId: string | undefined;
   apiBaseUrl: string | undefined;
+  canVerifyWithReadonlyProvider?: boolean;
   fallback: ChainInfrastructureState | null;
   loadInfrastructureState?: typeof fetchInfrastructureState;
   now?: number;
@@ -362,6 +366,7 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
     infrastructureState,
     unavailableReason: buildingCompletionUnavailableReasonFor({
       canTransact: true,
+      canVerifyWithReadonlyProvider,
       infrastructureState,
       now,
     }),
@@ -2071,6 +2076,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           gameContract,
           planetId,
           building,
+          { readProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -2101,6 +2107,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     onChainResources,
     onChainSettlement?.homePlanetId,
     provider,
+    readProvider,
     receiptProvider,
     refreshLiveInfrastructureState,
     refreshInfrastructureState,
@@ -2136,6 +2143,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
             account,
             activePlanetId: planetId,
             apiBaseUrl,
+            canVerifyWithReadonlyProvider: Boolean(readProvider),
             fallback: infrastructureChainState,
           });
         if (unavailableReason) {
@@ -2156,6 +2164,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
           account,
           gameContract,
           planetId,
+          { readProvider },
         );
         setBuildingAction({
           status: "pending",
@@ -2191,6 +2200,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     buildingQueue?.key,
     onChainSettlement?.homePlanetId,
     provider,
+    readProvider,
     receiptProvider,
     refreshFinishedBuildingState,
     transactionActionGate,
@@ -2423,6 +2433,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
       account,
       gameContract,
       planetId,
+      { readProvider },
     ), () => refreshCollectedResourcesState({ planetId, previousLastSettledAt }));
   }, [
     account,
@@ -2430,6 +2441,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     onChainSettlement?.homePlanetId,
     onChainSettlement?.planet?.lastSettledAt,
     provider,
+    readProvider,
     refreshCollectedResourcesState,
     runShipyardTransaction,
   ]);
