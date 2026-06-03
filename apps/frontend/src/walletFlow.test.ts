@@ -29,6 +29,7 @@ import {
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
+  miniAppUnsupportedChainMessage,
   mergePlayerProfile,
   parseRiftTokenAmount,
   readSettlementFundingState,
@@ -537,6 +538,15 @@ describe("walletFlow", () => {
     await ensureBaseSepoliaNetwork(provider);
 
     expect(params).toEqual([BASE_SEPOLIA]);
+  });
+
+  test("explains Quorum/Farcaster Mini App wrong-chain state without network switching", () => {
+    const message = miniAppUnsupportedChainMessage("0x2105");
+
+    expect(message).toContain("Base mainnet (0x2105)");
+    expect(message).toContain("requires Base Sepolia (0x14a34)");
+    expect(message).toContain("does not expose a safe network switch");
+    expect(message).toContain("desktop browser wallet flow");
   });
 
   test("reports no settlement when hasFirstPlanet returns false", async () => {

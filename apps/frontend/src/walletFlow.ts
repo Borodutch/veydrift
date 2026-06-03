@@ -474,6 +474,7 @@ export const BASE_SEPOLIA = {
     "https://sepolia.basescan.org"
   ]
 } as const;
+const BASE_MAINNET_CHAIN_ID_HEX = "0x2105";
 
 export function createJsonRpcProvider(rpcUrl: string): Eip1193Provider {
   let nextId = 1;
@@ -739,6 +740,15 @@ export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
   }
 
   return Number(chainId) === BASE_SEPOLIA.chainId;
+}
+
+export function miniAppUnsupportedChainMessage(chainId: string): string {
+  const normalized = chainId.toLowerCase();
+  const currentChain = normalized === BASE_MAINNET_CHAIN_ID_HEX
+    ? `Base mainnet (${BASE_MAINNET_CHAIN_ID_HEX})`
+    : `chain ${chainId}`;
+
+  return `${currentChain} is active in this Farcaster client, but test.veydrift.com requires Base Sepolia (${BASE_SEPOLIA.chainIdHex}). This Mini App host does not expose a safe network switch for Veydrift test transactions; open Veydrift in a Farcaster client with Base Sepolia support or use the desktop browser wallet flow.`;
 }
 
 export function shortAddress(address: string): string {

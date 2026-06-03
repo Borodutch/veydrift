@@ -21,6 +21,7 @@ import {
   getCurrentAccounts,
   isBaseSepoliaChain,
   isUserRejected,
+  miniAppUnsupportedChainMessage,
   readSettlementFundingState,
   readSettlementState,
   requestAccounts,
@@ -369,6 +370,14 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
+    if (miniAppMode && wallet.kind === "wrong-network") {
+      setPlanet({
+        kind: "error",
+        message: miniAppUnsupportedChainMessage(wallet.chainId),
+      });
+      return;
+    }
+
     setPlanet({
       kind: "checking"
     });
@@ -600,6 +609,16 @@ function FlowBody({
   }
 
   if (mode === "wrong-network" && wallet.kind === "wrong-network") {
+    if (miniAppMode) {
+      return (
+        <StateMessage
+          title="Unsupported Mini App network"
+          body={miniAppUnsupportedChainMessage(wallet.chainId)}
+          tone="warning"
+        />
+      );
+    }
+
     return (
       <StateMessage
         title="Wrong network"

@@ -39,28 +39,31 @@ export type MiniAppEmbed = {
 
 export type MiniAppManifest = {
   accountAssociation: AccountAssociation;
-  miniapp: {
-    version: "1";
-    name: string;
-    homeUrl: string;
-    iconUrl: string;
-    splashImageUrl: string;
-    splashBackgroundColor: string;
-    subtitle: string;
-    description: string;
-    screenshotUrls: string[];
-    primaryCategory: "games";
-    tags: string[];
-    heroImageUrl: string;
-    tagline: string;
-    ogTitle: string;
-    ogDescription: string;
-    ogImageUrl: string;
-    requiredChains: string[];
-    requiredCapabilities: string[];
-    canonicalDomain: string;
-    noindex: boolean;
-  };
+  miniapp: MiniAppManifestConfig;
+  frame: MiniAppManifestConfig;
+};
+
+export type MiniAppManifestConfig = {
+  version: "1";
+  name: string;
+  homeUrl: string;
+  iconUrl: string;
+  splashImageUrl: string;
+  splashBackgroundColor: string;
+  subtitle: string;
+  description: string;
+  screenshotUrls: string[];
+  primaryCategory: "games";
+  tags: string[];
+  heroImageUrl: string;
+  tagline: string;
+  ogTitle: string;
+  ogDescription: string;
+  ogImageUrl: string;
+  requiredChains: string[];
+  requiredCapabilities: string[];
+  canonicalDomain: string;
+  noindex: boolean;
 };
 
 export const productionAccountAssociation = {
@@ -138,40 +141,47 @@ export function buildMiniAppManifest(
   surface: MiniAppSurface,
   accountAssociation: AccountAssociation,
 ): MiniAppManifest {
+  const config = buildMiniAppManifestConfig(surface);
+
   return {
     accountAssociation,
-    miniapp: {
-      version: "1",
-      name: "Veydrift",
-      homeUrl: surface.PUBLIC_SITE_URL,
-      iconUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/icon.png`,
-      splashImageUrl: surface.MINIAPP_SPLASH,
-      splashBackgroundColor: "#05070d",
-      subtitle: "Onchain space awaits",
-      description: "A new onchain space project is coming soon.",
-      screenshotUrls: [
-        `${surface.PUBLIC_SITE_URL}/assets/miniapp/screenshot-1.jpg`,
-      ],
-      primaryCategory: "games",
-      tags: [
-        "space",
-        "onchain",
-        "base",
-        "game",
-      ],
-      heroImageUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/og-image.jpg`,
-      tagline: "Onchain space awaits",
-      ogTitle: "Veydrift",
-      ogDescription: "A new onchain space project is coming soon.",
-      ogImageUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/og-image.jpg`,
-      requiredChains: surface.requiredChains,
-      requiredCapabilities: [
-        "actions.ready",
-        "wallet.getEthereumProvider",
-      ],
-      canonicalDomain: surface.domain,
-      noindex: surface.noindex,
-    },
+    miniapp: config,
+    frame: config,
+  };
+}
+
+function buildMiniAppManifestConfig(surface: MiniAppSurface): MiniAppManifestConfig {
+  return {
+    version: "1",
+    name: "Veydrift",
+    homeUrl: surface.PUBLIC_SITE_URL,
+    iconUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/icon.png`,
+    splashImageUrl: surface.MINIAPP_SPLASH,
+    splashBackgroundColor: "#05070d",
+    subtitle: "Onchain space awaits",
+    description: "A new onchain space project is coming soon.",
+    screenshotUrls: [
+      `${surface.PUBLIC_SITE_URL}/assets/miniapp/screenshot-1.jpg`,
+    ],
+    primaryCategory: "games",
+    tags: [
+      "space",
+      "onchain",
+      "base",
+      "game",
+    ],
+    heroImageUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/og-image.jpg`,
+    tagline: "Onchain space awaits",
+    ogTitle: "Veydrift",
+    ogDescription: "A new onchain space project is coming soon.",
+    ogImageUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/og-image.jpg`,
+    requiredChains: surface.requiredChains,
+    requiredCapabilities: [
+      "actions.ready",
+      "wallet.getEthereumProvider",
+    ],
+    canonicalDomain: surface.domain,
+    noindex: surface.noindex,
   };
 }
 
