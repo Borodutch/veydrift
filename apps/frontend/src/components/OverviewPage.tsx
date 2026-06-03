@@ -30,6 +30,11 @@ import {
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import {
+  actionNoticeForBuilding,
+  buildingKeyForContractId,
+  type InfrastructureActionNotice,
+} from "../buildingActionNotice";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
@@ -67,6 +72,7 @@ interface OverviewPageProps {
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
+  buildingActionNotice?: InfrastructureActionNotice | undefined;
   isBuildingActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
@@ -109,6 +115,7 @@ export function OverviewPage({
   planet,
   homePlanet,
   isWalletConnected,
+  buildingActionNotice,
   isBuildingActionPending = false,
   isBuildingReadyToFinish,
   onFinishBuilding,
@@ -185,6 +192,10 @@ export function OverviewPage({
     isBuildingReadyToFinish,
     onFinishBuilding,
   });
+  const overviewBuildingNotice = overviewBuildingActionNoticeFor(
+    buildingActionNotice,
+    buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId),
+  );
 
   const planetName = homePlanet?.name
     ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
@@ -565,6 +576,7 @@ export function OverviewPage({
                 disabled={isBuildingActionPending}
                 onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
               />
+              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
             </div>
           ) : buildingQueue ? (
             <div className="grid gap-2">
@@ -581,6 +593,7 @@ export function OverviewPage({
                 disabled={isBuildingActionPending}
                 onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
               />
+              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
             </div>
           ) : (
             <EmptyQueue action={<QuickLink onClick={() => onNavigate("infrastructure")}>Build</QuickLink>}>
@@ -720,6 +733,14 @@ export function shouldShowOverviewBuildingFinishAction({
   return Boolean(isBuildingReadyToFinish && onFinishBuilding);
 }
 
+export function overviewBuildingActionNoticeFor(
+  actionNotice: InfrastructureActionNotice | undefined,
+  buildingKey: BuildingQueueItem["key"] | undefined,
+): InfrastructureActionNotice | undefined {
+  if (!buildingKey) return actionNotice;
+  return actionNoticeForBuilding(actionNotice, buildingKey);
+}
+
 export function overviewDefenseFinishAction({
   actionPending,
   now,
@@ -792,6 +813,24 @@ function OverviewBuildingFinishButton({
     >
       Finish upgrade
     </button>
+  );
+}
+
+function OverviewBuildingActionNotice({
+  notice,
+}: {
+  notice?: InfrastructureActionNotice | undefined;
+}) {
+  if (!notice) return null;
+  const className = notice.tone === "error"
+    ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
+    : "border-emerald-300/20 bg-emerald-300/10 text-emerald-100";
+  const role = notice.tone === "error" ? "alert" : "status";
+
+  return (
+    <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${className}`} role={role}>
+      {notice.label}
+    </div>
   );
 }
 

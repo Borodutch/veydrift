@@ -79,6 +79,24 @@ describe("chainState", () => {
     expect(isBuildingQueueReadyToFinish(queue, (readyAtSeconds - 1) * 1_000)).toBe(false);
   });
 
+  test("accepts normalized millisecond readyAt values for ready building completion", () => {
+    const readyAtMs = 1_700_000_060_000;
+    const queue = buildingQueue({
+      readyAt: readyAtMs.toString(),
+    });
+
+    expect(isBuildingQueueReadyToFinish(queue, readyAtMs)).toBe(true);
+    expect(isBuildingQueueReadyToFinish(queue, readyAtMs - 1)).toBe(false);
+    expect(buildingQueueItemForDisplay(queue, createInitialPlayableState().buildings, readyAtMs)).toMatchObject({
+      readyAt: readyAtMs,
+    });
+  });
+
+  test("keeps invalid readyAt values unavailable for building completion", () => {
+    expect(isBuildingQueueReadyToFinish(buildingQueue({ readyAt: "not-a-date" }), 1_700_000_060_000)).toBe(false);
+    expect(isBuildingQueueReadyToFinish(buildingQueue({ readyAt: "0" }), 1_700_000_060_000)).toBe(false);
+  });
+
   test("prefers the wallet queues building payload when both queue sources are active", () => {
     const queuesBuilding = buildingQueue({ itemId: 3, targetLevel: 1, readyAt: "1700000060" });
     const infrastructureBuilding = buildingQueue({ itemId: 0, targetLevel: 1, readyAt: "1700000060" });
