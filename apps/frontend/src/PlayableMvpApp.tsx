@@ -265,6 +265,16 @@ export function overviewResearchCompletionUnavailableReasonFor({
     : unavailableReason;
 }
 
+export function overviewBuildingReadyToFinishFlag({
+  activeBuildingQueue,
+  isBuildingReadyToFinish,
+}: {
+  activeBuildingQueue: QueueStateResponse | null | undefined;
+  isBuildingReadyToFinish: boolean;
+}): boolean | undefined {
+  return activeBuildingQueue ? isBuildingReadyToFinish : undefined;
+}
+
 export function buildingCompletionUnavailableReasonFor({
   canTransact,
   infrastructureState,
@@ -3395,7 +3405,10 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
         isBuildingActionPending={buildingAction.status === "pending"}
-        isBuildingReadyToFinish={isBuildingReadyToFinish}
+        isBuildingReadyToFinish={overviewBuildingReadyToFinishFlag({
+          activeBuildingQueue,
+          isBuildingReadyToFinish,
+        })}
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}
