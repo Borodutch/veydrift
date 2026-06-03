@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
+import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
 import {
@@ -31,8 +32,10 @@ interface ShipyardPageProps {
   onRefresh: () => void;
   onSelectShip?: ((key: ShipKey) => void) | undefined;
   overviewQueue?: ChainShipyardState["queue"] | undefined;
+  productionRates?: Resources | undefined;
   selectedShipKey?: ShipKey | undefined;
   shipyardState: ChainShipyardState | null;
+  spendableResources?: Resources | undefined;
 }
 
 const groupLabels = {
@@ -53,8 +56,10 @@ export function ShipyardPage({
   onRefresh,
   onSelectShip,
   overviewQueue,
+  productionRates,
   selectedShipKey,
   shipyardState,
+  spendableResources,
 }: ShipyardPageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<ShipKey>("smallCargo");
@@ -107,9 +112,10 @@ export function ShipyardPage({
             actionPending: actionState.status === "pending",
             canTransact,
             productionAvailable,
+            productionRates,
             quantities,
             queue,
-            resources,
+            resources: spendableResources ?? resources,
             shipyardLevel,
             shipyardState,
           })}
@@ -197,6 +203,7 @@ export function shipProductionItems({
   actionPending,
   canTransact,
   productionAvailable,
+  productionRates,
   quantities,
   queue,
   resources,
@@ -206,6 +213,7 @@ export function shipProductionItems({
   actionPending: boolean;
   canTransact: boolean;
   productionAvailable: boolean;
+  productionRates?: Resources | undefined;
   quantities: Record<string, number>;
   queue?: ChainShipyardState["queue"] | undefined;
   resources: Resources | undefined;
@@ -231,10 +239,12 @@ export function shipProductionItems({
       canTransact,
       hasPlanet: Boolean(shipyardState?.homePlanetId),
       missing,
+      productionRates,
       queueActive: Boolean(queue),
       resources,
       shipUnavailable,
       shipyardState,
+      totalCost,
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const combatStats = shipCombatStats(ship);
@@ -319,19 +329,23 @@ export function getBlockedReason({
   canTransact,
   hasPlanet,
   missing,
+  productionRates,
   queueActive,
   resources,
   shipUnavailable,
   shipyardState,
+  totalCost,
 }: {
   affordable: boolean;
   canTransact: boolean;
   hasPlanet: boolean;
   missing: string[];
+  productionRates?: Resources | undefined;
   queueActive: boolean;
   resources: Resources | undefined;
   shipUnavailable: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
+  totalCost?: Resources | undefined;
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!shipyardState) return "Waiting for chain state";
@@ -341,6 +355,7 @@ export function getBlockedReason({
   if (queueActive) return "Queue active";
   if (missing.length > 0) return missing[0];
   if (!resources) return "Resources unavailable";
+  if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;
 }

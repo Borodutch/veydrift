@@ -164,6 +164,41 @@ describe("Defense page display helpers", () => {
     });
     expect(items.find((item) => item.key === "lightLaser")?.blockedReason).toBe("Active queue: Rocket Launcher");
   });
+
+  test("uses spendable accrued resources in insufficient-resource copy", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 1,
+        defenses: [
+          {
+            id: 0,
+            count: 0,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+      productionAvailable: true,
+      productionRates: { metal: 500, crystal: 0, deuterium: 0 },
+      quantities: { rocketLauncher: 2 },
+      queue: undefined,
+      resources: {
+        metal: 3_500,
+        crystal: 0,
+        deuterium: 0,
+      },
+    });
+
+    expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      blockedReason: "Requires 500 more Metal (affordable in 1h)",
+      disabled: true,
+    });
+  });
 });
 
 function defenseState(overrides: Partial<ChainDefenseState> = {}): ChainDefenseState {

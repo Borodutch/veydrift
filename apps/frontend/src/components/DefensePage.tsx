@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
+import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainDefenseState } from "../walletFlow";
 import {
@@ -31,7 +32,9 @@ interface DefensePageProps {
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
   overviewQueue?: ChainDefenseState["queue"] | undefined;
+  productionRates?: Resources | undefined;
   selectedDefenseKey?: DefenseKey | undefined;
+  spendableResources?: Resources | undefined;
 }
 
 const groupLabels = {
@@ -62,7 +65,9 @@ export function DefensePage({
   onRefresh,
   onSelectDefense,
   overviewQueue,
+  productionRates,
   selectedDefenseKey,
+  spendableResources,
 }: DefensePageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
@@ -116,9 +121,10 @@ export function DefensePage({
             canTransact,
             defenseState,
             productionAvailable,
+            productionRates,
             quantities,
             queue,
-            resources,
+            resources: spendableResources ?? resources,
           })}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
           onFinishQueue={onFinish}
@@ -191,6 +197,7 @@ export function defenseProductionItems({
   canTransact,
   defenseState,
   productionAvailable,
+  productionRates,
   quantities,
   queue,
   resources,
@@ -199,6 +206,7 @@ export function defenseProductionItems({
   canTransact: boolean;
   defenseState: ChainDefenseState | null;
   productionAvailable: boolean;
+  productionRates?: Resources | undefined;
   quantities: Record<string, number>;
   queue?: ChainDefenseState["queue"] | undefined;
   resources: Resources | undefined;
@@ -221,8 +229,10 @@ export function defenseProductionItems({
       hasPlanet: Boolean(defenseState?.homePlanetId),
       limitReason,
       missing,
+      productionRates,
       queueBlocker,
       resources,
+      totalCost,
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const queued = queuedDefenseCount(defense.id, queue);
@@ -368,8 +378,10 @@ function getBlockedReason({
   hasPlanet,
   limitReason,
   missing,
+  productionRates,
   queueBlocker,
   resources,
+  totalCost,
 }: {
   affordable: boolean;
   canTransact: boolean;
@@ -377,8 +389,10 @@ function getBlockedReason({
   hasPlanet: boolean;
   limitReason?: string | undefined;
   missing: string[];
+  productionRates?: Resources | undefined;
   queueBlocker?: string | undefined;
   resources: Resources | undefined;
+  totalCost?: Resources | undefined;
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!defenseState) return "Waiting for chain state";
@@ -388,6 +402,7 @@ function getBlockedReason({
   if (missing.length > 0) return missing[0];
   if (limitReason) return limitReason;
   if (!resources) return "Resources unavailable";
+  if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;
 }

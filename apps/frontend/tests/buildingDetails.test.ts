@@ -58,6 +58,32 @@ describe("building detail helpers", () => {
     )).toBe("Requires 60 more Metal, 10 more Deuterium (time unavailable: no Deuterium production)");
   });
 
+  test("uses spendable accrued resources for building affordability and ETA", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        solarPlant: 1,
+      },
+      resources: { metal: 10, crystal: 5_000, deuterium: 5_000 },
+    };
+
+    expect(buildingUpgradeStatus(state, "metalMine", {
+      spendableResources: { metal: 60, crystal: 5_000, deuterium: 5_000 },
+    })).toMatchObject({
+      disabled: false,
+      reason: "Ready for Level 1",
+    });
+
+    expect(buildingUpgradeStatus(state, "metalMine", {
+      productionRates: { metal: 25, crystal: 0, deuterium: 0 },
+      spendableResources: { metal: 35, crystal: 5_000, deuterium: 5_000 },
+    })).toMatchObject({
+      disabled: true,
+      reason: "Requires 25 more Metal (affordable in 1h)",
+    });
+  });
+
   test("uses action unavailable reason before local affordability", () => {
     expect(
       buildingUpgradeStatus(

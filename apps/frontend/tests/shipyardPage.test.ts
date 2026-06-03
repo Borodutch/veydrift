@@ -157,6 +157,29 @@ describe("Shipyard page display helpers", () => {
       startedAt: "1700000000",
     });
   });
+
+  test("uses spendable accrued resources in insufficient-resource copy", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      productionRates: { metal: 500, crystal: 250, deuterium: 0 },
+      quantities: { smallCargo: 2 },
+      queue: undefined,
+      resources: {
+        metal: 3_500,
+        crystal: 3_900,
+        deuterium: 0,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState(),
+    });
+
+    expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+      blockedReason: "Requires 500 more Metal, 100 more Crystal (affordable in 1h)",
+      disabled: true,
+    });
+  });
 });
 
 function shipyardState(overrides: Partial<ChainShipyardState> = {}): ChainShipyardState {
