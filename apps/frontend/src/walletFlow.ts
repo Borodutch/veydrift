@@ -585,18 +585,43 @@ export type FarcasterWalletClient = {
   };
 };
 
+export type AvailableWalletProvider = {
+  provider: Eip1193Provider;
+  source: "injected" | "farcaster";
+};
+
 export function getInjectedProvider(
   globalWindow: InjectedWindow | undefined,
 ): Eip1193Provider | undefined {
   return globalWindow?.ethereum;
 }
 
+export async function getAvailableWalletProviderDetails(
+  globalWindow: InjectedWindow | undefined,
+  farcasterClient: FarcasterWalletClient = sdk as unknown as FarcasterWalletClient,
+): Promise<AvailableWalletProvider | undefined> {
+  const injected = getInjectedProvider(globalWindow);
+  if (injected) {
+    return {
+      provider: injected,
+      source: "injected",
+    };
+  }
+
+  const farcasterProvider = await getFarcasterEthereumProvider(farcasterClient);
+  return farcasterProvider
+    ? {
+      provider: farcasterProvider,
+      source: "farcaster",
+    }
+    : undefined;
+}
+
 export async function getAvailableWalletProvider(
   globalWindow: InjectedWindow | undefined,
   farcasterClient: FarcasterWalletClient = sdk as unknown as FarcasterWalletClient,
 ): Promise<Eip1193Provider | undefined> {
-  return getInjectedProvider(globalWindow)
-    ?? await getFarcasterEthereumProvider(farcasterClient);
+  return (await getAvailableWalletProviderDetails(globalWindow, farcasterClient))?.provider;
 }
 
 async function getFarcasterEthereumProvider(

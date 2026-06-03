@@ -26,6 +26,7 @@ import {
   fetchWalletSettlement,
   fetchWalletQueues,
   getAvailableWalletProvider,
+  getAvailableWalletProviderDetails,
   getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
@@ -109,6 +110,33 @@ describe("walletFlow", () => {
       },
     })).resolves.toBeUndefined();
     expect(getInjectedProvider({})).toBeUndefined();
+  });
+
+  test("reports whether the selected wallet provider came from Farcaster", async () => {
+    const provider = mockProvider(async () => null);
+    const miniAppProvider = mockProvider(async () => null);
+
+    await expect(getAvailableWalletProviderDetails({ ethereum: provider }, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    })).resolves.toEqual({
+      provider,
+      source: "injected",
+    });
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    })).resolves.toEqual({
+      provider: miniAppProvider,
+      source: "farcaster",
+    });
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        getEthereumProvider: () => ({ notAProvider: true }) as unknown as Eip1193Provider,
+      },
+    })).resolves.toBeUndefined();
   });
 
   test("ignores unavailable Mini App wallet provider outside host sessions", async () => {
