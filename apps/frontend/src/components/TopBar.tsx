@@ -115,14 +115,14 @@ export function TopBar({
           {showCollectButton && (
             <button
               aria-label={collectTitle}
-              className="col-start-6 grid h-7 w-7 shrink-0 place-items-center rounded border border-cyan-300/30 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-start-auto sm:inline-flex sm:w-auto sm:px-2.5 sm:text-[11px] sm:font-semibold sm:leading-none"
+              className="col-start-6 grid h-7 w-7 shrink-0 place-items-center rounded border border-cyan-300/30 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:col-start-auto lg:inline-flex lg:w-auto lg:gap-1.5 lg:px-2.5 lg:text-[11px] lg:font-semibold lg:leading-none"
               disabled={!canCollectResources || collectResourcesPending}
               onClick={onCollectResources}
               title={collectTitle}
               type="button"
             >
-              <Download aria-hidden="true" className="h-3.5 w-3.5 sm:hidden" strokeWidth={2.25} />
-              <span className="sr-only sm:not-sr-only">{collectResourcesPending ? "Pending" : "Collect"}</span>
+              <Download aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={2.25} />
+              <span className="sr-only lg:not-sr-only">{collectResourcesPending ? "Pending" : "Collect"}</span>
             </button>
           )}
           {queue && (
@@ -140,14 +140,14 @@ export function TopBar({
         <div className="flex min-w-0 max-w-full items-center justify-center gap-2 sm:justify-end sm:gap-3">
           <a
             aria-label="Telegram support"
-            className="hidden h-7 shrink-0 items-center justify-center gap-1.5 rounded border border-signal/35 bg-signal/10 px-2 text-[11px] font-semibold leading-none text-signal transition hover:bg-signal/20 sm:inline-flex"
+            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-signal/35 bg-signal/10 text-[11px] font-semibold leading-none text-signal transition hover:bg-signal/20 sm:inline-flex lg:w-auto lg:gap-1.5 lg:px-2"
             href={TELEGRAM_SUPPORT_URL}
             rel="noopener noreferrer"
             target="_blank"
             title="Telegram support"
           >
             <TelegramIcon className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Telegram</span>
+            <span className="sr-only lg:not-sr-only">Telegram</span>
           </a>
           {coordinates && (
             <span className="inline-flex h-6 items-center whitespace-nowrap font-mono text-xs leading-none text-slate-400">
