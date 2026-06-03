@@ -14,19 +14,15 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import {
-  BASE_SEPOLIA,
-  createJsonRpcProvider,
   ensureBaseSepoliaNetwork,
+  fetchSettlementFundingState,
+  fetchWalletSettlement,
   getChainId,
   getCurrentAccounts,
   isBaseSepoliaChain,
-  isUnsupportedProviderMethodError,
   isUserRejected,
   miniAppUnsupportedChainMessage,
-  readSettlementFundingState,
-  readSettlementState,
   requestAccounts,
-  fetchWalletSettlement,
   getAvailableWalletProviderDetails,
   sendSettlementTransaction,
   settlementContractConfigured,
@@ -43,7 +39,6 @@ import {
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
-const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
 type SettlementConfigState =
   | { status: "loading"; apiUrl?: string; config: SettlementConfig }
@@ -80,8 +75,6 @@ type SettlementFunding =
   | { status: "loading" }
   | { status: "ready"; funding: SettlementFundingState }
   | { status: "error"; message: string };
-
-type SettlementLaunchMode = "standard" | "mini-app";
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -366,73 +359,36 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function refreshPlanet(injected: Eip1193Provider, connectedAccount: string) {
+  async function refreshPlanet(_injected: Eip1193Provider, connectedAccount: string) {
     setPlanet({
       kind: "checking"
     });
 
     try {
       const indexedSettlement = await readIndexedSettlementState(settlementConfigState.apiUrl, connectedAccount);
-      if (indexedSettlement) {
-        if (indexedSettlement.kind === "settled") {
-          setSettlementFunding({ status: "idle" });
-          setPlanet({
-            kind: "already-settled",
-            planet: indexedSettlement.planet
-          });
-        } else if (indexedSettlement.kind === "indexing") {
-          setSettlementFunding({ status: "idle" });
-          setPlanet({
-            kind: "pending",
-            label: "Settlement confirmed. Indexing starting resources before opening planetary overview."
-          });
-        } else {
-          setPlanet({
-            kind: "not-settled"
-          });
-          await refreshSettlementFunding(injected, connectedAccount);
-        }
-        return;
+      if (!indexedSettlement) {
+        throw new Error("Settlement state is unavailable because the game API is not configured.");
       }
-    } catch (error) {
-      console.error("Indexed settlement state read failed", error);
-    }
-
-    try {
-      const { settlement } = await readSettlementStateWithMiniAppFallback(injected, connectedAccount);
-
-      if (settlement.kind === "unconfigured") {
+      if (indexedSettlement.kind === "settled") {
         setSettlementFunding({ status: "idle" });
         setPlanet({
-          kind: "contract-unconfigured"
+          kind: "already-settled",
+          planet: indexedSettlement.planet
         });
-      } else if (settlement.kind === "settled") {
+      } else if (indexedSettlement.kind === "indexing") {
         setSettlementFunding({ status: "idle" });
-        if (hasHydratedSettlementResources(settlement.planet)) {
-          setPlanet({
-            kind: "already-settled",
-            planet: settlement.planet
-          });
-        } else {
-          setPlanet({
-            kind: "pending",
-            label: "Settlement confirmed. Indexing starting resources before opening planetary overview."
-          });
-        }
-      } else if (settlement.kind === "legacy-settled") {
         setPlanet({
-          kind: "legacy-settled",
-          planet: settlement.planet
+          kind: "pending",
+          label: "Settlement confirmed. Indexing starting resources before opening planetary overview."
         });
-        await refreshSettlementFunding(injected, connectedAccount);
       } else {
         setPlanet({
           kind: "not-settled"
         });
-        await refreshSettlementFunding(injected, connectedAccount);
+        await refreshSettlementFunding(connectedAccount);
       }
     } catch (error) {
-      console.error("Wallet settlement state read failed", error);
+      console.error("Indexed settlement state read failed", error);
       setPlanet({
         kind: "error",
         message: walletRequestErrorMessage(error)
@@ -441,12 +397,15 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function refreshSettlementFunding(injected: Eip1193Provider, connectedAccount: string) {
+  async function refreshSettlementFunding(connectedAccount: string) {
     setSettlementFunding({ status: "loading" });
     try {
+      if (!settlementConfigState.apiUrl) {
+        throw new Error("Settlement funding is unavailable because the game API is not configured.");
+      }
       setSettlementFunding({
         status: "ready",
-        funding: await readSettlementFundingWithMiniAppFallback(injected, connectedAccount)
+        funding: await fetchSettlementFundingState(settlementConfigState.apiUrl, connectedAccount)
       });
     } catch (error) {
       setSettlementFunding({
@@ -524,8 +483,8 @@ export function FirstPlanetSettlementApp() {
 
       const label = "First planet settlement";
 
-      const launchMode = await refreshSettlementLaunchInfo(provider, wallet.account, planet);
-      if (!launchMode) {
+      const funding = await refreshSettlementLaunchInfo(wallet.account, planet);
+      if (!funding) {
         return;
       }
 
@@ -539,14 +498,14 @@ export function FirstPlanetSettlementApp() {
           provider,
           wallet.account,
           settlementConfig,
-          settlementTransactionOptions(launchMode === "mini-app")
+          settlementTransactionOptions(funding)
         );
         setPlanet({
           kind: "pending",
           label: transactionConfirmingLabel(label, txHash),
           txHash
         });
-        await waitForReceipt(settlementReadProvider(miniAppMode) ?? provider, txHash);
+        await waitForReceipt(provider, txHash);
         setPlanet({
           kind: "pending",
           label: transactionSyncingLabel(label),
@@ -569,19 +528,15 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshSettlementLaunchInfo(
-    injected: Eip1193Provider,
     connectedAccount: string,
     currentPlanet: PlanetState,
-  ): Promise<SettlementLaunchMode | undefined> {
+  ): Promise<SettlementFundingState | undefined> {
     setSettlementFunding({ status: "loading" });
 
     try {
-      const { settlement, launchMode } = await readSettlementStateWithMiniAppFallback(injected, connectedAccount);
-
-      if (settlement.kind === "unconfigured") {
-        setSettlementFunding({ status: "idle" });
-        setPlanet({ kind: "contract-unconfigured" });
-        return undefined;
+      const settlement = await readIndexedSettlementState(settlementConfigState.apiUrl, connectedAccount);
+      if (!settlement) {
+        throw new Error("Settlement state is unavailable because the game API is not configured.");
       }
 
       if (settlement.kind === "settled") {
@@ -593,23 +548,27 @@ export function FirstPlanetSettlementApp() {
         return undefined;
       }
 
-      if (settlement.kind === "legacy-settled") {
+      if (settlement.kind === "indexing") {
+        setSettlementFunding({ status: "idle" });
         setPlanet({
-          kind: "legacy-settled",
-          planet: settlement.planet,
+          kind: "pending",
+          label: "Settlement confirmed. Indexing starting resources before opening planetary overview.",
         });
-      } else {
-        setPlanet({ kind: "not-settled" });
+        return undefined;
       }
 
+      setPlanet({ kind: "not-settled" });
+      if (!settlementConfigState.apiUrl) {
+        throw new Error("Settlement funding is unavailable because the game API is not configured.");
+      }
       const nextFunding: SettlementFunding = {
         status: "ready",
-        funding: await readSettlementFundingWithMiniAppFallback(injected, connectedAccount, launchMode),
+        funding: await fetchSettlementFundingState(settlementConfigState.apiUrl, connectedAccount),
       };
       setSettlementFunding(nextFunding);
 
       return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding) === undefined
-        ? launchMode
+        ? nextFunding.funding
         : undefined;
     } catch (error) {
       setPlanet(currentPlanet.kind === "legacy-settled" ? currentPlanet : { kind: "not-settled" });
@@ -621,61 +580,10 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function readSettlementStateWithMiniAppFallback(
-    injected: Eip1193Provider,
-    connectedAccount: string,
-  ): Promise<{ settlement: Awaited<ReturnType<typeof readSettlementState>>; launchMode: SettlementLaunchMode }> {
-    const readProvider = settlementReadProvider(miniAppMode) ?? injected;
-    try {
-      return {
-        launchMode: miniAppMode ? "mini-app" : "standard",
-        settlement: await readSettlementState(readProvider, connectedAccount, settlementConfig),
-      };
-    } catch (error) {
-      if (!miniAppMode && isUnsupportedProviderMethodError(error)) {
-        setMiniAppMode(true);
-        return {
-          launchMode: "mini-app",
-          settlement: await readSettlementState(baseSepoliaReadProvider, connectedAccount, settlementConfig),
-        };
-      }
-
-      throw error;
-    }
-  }
-
-  async function readSettlementFundingWithMiniAppFallback(
-    injected: Eip1193Provider,
-    connectedAccount: string,
-    preferredLaunchMode: SettlementLaunchMode = miniAppMode ? "mini-app" : "standard",
-  ): Promise<SettlementFundingState> {
-    try {
-      return await readSettlementFundingState(
-        injected,
-        connectedAccount,
-        settlementConfig,
-        settlementTransactionOptions(preferredLaunchMode === "mini-app")
-      );
-    } catch (error) {
-      if (!miniAppMode && preferredLaunchMode === "standard" && isUnsupportedProviderMethodError(error)) {
-        setMiniAppMode(true);
-        return await readSettlementFundingState(
-          injected,
-          connectedAccount,
-          settlementConfig,
-          settlementTransactionOptions(true)
-        );
-      }
-
-      throw error;
-    }
-  }
-
   if (hasOverview) {
     return (
       <PlayableMvpApp
         provider={provider}
-        readProvider={settlementReadProvider(miniAppMode)}
         account={account}
         miniAppMode={miniAppMode}
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
@@ -906,19 +814,10 @@ export function settlementLaunchBlocker(
   return undefined;
 }
 
-function settlementTransactionOptions(miniAppMode: boolean): SettlementTransactionOptions {
-  const options: SettlementTransactionOptions = {
-    balanceRead: miniAppMode ? "optional" : "required",
+function settlementTransactionOptions(funding: SettlementFundingState): SettlementTransactionOptions {
+  return {
+    startPriceWei: funding.startPriceWei,
   };
-  const readProvider = settlementReadProvider(miniAppMode);
-  if (readProvider) {
-    options.readProvider = readProvider;
-  }
-  return options;
-}
-
-function settlementReadProvider(_miniAppMode: boolean): Eip1193Provider | undefined {
-  return baseSepoliaReadProvider;
 }
 
 function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding): string {
