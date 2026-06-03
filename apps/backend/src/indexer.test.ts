@@ -346,6 +346,117 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("keeps zero-resource settlement logs stale until canonical resources arrive", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    expect(indexer.applyLog({
+      blockNumber: "0x7c",
+      transactionHash: "0xstarted",
+      logIndex: "0x0",
+      topics: [
+        planetStartedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 211n, 1n)
+    })).toMatchObject({
+      applied: true,
+      snapshot: {
+        indexedPlanets: 1,
+        indexedState: "stale",
+        safeToServeIndexedState: false,
+        staleReason: "planet_resources_pending:7"
+      }
+    });
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      lastSettledAt: "0",
+      resources: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0"
+      }
+    });
+
+    expect(indexer.applyLog({
+      blockNumber: "0x7d",
+      transactionHash: "0xsettled",
+      logIndex: "0x1",
+      topics: [
+        planetSettledTopic,
+        topic(7n)
+      ],
+      data: abiWords(5000n, 4900n, 4800n, 1770000000n)
+    })).toMatchObject({
+      applied: true,
+      snapshot: {
+        indexedPlanets: 1,
+        indexedState: "stale",
+        staleReason: "never_reconciled"
+      }
+    });
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      transactionHash: "0xsettled",
+      blockNumber: "125",
+      lastSettledAt: "1770000000",
+      resources: planet.resources
+    });
+  });
+
+  test("preserves resource logs that arrive before settlement identity logs", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    expect(indexer.applyLog({
+      blockNumber: "0x7d",
+      transactionHash: "0xsettled",
+      logIndex: "0x0",
+      topics: [
+        planetSettledTopic,
+        topic(7n)
+      ],
+      data: abiWords(5000n, 4900n, 4800n, 1770000000n)
+    })).toMatchObject({
+      applied: true,
+      snapshot: {
+        indexedPlanets: 0,
+        indexedState: "stale",
+        staleReason: "planet_identity_pending:7"
+      }
+    });
+
+    expect(indexer.applyLog({
+      blockNumber: "0x7e",
+      transactionHash: "0xstarted",
+      logIndex: "0x1",
+      topics: [
+        planetStartedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 211n, 1n)
+    })).toMatchObject({
+      applied: true,
+      snapshot: {
+        indexedPlanets: 1,
+        indexedState: "stale",
+        staleReason: "never_reconciled"
+      }
+    });
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      transactionHash: "0xsettled",
+      blockNumber: "125",
+      lastSettledAt: "1770000000",
+      resources: planet.resources
+    });
+  });
+
   test("applies planet rename logs to every indexed planet read model", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

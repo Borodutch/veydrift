@@ -95,6 +95,11 @@ export type WalletSettlementResponse = {
   wallet: string;
   hasFirstPlanet: boolean;
   homePlanetId: string | null;
+  indexer?: {
+    indexedState?: "healthy" | "reconciling" | "stale";
+    safeToServeIndexedState?: boolean;
+    staleReason?: string | null;
+  };
   player?: PlayerProfile | undefined;
   planet: {
     planetId: string;
@@ -111,6 +116,8 @@ export type WalletSettlementResponse = {
     lastSettledAt: string;
     resources: OnChainResources;
   } | null;
+  source?: "contract-state-indexer" | string;
+  stale?: boolean;
 };
 
 export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet"]> & {
