@@ -281,16 +281,16 @@ describe("overview queue progress display", () => {
 
     const pending = overviewBuildingFinishAction({
       actionPending: true,
-      actionPendingLabel: "Building completion: awaiting wallet",
+      actionPendingLabel: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
       isBuildingReadyToFinish: true,
       onFinishBuilding,
       queue,
     });
     expect(pending).toEqual({
       disabled: true,
-      label: "Building completion: awaiting wallet",
+      label: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
       onFinish: undefined,
-      reason: "Building completion: awaiting wallet",
+      reason: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
       visible: true,
     });
 

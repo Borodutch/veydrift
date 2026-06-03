@@ -198,6 +198,8 @@ const buildingFinishStateReadFailureLabel =
   "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
 const buildingFinishLiveStateRequiredLabel =
   "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
+const buildingWalletConfirmationLabel = (label: string) =>
+  `${label}: unlock MetaMask if needed, then confirm in your wallet.`;
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -1789,7 +1791,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         }
 
         await assertWalletUnlocked(provider);
-        setBuildingAction({ status: "pending", buildingKey: key, label: transactionAwaitingWalletLabel(label) });
+        setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
           account,
@@ -1890,7 +1892,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         };
 
         await assertWalletUnlocked(provider);
-        setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: transactionAwaitingWalletLabel(label) });
+        setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendFinishBuildingUpgradeTransaction(
           provider,
           account,

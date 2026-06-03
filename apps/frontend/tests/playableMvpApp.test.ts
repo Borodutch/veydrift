@@ -40,7 +40,7 @@ describe("Playable MVP app display helpers", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: {
         status: "pending",
-        label: "Building completion: awaiting wallet",
+        label: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
       },
       gameContract: "0x3333333333333333333333333333333333333333",
       homePlanetId: "7",
@@ -87,16 +87,16 @@ describe("Playable MVP app display helpers", () => {
     });
 
     expect(infrastructureFinishAction({
-      actionUnavailableReason: "Building completion: awaiting wallet",
+      actionUnavailableReason: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
       isActionPending: true,
       isBuildingReadyToFinish: true,
       onFinishBuilding,
       queue,
     })).toEqual({
       disabled: true,
-      label: "Building completion: awaiting wallet",
+      label: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
       onFinish: undefined,
-      reason: "Building completion: awaiting wallet",
+      reason: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
       visible: true,
     });
 
