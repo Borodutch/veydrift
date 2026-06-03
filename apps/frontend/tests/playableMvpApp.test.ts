@@ -3,6 +3,7 @@ import {
   buildingCompletionUnavailableReasonFor,
   buildingCompletionUnavailableReasonAfterBackendRevalidation,
   buildingCompletionReadyToFinishFlag,
+  buildingFinishUnavailableReasonForDisplay,
   buildingFinishActionErrorLabel,
   canLoadIndexedPageState,
   canonicalInfrastructureBuildingCompletionQueue,
@@ -672,6 +673,42 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_000_000,
     })).toBeUndefined();
+  });
+
+  test("keeps displayed building finish verification open when readonly preflight can verify indexed queues", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      canVerifyWithReadonlyProvider: true,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      isBuildingReadyToFinish: false,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
+  test("does not let readonly building finish verification bypass wallet availability", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: false,
+      canVerifyWithReadonlyProvider: true,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      isBuildingReadyToFinish: false,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBe("Wallet or game contract is unavailable.");
   });
 
   test("allows building completion wallet submission after backend ready queue revalidation", () => {
