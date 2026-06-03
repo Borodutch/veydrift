@@ -4,7 +4,8 @@ import {
   coordinateDraftAfterExternalValueChange,
   parseCoordinateDraft,
   sanitizeCoordinateDraft,
-} from "./components/GalaxyView";
+} from "./galaxyCoordinateInput";
+import { GALAXY_COUNT, POSITION_COUNT, SYSTEM_COUNT } from "./data/mockUniverse";
 
 describe("Galaxy coordinate input helpers", () => {
   test("keeps only numeric draft characters while typing", () => {
@@ -28,6 +29,24 @@ describe("Galaxy coordinate input helpers", () => {
       value: 1,
     });
     expect(commitCoordinateDraft("999", 44, 499)).toEqual({
+      draft: "499",
+      value: 499,
+    });
+  });
+
+  test("uses live contract-aligned galaxy coordinate bounds", () => {
+    expect(GALAXY_COUNT).toBe(9);
+    expect(SYSTEM_COUNT).toBe(499);
+    expect(POSITION_COUNT).toBe(15);
+    expect(commitCoordinateDraft("9", 5, GALAXY_COUNT)).toEqual({
+      draft: "9",
+      value: 9,
+    });
+    expect(commitCoordinateDraft("10", 5, GALAXY_COUNT)).toEqual({
+      draft: "9",
+      value: 9,
+    });
+    expect(commitCoordinateDraft("499", 200, SYSTEM_COUNT)).toEqual({
       draft: "499",
       value: 499,
     });
