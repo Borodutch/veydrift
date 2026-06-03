@@ -186,6 +186,26 @@ export function researchStartTransactionLabel(
   return `${label} level ${currentLevel + 1} research`;
 }
 
+const buildingFinishStateReadFailureLabel =
+  "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
+
+export function buildingFinishActionErrorLabel(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Finish building upgrade transaction failed.";
+  }
+
+  const message = error.message.trim();
+  const normalizedMessage = message.toLowerCase();
+  if (
+    normalizedMessage.includes("wallet could not read the current game contract state")
+    || normalizedMessage.includes("internal json-rpc error")
+  ) {
+    return buildingFinishStateReadFailureLabel;
+  }
+
+  return message || "Finish building upgrade transaction failed.";
+}
+
 export function researchCompletionUnavailableReasonFor({
   canTransact,
   now = Date.now(),
@@ -1811,7 +1831,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         setBuildingAction({
           status: "error",
           buildingKey,
-          label: error instanceof Error ? error.message : "Finish building upgrade transaction failed.",
+          label: buildingFinishActionErrorLabel(error),
         });
       }
     });
@@ -3149,6 +3169,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onCounterplay={handleCounterplay}
         onJoinAttack={handleJoinAttack}
+        buildingActionNotice={infrastructureActionNotice}
         isDefenseActionPending={defenseAction.status === "pending"}
         isResearchActionPending={researchAction.status === "pending"}
         onFinishBuilding={handleFinishBuildingUpgrade}

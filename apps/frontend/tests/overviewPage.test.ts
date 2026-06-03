@@ -5,6 +5,7 @@ import {
 } from "../src/overviewHeroImage";
 import {
   isOverviewResearchReadyToFinish,
+  overviewBuildingActionNoticeFor,
   overviewDefenseFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
@@ -238,6 +239,18 @@ describe("overview queue progress display", () => {
     expect(shouldShowOverviewBuildingFinishAction({
       isBuildingReadyToFinish: true,
     })).toBe(false);
+  });
+
+  test("shows building finish action notices for the active overview queue", () => {
+    const notice = {
+      buildingKey: "shipyard" as const,
+      label: "Can't check game state right now.",
+      tone: "error" as const,
+    };
+
+    expect(overviewBuildingActionNoticeFor(notice, "shipyard")).toBe(notice);
+    expect(overviewBuildingActionNoticeFor(notice, "metalMine")).toBeUndefined();
+    expect(overviewBuildingActionNoticeFor(notice, undefined)).toBe(notice);
   });
 
   test("shows and invokes the ready defense completion action on Overview", () => {
