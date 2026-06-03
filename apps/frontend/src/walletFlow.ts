@@ -695,18 +695,35 @@ export function walletRequestErrorMessage(error: unknown): string {
 
 export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<void> {
   const metamask = (provider as Eip1193Provider & MetaMaskLockProbe)._metamask;
-  if (typeof metamask?.isUnlocked !== "function") {
+
+  if (typeof metamask?.isUnlocked === "function") {
+    try {
+      const unlocked = await metamask.isUnlocked();
+      if (!unlocked) {
+        throw new Error(WALLET_LOCKED_MESSAGE);
+      }
+      return;
+    } catch (error) {
+      if (error instanceof Error && error.message === WALLET_LOCKED_MESSAGE) {
+        throw error;
+      }
+    }
+  }
+
+  if (!metamask) {
     return;
   }
 
-  let unlocked: boolean;
+  let accounts: string[];
   try {
-    unlocked = await metamask.isUnlocked();
+    accounts = await readWalletRequest<string[]>(provider, {
+      method: "eth_accounts",
+    }, "wallet accounts");
   } catch {
     return;
   }
 
-  if (!unlocked) {
+  if (accounts.length === 0) {
     throw new Error(WALLET_LOCKED_MESSAGE);
   }
 }

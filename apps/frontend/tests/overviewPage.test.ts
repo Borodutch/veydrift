@@ -6,6 +6,7 @@ import {
 import {
   isOverviewResearchReadyToFinish,
   overviewBuildingActionNoticeFor,
+  overviewBuildingFinishAction,
   overviewDefenseFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
@@ -249,6 +250,59 @@ describe("overview queue progress display", () => {
     expect(shouldShowOverviewBuildingFinishAction({
       isBuildingReadyToFinish: true,
     })).toBe(false);
+  });
+
+  test("keeps building finish controls visible with reasons while not ready or pending", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+    let calls = 0;
+    const onFinishBuilding = () => {
+      calls += 1;
+    };
+
+    const notReady = overviewBuildingFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+      queue,
+    });
+    expect(notReady).toEqual({
+      disabled: true,
+      label: "Building upgrade is not ready to finish yet.",
+      onFinish: undefined,
+      reason: "Building upgrade is not ready to finish yet.",
+      visible: true,
+    });
+
+    const pending = overviewBuildingFinishAction({
+      actionPending: true,
+      actionPendingLabel: "Building completion: awaiting wallet",
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(pending).toEqual({
+      disabled: true,
+      label: "Building completion: awaiting wallet",
+      onFinish: undefined,
+      reason: "Building completion: awaiting wallet",
+      visible: true,
+    });
+
+    const ready = overviewBuildingFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(ready.disabled).toBe(false);
+    expect(ready.label).toBe("Finish upgrade");
+    ready.onFinish?.();
+    expect(calls).toBe(1);
   });
 
   test("shows building finish action notices for the active overview queue", () => {

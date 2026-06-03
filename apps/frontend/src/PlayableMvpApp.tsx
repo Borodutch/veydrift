@@ -107,6 +107,7 @@ import {
   fetchAllianceState,
   fetchPlayerProfile,
   mergePlayerProfile,
+  walletRequestErrorMessage,
   sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
@@ -1812,7 +1813,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: error instanceof Error ? error.message : "Building upgrade transaction failed.",
+          label: walletRequestErrorMessage(error),
         });
       }
     });
@@ -3334,6 +3335,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         onCounterplay={handleCounterplay}
         onJoinAttack={handleJoinAttack}
         buildingActionNotice={infrastructureActionNotice}
+        buildingActionPendingLabel={infrastructureActionPendingLabel}
         isDefenseActionPending={defenseAction.status === "pending"}
         isResearchActionPending={researchAction.status === "pending"}
         onFinishBuilding={handleFinishBuildingUpgrade}

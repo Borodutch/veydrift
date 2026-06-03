@@ -16,6 +16,7 @@ import {
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
 import {
+  infrastructureFinishAction,
   infrastructureFinishButtonLabel,
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
@@ -57,6 +58,57 @@ describe("Playable MVP app display helpers", () => {
       statusDisabled: true,
     })).toBe("Upgrade Level 2");
     expect(infrastructureFinishButtonLabel(undefined, false)).toBe("Finish upgrade");
+  });
+
+  test("keeps infrastructure finish controls visible with disabled reasons", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+    let calls = 0;
+    const onFinishBuilding = () => {
+      calls += 1;
+    };
+
+    expect(infrastructureFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+      queue,
+    })).toEqual({
+      disabled: true,
+      label: "Building upgrade is not ready to finish yet.",
+      onFinish: undefined,
+      reason: "Building upgrade is not ready to finish yet.",
+      visible: true,
+    });
+
+    expect(infrastructureFinishAction({
+      actionUnavailableReason: "Building completion: awaiting wallet",
+      isActionPending: true,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    })).toEqual({
+      disabled: true,
+      label: "Building completion: awaiting wallet",
+      onFinish: undefined,
+      reason: "Building completion: awaiting wallet",
+      visible: true,
+    });
+
+    const ready = infrastructureFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(ready.disabled).toBe(false);
+    expect(ready.label).toBe("Finish upgrade");
+    ready.onFinish?.();
+    expect(calls).toBe(1);
   });
 
   test("keeps terminal infrastructure action notices visible", () => {

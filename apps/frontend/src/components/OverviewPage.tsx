@@ -73,6 +73,7 @@ interface OverviewPageProps {
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
   buildingActionNotice?: InfrastructureActionNotice | undefined;
+  buildingActionPendingLabel?: string | undefined;
   isBuildingActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   onFinishBuilding?: (() => void) | undefined;
@@ -116,6 +117,7 @@ export function OverviewPage({
   homePlanet,
   isWalletConnected,
   buildingActionNotice,
+  buildingActionPendingLabel,
   isBuildingActionPending = false,
   isBuildingReadyToFinish,
   onFinishBuilding,
@@ -188,13 +190,25 @@ export function OverviewPage({
     onFinishResearch,
     queue: onChainQueues?.research,
   });
-  const showBuildingFinishAction = shouldShowOverviewBuildingFinishAction({
+  const buildingFinishAction = overviewBuildingFinishAction({
+    actionPending: isBuildingActionPending,
+    actionPendingLabel: buildingActionPendingLabel,
     isBuildingReadyToFinish,
     onFinishBuilding,
+    queue: buildingQueue,
   });
+  const pendingBuildingNotice = buildingActionPendingLabel
+    ? {
+        buildingKey: buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId),
+        label: buildingActionPendingLabel,
+        tone: "pending" as const,
+      }
+    : undefined;
+  const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
+  const scopedBuildingNotice = overviewBuildingActionNoticeFor(buildingActionNotice, buildingNoticeKey);
   const overviewBuildingNotice = overviewBuildingActionNoticeFor(
-    buildingActionNotice,
-    buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId),
+    scopedBuildingNotice ?? pendingBuildingNotice,
+    buildingNoticeKey,
   );
 
   const planetName = homePlanet?.name
@@ -573,8 +587,7 @@ export function OverviewPage({
                 />
               )}
               <OverviewBuildingFinishButton
-                disabled={isBuildingActionPending}
-                onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
+                action={buildingFinishAction}
               />
               <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
             </div>
@@ -590,8 +603,7 @@ export function OverviewPage({
                 now={now}
               />
               <OverviewBuildingFinishButton
-                disabled={isBuildingActionPending}
-                onFinishBuilding={showBuildingFinishAction ? onFinishBuilding : undefined}
+                action={buildingFinishAction}
               />
               <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
             </div>
@@ -733,6 +745,41 @@ export function shouldShowOverviewBuildingFinishAction({
   return Boolean(isBuildingReadyToFinish && onFinishBuilding);
 }
 
+export function overviewBuildingFinishAction({
+  actionPending,
+  actionPendingLabel,
+  isBuildingReadyToFinish,
+  onFinishBuilding,
+  queue,
+}: {
+  actionPending?: boolean | undefined;
+  actionPendingLabel?: string | undefined;
+  isBuildingReadyToFinish?: boolean | undefined;
+  onFinishBuilding?: (() => void) | undefined;
+  queue?: BuildingQueueItem | undefined;
+}): {
+  disabled: boolean;
+  label: string;
+  onFinish?: (() => void) | undefined;
+  reason?: string | undefined;
+  visible: boolean;
+} {
+  const visible = Boolean(queue && onFinishBuilding);
+  const reason = actionPending
+    ? actionPendingLabel ?? "Building transaction is already in progress."
+    : isBuildingReadyToFinish
+      ? undefined
+      : "Building upgrade is not ready to finish yet.";
+
+  return {
+    disabled: Boolean(reason),
+    label: reason ?? "Finish upgrade",
+    onFinish: visible && !reason ? onFinishBuilding : undefined,
+    reason,
+    visible,
+  };
+}
+
 export function overviewBuildingActionNoticeFor(
   actionNotice: InfrastructureActionNotice | undefined,
   buildingKey: BuildingQueueItem["key"] | undefined,
@@ -796,22 +843,22 @@ export function overviewResearchFinishAction({
 }
 
 function OverviewBuildingFinishButton({
-  disabled = false,
-  onFinishBuilding,
+  action,
 }: {
-  disabled?: boolean | undefined;
-  onFinishBuilding?: (() => void) | undefined;
+  action: ReturnType<typeof overviewBuildingFinishAction>;
 }) {
-  if (!onFinishBuilding) return null;
+  if (!action.visible) return null;
 
   return (
     <button
+      aria-label={action.reason ?? "Finish building upgrade"}
       className="mt-3 flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-      disabled={disabled}
-      onClick={onFinishBuilding}
+      disabled={action.disabled}
+      onClick={action.onFinish}
+      title={action.reason ?? "Finish building upgrade"}
       type="button"
     >
-      Finish upgrade
+      {action.label}
     </button>
   );
 }
@@ -824,7 +871,9 @@ function OverviewBuildingActionNotice({
   if (!notice) return null;
   const className = notice.tone === "error"
     ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
-    : "border-emerald-300/20 bg-emerald-300/10 text-emerald-100";
+    : notice.tone === "pending"
+      ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"
+      : "border-emerald-300/20 bg-emerald-300/10 text-emerald-100";
   const role = notice.tone === "error" ? "alert" : "status";
 
   return (
