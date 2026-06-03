@@ -16,6 +16,7 @@ import {
   type MoonState,
   type PlayerQueues,
   type ResearchState,
+  type Resources,
   type RiftState,
   type RpcLog,
   type SettledPlanetEvent,
@@ -1392,11 +1393,15 @@ function publicPlanetStateRef(
   };
 } | null {
   if (!planet || !indexer) return null;
+  const buildings = indexer.infrastructureRows(planet.planetId);
+  const ships = indexer.shipRows(planet.planetId);
+  const technologyLevels = indexer.technologyLevels(planet.owner);
+  const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
 
   return {
-    resources: planet.resources,
-    buildings: indexer.infrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
-    fleet: indexer.shipRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt),
+    buildings: buildings.map(({ id, level }) => ({ id, level })),
+    fleet: ships.map(({ id, count }) => ({ id, count })),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
     research: indexer.technologyRows(planet.owner).map(({ id, level }) => ({ id, level })),
     queues: {
@@ -1406,6 +1411,42 @@ function publicPlanetStateRef(
       research: indexer.researchQueue(planet.owner)
     }
   };
+}
+
+function resourcesWithClaimableAccrual(
+  current: Resources,
+  productionPerHour: Resources | null,
+  storageCaps: Resources | null,
+  lastSettledAt: string,
+  now = Date.now()
+): Resources {
+  if (!productionPerHour || !storageCaps) return current;
+
+  const lastSettledAtSeconds = Number(lastSettledAt);
+  if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return current;
+
+  const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
+  return {
+    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
+    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
+    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
+  };
+}
+
+function resourceWithClaimableAccrual(
+  current: string,
+  productionPerHour: string,
+  storageCap: string,
+  elapsedSeconds: number
+): string {
+  const currentValue = Number(current);
+  const rate = Math.max(0, Number(productionPerHour));
+  const cap = Number(storageCap);
+  if (!Number.isFinite(currentValue) || !Number.isFinite(rate) || !Number.isFinite(cap)) return current;
+
+  const produced = Math.floor((rate * elapsedSeconds) / 3_600);
+  const remainingCapacity = Math.max(0, cap - currentValue);
+  return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
 }
 
 async function allianceIntelForOccupiedPlanets(
