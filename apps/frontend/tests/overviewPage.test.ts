@@ -49,6 +49,18 @@ const homePlanet: Planet = {
 };
 
 describe("overview planet hero image", () => {
+  test("renders commander identity before the current planet block", () => {
+    const commanderIndex = overviewSource.indexOf(">Commander<");
+    const planetHeroIndex = overviewSource.indexOf("Planet hero");
+    const missionPanelIndex = overviewSource.indexOf("<MissionPanel");
+
+    expect(commanderIndex).toBeGreaterThanOrEqual(0);
+    expect(planetHeroIndex).toBeGreaterThanOrEqual(0);
+    expect(missionPanelIndex).toBeGreaterThanOrEqual(0);
+    expect(commanderIndex).toBeLessThan(planetHeroIndex);
+    expect(planetHeroIndex).toBeLessThan(missionPanelIndex);
+  });
+
   test("uses the disconnected default only for local preview state", () => {
     expect(overviewHeroImage(undefined, false, undefined, undefined)).toBe(DISCONNECTED_HERO_IMAGE);
     expect(overviewHeroImage(undefined, true, undefined, "1:42:7")).toBeUndefined();
