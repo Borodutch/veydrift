@@ -351,6 +351,7 @@ export type MissionShips = {
 export type ChainAllianceState = {
   wallet: string;
   allianceAvailable: boolean;
+  dismissJoinRequestAvailable?: boolean;
   unavailableReason?: string;
   membership: {
     allianceId: string;

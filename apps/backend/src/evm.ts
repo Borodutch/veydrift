@@ -335,6 +335,7 @@ export type RiftState = {
 export type AllianceState = {
   wallet: Address;
   allianceAvailable: boolean;
+  dismissJoinRequestAvailable?: boolean;
   unavailableReason?: string;
   membership: {
     allianceId: string;
@@ -1537,11 +1538,14 @@ export class VeydriftGameReader implements ChainReader {
       if (!decodeBoolWord(wordAt(words, 0))) return [];
 
       const membershipWords = splitWords(joinRequestMemberships[index] ?? "0x");
+      const requesterAllianceId = decodeUintWord(wordAt(membershipWords, 0));
+      if (requesterAllianceId !== 0n) return [];
+
       return [{
         allianceId: allianceId.toString(),
         requester: address,
         requesterMembership: {
-          allianceId: decodeUintWord(wordAt(membershipWords, 0)).toString(),
+          allianceId: requesterAllianceId.toString(),
           role: allianceRoleName(Number(decodeUintWord(wordAt(membershipWords, 1)))),
           joinedAt: decodeUintWord(wordAt(membershipWords, 2)).toString()
         },
