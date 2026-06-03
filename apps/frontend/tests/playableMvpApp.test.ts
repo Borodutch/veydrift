@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildingCompletionUnavailableReasonFor,
   buildingFinishActionErrorLabel,
+  infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
@@ -307,6 +309,67 @@ describe("Playable MVP app display helpers", () => {
       overviewQueue: readyOverviewQueue,
       researchState: null,
     })).toBe("No active research queue is available to complete.");
+  });
+
+  test("blocks stale building completion transactions when live infrastructure has no active queue", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({ queue: null }),
+      now: 1_700_000_000_000,
+    })).toBe("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
+  });
+
+  test("blocks stale building completion transactions when the live queue is not ready", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: {
+          active: true,
+          kind: "building",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600",
+          startedAt: "1699997000",
+          cost: { metal: "60", crystal: "15", deuterium: "0" },
+        },
+      }),
+      now: 1_700_000_000_000,
+    })).toBe("Building upgrade is not ready to finish yet.");
+  });
+
+  test("revalidates building completion against live infrastructure state before wallet submission", async () => {
+    const fallback = infrastructureState();
+    const latest = infrastructureState({
+      queue: {
+        active: true,
+        kind: "building",
+        itemId: 0,
+        targetLevel: 2,
+        readyAt: "1700000000",
+        startedAt: "1699997000",
+        cost: { metal: "60", crystal: "15", deuterium: "0" },
+      },
+    });
+    const calls: unknown[][] = [];
+
+    const result = await infrastructureStateForCompletionRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback,
+      loadInfrastructureState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(latest);
+      }) as never,
+    });
+
+    expect(result).toBe(latest);
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+      { source: "live" },
+    ]]);
   });
 
   test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
