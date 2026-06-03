@@ -788,8 +788,8 @@ function settlementTransactionOptions(miniAppMode: boolean): SettlementTransacti
   return options;
 }
 
-function settlementReadProvider(miniAppMode: boolean): Eip1193Provider | undefined {
-  return miniAppMode ? baseSepoliaReadProvider : undefined;
+function settlementReadProvider(_miniAppMode: boolean): Eip1193Provider | undefined {
+  return baseSepoliaReadProvider;
 }
 
 function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding): string {

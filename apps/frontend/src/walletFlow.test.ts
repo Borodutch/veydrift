@@ -1266,7 +1266,7 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("submits ready finish building upgrade transactions without a preflight call", async () => {
+  test("submits ready finish building upgrade transactions without a wallet-backed preflight call", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
@@ -1288,6 +1288,82 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("blocks stale ready finish building upgrades before opening the wallet when readonly preflight reverts", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = mockProvider(async ({ method, params }) => {
+      walletRequests.push({ method, params });
+      throw new Error("eth_sendTransaction should not be called");
+    });
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      throw { code: 3, message: "execution reverted", data: "0x7e787175" };
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "1", { readProvider })
+    ).rejects.toThrow("No active building upgrade is waiting to be finished");
+
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "latest"
+        ]
+      }
+    ]);
+    expect(walletRequests).toEqual([]);
+  });
+
+  test("uses a readonly provider for ready finish building upgrade preflight when available", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = mockProvider(async ({ method, params }) => {
+      walletRequests.push({ method, params });
+      if (method === "eth_sendTransaction") return "0xfinish";
+      throw new Error("wallet reads should not be used for finish preflight");
+    });
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      return "0x";
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).resolves.toBe("0xfinish");
+
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      }
+    ]);
+    expect(walletRequests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
           }
         ]
       }
