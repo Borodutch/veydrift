@@ -5,6 +5,9 @@ import {
   InspectPageHeader,
   InspectTwoColumnLayout,
   SingleItemQueueProgress,
+  singleItemQueueProgressHeaderClassName,
+  singleItemQueueProgressLabelClassName,
+  singleItemQueueProgressPercentClassName,
 } from "../src/components/InspectProgressLayout";
 
 describe("shared inspect/progress layout primitives", () => {
@@ -50,6 +53,15 @@ describe("shared inspect/progress layout primitives", () => {
     expect(text).toContain("Time remaining");
     expect(text).toContain("1m");
     expect(text).toContain("Ready at");
+  });
+
+  test("keeps single-item queue headers stable for long active item names", () => {
+    expect(singleItemQueueProgressHeaderClassName).toContain("grid");
+    expect(singleItemQueueProgressHeaderClassName).toContain("minmax(0,1fr)");
+    expect(singleItemQueueProgressLabelClassName).toContain("break-words");
+    expect(singleItemQueueProgressLabelClassName).not.toContain("truncate");
+    expect(singleItemQueueProgressPercentClassName).toContain("w-fit");
+    expect(singleItemQueueProgressPercentClassName).not.toContain("shrink-0");
   });
 
   test("renders shared page header and two-column inspect layout wrappers", () => {

@@ -7,6 +7,10 @@ import { OptimizedImage } from "./OptimizedImage";
 
 const loadedDetailImageKeys = new Set<string>();
 
+export const singleItemQueueProgressHeaderClassName = "grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start";
+export const singleItemQueueProgressLabelClassName = "mt-1 break-words text-xs leading-5 text-amber-200/85";
+export const singleItemQueueProgressPercentClassName = "w-fit rounded bg-black/20 px-2 py-1 text-xs font-semibold text-amber-100 sm:justify-self-end";
+
 export function useInspectDetailSelection<ItemKey>(
   onSelectItem?: ((key: ItemKey) => void) | undefined,
 ) {
@@ -36,14 +40,14 @@ export function InspectPageHeader({
 }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
+      <div className="min-w-0 max-w-full">
         <h2 className="text-lg font-semibold text-white">{title}</h2>
-        <p className="text-xs text-slate-400">
+        <p className="break-words text-xs leading-5 text-slate-400">
           {description}
         </p>
       </div>
       {actions ? (
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end">
           {actions}
         </div>
       ) : null}
@@ -277,16 +281,16 @@ export function SingleItemQueueProgress({
 
   return (
     <div className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className={singleItemQueueProgressHeaderClassName}>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-amber-100">
             {isPrimaryItem ? title.active : title.context}
           </p>
-          <p className="mt-1 text-xs leading-5 text-amber-200/85">
+          <p className={singleItemQueueProgressLabelClassName}>
             {label}
           </p>
         </div>
-        <span className="shrink-0 rounded bg-black/20 px-2 py-1 text-xs font-semibold text-amber-100">
+        <span className={singleItemQueueProgressPercentClassName}>
           {percent}%
         </span>
       </div>
