@@ -47,19 +47,13 @@ export type SettlementFundingState = {
 };
 
 export type SettlementTransactionOptions = {
-  balanceRead?: "required" | "optional";
-  readProvider?: Eip1193Provider;
-};
-
-export type TransactionPreflightOptions = {
-  readProvider?: Eip1193Provider | undefined;
+  startPriceWei?: bigint | null;
 };
 
 type TransactionRequest = {
   from: string;
   to: string;
   data: string;
-  gas?: string;
   value?: string;
 };
 
@@ -492,12 +486,6 @@ export type HighscoreResponse = {
   rankings: Record<HighscoreCategory, HighscoreEntry[]>;
 };
 
-export type SettlementState =
-  | { kind: "unconfigured" }
-  | { kind: "not-settled" }
-  | { kind: "legacy-settled"; planet: PlanetSummary }
-  | { kind: "settled"; planet: PlanetSummary };
-
 export const BASE_SEPOLIA = {
   chainId: 84532,
   chainIdHex: "0x14a34",
@@ -516,69 +504,10 @@ export const BASE_SEPOLIA = {
 } as const;
 const BASE_MAINNET_CHAIN_ID_HEX = "0x2105";
 
-export function createJsonRpcProvider(rpcUrl: string): Eip1193Provider {
-  let nextId = 1;
-
-  return {
-    async request<T = unknown>({ method, params }: { method: string; params?: unknown[] }): Promise<T> {
-      const response = await fetch(rpcUrl, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: nextId++,
-          method,
-          params: params ?? []
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`RPC HTTP ${response.status} while reading ${method}.`);
-      }
-
-      const payload = await response.json() as {
-        result?: T;
-        error?: {
-          code?: number | string;
-          message?: string;
-          data?: unknown;
-        };
-      };
-
-      if (payload.error) {
-        const error = new Error(payload.error.message ?? `RPC ${method} failed.`) as Error & {
-          code?: number | string;
-        };
-        if (payload.error.code !== undefined) {
-          error.code = payload.error.code;
-        }
-        if (payload.error.data !== undefined) {
-          (error as Error & { data?: unknown }).data = payload.error.data;
-        }
-        throw error;
-      }
-
-      return payload.result as T;
-    }
-  };
-}
-
-const READ_SELECTORS = {
-  firstPlanetOf: "0x29147f24",
-  hasFirstPlanet: "0x1d750846",
-  homePlanetOf: "0x0ff79fa5",
-  planet: "0x181c1bc4",
-  previewFirstPlanet: "0x729b082f"
-} as const;
-
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const START_PLANET_SELECTOR = "0xf45f1f18";
-const START_PRICE_SELECTOR = "0xf1a9af89";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
-  activeBuildingConstruction: "0xb8e835ab",
   completeFleetMissionReturn: "0xc2472852",
   collectResources: "0xdb43284d",
   createColony: "0x71358ab8",
@@ -843,157 +772,6 @@ async function sendWalletTransaction(
 
 function isAccountProbeWallet(provider: Eip1193Provider): boolean {
   return Boolean(provider.isRabby || provider.isOkxWallet || provider.isOKExWallet);
-}
-
-const buildingUpgradeRevertReasons: Record<string, string> = {
-  "0xcec62bc2": "Another building is already upgrading. Finish the active building queue before starting a new upgrade.",
-  "0x7e787175": "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.",
-  "0x4499d03a": "The active building upgrade is not ready to finish yet. Refresh infrastructure state and retry.",
-  "0x2ab0f96f": "Not enough on-chain resources are available for this building upgrade. Refresh infrastructure state and retry.",
-  "0xb8f7e9ba": "This building upgrade is missing an on-chain prerequisite.",
-  "0x359b57cf": "This planet has no free fields for another building upgrade.",
-  "0x1aca3780": "This building is already at its maximum supported level.",
-  "0x9a3d4eb9": "No planet exists for this building upgrade.",
-  "0xab2bcfd3": "This wallet does not own the selected planet.",
-  "0xdfa1a408": "The selected building is not supported by the current game contract.",
-  "0x78e10c67": "Building upgrades are not supported by the current game contract deployment.",
-};
-
-function abiWords(hex: string): string[] {
-  const clean = hex.replace(/^0x/, "");
-  return clean.match(/.{1,64}/g) ?? [];
-}
-
-function decodeAbiUint(word: string | undefined): bigint {
-  return word ? BigInt(`0x${word}`) : 0n;
-}
-
-function decodeAbiBool(word: string | undefined): boolean {
-  return decodeAbiUint(word) !== 0n;
-}
-
-function revertSelector(error: unknown): string | undefined {
-  const data = errorData(error);
-  return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
-    ? data.slice(0, 10).toLowerCase()
-    : undefined;
-}
-
-async function assertBuildingUpgradeCallSucceeds(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-): Promise<void> {
-  try {
-    await provider.request({
-      method: "eth_call",
-      params: [{ from, to, data }, "latest"],
-    });
-  } catch (error) {
-    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
-    throw new Error(reason ?? walletRequestErrorMessage(error));
-  }
-}
-
-async function assertBuildingUpgradeEstimateSucceeds(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-): Promise<string | undefined> {
-  try {
-    const gas = await provider.request<unknown>({
-      method: "eth_estimateGas",
-      params: [{ from, to, data }],
-    });
-    return normalizedGasQuantity(gas);
-  } catch (error) {
-    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
-    throw new Error(reason ?? "This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
-  }
-}
-
-async function assertTransactionCallSucceeds(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-  fallbackReason: string,
-): Promise<void> {
-  try {
-    await provider.request({
-      method: "eth_call",
-      params: [{ from, to, data }, "latest"],
-    });
-  } catch (error) {
-    throw new Error(preflightFailureMessage(error, fallbackReason));
-  }
-}
-
-async function estimateTransactionGas(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-  fallbackReason: string,
-): Promise<string | undefined> {
-  try {
-    const gas = await provider.request<unknown>({
-      method: "eth_estimateGas",
-      params: [{ from, to, data }],
-    });
-    return normalizedGasQuantity(gas);
-  } catch (error) {
-    throw new Error(preflightFailureMessage(error, fallbackReason));
-  }
-}
-
-function preflightFailureMessage(error: unknown, fallbackReason: string): string {
-  const message = walletRequestErrorMessage(error);
-  return message === "The game contract rejected a wallet read. Retry sync after the latest deployment finishes, or reconnect your wallet on Base Sepolia."
-    ? fallbackReason
-    : message || fallbackReason;
-}
-
-function normalizedGasQuantity(value: unknown): string | undefined {
-  if (typeof value !== "string" || !/^0x[0-9a-fA-F]+$/.test(value)) {
-    return undefined;
-  }
-
-  return BigInt(value) > 0n ? value : undefined;
-}
-
-async function assertActiveBuildingConstructionReady(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  planetId: string,
-): Promise<void> {
-  const data = encodeGameCall(GAME_SELECTORS.activeBuildingConstruction, [planetId]);
-  try {
-    const result = await provider.request<string>({
-      method: "eth_call",
-      params: [{ from, to, data }, "latest"],
-    });
-    const words = abiWords(result);
-    const active = decodeAbiBool(words[0]);
-    if (!active) {
-      throw new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
-    }
-
-    const readyAt = decodeAbiUint(words[3]);
-    if (readyAt <= 0n) {
-      throw new Error("Building completion time is unavailable. Refresh infrastructure state before finishing.");
-    }
-    if (readyAt > BigInt(Math.floor(Date.now() / 1_000))) {
-      throw new Error("Building upgrade is not ready to finish yet.");
-    }
-  } catch (error) {
-    if (error instanceof Error) throw error;
-    const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
-    throw new Error(reason ?? walletRequestErrorMessage(error));
-  }
 }
 
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
@@ -1347,57 +1125,6 @@ function isUnknownChainError(error: unknown): boolean {
     && /unknown chain|unrecognized chain|chain .*not (?:been )?added|wallet_addEthereumChain/i.test(candidate.message);
 }
 
-export async function readSettlementState(
-  provider: Eip1193Provider,
-  account: string,
-  config: SettlementConfig
-): Promise<SettlementState> {
-  if (!settlementContractConfigured(config)) {
-    return {
-      kind: "unconfigured"
-    };
-  }
-
-  let hasSettlement: boolean;
-
-  try {
-    hasSettlement = await readHasFirstPlanet(provider, config.address, account);
-  } catch (error) {
-    const gameSettlement = await readGameSettlement(provider, config.address, account);
-    if (gameSettlement) {
-      return gameSettlement.kind === "not-settled"
-        ? await readLegacySettlementState(provider, account, config) ?? gameSettlement
-        : gameSettlement;
-    }
-
-    throw error;
-  }
-
-  if (!hasSettlement) {
-    return await readLegacySettlementState(provider, account, config) ?? {
-      kind: "not-settled"
-    };
-  }
-
-  let planet: PlanetSummary;
-
-  try {
-    planet = await readFirstPlanet(provider, config.address, account);
-  } catch (error) {
-    const gameSettlement = await readGameSettlement(provider, config.address, account);
-    if (gameSettlement?.kind === "settled") {
-      return gameSettlement;
-    }
-
-    throw error;
-  }
-
-  return {
-    kind: "settled",
-    planet
-  };
-}
-
 export async function sendSettlementTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -1408,25 +1135,20 @@ export async function sendSettlementTransaction(
     throw new Error("Settlement contract address is not configured.");
   }
 
-  const readProvider = options.readProvider ?? provider;
-  const startPrice = await readStartPrice(readProvider, config.address);
-  if (startPrice !== undefined) {
+  if (options.startPriceWei === undefined) {
+    throw new Error("Settlement funding information is required before sending a settlement transaction.");
+  }
+
+  if (options.startPriceWei !== null) {
     if (config.resourceTokensConfigured === false) {
       throw new Error("Resource token reserves are not configured for this game deployment yet.");
-    }
-
-    const balance = await readNativeBalanceForSettlement(readProvider, account, options);
-    if (balance !== undefined && balance < startPrice) {
-      throw new Error(
-        `First planet settlement costs ${formatEth(startPrice)} ETH, but this wallet only has ${formatEth(balance)} ETH on Base Sepolia.`
-      );
     }
 
     return sendWalletTransaction(provider, account, {
       from: account,
       to: config.address,
       data: START_PLANET_SELECTOR,
-      value: encodeQuantity(startPrice)
+      value: encodeQuantity(options.startPriceWei)
     });
   }
 
@@ -1435,46 +1157,6 @@ export async function sendSettlementTransaction(
     to: config.address,
     data: settlementTransactionData()
   });
-}
-
-export async function readSettlementFundingState(
-  provider: Eip1193Provider,
-  account: string,
-  config: SettlementConfig,
-  options: SettlementTransactionOptions = {}
-): Promise<SettlementFundingState> {
-  if (!settlementContractConfigured(config)) {
-    throw new Error("Settlement contract address is not configured.");
-  }
-
-  const readProvider = options.readProvider ?? provider;
-  const startPrice = await readStartPrice(readProvider, config.address);
-  if (startPrice === undefined) {
-    return {
-      affordable: true,
-      balanceWei: null,
-      contractKind: "legacy",
-      startPriceWei: null
-    };
-  }
-
-  if (config.resourceTokensConfigured === false) {
-    return {
-      affordable: false,
-      balanceWei: null,
-      contractKind: "game",
-      startPriceWei: startPrice,
-      unavailableReason: "Resource token reserves are not configured for this game deployment yet."
-    };
-  }
-
-  const balance = await readNativeBalanceForSettlement(readProvider, account, options);
-  return {
-    affordable: balance === undefined || balance >= startPrice,
-    balanceWei: balance ?? null,
-    contractKind: "game",
-    startPriceWei: startPrice
-  };
 }
 
 export async function sendStartShipProductionTransaction(
@@ -1710,8 +1392,7 @@ export async function sendStartBuildingUpgradeTransaction(
   account: string,
   contractAddress: string,
   planetId: string,
-  buildingId: number,
-  options: TransactionPreflightOptions = {}
+  buildingId: number
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
   const transaction = {
@@ -1721,14 +1402,7 @@ export async function sendStartBuildingUpgradeTransaction(
   };
 
   const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
-  const preflightProvider = options.readProvider ?? provider;
-  if (!options.readProvider && !accountProbeReadyChecked) {
-    await assertWalletUnlocked(provider);
-  }
-  await assertBuildingUpgradeCallSucceeds(preflightProvider, account, contractAddress, data);
-  if (options.readProvider && !accountProbeReadyChecked) {
-    await assertWalletUnlocked(provider);
-  }
+  if (!accountProbeReadyChecked) await assertWalletUnlocked(provider);
 
   return sendWalletTransaction(provider, account, transaction, {
     accountProbeReadyChecked
@@ -1780,8 +1454,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  planetId: string,
-  options: TransactionPreflightOptions = {}
+  planetId: string
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
   const transaction: TransactionRequest = {
@@ -1791,12 +1464,6 @@ export async function sendFinishBuildingUpgradeTransaction(
   };
 
   const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
-  if (options.readProvider) {
-    await assertActiveBuildingConstructionReady(options.readProvider, account, contractAddress, planetId);
-    await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
-    const gas = await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
-    if (gas) transaction.gas = gas;
-  }
   if (!accountProbeReadyChecked) {
     await assertWalletUnlocked(provider);
   }
@@ -1885,8 +1552,7 @@ export async function sendCollectResourcesTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  planetId: string,
-  options: TransactionPreflightOptions = {}
+  planetId: string
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.collectResources, [planetId]);
   const transaction: TransactionRequest = {
@@ -1896,12 +1562,6 @@ export async function sendCollectResourcesTransaction(
   };
 
   const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
-  if (options.readProvider) {
-    const fallbackReason = "This resource collection is likely to fail on-chain. Refresh resources and retry.";
-    await assertTransactionCallSucceeds(options.readProvider, account, contractAddress, data, fallbackReason);
-    const gas = await estimateTransactionGas(options.readProvider, account, contractAddress, data, fallbackReason);
-    if (gas) transaction.gas = gas;
-  }
   if (!accountProbeReadyChecked) {
     await assertWalletUnlocked(provider);
   }
@@ -1941,8 +1601,7 @@ export async function sendLaunchFleetMissionTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeLaunchFleetMissionCall>[0],
-  _options: TransactionPreflightOptions = {}
+  params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
 
@@ -2088,223 +1747,6 @@ export function planetFromTransaction(account: string, txHash: string): PlanetSu
   };
 }
 
-async function readHasFirstPlanet(
-  provider: Eip1193Provider,
-  contractAddress: string,
-  account: string
-): Promise<boolean> {
-  const result = await readWalletRequest<string>(provider, {
-    method: "eth_call",
-    params: [
-      {
-        to: contractAddress,
-        data: encodeAddressCall(READ_SELECTORS.hasFirstPlanet, account)
-      },
-      "latest"
-    ]
-  }, "first planet settlement");
-
-  return decodeBoolResult(result);
-}
-
-async function readFirstPlanet(
-  provider: Eip1193Provider,
-  contractAddress: string,
-  account: string
-): Promise<PlanetSummary> {
-  const result = await readWalletRequest<string>(provider, {
-    method: "eth_call",
-    params: [
-      {
-        to: contractAddress,
-        data: encodeAddressCall(READ_SELECTORS.firstPlanetOf, account)
-      },
-      "latest"
-    ]
-  }, "first planet details");
-
-  const decoded = decodeFirstPlanetWords(result);
-
-  if (decoded) {
-    return decoded;
-  }
-
-  return {
-    label: "First planet settled",
-    source: "chain"
-  };
-}
-
-async function readGameSettlement(
-  provider: Eip1193Provider,
-  contractAddress: string,
-  account: string
-): Promise<SettlementState | undefined> {
-  try {
-    const homePlanetId = decodeUintResult(await readWalletRequest<string>(provider, {
-      method: "eth_call",
-      params: [
-        {
-          to: contractAddress,
-          data: encodeAddressCall(READ_SELECTORS.homePlanetOf, account)
-        },
-        "latest"
-      ]
-    }, "game home planet"));
-
-    if (homePlanetId === 0n) {
-      return {
-        kind: "not-settled"
-      };
-    }
-
-    const planet = await readGamePlanet(provider, contractAddress, homePlanetId);
-
-    return {
-      kind: "settled",
-      planet: planet ?? {
-        label: `Planet #${homePlanetId.toString()}`,
-        source: "chain"
-      }
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-async function readLegacySettlementState(
-  provider: Eip1193Provider,
-  account: string,
-  config: SettlementConfig
-): Promise<SettlementState | undefined> {
-  if (!config.legacyAddress || config.legacyAddress.toLowerCase() === config.address?.toLowerCase()) {
-    return undefined;
-  }
-
-  try {
-    const hasLegacySettlement = await readHasFirstPlanet(provider, config.legacyAddress, account);
-    if (!hasLegacySettlement) {
-      return undefined;
-    }
-
-    return {
-      kind: "legacy-settled",
-      planet: await readFirstPlanet(provider, config.legacyAddress, account)
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-async function readStartPrice(provider: Eip1193Provider, contractAddress: string): Promise<bigint | undefined> {
-  try {
-    return decodeUintResult(await readWalletRequest<string>(provider, {
-      method: "eth_call",
-      params: [
-        {
-          to: contractAddress,
-          data: START_PRICE_SELECTOR
-        },
-        "latest"
-      ]
-    }, "settlement price"));
-  } catch {
-    return undefined;
-  }
-}
-
-async function readNativeBalance(provider: Eip1193Provider, account: string): Promise<bigint> {
-  return decodeUintResult(await readWalletRequest<string>(provider, {
-    method: "eth_getBalance",
-    params: [
-      account,
-      "latest"
-    ]
-  }, "wallet balance"));
-}
-
-async function readNativeBalanceForSettlement(
-  provider: Eip1193Provider,
-  account: string,
-  options: SettlementTransactionOptions,
-): Promise<bigint | undefined> {
-  try {
-    return await readNativeBalance(provider, account);
-  } catch (error) {
-    if (options.balanceRead === "optional" && isUnsupportedProviderMethodError(error)) {
-      return undefined;
-    }
-
-    throw error;
-  }
-}
-
-export function isUnsupportedProviderMethodError(error: unknown): boolean {
-  const code = errorCode(error);
-  const message = errorMessage(error);
-
-  return code === 4200
-    || code === "4200"
-    || code === -32601
-    || code === "-32601"
-    || /provider does not support the requested method/i.test(message)
-    || /method .*not supported/i.test(message)
-    || /unsupported .*method/i.test(message);
-}
-
-function formatEth(wei: bigint): string {
-  const ether = 10n ** 18n;
-  const whole = wei / ether;
-  const fraction = wei % ether;
-  if (fraction === 0n) {
-    return whole.toString();
-  }
-
-  return `${whole.toString()}.${fraction.toString().padStart(18, "0").replace(/0+$/, "")}`;
-}
-
-async function readGamePlanet(
-  provider: Eip1193Provider,
-  contractAddress: string,
-  planetId: bigint
-): Promise<PlanetSummary | undefined> {
-  const result = await readWalletRequest<string>(provider, {
-    method: "eth_call",
-    params: [
-      {
-        to: contractAddress,
-        data: encodeUintCall(READ_SELECTORS.planet, planetId)
-      },
-      "latest"
-    ]
-  }, "planet details");
-
-  return decodeGamePlanetWords(result);
-}
-
-export async function previewFirstPlanet(
-  provider: Eip1193Provider,
-  account: string,
-  config: SettlementConfig
-): Promise<PlanetSummary | undefined> {
-  if (!settlementContractConfigured(config)) {
-    return undefined;
-  }
-
-  const result = await readWalletRequest<string>(provider, {
-    method: "eth_call",
-    params: [
-      {
-        to: config.address,
-        data: encodeAddressCall(READ_SELECTORS.previewFirstPlanet, account)
-      },
-      "latest"
-    ]
-  }, "first planet preview");
-
-  return decodeFirstPlanetWords(result);
-}
-
 async function readWalletRequest<T>(
   provider: Eip1193Provider,
   args: { method: string; params?: unknown[] },
@@ -2330,112 +1772,6 @@ async function timeoutPromise<T>(promise: Promise<T>, timeoutMs: number, label: 
   }
 }
 
-function decodeGamePlanetWords(hex: string): PlanetSummary | undefined {
-  const clean = hex.replace(/^0x/, "");
-
-  if (clean.length < 13 * 64 || /^0+$/.test(clean)) {
-    return undefined;
-  }
-
-  const words = clean.match(/.{1,64}/g) ?? [];
-  const galaxy = words[1] ? Number(decodeUintWord(words[1])) : undefined;
-  const system = words[2] ? Number(decodeUintWord(words[2])) : undefined;
-  const position = words[3] ? Number(decodeUintWord(words[3])) : undefined;
-  const fields = words[4] ? Number(decodeUintWord(words[4])) : undefined;
-  const temperature = words[5] ? Number(decodeSignedWord(words[5])) : undefined;
-  const lastSettledAt = words[9] ? decodeUintWord(words[9]) : undefined;
-  const metal = words[10] ? decodeUintWord(words[10]) : undefined;
-  const crystal = words[11] ? decodeUintWord(words[11]) : undefined;
-  const deuterium = words[12] ? decodeUintWord(words[12]) : undefined;
-
-  if (!Number.isFinite(galaxy) || !Number.isFinite(system) || !Number.isFinite(position)) {
-    return undefined;
-  }
-
-  const planet: PlanetSummary = {
-    label: `Planet ${galaxy}:${system}:${position}`,
-    coordinates: `${galaxy}:${system}:${position}`,
-    rarity: "Genesis settlement",
-    source: "chain"
-  };
-
-  if (lastSettledAt && lastSettledAt > 0n) {
-    planet.settledAt = new Date(Number(lastSettledAt) * 1_000).toISOString();
-  }
-
-  if (fields !== undefined && Number.isInteger(fields) && fields > 0 && fields <= 1_000) {
-    planet.fields = fields.toString();
-  }
-
-  if (temperature !== undefined && Number.isInteger(temperature) && temperature >= -200 && temperature <= 200) {
-    planet.temperature = temperature.toString();
-  }
-
-  if (metal !== undefined && crystal !== undefined && deuterium !== undefined) {
-    planet.resources = {
-      metal: metal.toString(),
-      crystal: crystal.toString(),
-      deuterium: deuterium.toString()
-    };
-  }
-
-  return planet;
-}
-
-function decodeFirstPlanetWords(hex: string): PlanetSummary | undefined {
-  const clean = hex.replace(/^0x/, "");
-
-  if (clean.length < 7 * 64 || /^0+$/.test(clean)) {
-    return undefined;
-  }
-
-  const words = clean.match(/.{1,64}/g) ?? [];
-  const galaxy = words[0] ? Number(decodeUintWord(words[0])) : undefined;
-  const system = words[1] ? Number(decodeUintWord(words[1])) : undefined;
-  const position = words[2] ? Number(decodeUintWord(words[2])) : undefined;
-  const fields = words[3] ? Number(decodeUintWord(words[3])) : undefined;
-  const temperature = words[4] ? Number(decodeSignedWord(words[4])) : undefined;
-  const settledAt = words[5] ? decodeUintWord(words[5]) : undefined;
-  const settledBlock = words[6] ? decodeUintWord(words[6]) : undefined;
-
-  if (!Number.isFinite(galaxy) || !Number.isFinite(system) || !Number.isFinite(position)) {
-    return undefined;
-  }
-
-  const planet: PlanetSummary = {
-    label: `Planet ${galaxy}:${system}:${position}`,
-    coordinates: `${galaxy}:${system}:${position}`,
-    rarity: "Genesis settlement",
-    source: "chain"
-  };
-
-  if (settledAt && settledAt > 0n) {
-    planet.settledAt = new Date(Number(settledAt) * 1_000).toISOString();
-  }
-
-  if (settledBlock && settledBlock > 0n) {
-    planet.settledBlock = settledBlock.toString();
-  }
-
-  if (fields !== undefined && Number.isInteger(fields) && fields > 0 && fields <= 1_000) {
-    planet.fields = fields.toString();
-  }
-
-  if (temperature !== undefined && Number.isInteger(temperature) && temperature >= -200 && temperature <= 200) {
-    planet.temperature = temperature.toString();
-  }
-
-  return planet;
-}
-
-function decodeUintWord(word: string): bigint {
-  return BigInt(`0x${word}`);
-}
-
-function decodeSignedWord(word: string): bigint {
-  return BigInt.asIntN(256, BigInt(`0x${word}`));
-}
-
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -2454,20 +1790,22 @@ function errorCode(error: unknown): unknown {
     : undefined;
 }
 
-function errorData(error: unknown): unknown {
-  if (typeof error !== "object" || error === null) return undefined;
-  if ("data" in error) return (error as { data: unknown }).data;
-  if ("error" in error) {
-    const nested = (error as { error: unknown }).error;
-    if (typeof nested === "object" && nested !== null && "data" in nested) {
-      return (nested as { data: unknown }).data;
-    }
-  }
-  return undefined;
-}
-
 export async function fetchWalletSettlement(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
   return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, withWalletReadOptions("settlement", undefined, options), "Settlement");
+}
+
+type SettlementFundingResponse = Omit<SettlementFundingState, "balanceWei" | "startPriceWei"> & {
+  balanceWei: string | null;
+  startPriceWei: string | null;
+};
+
+export async function fetchSettlementFundingState(apiUrl: string, wallet: string): Promise<SettlementFundingState> {
+  const response = await fetchWalletJson<SettlementFundingResponse>(apiUrl, wallet, "settlement-funding", "Settlement funding");
+  return {
+    ...response,
+    balanceWei: response.balanceWei === null ? null : BigInt(response.balanceWei),
+    startPriceWei: response.startPriceWei === null ? null : BigInt(response.startPriceWei)
+  };
 }
 
 export async function fetchWalletPlanets(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {

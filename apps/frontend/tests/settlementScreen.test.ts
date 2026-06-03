@@ -314,14 +314,16 @@ describe("settlement screen mode", () => {
     })).toBe(false);
   });
 
-  test("keeps a Mini App settlement read-provider fallback for unsupported wallet reads", async () => {
+  test("uses backend settlement state instead of Mini App read-provider fallbacks", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
-    expect(source).toContain("readSettlementStateWithMiniAppFallback");
-    expect(source).toContain("readSettlementFundingWithMiniAppFallback");
-    expect(source).toContain("isUnsupportedProviderMethodError(error)");
+    expect(source).toContain("readIndexedSettlementState");
+    expect(source).toContain("fetchSettlementFundingState");
+    expect(source).toContain("settlementTransactionOptions(funding)");
+    expect(source).not.toContain("readSettlementStateWithMiniAppFallback");
+    expect(source).not.toContain("readSettlementFundingWithMiniAppFallback");
+    expect(source).not.toContain("isUnsupportedProviderMethodError(error)");
     expect(source).toContain("setMiniAppMode(true)");
-    expect(source).toContain("settlementTransactionOptions(launchMode === \"mini-app\")");
   });
 
   test("auto-binds Farcaster wallet and retries Base Sepolia setup in Mini App mode", async () => {

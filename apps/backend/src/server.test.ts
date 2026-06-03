@@ -132,6 +132,15 @@ class MockChainReader implements ChainReader {
     };
   }
 
+  async getSettlementFunding() {
+    return {
+      affordable: true,
+      balanceWei: "100000000000000000",
+      contractKind: "game" as const,
+      startPriceWei: "50000000000000000"
+    };
+  }
+
   async getWalletPlanets(wallet: Address): Promise<WalletPlanets> {
     const managedPlanet: ManagedPlanet = {
       ...planet,
