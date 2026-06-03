@@ -73,6 +73,14 @@ export type OnChainEnergyBalance = {
   produced: string;
   required: string;
   scaleBps: string;
+  sources?: {
+    solarPlant: string;
+    fusionReactor: string;
+    fusionReactorDeuteriumConsumed: string;
+    solarSatellites: string;
+    solarSatelliteCount: number;
+    solarSatelliteEnergy: string;
+  };
 };
 
 export type PlanetSummary = {
@@ -226,6 +234,7 @@ export type ChainShipyardState = {
     id: number;
     count: number;
     cost: OnChainResources;
+    energyPerUnit?: string;
   }>;
   queue: QueueStateResponse | null;
 };

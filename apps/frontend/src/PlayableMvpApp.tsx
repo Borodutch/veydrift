@@ -196,6 +196,8 @@ const buildingFinishStateReadFailureLabel =
   "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
 const buildingFinishLiveStateRequiredLabel =
   "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
+export const infrastructureBackendSyncPausedLabel =
+  "Infrastructure API is temporarily unavailable while backend state is restored. The app will retry when game state sync recovers.";
 const buildingWalletConfirmationLabel = (label: string) =>
   `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 
@@ -289,21 +291,28 @@ export function canonicalInfrastructureBuildingCompletionQueue(
 }
 
 export function buildingCompletionReadyToFinishFlag({
+  fallbackBuildingQueue,
   infrastructureState,
   now = Date.now(),
 }: {
+  fallbackBuildingQueue?: QueueStateResponse | null | undefined;
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): boolean {
-  return isBuildingQueueReadyToFinish(canonicalInfrastructureBuildingCompletionQueue(infrastructureState), now);
+  return isBuildingQueueReadyToFinish(
+    buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue),
+    now,
+  );
 }
 
 export function buildingCompletionUnavailableReasonFor({
   canTransact,
+  fallbackBuildingQueue,
   infrastructureState,
   now = Date.now(),
 }: {
   canTransact: boolean;
+  fallbackBuildingQueue?: QueueStateResponse | null | undefined;
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): string | undefined {
@@ -311,15 +320,15 @@ export function buildingCompletionUnavailableReasonFor({
     return "Wallet or game contract is unavailable.";
   }
 
-  if (!infrastructureState) {
+  if (infrastructureState?.stale === true) {
+    return infrastructureBackendSyncPausedLabel;
+  }
+
+  const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
+  if (!queue?.active && !infrastructureState) {
     return buildingFinishLiveStateRequiredLabel;
   }
 
-  if (infrastructureState.stale === true) {
-    return buildingFinishLiveStateRequiredLabel;
-  }
-
-  const queue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
   if (!queue?.active) {
     return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
   }
@@ -336,8 +345,21 @@ export function buildingCompletionUnavailableReasonFor({
   return undefined;
 }
 
+function buildingCompletionQueueForVerification(
+  infrastructureState: ChainInfrastructureState | null,
+  fallbackBuildingQueue?: QueueStateResponse | null | undefined,
+): QueueStateResponse | null {
+  const infrastructureQueue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
+  if (infrastructureQueue?.active) return infrastructureQueue;
+  if (infrastructureState?.stale === true) return null;
+  return fallbackBuildingQueue?.active && fallbackBuildingQueue.kind === "building"
+    ? fallbackBuildingQueue
+    : null;
+}
+
 export function buildingFinishUnavailableReasonForDisplay({
   activeBuildingQueue,
+  backendSyncPausedReason,
   canTransact,
   infrastructureState,
   isBuildingReadyToFinish,
@@ -345,18 +367,32 @@ export function buildingFinishUnavailableReasonForDisplay({
   now = Date.now(),
 }: {
   activeBuildingQueue: QueueStateResponse | null | undefined;
+  backendSyncPausedReason?: string | undefined;
   canTransact: boolean;
   infrastructureState: ChainInfrastructureState | null;
   isBuildingReadyToFinish: boolean;
   isDisplayedBuildingQueueReady: boolean;
   now?: number;
 }): string | undefined {
-  if (!activeBuildingQueue?.active || !isDisplayedBuildingQueueReady || isBuildingReadyToFinish) {
+  if (!activeBuildingQueue?.active || !isDisplayedBuildingQueueReady) {
+    return undefined;
+  }
+
+  if (!canTransact) {
+    return "Wallet or game contract is unavailable.";
+  }
+
+  if (backendSyncPausedReason) {
+    return backendSyncPausedReason;
+  }
+
+  if (isBuildingReadyToFinish) {
     return undefined;
   }
 
   return buildingCompletionUnavailableReasonFor({
     canTransact,
+    fallbackBuildingQueue: activeBuildingQueue,
     infrastructureState,
     now,
   });
@@ -384,6 +420,7 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
   activePlanetId,
   apiBaseUrl,
   fallback,
+  knownBuildingQueue,
   loadInfrastructureState = fetchInfrastructureState,
   now = Date.now(),
 }: {
@@ -391,6 +428,7 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
   activePlanetId: string | undefined;
   apiBaseUrl: string | undefined;
   fallback: ChainInfrastructureState | null;
+  knownBuildingQueue?: QueueStateResponse | null | undefined;
   loadInfrastructureState?: typeof fetchInfrastructureState;
   now?: number;
 }): Promise<{
@@ -409,6 +447,7 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
     infrastructureState,
     unavailableReason: buildingCompletionUnavailableReasonFor({
       canTransact: true,
+      fallbackBuildingQueue: knownBuildingQueue,
       infrastructureState,
       now,
     }),
@@ -597,13 +636,17 @@ export function topBarEnergyFor({
     return undefined;
   }
 
-  return energyBalanceFromChain(infrastructureChainState.energyBalance)
-    ?? energyBalance(
-      settledState.buildings,
-      settledState.research.energy,
-      settledState.ships.solarSatellite,
-      planetProductionProfile,
-    );
+  const localEnergy = energyBalance(
+    settledState.buildings,
+    settledState.research.energy,
+    settledState.ships.solarSatellite,
+    planetProductionProfile,
+  );
+  const chainEnergy = energyBalanceFromChain(infrastructureChainState.energyBalance);
+
+  if (!chainEnergy) return localEnergy;
+  if (chainEnergy.sources) return chainEnergy;
+  return localEnergy.sources ? { ...chainEnergy, sources: localEnergy.sources } : chainEnergy;
 }
 
 export function infrastructureUnavailableReasonFor({
@@ -650,6 +693,24 @@ export function infrastructureUnavailableReasonFor({
     return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
   }
   if (!infrastructureChainState) return "Infrastructure state unavailable.";
+  const syncPausedReason = infrastructureBackendSyncPausedReasonFor({
+    infrastructureChainState,
+    infrastructureError,
+  });
+  if (syncPausedReason) return syncPausedReason;
+  return undefined;
+}
+
+export function infrastructureBackendSyncPausedReasonFor({
+  infrastructureChainState,
+  infrastructureError,
+}: {
+  infrastructureChainState: ChainInfrastructureState | null;
+  infrastructureError?: string | undefined;
+}): string | undefined {
+  if (infrastructureError || infrastructureChainState?.stale === true) {
+    return infrastructureBackendSyncPausedLabel;
+  }
   return undefined;
 }
 
@@ -1310,16 +1371,22 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     setInfrastructureError(undefined);
     setMoonError(undefined);
     try {
-      const [nextInfrastructure, nextMoon] = await Promise.all([
-        fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
-        fetchMoonState(apiBaseUrl, account, activePlanetId),
+      const [infrastructureResult, moonResult] = await Promise.all([
+        settlePromise(fetchInfrastructureState(apiBaseUrl, account, activePlanetId)),
+        settlePromise(fetchMoonState(apiBaseUrl, account, activePlanetId)),
       ]);
-      setInfrastructureChainState(nextInfrastructure);
-      setMoonState(nextMoon);
-    } catch (error) {
-      console.error(error);
-      setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
-      setMoonError(error instanceof Error ? error.message : "Moon state could not be loaded.");
+      if (infrastructureResult.status === "fulfilled") {
+        setInfrastructureChainState(infrastructureResult.value);
+      } else {
+        console.error(infrastructureResult.reason);
+        setInfrastructureError(infrastructureResult.reason instanceof Error ? infrastructureResult.reason.message : "Infrastructure state could not be loaded.");
+      }
+      if (moonResult.status === "fulfilled") {
+        setMoonState(moonResult.value);
+      } else {
+        console.error(moonResult.reason);
+        setMoonError(moonResult.reason instanceof Error ? moonResult.reason.message : "Moon state could not be loaded.");
+      }
     } finally {
       setInfrastructureLoading(false);
       setMoonLoading(false);
@@ -1965,13 +2032,21 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
   }, [activeBuildingQueue, now]);
   const isBuildingReadyToFinish = useMemo(() => {
     return buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: activeBuildingQueue,
       infrastructureState: infrastructureChainState,
       now,
     });
-  }, [infrastructureChainState, now]);
+  }, [activeBuildingQueue, infrastructureChainState, now]);
+  const infrastructureBackendSyncPausedReason = useMemo(() => {
+    return infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState,
+      infrastructureError,
+    });
+  }, [infrastructureChainState, infrastructureError]);
   const buildingFinishUnavailableReason = useMemo(() => {
     return buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedReason,
       canTransact: Boolean(provider && account && gameContract),
       infrastructureState: infrastructureChainState,
       isBuildingReadyToFinish,
@@ -1982,6 +2057,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     account,
     activeBuildingQueue,
     gameContract,
+    infrastructureBackendSyncPausedReason,
     infrastructureChainState,
     isBuildingReadyToFinish,
     isDisplayedBuildingQueueReady,
@@ -2239,6 +2315,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
             activePlanetId: planetId,
             apiBaseUrl,
             fallback: infrastructureChainState,
+            knownBuildingQueue: activeBuildingQueue,
           });
         if (unavailableReason) {
           setBuildingAction({ status: "error", buildingKey, label: unavailableReason });

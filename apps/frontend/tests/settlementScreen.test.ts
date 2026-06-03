@@ -6,6 +6,7 @@ import {
   settlementLaunchBlocker,
   shouldAttemptFarcasterNetworkSetup,
   shouldAutoConnectFarcasterWallet,
+  shouldRetryFarcasterWalletProviderProbe,
   waitForIndexedSettledPlanet,
 } from "../src/FirstPlanetSettlementApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "../src/settlementScreen";
@@ -286,6 +287,33 @@ describe("settlement screen mode", () => {
     })).toBe(false);
   });
 
+  test("retries Farcaster provider discovery only while Mini App wallet support may still be late", () => {
+    expect(shouldRetryFarcasterWalletProviderProbe({
+      attempt: 1,
+      maxAttempts: 3,
+      miniAppMode: true,
+      providerAvailable: false,
+    })).toBe(true);
+    expect(shouldRetryFarcasterWalletProviderProbe({
+      attempt: 3,
+      maxAttempts: 3,
+      miniAppMode: true,
+      providerAvailable: false,
+    })).toBe(false);
+    expect(shouldRetryFarcasterWalletProviderProbe({
+      attempt: 1,
+      maxAttempts: 3,
+      miniAppMode: false,
+      providerAvailable: false,
+    })).toBe(false);
+    expect(shouldRetryFarcasterWalletProviderProbe({
+      attempt: 1,
+      maxAttempts: 3,
+      miniAppMode: true,
+      providerAvailable: true,
+    })).toBe(false);
+  });
+
   test("keeps a Mini App settlement read-provider fallback for unsupported wallet reads", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
@@ -312,9 +340,10 @@ describe("settlement screen mode", () => {
   test("rechecks the Farcaster wallet provider when connect is clicked after a cold desktop load", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
-    expect(source).toContain("const activeProvider = provider ?? bindWalletProviderDetails(await loadWalletProviderDetails())");
+    expect(source).toContain("await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode })");
+    expect(source).toContain("shouldRetryFarcasterWalletProviderProbe");
     expect(source).toContain("const accounts = await requestAccounts(activeProvider)");
-    expect(source).toContain("await refreshWallet(activeProvider, accounts[0])");
+    expect(source).toContain("await refreshWallet(activeProvider, accounts[0], providerContext)");
   });
 });
 

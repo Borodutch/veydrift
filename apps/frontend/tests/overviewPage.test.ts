@@ -338,6 +338,36 @@ describe("overview queue progress display", () => {
     expect(calls).toBe(1);
   });
 
+  test("disables ready building finish controls when the backend is unavailable", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "crystalMine" as const,
+      label: "Crystal Mine",
+      readyAt: 1_700_000_000_000,
+      startedAt: 1_699_999_000_000,
+      targetLevel: 8,
+    };
+    const backendUnavailableReason =
+      "Infrastructure API is temporarily unavailable while backend state is restored. The app will retry when game state sync recovers.";
+    let calls = 0;
+    const action = overviewBuildingFinishAction({
+      actionUnavailableReason: backendUnavailableReason,
+      isBuildingReadyToFinish: true,
+      now: 1_700_000_000_000,
+      onFinishBuilding: () => {
+        calls += 1;
+      },
+      queue,
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+    expect(action.label).toContain("Infrastructure API is temporarily unavailable");
+    expect(action.label).not.toContain("Syncing building queue");
+    expect(calls).toBe(0);
+  });
+
   test("shows building finish action notices for the active overview queue", () => {
     const notice = {
       buildingKey: "shipyard" as const,
