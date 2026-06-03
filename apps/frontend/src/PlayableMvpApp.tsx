@@ -300,12 +300,10 @@ export function buildingCompletionReadyToFinishFlag({
 
 export function buildingCompletionUnavailableReasonFor({
   canTransact,
-  canVerifyWithReadonlyProvider = false,
   infrastructureState,
   now = Date.now(),
 }: {
   canTransact: boolean;
-  canVerifyWithReadonlyProvider?: boolean;
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): string | undefined {
@@ -318,10 +316,6 @@ export function buildingCompletionUnavailableReasonFor({
   }
 
   if (infrastructureState.stale === true) {
-    return buildingFinishLiveStateRequiredLabel;
-  }
-
-  if (!canVerifyWithReadonlyProvider && infrastructureState.source === "contract-state-indexer") {
     return buildingFinishLiveStateRequiredLabel;
   }
 
@@ -345,7 +339,6 @@ export function buildingCompletionUnavailableReasonFor({
 export function buildingFinishUnavailableReasonForDisplay({
   activeBuildingQueue,
   canTransact,
-  canVerifyWithReadonlyProvider = false,
   infrastructureState,
   isBuildingReadyToFinish,
   isDisplayedBuildingQueueReady,
@@ -353,7 +346,6 @@ export function buildingFinishUnavailableReasonForDisplay({
 }: {
   activeBuildingQueue: QueueStateResponse | null | undefined;
   canTransact: boolean;
-  canVerifyWithReadonlyProvider?: boolean;
   infrastructureState: ChainInfrastructureState | null;
   isBuildingReadyToFinish: boolean;
   isDisplayedBuildingQueueReady: boolean;
@@ -365,7 +357,6 @@ export function buildingFinishUnavailableReasonForDisplay({
 
   return buildingCompletionUnavailableReasonFor({
     canTransact,
-    canVerifyWithReadonlyProvider,
     infrastructureState,
     now,
   });
@@ -392,7 +383,6 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
   account,
   activePlanetId,
   apiBaseUrl,
-  canVerifyWithReadonlyProvider = false,
   fallback,
   loadInfrastructureState = fetchInfrastructureState,
   now = Date.now(),
@@ -400,7 +390,6 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
   account: string | undefined;
   activePlanetId: string | undefined;
   apiBaseUrl: string | undefined;
-  canVerifyWithReadonlyProvider?: boolean;
   fallback: ChainInfrastructureState | null;
   loadInfrastructureState?: typeof fetchInfrastructureState;
   now?: number;
@@ -420,7 +409,6 @@ export async function buildingCompletionUnavailableReasonAfterBackendRevalidatio
     infrastructureState,
     unavailableReason: buildingCompletionUnavailableReasonFor({
       canTransact: true,
-      canVerifyWithReadonlyProvider,
       infrastructureState,
       now,
     }),
@@ -1989,7 +1977,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     return buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue,
       canTransact: Boolean(provider && account && gameContract),
-      canVerifyWithReadonlyProvider: Boolean(readProvider),
       infrastructureState: infrastructureChainState,
       isBuildingReadyToFinish,
       isDisplayedBuildingQueueReady,
@@ -2004,7 +1991,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
     isDisplayedBuildingQueueReady,
     now,
     provider,
-    readProvider,
   ]);
   const buildingQueue = useMemo(() => {
     if (activeBuildingQueue?.active) {
@@ -2256,7 +2242,6 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
             account,
             activePlanetId: planetId,
             apiBaseUrl,
-            canVerifyWithReadonlyProvider: Boolean(readProvider),
             fallback: infrastructureChainState,
           });
         if (unavailableReason) {

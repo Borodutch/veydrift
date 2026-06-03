@@ -235,6 +235,98 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("requests Rabby accounts before non-preflight transaction submission", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") return [account];
+        if (method === "eth_sendTransaction") return "0xship";
+        throw new Error(`Unexpected method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+
+    await expect(sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)).resolves.toBe("0xship");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x13aed9a2", [7, 0, 3]),
+        }],
+      },
+    ]);
+  });
+
+  test("requests Rabby accounts before building start preflight when current accounts are empty", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") return [account];
+        if (method === "eth_call") return "0x";
+        if (method === "eth_sendTransaction") return "0xbuild";
+        throw new Error(`Unexpected method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+
+    await expect(sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)).resolves.toBe("0xbuild");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 0]),
+          },
+          "latest",
+        ],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
+    ]);
+  });
+
+  test("reports rejected Rabby authorization before non-preflight transaction submission", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") throw { code: 4001, message: "Rejected" };
+        throw new Error("eth_sendTransaction should not be called");
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+
+    await expect(
+      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
+    ).rejects.toThrow("Wallet connection was rejected. Reconnect your wallet, then retry.");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+    ]);
+  });
+
   test("detects injected wallet availability before Mini App fallback", async () => {
     const provider = mockProvider(async () => null);
     const miniAppProvider = mockProvider(async () => null);
@@ -1719,6 +1811,84 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("requests Rabby accounts before ready finish building preflight when current accounts are empty", async () => {
+    const walletRequests: unknown[] = [];
+    const readonlyRequests: unknown[] = [];
+    const walletProvider = {
+      ...mockProvider(async ({ method, params }) => {
+        walletRequests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") return [account];
+        if (method === "eth_sendTransaction") return "0xfinish";
+        throw new Error(`Unexpected wallet method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+    const readProvider = mockProvider(async ({ method, params }) => {
+      readonlyRequests.push({ method, params });
+      const data = String((params?.[0] as { data?: string } | undefined)?.data ?? "");
+      if (method === "eth_call" && data.startsWith("0xb8e835ab")) {
+        return activeBuildingConstructionResult({ active: true, readyAt: 1n });
+      }
+      if (method === "eth_estimateGas") return "0xc350";
+      return "0x";
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(walletProvider, account, contract, "7", { readProvider })
+    ).resolves.toBe("0xfinish");
+
+    expect(walletRequests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007",
+            gas: "0xc350"
+          }
+        ]
+      }
+    ]);
+    expect(readonlyRequests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xb8e835ab0000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_call",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
+          },
+          "latest"
+        ]
+      },
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+  });
+
   test("blocks likely-failing ready finish building upgrades before opening the wallet when readonly gas estimation fails", async () => {
     const walletRequests: unknown[] = [];
     const readonlyRequests: unknown[] = [];
@@ -2081,6 +2251,51 @@ describe("walletFlow", () => {
       }
     ]);
     expect(walletRequests).toEqual([]);
+  });
+
+  test("requests Rabby accounts before other production, research, and rift submissions", async () => {
+    const walletRequests: Array<{ method: string; params: unknown[] | undefined }> = [];
+    let authorized = false;
+    let sentTransactions = 0;
+    const walletProvider = {
+      ...mockProvider(async ({ method, params }) => {
+        walletRequests.push({ method, params });
+        if (method === "eth_accounts") return authorized ? [account] : [];
+        if (method === "eth_requestAccounts") {
+          authorized = true;
+          return [account];
+        }
+        if (method === "eth_sendTransaction") {
+          sentTransactions += 1;
+          return `0xrabby${sentTransactions}`;
+        }
+        throw new Error(`Unexpected wallet method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+
+    const submissions: Array<() => Promise<string>> = [
+      () => sendStartShipProductionTransaction(walletProvider, account, contract, "7", 0, 3),
+      () => sendFinishShipProductionTransaction(walletProvider, account, contract, "7"),
+      () => sendStartDefenseProductionTransaction(walletProvider, account, contract, "7", 0, 2),
+      () => sendFinishDefenseProductionTransaction(walletProvider, account, contract, "7"),
+      () => sendStartResearchTransaction(walletProvider, account, contract, "7", 12),
+      () => sendFinishResearchTransaction(walletProvider, account, contract),
+      () => sendApproveResourceTokenTransaction(walletProvider, account, "0x3333333333333333333333333333333333333333", contract, 1_500_000n),
+      () => sendDepositResourceTransaction(walletProvider, account, contract, "7", 0, 1_500_000n),
+      () => sendRequestResourceWithdrawalTransaction(walletProvider, account, contract, "7", 1, 2_000_000n),
+      () => sendFinishResourceWithdrawalTransaction(walletProvider, account, contract, 1),
+    ];
+
+    for (let index = 0; index < submissions.length; index += 1) {
+      await expect(submissions[index]!()).resolves.toBe(`0xrabby${index + 1}`);
+    }
+
+    const methods = walletRequests.map((request) => request.method);
+    expect(methods.slice(0, 3)).toEqual(["eth_accounts", "eth_requestAccounts", "eth_sendTransaction"]);
+    expect(methods.filter((method) => method === "eth_requestAccounts")).toHaveLength(1);
+    expect(methods.filter((method) => method === "eth_accounts")).toHaveLength(submissions.length);
+    expect(methods.filter((method) => method === "eth_sendTransaction")).toHaveLength(submissions.length);
   });
 
   test("submits moon building and Jump Gate transactions", async () => {

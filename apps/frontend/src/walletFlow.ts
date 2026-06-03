@@ -60,6 +60,7 @@ type TransactionRequest = {
   to: string;
   data: string;
   gas?: string;
+  value?: string;
 };
 
 export type OnChainResources = {
@@ -815,6 +816,31 @@ function accountListIncludes(accounts: string[], account: string): boolean {
   return accounts.some((candidate) => candidate.toLowerCase() === account.toLowerCase());
 }
 
+async function prepareAccountProbeWalletForTransaction(provider: Eip1193Provider, account: string): Promise<boolean> {
+  if (!isAccountProbeWallet(provider)) {
+    return false;
+  }
+
+  await assertAccountProbeWalletReady(provider, account);
+  return true;
+}
+
+async function sendWalletTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  transaction: TransactionRequest,
+  options: { accountProbeReadyChecked?: boolean } = {},
+): Promise<string> {
+  if (!options.accountProbeReadyChecked) {
+    await prepareAccountProbeWalletForTransaction(provider, account);
+  }
+
+  return provider.request<string>({
+    method: "eth_sendTransaction",
+    params: [transaction]
+  });
+}
+
 function isAccountProbeWallet(provider: Eip1193Provider): boolean {
   return Boolean(provider.isRabby || provider.isOkxWallet || provider.isOKExWallet);
 }
@@ -1396,28 +1422,18 @@ export async function sendSettlementTransaction(
       );
     }
 
-    return provider.request<string>({
-      method: "eth_sendTransaction",
-      params: [
-        {
-          from: account,
-          to: config.address,
-          data: START_PLANET_SELECTOR,
-          value: encodeQuantity(startPrice)
-        }
-      ]
+    return sendWalletTransaction(provider, account, {
+      from: account,
+      to: config.address,
+      data: START_PLANET_SELECTOR,
+      value: encodeQuantity(startPrice)
     });
   }
 
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: config.address,
-        data: settlementTransactionData()
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: config.address,
+    data: settlementTransactionData()
   });
 }
 
@@ -1469,15 +1485,10 @@ export async function sendStartShipProductionTransaction(
   shipId: number,
   quantity: number
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.startShipProduction, [planetId, shipId, quantity])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.startShipProduction, [planetId, shipId, quantity])
   });
 }
 
@@ -1488,15 +1499,10 @@ export async function sendApproveResourceTokenTransaction(
   spenderAddress: string,
   amount: bigint | number | string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: tokenAddress,
-        data: encodeAddressUintCall(ERC20_SELECTORS.approve, spenderAddress, amount)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: tokenAddress,
+    data: encodeAddressUintCall(ERC20_SELECTORS.approve, spenderAddress, amount)
   });
 }
 
@@ -1508,15 +1514,10 @@ export async function sendDepositResourceTransaction(
   resourceId: number,
   amount: bigint | number | string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.depositResource, [planetId, resourceId, amount])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.depositResource, [planetId, resourceId, amount])
   });
 }
 
@@ -1528,15 +1529,10 @@ export async function sendRequestResourceWithdrawalTransaction(
   resourceId: number,
   amount: bigint | number | string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [planetId, resourceId, amount])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [planetId, resourceId, amount])
   });
 }
 
@@ -1546,15 +1542,10 @@ export async function sendFinishResourceWithdrawalTransaction(
   contractAddress: string,
   resourceId: number
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId])
   });
 }
 
@@ -1566,15 +1557,10 @@ export async function sendStartDefenseProductionTransaction(
   defenseId: number,
   quantity: number
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.startDefenseProduction, [planetId, defenseId, quantity])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.startDefenseProduction, [planetId, defenseId, quantity])
   });
 }
 
@@ -1586,15 +1572,10 @@ export async function sendCreateAllianceTransaction(
   name: string,
   description: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, description])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, description])
   });
 }
 
@@ -1605,15 +1586,10 @@ export async function sendAllianceInviteTransaction(
   allianceId: string,
   playerAddress: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: `${ALLIANCE_SELECTORS.inviteMember}${BigInt(allianceId).toString(16).padStart(64, "0")}${playerAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: `${ALLIANCE_SELECTORS.inviteMember}${BigInt(allianceId).toString(16).padStart(64, "0")}${playerAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`
   });
 }
 
@@ -1626,15 +1602,10 @@ export async function sendAllianceProfileTransaction(
   name: string,
   description: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeUintStringTripleCall(ALLIANCE_SELECTORS.updateAllianceProfile, allianceId, [tag, name, description])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintStringTripleCall(ALLIANCE_SELECTORS.updateAllianceProfile, allianceId, [tag, name, description])
   });
 }
 
@@ -1644,15 +1615,10 @@ export async function sendAcceptAllianceInviteTransaction(
   contractAddress: string,
   allianceId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeUintCall(ALLIANCE_SELECTORS.acceptInvite, allianceId)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintCall(ALLIANCE_SELECTORS.acceptInvite, allianceId)
   });
 }
 
@@ -1662,15 +1628,10 @@ export async function sendAllianceJoinRequestTransaction(
   contractAddress: string,
   allianceId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeUintCall(ALLIANCE_SELECTORS.requestJoinAlliance, allianceId)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintCall(ALLIANCE_SELECTORS.requestJoinAlliance, allianceId)
   });
 }
 
@@ -1680,15 +1641,10 @@ export async function sendCancelAllianceJoinRequestTransaction(
   contractAddress: string,
   allianceId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeUintCall(ALLIANCE_SELECTORS.cancelJoinRequest, allianceId)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintCall(ALLIANCE_SELECTORS.cancelJoinRequest, allianceId)
   });
 }
 
@@ -1699,15 +1655,10 @@ export async function sendApproveAllianceJoinRequestTransaction(
   allianceId: string,
   playerAddress: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeUintAddressCall(ALLIANCE_SELECTORS.approveJoinRequest, allianceId, playerAddress)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressCall(ALLIANCE_SELECTORS.approveJoinRequest, allianceId, playerAddress)
   });
 }
 
@@ -1718,15 +1669,10 @@ export async function sendDismissAllianceJoinRequestTransaction(
   allianceId: string,
   playerAddress: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeUintAddressCall(ALLIANCE_SELECTORS.dismissJoinRequest, allianceId, playerAddress)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressCall(ALLIANCE_SELECTORS.dismissJoinRequest, allianceId, playerAddress)
   });
 }
 
@@ -1737,15 +1683,10 @@ export async function sendAllianceKickTransaction(
   allianceId: string,
   playerAddress: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeUintAddressCall(ALLIANCE_SELECTORS.kickMember, allianceId, playerAddress)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressCall(ALLIANCE_SELECTORS.kickMember, allianceId, playerAddress)
   });
 }
 
@@ -1757,15 +1698,10 @@ export async function sendAllianceRoleTransaction(
   playerAddress: string,
   role: "member" | "officer"
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
   });
 }
 
@@ -1784,18 +1720,18 @@ export async function sendStartBuildingUpgradeTransaction(
     data
   };
 
+  const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
   const preflightProvider = options.readProvider ?? provider;
-  if (!options.readProvider) {
+  if (!options.readProvider && !accountProbeReadyChecked) {
     await assertWalletUnlocked(provider);
   }
   await assertBuildingUpgradeCallSucceeds(preflightProvider, account, contractAddress, data);
-  if (options.readProvider) {
+  if (options.readProvider && !accountProbeReadyChecked) {
     await assertWalletUnlocked(provider);
   }
 
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [transaction]
+  return sendWalletTransaction(provider, account, transaction, {
+    accountProbeReadyChecked
   });
 }
 
@@ -1806,15 +1742,10 @@ export async function sendRenamePlanetTransaction(
   planetId: string,
   name: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodePlanetNameCall(GAME_SELECTORS.renamePlanet, planetId, name)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodePlanetNameCall(GAME_SELECTORS.renamePlanet, planetId, name)
   });
 }
 
@@ -1824,15 +1755,10 @@ export async function sendAbandonPlanetTransaction(
   contractAddress: string,
   planetId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.abandonPlanet, [planetId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.abandonPlanet, [planetId])
   });
 }
 
@@ -1843,15 +1769,10 @@ export async function sendStartResearchTransaction(
   planetId: string,
   technologyId: number
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.startResearch, [planetId, technologyId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.startResearch, [planetId, technologyId])
   });
 }
 
@@ -1869,17 +1790,19 @@ export async function sendFinishBuildingUpgradeTransaction(
     data
   };
 
+  const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
   if (options.readProvider) {
     await assertActiveBuildingConstructionReady(options.readProvider, account, contractAddress, planetId);
     await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
     const gas = await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
     if (gas) transaction.gas = gas;
   }
-  await assertWalletUnlocked(provider);
+  if (!accountProbeReadyChecked) {
+    await assertWalletUnlocked(provider);
+  }
 
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [transaction]
+  return sendWalletTransaction(provider, account, transaction, {
+    accountProbeReadyChecked
   });
 }
 
@@ -1890,15 +1813,10 @@ export async function sendStartMoonBuildingUpgradeTransaction(
   planetId: string,
   buildingId: number
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId])
   });
 }
 
@@ -1908,15 +1826,10 @@ export async function sendFinishMoonBuildingUpgradeTransaction(
   contractAddress: string,
   planetId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(MOON_SELECTORS.finishMoonBuildingUpgrade, [planetId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(MOON_SELECTORS.finishMoonBuildingUpgrade, [planetId])
   });
 }
 
@@ -1949,15 +1862,10 @@ export async function sendJumpGateJumpTransaction(
       ships.pathfinder,
     ]
     : [originMoonPlanetId, destinationMoonPlanetId];
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(selector, args)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(selector, args)
   });
 }
 
@@ -1966,15 +1874,10 @@ export async function sendFinishResearchTransaction(
   account: string,
   contractAddress: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: GAME_SELECTORS.finishResearch
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: GAME_SELECTORS.finishResearch
   });
 }
 
@@ -1992,10 +1895,7 @@ export async function sendCollectResourcesTransaction(
     data
   };
 
-  const accountProbeReadyChecked = isAccountProbeWallet(provider);
-  if (accountProbeReadyChecked) {
-    await assertAccountProbeWalletReady(provider, account);
-  }
+  const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
   if (options.readProvider) {
     const fallbackReason = "This resource collection is likely to fail on-chain. Refresh resources and retry.";
     await assertTransactionCallSucceeds(options.readProvider, account, contractAddress, data, fallbackReason);
@@ -2006,9 +1906,8 @@ export async function sendCollectResourcesTransaction(
     await assertWalletUnlocked(provider);
   }
 
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [transaction]
+  return sendWalletTransaction(provider, account, transaction, {
+    accountProbeReadyChecked
   });
 }
 
@@ -2018,15 +1917,10 @@ export async function sendFinishShipProductionTransaction(
   contractAddress: string,
   planetId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.finishShipProduction, [planetId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.finishShipProduction, [planetId])
   });
 }
 
@@ -2036,15 +1930,10 @@ export async function sendFinishDefenseProductionTransaction(
   contractAddress: string,
   planetId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.finishDefenseProduction, [planetId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.finishDefenseProduction, [planetId])
   });
 }
 
@@ -2057,15 +1946,10 @@ export async function sendLaunchFleetMissionTransaction(
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
 
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data
   });
 }
 
@@ -2075,15 +1959,10 @@ export async function sendJoinAttackMissionTransaction(
   contractAddress: string,
   params: Parameters<typeof encodeJoinAttackMissionCall>[0]
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeJoinAttackMissionCall(params)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeJoinAttackMissionCall(params)
   });
 }
 
@@ -2093,15 +1972,10 @@ export async function sendLaunchInterplanetaryMissileAttackTransaction(
   contractAddress: string,
   params: Parameters<typeof encodeLaunchInterplanetaryMissileAttackCall>[0]
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeLaunchInterplanetaryMissileAttackCall(params)
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeLaunchInterplanetaryMissileAttackCall(params)
   });
 }
 
@@ -2111,15 +1985,10 @@ export async function sendRecallFleetMissionTransaction(
   contractAddress: string,
   missionId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.recallFleetMission, [missionId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.recallFleetMission, [missionId])
   });
 }
 
@@ -2129,15 +1998,10 @@ export async function sendResolveFleetMissionTransaction(
   contractAddress: string,
   missionId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId])
   });
 }
 
@@ -2147,15 +2011,10 @@ export async function sendCompleteFleetMissionReturnTransaction(
   contractAddress: string,
   missionId: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId])
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId])
   });
 }
 
@@ -2169,36 +2028,31 @@ export async function sendCreateColonyTransaction(
   position: number,
   speedPercent = 100
 ): Promise<string> {
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeLaunchFleetMissionCall({
-          originPlanetId,
-          targetPlanetId: encodeColonizationTargetId(galaxy, system, position),
-          missionType: COLONIZE_MISSION_TYPE,
-          ships: {
-            smallCargo: 0,
-            lightFighter: 0,
-            recycler: 0,
-            colonyShip: 1,
-            largeCargo: 0,
-            heavyFighter: 0,
-            cruiser: 0,
-            battleship: 0,
-            bomber: 0,
-            destroyer: 0,
-            deathstar: 0,
-            battlecruiser: 0,
-            reaper: 0,
-            pathfinder: 0,
-          },
-          speedPercent,
-        })
-      }
-    ]
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeLaunchFleetMissionCall({
+      originPlanetId,
+      targetPlanetId: encodeColonizationTargetId(galaxy, system, position),
+      missionType: COLONIZE_MISSION_TYPE,
+      ships: {
+        smallCargo: 0,
+        lightFighter: 0,
+        recycler: 0,
+        colonyShip: 1,
+        largeCargo: 0,
+        heavyFighter: 0,
+        cruiser: 0,
+        battleship: 0,
+        bomber: 0,
+        destroyer: 0,
+        deathstar: 0,
+        battlecruiser: 0,
+        reaper: 0,
+        pathfinder: 0,
+      },
+      speedPercent,
+    })
   });
 }
 
