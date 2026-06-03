@@ -235,6 +235,57 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("requests Rabby accounts before non-preflight transaction submission", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") return [account];
+        if (method === "eth_sendTransaction") return "0xship";
+        throw new Error(`Unexpected method ${method}`);
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+
+    await expect(sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)).resolves.toBe("0xship");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x13aed9a2", [7, 0, 3]),
+        }],
+      },
+    ]);
+  });
+
+  test("reports rejected Rabby authorization before non-preflight transaction submission", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") throw { code: 4001, message: "Rejected" };
+        throw new Error("eth_sendTransaction should not be called");
+      }),
+      isRabby: true,
+    } as Eip1193Provider;
+
+    await expect(
+      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
+    ).rejects.toThrow("Wallet connection was rejected. Reconnect your wallet, then retry.");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_requestAccounts", params: undefined },
+    ]);
+  });
+
   test("detects injected wallet availability before Mini App fallback", async () => {
     const provider = mockProvider(async () => null);
     const miniAppProvider = mockProvider(async () => null);
