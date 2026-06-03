@@ -277,10 +277,10 @@ export function overviewBuildingReadyToFinishFlag({
   return activeBuildingQueue ? isBuildingReadyToFinish : undefined;
 }
 
-export function liveInfrastructureBuildingCompletionQueue(
+export function canonicalInfrastructureBuildingCompletionQueue(
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
-  if (!infrastructureState || infrastructureState.source === "contract-state-indexer" || infrastructureState.stale === true) {
+  if (!infrastructureState || infrastructureState.stale === true) {
     return null;
   }
 
@@ -294,7 +294,7 @@ export function buildingCompletionReadyToFinishFlag({
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): boolean {
-  return isBuildingQueueReadyToFinish(liveInfrastructureBuildingCompletionQueue(infrastructureState), now);
+  return isBuildingQueueReadyToFinish(canonicalInfrastructureBuildingCompletionQueue(infrastructureState), now);
 }
 
 export function buildingCompletionUnavailableReasonFor({
@@ -316,11 +316,15 @@ export function buildingCompletionUnavailableReasonFor({
     return buildingFinishLiveStateRequiredLabel;
   }
 
-  if (!canVerifyWithReadonlyProvider && (infrastructureState.source === "contract-state-indexer" || infrastructureState.stale === true)) {
+  if (infrastructureState.stale === true) {
     return buildingFinishLiveStateRequiredLabel;
   }
 
-  const queue = liveInfrastructureBuildingCompletionQueue(infrastructureState);
+  if (!canVerifyWithReadonlyProvider && infrastructureState.source === "contract-state-indexer") {
+    return buildingFinishLiveStateRequiredLabel;
+  }
+
+  const queue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
   if (!queue?.active) {
     return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
   }
