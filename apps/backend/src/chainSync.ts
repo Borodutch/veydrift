@@ -302,6 +302,7 @@ export class ChainSyncService {
       this.recordGap((previous + 1n).toString(), block.toString());
       this.requestReconciliation(`websocket head gap ${previous + 1n}-${block}`);
     }
+    this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
   }
 
   private handleLog(result: unknown): void {
