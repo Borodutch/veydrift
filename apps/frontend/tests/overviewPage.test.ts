@@ -93,6 +93,16 @@ describe("overview queue progress display", () => {
     expect(overviewQueueItemRemainingClassName).not.toContain("shrink-0");
   });
 
+  test("uses the shared anchored empty-action layout for production queue cards", () => {
+    for (const actionLabel of ["Build", "Defenses", "Research", "Shipyard"]) {
+      expect(overviewSource).toContain(`actionLabel="${actionLabel}"`);
+    }
+
+    expect(overviewSource).toContain("mt-auto flex min-h-9 w-full min-w-0");
+    expect(overviewSource).toContain("<ArrowRight");
+    expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
+  });
+
   test("renders ready queues as complete even when the source payload was indeterminate", () => {
     expect(queueProgressBarState({
       indeterminate: true,
