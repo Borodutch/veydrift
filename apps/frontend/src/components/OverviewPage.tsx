@@ -191,8 +191,10 @@ export function OverviewPage({
     onFinishResearch,
     queue: onChainQueues?.research,
   });
+  const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
+  const scopedBuildingNotice = overviewBuildingActionNoticeFor(buildingActionNotice, buildingNoticeKey);
   const buildingFinishAction = overviewBuildingFinishAction({
-    actionUnavailableReason: buildingActionNotice?.label,
+    actionUnavailableReason: scopedBuildingNotice?.label,
     actionPending: isBuildingActionPending,
     actionPendingLabel: buildingActionPendingLabel,
     isBuildingReadyToFinish,
@@ -207,8 +209,6 @@ export function OverviewPage({
         tone: "pending" as const,
       }
     : undefined;
-  const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
-  const scopedBuildingNotice = overviewBuildingActionNoticeFor(buildingActionNotice, buildingNoticeKey);
   const overviewBuildingNotice = overviewBuildingActionNoticeFor(
     scopedBuildingNotice ?? pendingBuildingNotice,
     buildingNoticeKey,
