@@ -192,6 +192,7 @@ export function OverviewPage({
     queue: onChainQueues?.research,
   });
   const buildingFinishAction = overviewBuildingFinishAction({
+    actionUnavailableReason: buildingActionNotice?.label,
     actionPending: isBuildingActionPending,
     actionPendingLabel: buildingActionPendingLabel,
     isBuildingReadyToFinish,
@@ -765,6 +766,7 @@ type OverviewBuildingFinishQueue =
   | { readyAt: TimestampInput };
 
 export function overviewBuildingFinishAction({
+  actionUnavailableReason,
   actionPending,
   actionPendingLabel,
   isBuildingReadyToFinish,
@@ -772,6 +774,7 @@ export function overviewBuildingFinishAction({
   onFinishBuilding,
   queue,
 }: {
+  actionUnavailableReason?: string | undefined;
   actionPending?: boolean | undefined;
   actionPendingLabel?: string | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
@@ -794,9 +797,7 @@ export function overviewBuildingFinishAction({
   const visible = Boolean(queue && onFinishBuilding && (actionPending || ready));
   const reason = actionPending
     ? actionPendingLabel ?? "Building transaction is already in progress."
-    : ready
-      ? undefined
-      : undefined;
+    : actionUnavailableReason;
 
   return {
     disabled: Boolean(reason),

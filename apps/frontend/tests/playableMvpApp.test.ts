@@ -8,6 +8,8 @@ import {
   canLoadIndexedPageState,
   canonicalInfrastructureBuildingCompletionQueue,
   hasInfrastructureDisplayState,
+  infrastructureBackendSyncPausedLabel,
+  infrastructureBackendSyncPausedReasonFor,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
   infrastructureLoadErrorFor,
@@ -740,11 +742,47 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
+  test("pauses displayed ready building finish actions while backend infrastructure sync is degraded", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      infrastructureError: "Moon API could not be reached from this browser.",
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
+  });
+
   test("does not let backend building finish verification bypass wallet availability", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue: readyQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
       canTransact: false,
       infrastructureState: infrastructureState({
         queue: readyQueue,
@@ -864,7 +902,7 @@ describe("Playable MVP app display helpers", () => {
     ]]);
   });
 
-  test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
+  test("keeps loaded infrastructure usable while a background refresh is pending", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: { status: "idle" },
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -876,7 +914,9 @@ describe("Playable MVP app display helpers", () => {
       onChainStatus: "loading",
       runtimeConfigStatus: "ready",
     })).toBeUndefined();
+  });
 
+  test("pauses infrastructure actions while loaded backend state is stale or refresh-degraded", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: { status: "idle" },
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -888,7 +928,19 @@ describe("Playable MVP app display helpers", () => {
       onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
       onChainStatus: "error",
       runtimeConfigStatus: "ready",
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: { status: "idle" },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState({ stale: true }),
+      infrastructureLoading: false,
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
+      onChainStatus: "ready",
+      runtimeConfigStatus: "ready",
+    })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
   test("uses infrastructure loading and error reasons before the first state arrives", () => {
