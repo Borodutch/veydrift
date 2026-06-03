@@ -197,7 +197,7 @@ const buildingFinishStateReadFailureLabel =
 const buildingFinishLiveStateRequiredLabel =
   "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
 export const infrastructureBackendSyncPausedLabel =
-  "Syncing building queue with the backend. Actions are paused until canonical state catches up.";
+  "Infrastructure API is temporarily unavailable while backend state is restored. The app will retry when game state sync recovers.";
 const buildingWalletConfirmationLabel = (label: string) =>
   `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 

@@ -779,6 +779,7 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_000_000,
     })).toBe(infrastructureBackendSyncPausedLabel);
+    expect(infrastructureBackendSyncPausedLabel).not.toContain("Syncing building queue");
   });
 
   test("keeps displayed building finish verification open when backend indexed queue is ready", () => {
@@ -798,7 +799,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("pauses displayed ready building finish actions while backend infrastructure sync is degraded", () => {
+  test("routes degraded ready building finish actions to backend-unavailable copy", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(infrastructureBackendSyncPausedReasonFor({
@@ -831,6 +832,32 @@ describe("Playable MVP app display helpers", () => {
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
     })).toBe(infrastructureBackendSyncPausedLabel);
+    expect(infrastructureBackendSyncPausedLabel).toContain("Infrastructure API is temporarily unavailable");
+    expect(infrastructureBackendSyncPausedLabel).not.toContain("Syncing building queue");
+  });
+
+  test("does not show queue catch-up copy for shared wallet building queues", () => {
+    const readyQueue = readyBuildingQueue();
+    const walletPaths = ["Farcaster mobile", "Rabby", "OKX", "MetaMask", "generic injected wallet"];
+
+    for (const walletPath of walletPaths) {
+      const unavailableReason = buildingFinishUnavailableReasonForDisplay({
+        activeBuildingQueue: readyQueue,
+        backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+        canTransact: true,
+        infrastructureState: infrastructureState({
+          queue: readyQueue,
+          source: "contract-state-indexer",
+          stale: false,
+        }),
+        isBuildingReadyToFinish: true,
+        isDisplayedBuildingQueueReady: true,
+        now: 1_700_000_000_000,
+      });
+
+      expect(`${walletPath}: ${unavailableReason}`).not.toContain("Syncing building queue");
+      expect(unavailableReason).toBe(infrastructureBackendSyncPausedLabel);
+    }
   });
 
   test("does not let backend building finish verification bypass wallet availability", () => {
