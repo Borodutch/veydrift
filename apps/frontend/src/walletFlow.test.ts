@@ -112,6 +112,28 @@ describe("walletFlow", () => {
     expect(requests).toEqual([]);
   });
 
+  test("detects locked MetaMask from empty accounts when the unlock probe is unavailable", async () => {
+    const requests: unknown[] = [];
+    const provider = {
+      ...mockProvider(async ({ method, params }) => {
+        requests.push({ method, params });
+        if (method === "eth_accounts") return [];
+        throw new Error("eth_sendTransaction should not be called");
+      }),
+      _metamask: {},
+    } as Eip1193Provider;
+
+    await expect(assertWalletUnlocked(provider)).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+    await expect(
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
+    ).rejects.toThrow("Wallet is locked. Please unlock MetaMask and try again.");
+
+    expect(requests).toEqual([
+      { method: "eth_accounts", params: undefined },
+      { method: "eth_accounts", params: undefined },
+    ]);
+  });
+
   test("detects injected wallet availability before Mini App fallback", async () => {
     const provider = mockProvider(async () => null);
     const miniAppProvider = mockProvider(async () => null);

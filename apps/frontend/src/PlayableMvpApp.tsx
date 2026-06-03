@@ -107,6 +107,7 @@ import {
   fetchAllianceState,
   fetchPlayerProfile,
   mergePlayerProfile,
+  walletRequestErrorMessage,
   sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
@@ -175,6 +176,7 @@ import {
   transactionConfirmingLabel,
   transactionSyncingLabel,
 } from "./transactionActionGate";
+import { timestampToMs } from "./timestampFormat";
 
 const baseSepoliaReadProvider = createJsonRpcProvider(BASE_SEPOLIA.rpcUrls[0]);
 
@@ -196,6 +198,8 @@ const buildingFinishStateReadFailureLabel =
   "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
 const buildingFinishLiveStateRequiredLabel =
   "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
+const buildingWalletConfirmationLabel = (label: string) =>
+  `${label}: unlock MetaMask if needed, then confirm in your wallet.`;
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -232,8 +236,8 @@ export function researchCompletionUnavailableReasonFor({
     return "No active research queue is available to complete.";
   }
 
-  const readyAt = Number(queue.readyAt) * 1_000;
-  if (!Number.isFinite(readyAt) || readyAt <= 0) {
+  const readyAt = timestampToMs(queue.readyAt);
+  if (readyAt === undefined) {
     return "Research completion time is unavailable. Refresh research state before completing.";
   }
 
@@ -292,8 +296,8 @@ export function buildingCompletionUnavailableReasonFor({
     return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
   }
 
-  const readyAt = Number(queue.readyAt) * 1_000;
-  if (!Number.isFinite(readyAt) || readyAt <= 0) {
+  const readyAt = timestampToMs(queue.readyAt);
+  if (readyAt === undefined) {
     return "Building completion time is unavailable. Refresh infrastructure state before finishing.";
   }
 
@@ -1787,7 +1791,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         }
 
         await assertWalletUnlocked(provider);
-        setBuildingAction({ status: "pending", buildingKey: key, label: transactionAwaitingWalletLabel(label) });
+        setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
           account,
@@ -1811,7 +1815,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: error instanceof Error ? error.message : "Building upgrade transaction failed.",
+          label: walletRequestErrorMessage(error),
         });
       }
     });
@@ -1888,7 +1892,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         };
 
         await assertWalletUnlocked(provider);
-        setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: transactionAwaitingWalletLabel(label) });
+        setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendFinishBuildingUpgradeTransaction(
           provider,
           account,
@@ -3333,6 +3337,7 @@ export function PlayableMvpApp({ provider, readProvider, account, miniAppMode = 
         onCounterplay={handleCounterplay}
         onJoinAttack={handleJoinAttack}
         buildingActionNotice={infrastructureActionNotice}
+        buildingActionPendingLabel={infrastructureActionPendingLabel}
         isDefenseActionPending={defenseAction.status === "pending"}
         isResearchActionPending={researchAction.status === "pending"}
         onFinishBuilding={handleFinishBuildingUpgrade}

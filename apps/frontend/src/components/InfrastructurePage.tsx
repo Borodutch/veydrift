@@ -122,6 +122,14 @@ export function InfrastructurePage({
     loadError,
   });
   const initialLoadError = showInitialLoadError ? loadError : undefined;
+  const activeBuildingQueue = settledState.queue?.kind === "building" ? settledState.queue : undefined;
+  const finishAction = infrastructureFinishAction({
+    actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
+    isActionPending,
+    isBuildingReadyToFinish,
+    onFinishBuilding,
+    queue: activeBuildingQueue,
+  });
 
   const { detailPanelRef, selectInspectItem: handleSelectBuilding } = useInspectDetailSelection<BuildingKey>((key) => {
     setLocalSelectedKey(key);
@@ -151,14 +159,16 @@ export function InfrastructurePage({
               label={buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)}
             />
           ) : null}
-          {isBuildingReadyToFinish && onFinishBuilding ? (
+          {finishAction.visible ? (
             <button
+              aria-label={finishAction.reason ?? "Finish building upgrade"}
               className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={isActionPending}
-              onClick={onFinishBuilding}
+              disabled={finishAction.disabled}
+              onClick={finishAction.onFinish}
+              title={finishAction.reason ?? "Finish building upgrade"}
               type="button"
             >
-              Finish upgrade
+              {finishAction.label}
             </button>
           ) : null}
           </>
@@ -336,6 +346,14 @@ function BuildingDetailPanel({
     statusDisabled: status.disabled,
   });
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
+  const finishAction = infrastructureFinishAction({
+    actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
+    binary,
+    isActionPending,
+    isBuildingReadyToFinish,
+    onFinishBuilding,
+    queue: activeBuildingQueue,
+  });
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -432,14 +450,16 @@ function BuildingDetailPanel({
         </div>
       )}
 
-      {isBuildingReadyToFinish && onFinishBuilding && (
+      {finishAction.visible && (
         <button
+          aria-label={finishAction.reason ?? "Finish building upgrade"}
           className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-          disabled={Boolean(actionUnavailableReason || isActionPending)}
-          onClick={onFinishBuilding}
+          disabled={finishAction.disabled}
+          onClick={finishAction.onFinish}
+          title={finishAction.reason ?? "Finish building upgrade"}
           type="button"
         >
-          {infrastructureFinishButtonLabel(actionUnavailableReason, binary)}
+          {finishAction.label}
         </button>
       )}
 
@@ -490,6 +510,41 @@ export function infrastructureFinishButtonLabel(
   binary: boolean,
 ): string {
   return actionUnavailableReason ?? (binary ? "Finish build" : "Finish upgrade");
+}
+
+export function infrastructureFinishAction({
+  actionUnavailableReason,
+  binary = false,
+  isActionPending,
+  isBuildingReadyToFinish,
+  onFinishBuilding,
+  queue,
+}: {
+  actionUnavailableReason?: string | undefined;
+  binary?: boolean | undefined;
+  isActionPending?: boolean | undefined;
+  isBuildingReadyToFinish?: boolean | undefined;
+  onFinishBuilding?: (() => void) | undefined;
+  queue?: BuildingQueueItem | undefined;
+}): {
+  disabled: boolean;
+  label: string;
+  onFinish?: (() => void) | undefined;
+  reason?: string | undefined;
+  visible: boolean;
+} {
+  const visible = Boolean(queue && onFinishBuilding);
+  const reason = actionUnavailableReason
+    ?? (isActionPending ? "Building transaction is already in progress." : undefined)
+    ?? (isBuildingReadyToFinish ? undefined : "Building upgrade is not ready to finish yet.");
+
+  return {
+    disabled: Boolean(reason),
+    label: reason ?? infrastructureFinishButtonLabel(undefined, binary),
+    onFinish: visible && !reason ? onFinishBuilding : undefined,
+    reason,
+    visible,
+  };
 }
 
 export function ActiveBuildingQueueDetail({

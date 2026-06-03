@@ -16,6 +16,7 @@ import {
   topBarEnergyFor,
 } from "../src/PlayableMvpApp";
 import {
+  infrastructureFinishAction,
   infrastructureFinishButtonLabel,
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
@@ -39,7 +40,7 @@ describe("Playable MVP app display helpers", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: {
         status: "pending",
-        label: "Building completion: awaiting wallet",
+        label: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
       },
       gameContract: "0x3333333333333333333333333333333333333333",
       homePlanetId: "7",
@@ -57,6 +58,57 @@ describe("Playable MVP app display helpers", () => {
       statusDisabled: true,
     })).toBe("Upgrade Level 2");
     expect(infrastructureFinishButtonLabel(undefined, false)).toBe("Finish upgrade");
+  });
+
+  test("keeps infrastructure finish controls visible with disabled reasons", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+    let calls = 0;
+    const onFinishBuilding = () => {
+      calls += 1;
+    };
+
+    expect(infrastructureFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+      queue,
+    })).toEqual({
+      disabled: true,
+      label: "Building upgrade is not ready to finish yet.",
+      onFinish: undefined,
+      reason: "Building upgrade is not ready to finish yet.",
+      visible: true,
+    });
+
+    expect(infrastructureFinishAction({
+      actionUnavailableReason: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
+      isActionPending: true,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    })).toEqual({
+      disabled: true,
+      label: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
+      onFinish: undefined,
+      reason: "Building completion: unlock MetaMask if needed, then confirm in your wallet.",
+      visible: true,
+    });
+
+    const ready = infrastructureFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(ready.disabled).toBe(false);
+    expect(ready.label).toBe("Finish upgrade");
+    ready.onFinish?.();
+    expect(calls).toBe(1);
   });
 
   test("keeps terminal infrastructure action notices visible", () => {
@@ -253,6 +305,40 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
+  test("allows research completion with normalized millisecond readyAt values", () => {
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_600_000,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600000",
+          startedAt: "1699997000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+    })).toBeUndefined();
+
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_600_000,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600001",
+          startedAt: "1699997000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+    })).toBe("Research is not ready to complete yet.");
+  });
+
   test("revalidates research completion against live research state before wallet submission", async () => {
     const fallback = researchState();
     const latest = researchState({
@@ -376,6 +462,36 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_000_000,
     })).toBeUndefined();
+  });
+
+  test("allows building completion revalidation with normalized millisecond readyAt values", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: {
+          ...readyBuildingQueue(),
+          readyAt: "1700000000000",
+          startedAt: "1699997000000",
+        },
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: {
+          ...readyBuildingQueue(),
+          readyAt: "1700000000001",
+          startedAt: "1699997000000",
+        },
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe("Building upgrade is not ready to finish yet.");
   });
 
   test("revalidates building completion against live infrastructure state before wallet submission", async () => {
