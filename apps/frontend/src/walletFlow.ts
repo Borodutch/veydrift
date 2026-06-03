@@ -47,6 +47,13 @@ export type TransactionPreflightOptions = {
   readProvider?: Eip1193Provider | undefined;
 };
 
+type TransactionRequest = {
+  from: string;
+  to: string;
+  data: string;
+  gas?: string;
+};
+
 export type OnChainResources = {
   metal: string;
   crystal: string;
@@ -799,16 +806,67 @@ async function assertBuildingUpgradeEstimateSucceeds(
   from: string,
   to: string,
   data: string,
-): Promise<void> {
+): Promise<string | undefined> {
   try {
-    await provider.request({
+    const gas = await provider.request<unknown>({
       method: "eth_estimateGas",
       params: [{ from, to, data }],
     });
+    return normalizedGasQuantity(gas);
   } catch (error) {
     const reason = buildingUpgradeRevertReasons[revertSelector(error) ?? ""];
     throw new Error(reason ?? "This building completion is likely to fail on-chain. Refresh infrastructure state and retry.");
   }
+}
+
+async function assertTransactionCallSucceeds(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+  fallbackReason: string,
+): Promise<void> {
+  try {
+    await provider.request({
+      method: "eth_call",
+      params: [{ from, to, data }, "latest"],
+    });
+  } catch (error) {
+    throw new Error(preflightFailureMessage(error, fallbackReason));
+  }
+}
+
+async function estimateTransactionGas(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+  fallbackReason: string,
+): Promise<string | undefined> {
+  try {
+    const gas = await provider.request<unknown>({
+      method: "eth_estimateGas",
+      params: [{ from, to, data }],
+    });
+    return normalizedGasQuantity(gas);
+  } catch (error) {
+    throw new Error(preflightFailureMessage(error, fallbackReason));
+  }
+}
+
+function preflightFailureMessage(error: unknown, fallbackReason: string): string {
+  const message = walletRequestErrorMessage(error);
+  return message === "The game contract rejected a wallet read. Retry sync after the latest deployment finishes, or reconnect your wallet on Base Sepolia."
+    ? fallbackReason
+    : message || fallbackReason;
+}
+
+function normalizedGasQuantity(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]+$/.test(value)) {
+    return undefined;
+  }
+
+  return BigInt(value) > 0n ? value : undefined;
 }
 
 async function assertActiveBuildingConstructionReady(
@@ -1749,7 +1807,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   options: TransactionPreflightOptions = {}
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
-  const transaction = {
+  const transaction: TransactionRequest = {
     from: account,
     to: contractAddress,
     data
@@ -1758,7 +1816,8 @@ export async function sendFinishBuildingUpgradeTransaction(
   if (options.readProvider) {
     await assertActiveBuildingConstructionReady(options.readProvider, account, contractAddress, planetId);
     await assertBuildingUpgradeCallSucceeds(options.readProvider, account, contractAddress, data);
-    await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
+    const gas = await assertBuildingUpgradeEstimateSucceeds(options.readProvider, account, contractAddress, data);
+    if (gas) transaction.gas = gas;
   }
   await assertWalletUnlocked(provider);
 
@@ -1867,17 +1926,27 @@ export async function sendCollectResourcesTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  planetId: string
+  planetId: string,
+  options: TransactionPreflightOptions = {}
 ): Promise<string> {
+  const data = encodeGameCall(GAME_SELECTORS.collectResources, [planetId]);
+  const transaction: TransactionRequest = {
+    from: account,
+    to: contractAddress,
+    data
+  };
+
+  if (options.readProvider) {
+    const fallbackReason = "This resource collection is likely to fail on-chain. Refresh resources and retry.";
+    await assertTransactionCallSucceeds(options.readProvider, account, contractAddress, data, fallbackReason);
+    const gas = await estimateTransactionGas(options.readProvider, account, contractAddress, data, fallbackReason);
+    if (gas) transaction.gas = gas;
+  }
+  await assertWalletUnlocked(provider);
+
   return provider.request<string>({
     method: "eth_sendTransaction",
-    params: [
-      {
-        from: account,
-        to: contractAddress,
-        data: encodeGameCall(GAME_SELECTORS.collectResources, [planetId])
-      }
-    ]
+    params: [transaction]
   });
 }
 
