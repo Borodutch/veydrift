@@ -255,4 +255,12 @@ describe("settlement screen mode", () => {
     expect(source).toContain("disabled={networkSwitchPending}");
     expect(source).not.toContain("Unsupported Mini App network");
   });
+
+  test("rechecks the Farcaster wallet provider when connect is clicked after a cold desktop load", async () => {
+    const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("const activeProvider = provider ?? bindWalletProviderDetails(await loadWalletProviderDetails())");
+    expect(source).toContain("const accounts = await requestAccounts(activeProvider)");
+    expect(source).toContain("await refreshWallet(activeProvider, accounts[0])");
+  });
 });
