@@ -63,7 +63,7 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
   return (
     <>
       {/* Desktop sidebar */}
-      <nav className="hidden h-[calc(100dvh-52px)] w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-[52px] md:flex">
+      <nav className="hidden h-[calc(100dvh-2.75rem)] w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-11 md:flex">
         <div className="flex min-h-0 flex-1 flex-col gap-3 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] p-3 shadow-[inset_-1px_0_rgba(255,255,255,0.04)]">
           <div className="border-b border-white/10 px-2 pb-3">
             <p className="text-sm font-semibold text-white">
@@ -162,7 +162,7 @@ function NavItem({
 }) {
   return (
     <button
-      className={`flex items-center gap-2.5 rounded px-2.5 py-2 text-left text-sm transition ${
+      className={`flex w-full items-center gap-2.5 rounded px-2.5 py-2 text-left text-sm transition ${
         active
           ? "bg-white/10 font-medium text-white"
           : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
