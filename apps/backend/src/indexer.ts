@@ -163,6 +163,12 @@ type ResourceColumns = {
   deuterium: string;
 };
 
+type PlanetResourceRow = ResourceColumns & {
+  block_number: string;
+  last_settled_at: string;
+  transaction_hash: string;
+};
+
 type PlayerProfileRow = {
   display_name: string | null;
   updated_at: string | null;
@@ -1292,6 +1298,7 @@ export class SettlementIndexer {
   }
 
   private upsertPlanet(event: SettledPlanetEvent): void {
+    const planetEvent = this.withKnownPlanetResources(event);
     this.db.query(`
       INSERT INTO indexed_planets (planet_id, owner, galaxy, system, position, event_json)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -1302,12 +1309,12 @@ export class SettlementIndexer {
         position = excluded.position,
         event_json = excluded.event_json
     `).run(
-      event.planetId,
-      event.owner.toLowerCase(),
-      event.galaxy,
-      event.system,
-      event.position,
-      JSON.stringify(event)
+      planetEvent.planetId,
+      planetEvent.owner.toLowerCase(),
+      planetEvent.galaxy,
+      planetEvent.system,
+      planetEvent.position,
+      JSON.stringify(planetEvent)
     );
     this.db.query(`
       INSERT INTO contract_players (wallet, home_planet_id, planet_count, event_json, updated_at)
@@ -1325,12 +1332,12 @@ export class SettlementIndexer {
         event_json = excluded.event_json,
         updated_at = excluded.updated_at
     `).run(
-      event.owner,
-      event.planetId,
-      JSON.stringify(event),
+      planetEvent.owner,
+      planetEvent.planetId,
+      JSON.stringify(planetEvent),
       new Date().toISOString(),
-      event.owner,
-      event.planetId
+      planetEvent.owner,
+      planetEvent.planetId
     );
     this.db.query(`
       INSERT INTO contract_planets (
@@ -1353,20 +1360,80 @@ export class SettlementIndexer {
         last_settled_at = excluded.last_settled_at,
         event_json = excluded.event_json
     `).run(
-      event.planetId,
-      event.owner,
-      event.name,
-      event.galaxy,
-      event.system,
-      event.position,
-      event.fields,
-      event.temperature,
-      event.metalMultiplierBps,
-      event.crystalMultiplierBps,
-      event.deuteriumMultiplierBps,
-      event.lastSettledAt,
-      JSON.stringify(event)
+      planetEvent.planetId,
+      planetEvent.owner,
+      planetEvent.name,
+      planetEvent.galaxy,
+      planetEvent.system,
+      planetEvent.position,
+      planetEvent.fields,
+      planetEvent.temperature,
+      planetEvent.metalMultiplierBps,
+      planetEvent.crystalMultiplierBps,
+      planetEvent.deuteriumMultiplierBps,
+      planetEvent.lastSettledAt,
+      JSON.stringify(planetEvent)
     );
+    this.upsertPlanetResourceSnapshot(
+      planetEvent.planetId,
+      planetEvent.resources,
+      planetEvent.lastSettledAt,
+      planetEvent.transactionHash,
+      planetEvent.blockNumber
+    );
+  }
+
+  private updatePlanetResources(event: PlanetSettledEvent): void {
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
+    if (!row) {
+      this.upsertPlanetResourceSnapshot(event.planetId, event.resources, event.lastSettledAt, event.transactionHash, event.blockNumber);
+      return;
+    }
+
+    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
+    this.upsertPlanet({
+      ...planet,
+      transactionHash: event.transactionHash,
+      blockNumber: event.blockNumber,
+      lastSettledAt: event.lastSettledAt,
+      resources: event.resources
+    });
+  }
+
+  private withKnownPlanetResources(event: SettledPlanetEvent): SettledPlanetEvent {
+    if (!isZeroResourcePlaceholder(event)) return event;
+
+    const resources = this.planetResourceSnapshot(event.planetId);
+    if (!resources) return event;
+
+    return {
+      ...event,
+      blockNumber: resources.block_number,
+      lastSettledAt: resources.last_settled_at,
+      resources: {
+        metal: resources.metal,
+        crystal: resources.crystal,
+        deuterium: resources.deuterium
+      },
+      transactionHash: resources.transaction_hash
+    };
+  }
+
+  private planetResourceSnapshot(planetId: string): PlanetResourceRow | null {
+    return this.db.query(`
+      SELECT metal, crystal, deuterium, last_settled_at, transaction_hash, block_number
+      FROM contract_planet_resources
+      WHERE planet_id = ?
+    `).get(planetId) as PlanetResourceRow | null;
+  }
+
+  private upsertPlanetResourceSnapshot(
+    planetId: string,
+    resources: ResourceColumns,
+    lastSettledAt: string,
+    transactionHash: string,
+    blockNumber: string
+  ): void {
     this.db.query(`
       INSERT INTO contract_planet_resources (
         planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number
@@ -1380,28 +1447,14 @@ export class SettlementIndexer {
         transaction_hash = excluded.transaction_hash,
         block_number = excluded.block_number
     `).run(
-      event.planetId,
-      event.resources.metal,
-      event.resources.crystal,
-      event.resources.deuterium,
-      event.lastSettledAt,
-      event.transactionHash,
-      event.blockNumber
+      planetId,
+      resources.metal,
+      resources.crystal,
+      resources.deuterium,
+      lastSettledAt,
+      transactionHash,
+      blockNumber
     );
-  }
-
-  private updatePlanetResources(event: PlanetSettledEvent): void {
-    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
-    if (!row) return;
-
-    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
-    this.upsertPlanet({
-      ...planet,
-      transactionHash: event.transactionHash,
-      blockNumber: event.blockNumber,
-      lastSettledAt: event.lastSettledAt,
-      resources: event.resources
-    });
   }
 
   private applyPlanetRenamedEvent(event: PlanetRenamedEvent): void {
@@ -1968,6 +2021,13 @@ function indexedManagedPlanet(
     queues,
     moon: null
   };
+}
+
+function isZeroResourcePlaceholder(event: SettledPlanetEvent): boolean {
+  return event.lastSettledAt === "0"
+    && event.resources.metal === "0"
+    && event.resources.crystal === "0"
+    && event.resources.deuterium === "0";
 }
 
 function subtractResources(left: QueueState["cost"], right: QueueState["cost"]): QueueState["cost"] {
