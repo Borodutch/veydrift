@@ -6,6 +6,7 @@ import {
   formatResearchRequirements,
   getResearchRequirementStates,
   ResearchLoadErrorPanel,
+  researchRefreshErrorLabel,
   researchActionStatus,
   researchCompletionButtonState,
   shouldHideResearchValues,
@@ -46,6 +47,17 @@ describe("Research page load-error display", () => {
       researchState: researchState(),
       useLocalStateFallback: false,
     })).toBe(false);
+  });
+
+  test("labels refresh errors as stale-data notices when research state remains loaded", () => {
+    expect(researchRefreshErrorLabel({
+      error: "Research request failed with 503",
+      researchState: researchState(),
+    })).toBe("Refreshing research state: Research request failed with 503");
+    expect(researchRefreshErrorLabel({
+      error: "Research request failed with 503",
+      researchState: null,
+    })).toBeUndefined();
   });
 
   test("keeps disconnected local research fallback explicit", () => {
@@ -311,6 +323,12 @@ function textParts(node: ComponentChildren): string[] {
   }
 
   const vnode = node as VNode;
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
+      return [];
+    }
+    return textParts(vnode.type(vnode.props));
+  }
   return textParts(vnode.props?.children);
 }
 
