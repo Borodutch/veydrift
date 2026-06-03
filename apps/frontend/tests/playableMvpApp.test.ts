@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildingCompletionUnavailableReasonFor,
-  buildingCompletionUnavailableReasonAfterLiveRevalidation,
+  buildingCompletionUnavailableReasonAfterBackendRevalidation,
   buildingFinishActionErrorLabel,
+  canLoadIndexedPageState,
+  hasInfrastructureDisplayState,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
@@ -15,6 +18,7 @@ import {
   researchStateForCompletionRevalidation,
   researchStartTransactionLabel,
   topBarEnergyFor,
+  walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
 import {
   infrastructureFinishAction,
@@ -35,6 +39,28 @@ describe("Playable MVP app display helpers", () => {
       status: "pending",
       label: "Waiting for wallet confirmation",
     })).toBeUndefined();
+  });
+
+  test("gates page state refreshes until the current wallet snapshot is hydrated", () => {
+    const apiBaseUrl = "https://api.test";
+    const account = "0x2222222222222222222222222222222222222222";
+    const hydratedWalletSnapshotKey = walletSnapshotHydrationKey(apiBaseUrl, account);
+
+    expect(canLoadIndexedPageState({
+      account,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey,
+    })).toBe(true);
+    expect(canLoadIndexedPageState({
+      account,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey: walletSnapshotHydrationKey(apiBaseUrl, "0x3333333333333333333333333333333333333333"),
+    })).toBe(false);
+    expect(canLoadIndexedPageState({
+      account: undefined,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey: undefined,
+    })).toBe(true);
   });
 
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {
@@ -340,7 +366,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Research is not ready to complete yet.");
   });
 
-  test("revalidates research completion against live research state before wallet submission", async () => {
+  test("revalidates research completion against backend canonical state before wallet submission", async () => {
     const fallback = researchState();
     const latest = researchState({
       queue: {
@@ -371,11 +397,10 @@ describe("Playable MVP app display helpers", () => {
       "https://api.test",
       "0x2222222222222222222222222222222222222222",
       "7",
-      { source: "live" },
     ]]);
   });
 
-  test("allows Overview-ready research completion to reach live revalidation before wallet submission", () => {
+  test("allows Overview-ready research completion to reach backend revalidation before wallet submission", () => {
     const readyOverviewQueue = {
       active: true,
       cost: { metal: "800", crystal: "400", deuterium: "0" },
@@ -400,7 +425,28 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("No active research queue is available to complete.");
   });
 
-  test("blocks stale building completion transactions when live infrastructure has no active queue", () => {
+  test("lets Overview derive building readiness only when no canonical active building queue is available", () => {
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: null,
+      isBuildingReadyToFinish: false,
+    })).toBeUndefined();
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000600",
+      }),
+      isBuildingReadyToFinish: false,
+    })).toBe(false);
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000000",
+      }),
+      isBuildingReadyToFinish: true,
+    })).toBe(true);
+  });
+
+  test("blocks stale building completion transactions when backend infrastructure has no active queue", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: infrastructureState({ queue: null }),
@@ -408,7 +454,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
   });
 
-  test("blocks stale building completion transactions when the live queue is not ready", () => {
+  test("blocks stale building completion transactions when the backend queue is not ready", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: infrastructureState({
@@ -453,7 +499,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
-  test("allows building completion wallet submission after a live ready queue revalidation", () => {
+  test("allows building completion wallet submission after backend ready queue revalidation", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: infrastructureState({
@@ -495,7 +541,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Building upgrade is not ready to finish yet.");
   });
 
-  test("revalidates building completion against live infrastructure state before wallet submission", async () => {
+  test("revalidates building completion against backend canonical infrastructure state before wallet submission", async () => {
     const fallback = infrastructureState();
     const latest = infrastructureState({
       queue: readyBuildingQueue(),
@@ -518,11 +564,10 @@ describe("Playable MVP app display helpers", () => {
       "https://api.test",
       "0x2222222222222222222222222222222222222222",
       "7",
-      { source: "live" },
     ]]);
   });
 
-  test("uses live building completion revalidation even when the local queue snapshot is stale", async () => {
+  test("uses backend building completion revalidation even when the local queue snapshot is stale", async () => {
     const fallback = infrastructureState({
       queue: {
         ...readyBuildingQueue(),
@@ -538,7 +583,7 @@ describe("Playable MVP app display helpers", () => {
     });
     const calls: unknown[][] = [];
 
-    const result = await buildingCompletionUnavailableReasonAfterLiveRevalidation({
+    const result = await buildingCompletionUnavailableReasonAfterBackendRevalidation({
       account: "0x2222222222222222222222222222222222222222",
       activePlanetId: "7",
       apiBaseUrl: "https://api.test",
@@ -558,7 +603,6 @@ describe("Playable MVP app display helpers", () => {
       "https://api.test",
       "0x2222222222222222222222222222222222222222",
       "7",
-      { source: "live" },
     ]]);
   });
 
@@ -647,9 +691,23 @@ describe("Playable MVP app display helpers", () => {
       infrastructureError: "Infrastructure request failed with 503.",
       isWalletConnected: true,
     })).toBe("Infrastructure request failed with 503.");
+
+    expect(hasInfrastructureDisplayState({
+      activeBuildingQueue: activeBuilding,
+      homePlanetId: "7",
+      infrastructureChainState: null,
+      onChainResources: { metal: 500, crystal: 300, deuterium: 100 },
+    })).toBe(true);
+
+    expect(hasInfrastructureDisplayState({
+      activeBuildingQueue: null,
+      homePlanetId: "7",
+      infrastructureChainState: null,
+      onChainResources: { metal: 500, crystal: 300, deuterium: 100 },
+    })).toBe(false);
   });
 
-  test("allows building transactions from refreshed live infrastructure resources", () => {
+  test("allows building transactions from refreshed backend infrastructure resources", () => {
     expect(refreshedInfrastructureUnavailableReasonFor({
       gameContract: "0x3333333333333333333333333333333333333333",
       homePlanetId: "7",
@@ -675,7 +733,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Infrastructure is unavailable on this deployment.");
   });
 
-  test("blocks building transactions when refreshed live resources cannot afford the upgrade", () => {
+  test("blocks building transactions when refreshed backend resources cannot afford the upgrade", () => {
     expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
       buildingKey: "solarPlant",
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -689,7 +747,7 @@ describe("Playable MVP app display helpers", () => {
     })).toContain("Requires");
   });
 
-  test("blocks building transactions when refreshed live infrastructure has an active building queue", () => {
+  test("blocks building transactions when refreshed backend infrastructure has an active building queue", () => {
     expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
       buildingKey: "metalMine",
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -710,7 +768,7 @@ describe("Playable MVP app display helpers", () => {
     })).toContain("currently upgrading");
   });
 
-  test("hydrates indexed planet state before requesting live settlement state", async () => {
+  test("hydrates indexed planet state before requesting canonical settlement state", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
     const requestedPaths: string[] = [];
@@ -720,7 +778,7 @@ describe("Playable MVP app display helpers", () => {
       requestedPaths.push(`${url.pathname}${url.search}`);
 
       if (url.pathname.endsWith("/settlement")) {
-        throw new Error("indexed state should hydrate before live settlement reads");
+        throw new Error("indexed state should hydrate before canonical settlement reads");
       }
 
       if (url.pathname.endsWith("/planets")) {
@@ -915,7 +973,7 @@ describe("Playable MVP app display helpers", () => {
       requestedPaths.push(url.pathname);
 
       if (url.pathname.endsWith("/settlement")) {
-        throw new Error("indexed state should hydrate before live settlement reads");
+        throw new Error("indexed state should hydrate before canonical settlement reads");
       }
 
       if (url.pathname.endsWith("/planets")) {
@@ -1008,7 +1066,7 @@ describe("Playable MVP app display helpers", () => {
     }
   });
 
-  test("falls back to live settlement state when indexed planets are empty", async () => {
+  test("falls back to canonical settlement state when indexed planets are empty", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
     const requestedPaths: string[] = [];
@@ -1123,6 +1181,18 @@ function researchState({
       { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
     ],
     queue: queue ?? null,
+  };
+}
+
+function buildingQueue(overrides: Partial<QueueStateResponse> = {}): QueueStateResponse {
+  return {
+    active: true,
+    cost: { metal: "60", crystal: "15", deuterium: "0" },
+    itemId: 0,
+    kind: "building",
+    readyAt: "1700000000",
+    targetLevel: 2,
+    ...overrides,
   };
 }
 

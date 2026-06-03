@@ -1110,9 +1110,8 @@ function isDegradableReadError(error: unknown): boolean {
     && (error.message === "backend_not_configured" || isRpcTransportError(error));
 }
 
-function requestsLiveState(url: URL): boolean {
-  const source = url.searchParams.get("source") ?? url.searchParams.get("stateSource");
-  return source === "live" || url.searchParams.get("live") === "1";
+function requestsLiveState(_url: URL): boolean {
+  return false;
 }
 
 function selectedPlanetIdOrUndefined(url: URL): bigint | undefined {

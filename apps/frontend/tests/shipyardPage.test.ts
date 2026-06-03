@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
-import { getBlockedReason, getShipRequirementStates, shipProductionItems } from "../src/components/ShipyardPage";
+import { getBlockedReason, getShipRequirementStates, shipProductionItems, shipyardRefreshErrorLabel } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
 import { shipCatalog } from "../src/playableMvp";
 
@@ -51,6 +51,17 @@ describe("Shipyard page display helpers", () => {
       shipUnavailable: false,
       shipyardState: null,
     })).toBe("Waiting for chain state");
+  });
+
+  test("labels refresh errors as stale-data notices when shipyard state remains loaded", () => {
+    expect(shipyardRefreshErrorLabel({
+      error: "Shipyard request failed with 503",
+      shipyardState: shipyardState(),
+    })).toBe("Refreshing shipyard state: Shipyard request failed with 503");
+    expect(shipyardRefreshErrorLabel({
+      error: "Shipyard request failed with 503",
+      shipyardState: null,
+    })).toBeUndefined();
   });
 
   test("returns visible met and unmet ship requirement states", () => {
