@@ -612,15 +612,29 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_000_000,
     })).toBe(buildingFinishLiveStateRequiredLabel);
+  });
+
+  test("allows indexed ready building queues to reach readonly completion preflight", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      canVerifyWithReadonlyProvider: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
 
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
+      canVerifyWithReadonlyProvider: true,
       infrastructureState: infrastructureState({
         queue: readyBuildingQueue(),
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBe(buildingFinishLiveStateRequiredLabel);
+    })).toBeUndefined();
   });
 
   test("allows building completion wallet submission after backend ready queue revalidation", () => {
@@ -711,6 +725,7 @@ describe("Playable MVP app display helpers", () => {
       account: "0x2222222222222222222222222222222222222222",
       activePlanetId: "7",
       apiBaseUrl: "https://api.test",
+      canVerifyWithReadonlyProvider: true,
       fallback,
       loadInfrastructureState: ((...args: unknown[]) => {
         calls.push(args);
