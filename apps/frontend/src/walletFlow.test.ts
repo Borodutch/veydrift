@@ -78,6 +78,7 @@ const contract = "0x2222222222222222222222222222222222222222";
 describe("walletFlow", () => {
   test("classifies Base Sepolia chain ids", () => {
     expect(isBaseSepoliaChain("0x14a34")).toBe(true);
+    expect(isBaseSepoliaChain("84532")).toBe(true);
     expect(isBaseSepoliaChain(84532)).toBe(true);
     expect(isBaseSepoliaChain("0x1")).toBe(false);
   });
@@ -784,6 +785,51 @@ describe("walletFlow", () => {
       "wallet_switchEthereumChain",
       "wallet_addEthereumChain",
       "wallet_switchEthereumChain",
+    ]);
+  });
+
+  test("retries Base Sepolia switch when Rabby iOS reports the chain is already added", async () => {
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "wallet_switchEthereumChain") {
+        if (calls.filter((call) => call === "wallet_switchEthereumChain").length > 1) {
+          return null;
+        }
+        throw { code: 4902 };
+      }
+      if (method === "wallet_addEthereumChain") {
+        throw { code: -32603, message: "Base Sepolia has already been added." };
+      }
+      return null;
+    });
+
+    await ensureBaseSepoliaNetwork(provider);
+
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
+      "wallet_switchEthereumChain",
+    ]);
+  });
+
+  test("surfaces rejected Base Sepolia add requests when the chain is genuinely missing", async () => {
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "wallet_switchEthereumChain") {
+        throw { code: 4902 };
+      }
+      if (method === "wallet_addEthereumChain") {
+        throw { code: 4001, message: "User rejected the request." };
+      }
+      return null;
+    });
+
+    await expect(ensureBaseSepoliaNetwork(provider)).rejects.toMatchObject({ code: 4001 });
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
     ]);
   });
 
