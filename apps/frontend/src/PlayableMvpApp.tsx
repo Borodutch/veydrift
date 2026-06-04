@@ -209,6 +209,7 @@ export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 const buildingWalletConfirmationLabel = (label: string) =>
   `${label}: unlock your wallet if needed, then confirm in your wallet.`;
+const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -1323,6 +1324,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
+  const onChainRefreshRequestId = useRef(0);
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -1609,6 +1611,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
   const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }) => {
+    const requestId = ++onChainRefreshRequestId.current;
     if (!apiBaseUrl || !account) {
       setOnChainSettlement(undefined);
       setWalletPlanets([]);
@@ -1635,6 +1638,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             planet: selectedPlanet,
           }
         : settlement;
+      if (requestId !== onChainRefreshRequestId.current) {
+        return;
+      }
       setWalletPlanets(planets);
       if (!selectedPlanetId && selectedPlanet?.planetId) {
         setSelectedPlanetId(selectedPlanet.planetId);
@@ -1647,6 +1653,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setOnChainStatus("ready");
       setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
     } catch (error) {
+      if (requestId !== onChainRefreshRequestId.current) {
+        return;
+      }
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainStatus("error");
     }
@@ -1996,6 +2005,40 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }, 120_000);
     return () => window.clearInterval(interval);
   }, [chainSyncHealthy, refreshInfrastructureState, refreshOnChainState]);
+
+  useEffect(() => {
+    if (!apiBaseUrl || !account || !pageStateHydrationReady || !onChainSettlement?.planet) {
+      return;
+    }
+
+    let refreshInFlight = false;
+    const refreshTopBarResources = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      if (refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+      Promise.allSettled([
+        refreshOnChainState(),
+        refreshInfrastructureState(),
+      ]).finally(() => {
+        refreshInFlight = false;
+      });
+    };
+
+    const interval = window.setInterval(refreshTopBarResources, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [
+    account,
+    apiBaseUrl,
+    onChainSettlement?.planet?.planetId,
+    pageStateHydrationReady,
+    refreshInfrastructureState,
+    refreshOnChainState,
+  ]);
 
   const state = useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState, now), [infrastructureChainState, now]);
   const settledState = state;

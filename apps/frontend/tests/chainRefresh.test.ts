@@ -12,6 +12,18 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("2_500");
   });
 
+  test("polls the canonical wallet resource snapshot for the hydrated top bar", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000");
+    expect(source).toContain("refreshTopBarResources");
+    expect(source).toContain("document.visibilityState === \"hidden\"");
+    expect(source).toContain("refreshOnChainState()");
+    expect(source).toContain("refreshInfrastructureState()");
+    expect(source).toContain("onChainRefreshRequestId");
+    expect(source).toContain("requestId !== onChainRefreshRequestId.current");
+  });
+
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
     const walletFlowSource = await Bun.file(new URL("../src/walletFlow.ts", import.meta.url)).text();
