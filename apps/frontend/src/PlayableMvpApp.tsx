@@ -283,7 +283,7 @@ export function overviewBuildingReadyToFinishFlag({
 export function canonicalInfrastructureBuildingCompletionQueue(
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
-  if (!infrastructureState || infrastructureState.stale === true) {
+  if (!infrastructureState) {
     return null;
   }
 
@@ -320,10 +320,6 @@ export function buildingCompletionUnavailableReasonFor({
     return "Wallet or game contract is unavailable.";
   }
 
-  if (infrastructureState?.stale === true) {
-    return infrastructureBackendSyncPausedLabel;
-  }
-
   const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
   if (!queue?.active && !infrastructureState) {
     return buildingFinishLiveStateRequiredLabel;
@@ -351,7 +347,6 @@ function buildingCompletionQueueForVerification(
 ): QueueStateResponse | null {
   const infrastructureQueue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
   if (infrastructureQueue?.active) return infrastructureQueue;
-  if (infrastructureState?.stale === true) return null;
   return fallbackBuildingQueue?.active && fallbackBuildingQueue.kind === "building"
     ? fallbackBuildingQueue
     : null;
@@ -707,7 +702,7 @@ export function infrastructureBackendSyncPausedReasonFor({
   infrastructureChainState: ChainInfrastructureState | null;
   infrastructureError?: string | undefined;
 }): string | undefined {
-  if (infrastructureError || infrastructureChainState?.stale === true) {
+  if (infrastructureError || infrastructureChainState?.degraded === true) {
     return infrastructureBackendSyncPausedLabel;
   }
   return undefined;
