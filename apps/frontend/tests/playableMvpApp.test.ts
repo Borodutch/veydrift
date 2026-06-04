@@ -32,7 +32,11 @@ import {
   researchStateForCompletionRevalidation,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
+  shouldPollTopBarResources,
+  topBarInfrastructureStateWithResources,
   topBarEnergyFor,
+  topBarResourcePollIntervalMs,
+  walletTopBarResourcesFor,
   walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
@@ -381,6 +385,92 @@ describe("Playable MVP app display helpers", () => {
       isWalletConnected: false,
       onChainResources: resources,
     })).toBeUndefined();
+  });
+
+  test("uses canonical accrued infrastructure resources for the wallet top bar", () => {
+    const settlementResources = { metal: 5_000, crystal: 4_900, deuterium: 4_800 };
+
+    expect(walletTopBarResourcesFor({
+      infrastructureChainState: infrastructureState({
+        resources: { metal: "5064", crystal: "4932", deuterium: "4807" },
+      }),
+      isWalletConnected: true,
+      onChainResources: settlementResources,
+    })).toEqual({ metal: 5_064, crystal: 4_932, deuterium: 4_807 });
+
+    expect(walletTopBarResourcesFor({
+      infrastructureChainState: { ...infrastructureState(), resources: null },
+      isWalletConnected: true,
+      onChainResources: settlementResources,
+    })).toBe(settlementResources);
+
+    expect(walletTopBarResourcesFor({
+      infrastructureChainState: infrastructureState(),
+      isWalletConnected: false,
+      onChainResources: settlementResources,
+    })).toBeUndefined();
+  });
+
+  test("updates only canonical accrued resource fields for top-bar polls", () => {
+    const current = infrastructureState({
+      resources: { metal: "5000", crystal: "4900", deuterium: "4800" },
+      source: "contract-state-indexer",
+    });
+    const next = infrastructureState({
+      resources: { metal: "5064", crystal: "4932", deuterium: "4807" },
+      source: "contract-state-indexer",
+      stale: true,
+    });
+
+    const merged = topBarInfrastructureStateWithResources({
+      currentInfrastructureChainState: current,
+      nextInfrastructureChainState: {
+        ...next,
+        buildings: [{ id: 0, level: 99, cost: { metal: "1", crystal: "1", deuterium: "0" } }],
+      },
+    });
+
+    expect(merged.resources).toEqual({ metal: "5064", crystal: "4932", deuterium: "4807" });
+    expect(merged.buildings).toBe(current.buildings);
+    expect(merged.stale).toBe(true);
+    expect(topBarInfrastructureStateWithResources({
+      currentInfrastructureChainState: null,
+      nextInfrastructureChainState: next,
+    })).toBe(next);
+  });
+
+  test("polls top-bar resources only after wallet API hydration", () => {
+    expect(topBarResourcePollIntervalMs).toBe(10_000);
+    expect(shouldPollTopBarResources({
+      account: "0x2222222222222222222222222222222222222222",
+      apiBaseUrl: "https://api.test",
+      isWalletConnected: true,
+      pageStateHydrationReady: true,
+    })).toBe(true);
+    expect(shouldPollTopBarResources({
+      account: undefined,
+      apiBaseUrl: "https://api.test",
+      isWalletConnected: true,
+      pageStateHydrationReady: true,
+    })).toBe(false);
+    expect(shouldPollTopBarResources({
+      account: "0x2222222222222222222222222222222222222222",
+      apiBaseUrl: undefined,
+      isWalletConnected: true,
+      pageStateHydrationReady: true,
+    })).toBe(false);
+    expect(shouldPollTopBarResources({
+      account: "0x2222222222222222222222222222222222222222",
+      apiBaseUrl: "https://api.test",
+      isWalletConnected: false,
+      pageStateHydrationReady: true,
+    })).toBe(false);
+    expect(shouldPollTopBarResources({
+      account: "0x2222222222222222222222222222222222222222",
+      apiBaseUrl: "https://api.test",
+      isWalletConnected: true,
+      pageStateHydrationReady: false,
+    })).toBe(false);
   });
 
   test("blocks research completion transactions until the active queue is ready", () => {

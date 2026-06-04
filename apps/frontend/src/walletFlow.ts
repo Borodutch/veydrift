@@ -1977,6 +1977,9 @@ function withWalletReadOptions(path: string, planetId: string | undefined, optio
   if (planetId && isContractPlanetId(planetId)) {
     params.set("planetId", planetId);
   }
+  if (options.source) {
+    params.set("source", options.source);
+  }
 
   const query = params.toString();
   return query ? `${path}?${query}` : path;

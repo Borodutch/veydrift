@@ -1423,6 +1423,7 @@ describe("walletFlow", () => {
       await fetchWalletQueues("https://api.example.test///", account, "7");
       await fetchInfrastructureState("https://api.example.test", account);
       await fetchInfrastructureState("https://api.example.test", account, undefined);
+      await fetchInfrastructureState("https://api.example.test", account, "7", { source: "indexed" });
       await fetchMoonState("https://api.example.test", account, "7");
       await fetchMoonState("https://api.example.test", account, "7");
       await fetchMoonState("https://api.example.test", account, "8:37:9");
@@ -1488,6 +1489,14 @@ describe("walletFlow", () => {
       },
       {
         url: `https://api.example.test/wallet/${account}/infrastructure`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/infrastructure?planetId=7&source=indexed`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },

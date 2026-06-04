@@ -197,6 +197,60 @@ export function walletSpendableResourcesFor({
   return isWalletConnected ? onChainResources : undefined;
 }
 
+export function walletTopBarResourcesFor({
+  infrastructureChainState,
+  isWalletConnected,
+  onChainResources,
+}: {
+  infrastructureChainState: ChainInfrastructureState | null;
+  isWalletConnected: boolean;
+  onChainResources: PlayableState["resources"] | undefined;
+}): PlayableState["resources"] | undefined {
+  if (!isWalletConnected) return undefined;
+
+  return resourcesFromChain(infrastructureChainState?.resources ?? null) ?? onChainResources;
+}
+
+export function topBarInfrastructureStateWithResources({
+  currentInfrastructureChainState,
+  nextInfrastructureChainState,
+}: {
+  currentInfrastructureChainState: ChainInfrastructureState | null;
+  nextInfrastructureChainState: ChainInfrastructureState;
+}): ChainInfrastructureState {
+  if (!currentInfrastructureChainState) return nextInfrastructureChainState;
+
+  const merged = {
+    ...currentInfrastructureChainState,
+    homePlanetId: nextInfrastructureChainState.homePlanetId,
+    resources: nextInfrastructureChainState.resources,
+  };
+  if (nextInfrastructureChainState.source !== undefined) {
+    merged.source = nextInfrastructureChainState.source;
+  }
+  if (nextInfrastructureChainState.stale !== undefined) {
+    merged.stale = nextInfrastructureChainState.stale;
+  }
+
+  return merged;
+}
+
+export const topBarResourcePollIntervalMs = 10_000;
+
+export function shouldPollTopBarResources({
+  account,
+  apiBaseUrl,
+  isWalletConnected,
+  pageStateHydrationReady,
+}: {
+  account: string | undefined;
+  apiBaseUrl: string | undefined;
+  isWalletConnected: boolean;
+  pageStateHydrationReady: boolean;
+}): boolean {
+  return Boolean(isWalletConnected && account && apiBaseUrl && pageStateHydrationReady);
+}
+
 const buildingFinishStateReadFailureLabel =
   "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
 const buildingFinishLiveStateRequiredLabel =
@@ -1323,6 +1377,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
+  const infrastructureRequestId = useRef(0);
+  const topBarResourceRequestId = useRef(0);
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -1444,9 +1500,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [runtimeConfig]);
 
   const refreshInfrastructureState = useCallback(async () => {
+    const requestId = ++infrastructureRequestId.current;
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
       setMoonState(null);
+      setInfrastructureLoading(false);
+      setMoonLoading(false);
       return;
     }
 
@@ -1459,6 +1518,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         settlePromise(fetchInfrastructureState(apiBaseUrl, account, activePlanetId)),
         settlePromise(fetchMoonState(apiBaseUrl, account, activePlanetId)),
       ]);
+      if (requestId !== infrastructureRequestId.current) return;
       if (infrastructureResult.status === "fulfilled") {
         setInfrastructureChainState(infrastructureResult.value);
       } else {
@@ -1472,14 +1532,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setMoonError(moonResult.reason instanceof Error ? moonResult.reason.message : "Moon state could not be loaded.");
       }
     } finally {
-      setInfrastructureLoading(false);
-      setMoonLoading(false);
+      if (requestId === infrastructureRequestId.current) {
+        setInfrastructureLoading(false);
+        setMoonLoading(false);
+      }
     }
   }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshLiveInfrastructureState = useCallback(async () => {
+    const requestId = ++infrastructureRequestId.current;
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
+      setInfrastructureLoading(false);
       return null;
     }
 
@@ -1487,14 +1551,36 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setInfrastructureError(undefined);
     try {
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
-      setInfrastructureChainState(nextInfrastructure);
+      if (requestId === infrastructureRequestId.current) {
+        setInfrastructureChainState(nextInfrastructure);
+      }
       return nextInfrastructure;
     } catch (error) {
       console.error(error);
-      setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
+      if (requestId === infrastructureRequestId.current) {
+        setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
+      }
       throw error;
     } finally {
-      setInfrastructureLoading(false);
+      if (requestId === infrastructureRequestId.current) {
+        setInfrastructureLoading(false);
+      }
+    }
+  }, [account, activePlanetId, apiBaseUrl]);
+
+  const refreshTopBarResources = useCallback(async () => {
+    const requestId = ++topBarResourceRequestId.current;
+    if (!apiBaseUrl || !account) return;
+
+    try {
+      const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId, { source: "indexed" });
+      if (requestId !== topBarResourceRequestId.current) return;
+      setInfrastructureChainState((current) => topBarInfrastructureStateWithResources({
+        currentInfrastructureChainState: current,
+        nextInfrastructureChainState: nextInfrastructure,
+      }));
+    } catch (error) {
+      console.error(error);
     }
   }, [account, activePlanetId, apiBaseUrl]);
 
@@ -1938,6 +2024,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [pageStateHydrationReady, refreshInfrastructureState]);
 
   useEffect(() => {
+    if (!shouldPollTopBarResources({ account, apiBaseUrl, isWalletConnected, pageStateHydrationReady })) return;
+
+    void refreshTopBarResources();
+    const intervalId = window.setInterval(() => {
+      void refreshTopBarResources();
+    }, topBarResourcePollIntervalMs);
+
+    return () => {
+      topBarResourceRequestId.current += 1;
+      window.clearInterval(intervalId);
+    };
+  }, [account, apiBaseUrl, isWalletConnected, pageStateHydrationReady, refreshTopBarResources]);
+
+  useEffect(() => {
     if (!apiBaseUrl || !account || typeof window.EventSource === "undefined") {
       setChainSyncHealthy(false);
       return;
@@ -2048,6 +2148,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const spendableResources = useMemo(() => {
     return walletSpendableResourcesFor({ isWalletConnected, onChainResources });
   }, [isWalletConnected, onChainResources]);
+  const topBarResources = useMemo(() => {
+    return walletTopBarResourcesFor({ infrastructureChainState, isWalletConnected, onChainResources });
+  }, [infrastructureChainState, isWalletConnected, onChainResources]);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
@@ -3637,7 +3740,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       rates={rates}
       resourceStatus={isWalletConnected && !walletPlanetHydrated && onChainStatus !== "error" ? "loading" : isWalletConnected ? onChainStatus : "local"}
       researchQueue={isWalletConnected ? undefined : settledState.researchQueue}
-      resources={isWalletConnected ? spendableResources : settledState.resources}
+      resources={isWalletConnected ? topBarResources : settledState.resources}
     />
   );
 
