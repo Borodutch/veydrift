@@ -219,6 +219,36 @@ export function buildingFinishActionErrorLabel(error: unknown): string {
   return message || "Finish building upgrade transaction failed.";
 }
 
+export function buildingFinishFailureStateFor({
+  activeBuildingQueue,
+  error,
+  expectation,
+}: {
+  activeBuildingQueue: QueueStateResponse | null | undefined;
+  error: unknown;
+  expectation?: FinishedBuildingExpectation | undefined;
+}): {
+  failedExpectation?: FinishedBuildingExpectation | undefined;
+  label: string;
+} {
+  const failedSyncReason = failedBuildingFinishSyncReasonFor({
+    activeBuildingQueue,
+    expectation,
+  });
+  if (failedSyncReason) {
+    return {
+      failedExpectation: expectation,
+      label: failedSyncReason,
+    };
+  }
+
+  return {
+    label: isUserRejected(error)
+      ? "Finish building upgrade transaction was cancelled."
+      : buildingFinishActionErrorLabel(error),
+  };
+}
+
 export function researchCompletionUnavailableReasonFor({
   canTransact,
   now = Date.now(),
@@ -2363,18 +2393,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         }
       } catch (error) {
         console.error(error);
-        const label = buildingFinishActionErrorLabel(error);
-        const failedSyncReason = failedBuildingFinishSyncReasonFor({
+        const failureState = buildingFinishFailureStateFor({
           activeBuildingQueue,
+          error,
           expectation: finishExpectation,
         });
-        if (!isUserRejected(error) && failedSyncReason) {
-          setFailedBuildingFinishExpectation(finishExpectation);
+        if (failureState.failedExpectation) {
+          setFailedBuildingFinishExpectation(failureState.failedExpectation);
         }
         setBuildingAction({
           status: "error",
           buildingKey: completionBuildingKey,
-          label: !isUserRejected(error) && failedSyncReason ? failedSyncReason : label,
+          label: failureState.label,
         });
       }
     });

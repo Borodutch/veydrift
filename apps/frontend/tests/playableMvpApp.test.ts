@@ -3,6 +3,7 @@ import {
   buildingCompletionUnavailableReasonFor,
   buildingCompletionUnavailableReasonAfterBackendRevalidation,
   buildingCompletionReadyToFinishFlag,
+  buildingFinishFailureStateFor,
   buildingFinishUnavailableReasonForDisplay,
   buildingFinishActionErrorLabel,
   canLoadIndexedPageState,
@@ -966,6 +967,46 @@ describe("Playable MVP app display helpers", () => {
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
     })).toContain("Building completion failed for this ready queue");
+  });
+
+  test("treats cancelled finish sends after queue revalidation as stale failed completions", () => {
+    const readyQueue = readyBuildingQueue();
+    const expectation = {
+      itemId: readyQueue.itemId,
+      targetLevel: readyQueue.targetLevel,
+    };
+
+    expect(buildingFinishFailureStateFor({
+      activeBuildingQueue: readyQueue,
+      error: { code: 4001, message: "User rejected the request." },
+      expectation,
+    })).toEqual({
+      failedExpectation: expectation,
+      label: "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.",
+    });
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      failedBuildingFinishExpectation: expectation,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toContain("Building completion failed for this ready queue");
+  });
+
+  test("keeps plain cancelled finish requests distinct when no ready queue was revalidated", () => {
+    expect(buildingFinishFailureStateFor({
+      activeBuildingQueue: null,
+      error: { code: 4001, message: "User rejected the request." },
+    })).toEqual({
+      label: "Finish building upgrade transaction was cancelled.",
+    });
   });
 
   test("clears failed finish blocking when the active building queue changes", () => {
