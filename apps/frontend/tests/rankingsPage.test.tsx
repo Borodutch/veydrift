@@ -116,6 +116,16 @@ describe("RankingsPage", () => {
     expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
   });
 
+  test("serves ranked home planet thumbnails through responsive variants", () => {
+    const table = RankingsTable({ entries: [rankingEntry()], loading: false });
+    const image = elementNodes(table).find((item) => item.type === "img" && item.props?.alt === "");
+
+    expect(image?.props?.src).toBe("/assets/game/style-pass/generated/planets/temperate-ocean.webp");
+    expect(image?.props?.sizes).toBe("40px");
+    expect(image?.props?.srcSet).toContain("/assets/game/sizes/64/style-pass/generated/planets/temperate-ocean.webp 64w");
+    expect(image?.props?.srcSet).toContain("/assets/game/style-pass/generated/planets/temperate-ocean.webp 1024w");
+  });
+
   test("reads the canonical total ranking from the existing highscore payload", () => {
     const entry = rankingEntry();
     const data: HighscoreResponse = {
