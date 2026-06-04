@@ -1696,14 +1696,6 @@ export function spendableResources(resources: Resources, collectibleDeltas?: Res
   };
 }
 
-export function hasCollectableResources(
-  rates: Resources,
-  lastSettledAtSeconds: number,
-  now = Date.now(),
-): boolean {
-  return resourceEntries(collectibleResourceDeltas(rates, lastSettledAtSeconds, now)).some(([, value]) => value > 0);
-}
-
 export function collectibleResourceDeltas(
   rates: Resources,
   lastSettledAtSeconds: number,
