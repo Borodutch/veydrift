@@ -312,7 +312,7 @@ export function failedBuildingFinishSyncReasonFor({
 export function canonicalInfrastructureBuildingCompletionQueue(
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
-  if (!infrastructureState) {
+  if (!infrastructureState || backendCanonicalStatePaused(infrastructureState)) {
     return null;
   }
 
@@ -349,11 +349,18 @@ export function buildingCompletionUnavailableReasonFor({
     return "Wallet or game contract is unavailable.";
   }
 
-  const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
-  if (!queue?.active && !infrastructureState) {
+  if (!infrastructureState) {
     return buildingFinishLiveStateRequiredLabel;
   }
 
+  const backendPausedReason = infrastructureBackendSyncPausedReasonFor({
+    infrastructureChainState: infrastructureState,
+  });
+  if (backendPausedReason) {
+    return backendPausedReason;
+  }
+
+  const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
   if (!queue?.active) {
     return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
   }
@@ -372,13 +379,9 @@ export function buildingCompletionUnavailableReasonFor({
 
 function buildingCompletionQueueForVerification(
   infrastructureState: ChainInfrastructureState | null,
-  fallbackBuildingQueue?: QueueStateResponse | null | undefined,
+  _fallbackBuildingQueue?: QueueStateResponse | null | undefined,
 ): QueueStateResponse | null {
-  const infrastructureQueue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
-  if (infrastructureQueue?.active) return infrastructureQueue;
-  return fallbackBuildingQueue?.active && fallbackBuildingQueue.kind === "building"
-    ? fallbackBuildingQueue
-    : null;
+  return canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
 }
 
 export function buildingFinishUnavailableReasonForDisplay({
@@ -745,10 +748,14 @@ export function infrastructureBackendSyncPausedReasonFor({
   infrastructureChainState: ChainInfrastructureState | null;
   infrastructureError?: string | undefined;
 }): string | undefined {
-  if (infrastructureError || infrastructureChainState?.degraded === true) {
+  if (infrastructureError || backendCanonicalStatePaused(infrastructureChainState)) {
     return infrastructureBackendSyncPausedLabel;
   }
   return undefined;
+}
+
+function backendCanonicalStatePaused(state: ChainInfrastructureState | null): boolean {
+  return state?.degraded === true || state?.stale === true;
 }
 
 export function infrastructureLoadErrorFor({

@@ -702,7 +702,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
-  test("allows ready indexed building completion during normal backend reconciliation", () => {
+  test("blocks ready indexed building completion while backend canonical state is stale", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: infrastructureState({
@@ -711,7 +711,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
 
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
@@ -720,7 +720,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
   test("allows indexed ready building queues after backend revalidation without readonly preflight gating", () => {
@@ -735,20 +735,20 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("allows indexed ready building queues to verify while infrastructure detail state is still loading", () => {
+  test("blocks indexed ready building queues while infrastructure detail state is still loading", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(buildingCompletionReadyToFinishFlag({
       fallbackBuildingQueue: readyQueue,
       infrastructureState: null,
       now: 1_700_000_000_000,
-    })).toBe(true);
+    })).toBe(false);
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       fallbackBuildingQueue: readyQueue,
       infrastructureState: null,
       now: 1_700_000_000_000,
-    })).toBeUndefined();
+    })).toBe(buildingFinishLiveStateRequiredLabel);
     expect(buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue: readyQueue,
       canTransact: true,
@@ -759,7 +759,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("keeps ready indexed infrastructure actionable during normal reconciliation", () => {
+  test("keeps ready indexed infrastructure paused during backend reconciliation", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(buildingCompletionReadyToFinishFlag({
@@ -770,7 +770,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBe(true);
+    })).toBe(false);
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       fallbackBuildingQueue: readyQueue,
@@ -780,7 +780,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
   test("keeps displayed building finish verification open when backend indexed queue is ready", () => {
@@ -818,7 +818,7 @@ describe("Playable MVP app display helpers", () => {
         source: "contract-state-indexer",
         stale: true,
       }),
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
 
     expect(infrastructureBackendSyncPausedReasonFor({
       infrastructureChainState: infrastructureState({
@@ -1097,7 +1097,7 @@ describe("Playable MVP app display helpers", () => {
     ]]);
   });
 
-  test("uses the indexed wallet building queue when completion revalidation has no infrastructure detail yet", async () => {
+  test("blocks the indexed wallet building queue when completion revalidation has no infrastructure detail yet", async () => {
     const readyQueue = readyBuildingQueue();
     const calls: unknown[][] = [];
 
@@ -1116,7 +1116,7 @@ describe("Playable MVP app display helpers", () => {
 
     expect(result).toEqual({
       infrastructureState: null,
-      unavailableReason: undefined,
+      unavailableReason: buildingFinishLiveStateRequiredLabel,
     });
     expect(calls).toEqual([[
       "https://api.test",
