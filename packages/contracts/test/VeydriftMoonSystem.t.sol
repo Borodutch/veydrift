@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
@@ -123,6 +124,37 @@ contract VeydriftMoonSystemTest is Test {
         randomness.setRequesterAuthorization(address(moons), true);
         moons.setMoonChanceReporter(reporter);
         vm.deal(player, 1 ether);
+    }
+
+    function testProxyInitializationAndOwnerUpgradeGate() public {
+        VeydriftMoonSystem proxied = VeydriftMoonSystem(
+            address(
+                new ERC1967Proxy(
+                    address(new VeydriftMoonSystem(address(game), address(randomness))),
+                    abi.encodeCall(
+                        VeydriftMoonSystem.initialize, (address(game), address(randomness), admin)
+                    )
+                )
+            )
+        );
+
+        assertEq(proxied.owner(), admin);
+        assertEq(address(proxied.game()), address(game));
+        assertEq(address(proxied.randomness()), address(randomness));
+        assertEq(proxied.moonChanceReporter(), address(game));
+        assertEq(proxied.nextMoonChanceId(), 1);
+        assertEq(proxied.nextMoonDestructionId(), 1);
+
+        VeydriftMoonSystem nextImplementation =
+            new VeydriftMoonSystem(address(game), address(randomness));
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, player));
+        proxied.upgradeToAndCall(address(nextImplementation), "");
+
+        vm.prank(admin);
+        proxied.upgradeToAndCall(address(nextImplementation), "");
+        assertEq(proxied.owner(), admin);
+        assertEq(address(proxied.game()), address(game));
     }
 
     function testDirectPlayerMoonCreationReverts() public {

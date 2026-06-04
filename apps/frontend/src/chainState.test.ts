@@ -97,14 +97,27 @@ describe("chainState", () => {
     expect(isBuildingQueueReadyToFinish(buildingQueue({ readyAt: "0" }), 1_700_000_060_000)).toBe(false);
   });
 
-  test("prefers the wallet queues building payload when both queue sources are active", () => {
+  test("prefers the selected infrastructure building payload when both queue sources are active", () => {
     const queuesBuilding = buildingQueue({ itemId: 3, targetLevel: 1, readyAt: "1700000060" });
     const infrastructureBuilding = buildingQueue({ itemId: 0, targetLevel: 1, readyAt: "1700000060" });
 
     expect(activeBuildingQueueResponse(
       playerQueues(queuesBuilding),
       infrastructureWithQueue(infrastructureBuilding),
-    )).toEqual(queuesBuilding);
+    )).toEqual(infrastructureBuilding);
+  });
+
+  test("does not let a stale ready wallet queue override refreshed infrastructure state", () => {
+    const walletReadyQueue = buildingQueue({ itemId: 3, targetLevel: 6, readyAt: "1700000000" });
+    const infrastructureActiveQueue = buildingQueue({ itemId: 3, targetLevel: 6, readyAt: "1700000600" });
+
+    const queue = activeBuildingQueueResponse(
+      playerQueues(walletReadyQueue),
+      infrastructureWithQueue(infrastructureActiveQueue),
+    );
+
+    expect(queue).toEqual(infrastructureActiveQueue);
+    expect(isBuildingQueueReadyToFinish(queue, 1_700_000_000_000)).toBe(false);
   });
 
   test("adapts contract energy shortage factor for display", () => {

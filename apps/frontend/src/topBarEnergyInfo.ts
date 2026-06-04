@@ -34,9 +34,9 @@ export function energyExplanationTitle({
   if (sources) {
     details.push(
       `Production in total: ${format(produced)}.`,
-      `By Solar Plant: ${format(sources.solarPlant)}.`,
-      `By Fusion Generator: ${format(sources.fusionReactor)} from ${format(sources.fusionReactorDeuteriumConsumed)} DEUT/h.`,
-      `By Solar Satellites: ${format(sources.solarSatellites)} from ${format(sources.solarSatelliteCount)} satellites (${format(sources.solarSatelliteEnergy)} E/Sat).`,
+      `Solar Plant: ${format(sources.solarPlant)}.`,
+      `Fusion Generator: ${format(sources.fusionReactor)} from ${format(sources.fusionReactorDeuteriumConsumed)} DEUT/h.`,
+      `Solar Satellites: ${format(sources.solarSatellites)} from ${format(sources.solarSatelliteCount)} satellites (${format(sources.solarSatelliteEnergy)} E/Sat).`,
     );
   }
 

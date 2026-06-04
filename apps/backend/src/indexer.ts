@@ -110,6 +110,7 @@ type EventRow = {
 };
 
 type QueueRow = {
+  backlog_json: string | null;
   crystal_cost: string;
   deuterium_cost: string;
   item_id: number;
@@ -184,6 +185,10 @@ type PlayerProfileRow = {
   display_name: string | null;
   updated_at: string | null;
   wallet: string;
+};
+
+type QueueUpsertEvent = IndexedQueueStartedEvent & {
+  backlog?: QueueState[];
 };
 
 export type IndexedRpcLog = RpcLog & {
@@ -733,7 +738,7 @@ export class SettlementIndexer {
         this.upsertPlanet(event);
       }
       this.applyCanonicalState(canonicalState);
-      this.replayEventDerivedQueueStateFromEventLogs();
+      this.replayEventDerivedQueueStateFromEventLogs(canonicalState);
       for (const event of debrisEvents) {
         this.upsertDebris(event);
       }
@@ -939,6 +944,7 @@ export class SettlementIndexer {
         metal_cost TEXT NOT NULL,
         crystal_cost TEXT NOT NULL,
         deuterium_cost TEXT NOT NULL,
+        backlog_json TEXT,
         event_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS contract_production_queues_planet_idx
@@ -1082,7 +1088,14 @@ export class SettlementIndexer {
         updated_at TEXT NOT NULL
       );
     `);
+    this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.backfillCanonicalTables();
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (columns.some((candidate) => candidate.name === column)) return;
+    this.db.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
   }
 
   private backfillCanonicalTables(): void {
@@ -1186,7 +1199,10 @@ export class SettlementIndexer {
     for (const row of rows) {
       const log = parseEvent<IndexedRpcLog>(row.event_json);
       if (isIndexedQueueStartedLog(log)) {
-        this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
+        const event = decodeIndexedQueueStartedLog(log);
+        if (!this.queueStartProvenCompleted(event)) {
+          this.applyQueueStartedEvent(event, { settleResources: false });
+        }
       } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
@@ -1195,7 +1211,7 @@ export class SettlementIndexer {
     }
   }
 
-  private replayEventDerivedQueueStateFromEventLogs(): void {
+  private replayEventDerivedQueueStateFromEventLogs(canonicalState?: CanonicalReconciliationState): void {
     const activeEventQueues = new Set<string>();
     const rows = this.db.query(`
       SELECT event_json
@@ -1208,6 +1224,10 @@ export class SettlementIndexer {
       const log = parseEvent<IndexedRpcLog>(row.event_json);
       if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
+        if (this.queueStartProvenCompleted(event) || canonicalState?.verifiedEmptyQueues.has(queueKey(event))) {
+          activeEventQueues.delete(queueKey(event));
+          continue;
+        }
         this.applyQueueStartedEvent(event, { settleResources: false });
         activeEventQueues.add(queueKey(event));
       } else if (isIndexedQueueCompletedLog(log)) {
@@ -1223,6 +1243,25 @@ export class SettlementIndexer {
     }
   }
 
+  private queueStartProvenCompleted(event: IndexedQueueStartedEvent): boolean {
+    if (event.queueKind === "building" && event.planetId && event.targetLevel !== undefined) {
+      return this.indexedLevel("contract_building_levels", "building_id", event.planetId, event.itemId) >= event.targetLevel;
+    }
+    if (event.queueKind === "moon-building" && event.planetId && event.targetLevel !== undefined) {
+      return this.indexedLevel("contract_moon_building_levels", "moon_building_id", event.planetId, event.itemId) >= event.targetLevel;
+    }
+    if (event.queueKind === "research" && event.owner && event.targetLevel !== undefined) {
+      const row = this.db.query(`
+        SELECT level
+        FROM contract_technology_levels
+        WHERE owner = lower(?) AND technology_id = ?
+      `).get(event.owner, event.itemId) as { level: number } | null;
+      return (row?.level ?? 0) >= event.targetLevel;
+    }
+
+    return false;
+  }
+
   private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
     const state: CanonicalReconciliationState = {
       planetQueues: new Map(),
@@ -1230,7 +1269,8 @@ export class SettlementIndexer {
       defenses: new Map(),
       ships: new Map(),
       research: new Map(),
-      researchQueues: new Map()
+      researchQueues: new Map(),
+      verifiedEmptyQueues: new Set()
     };
     const owners = new Set(planets.map((planet) => planet.owner.toLowerCase() as `0x${string}`));
 
@@ -1253,18 +1293,27 @@ export class SettlementIndexer {
         state.buildings.set(planetId, infrastructure.buildings);
         if (infrastructure.queue?.active) {
           state.planetQueues.set(`building:${planetId}`, infrastructure.queue);
+          state.verifiedEmptyQueues.delete(`building:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`building:${planetId}`);
         }
       }
       if (defenses) {
         state.defenses.set(planetId, defenses.defenses);
         if (defenses.queue?.active) {
           state.planetQueues.set(`defense:${planetId}`, defenses.queue);
+          state.verifiedEmptyQueues.delete(`defense:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`defense:${planetId}`);
         }
       }
       if (shipyard) {
         state.ships.set(planetId, shipyard.ships);
         if (shipyard.queue?.active) {
           state.planetQueues.set(`ship:${planetId}`, shipyard.queue);
+          state.verifiedEmptyQueues.delete(`ship:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`ship:${planetId}`);
         }
       }
       if (queues) {
@@ -1272,6 +1321,10 @@ export class SettlementIndexer {
         this.addActiveQueue(state.planetQueues, `defense:${planetId}`, queues.defense);
         this.addActiveQueue(state.planetQueues, `ship:${planetId}`, queues.ship);
         this.addActiveResearchQueue(state.researchQueues, owner, queues.research);
+        if (queues.building?.active) state.verifiedEmptyQueues.delete(`building:${planetId}`);
+        if (queues.defense?.active) state.verifiedEmptyQueues.delete(`defense:${planetId}`);
+        if (queues.ship?.active) state.verifiedEmptyQueues.delete(`ship:${planetId}`);
+        if (queues.research?.active) state.verifiedEmptyQueues.delete(`research:${owner.toLowerCase()}`);
       }
     }));
 
@@ -1279,7 +1332,12 @@ export class SettlementIndexer {
       const research = await this.chainReader.getResearchState?.(owner);
       if (!research) return;
       state.research.set(owner, research.technologies);
-      this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
+      if (research.queue?.active) {
+        this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
+        state.verifiedEmptyQueues.delete(`research:${owner.toLowerCase()}`);
+      } else {
+        state.verifiedEmptyQueues.add(`research:${owner.toLowerCase()}`);
+      }
     }));
 
     return state;
@@ -1377,7 +1435,8 @@ export class SettlementIndexer {
       ...(queue.quantity !== undefined ? { quantity: queue.quantity } : {}),
       readyAt: queue.readyAt ?? "0",
       ...(queue.startedAt ? { startedAt: queue.startedAt } : {}),
-      cost: queue.cost
+      cost: queue.cost,
+      ...(queue.backlog?.length ? { backlog: queue.backlog } : {})
     });
   }
 
@@ -1728,7 +1787,11 @@ export class SettlementIndexer {
     }
   }
 
-  private upsertQueue(event: IndexedQueueStartedEvent): void {
+  private upsertQueue(event: QueueUpsertEvent): void {
+    if (this.appendDefenseBacklogQueue(event)) {
+      return;
+    }
+
     this.db.query(`
       INSERT INTO indexed_planet_queues (
         queue_key, kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at, cost_json, event_json
@@ -1761,9 +1824,9 @@ export class SettlementIndexer {
     this.db.query(`
       INSERT INTO contract_production_queues (
         queue_key, queue_kind, planet_id, owner, item_id, target_level, quantity,
-        ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, event_json
+        ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json, event_json
       )
-      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(queue_key) DO UPDATE SET
         queue_kind = excluded.queue_kind,
         planet_id = excluded.planet_id,
@@ -1776,6 +1839,7 @@ export class SettlementIndexer {
         metal_cost = excluded.metal_cost,
         crystal_cost = excluded.crystal_cost,
         deuterium_cost = excluded.deuterium_cost,
+        backlog_json = excluded.backlog_json,
         event_json = excluded.event_json
     `).run(
       queueKey(event),
@@ -1790,6 +1854,7 @@ export class SettlementIndexer {
       event.cost.metal,
       event.cost.crystal,
       event.cost.deuterium,
+      event.backlog?.length ? JSON.stringify(event.backlog) : null,
       JSON.stringify(event)
     );
 
@@ -1819,6 +1884,31 @@ export class SettlementIndexer {
         JSON.stringify(event)
       );
     }
+  }
+
+  private appendDefenseBacklogQueue(event: QueueUpsertEvent): boolean {
+    if (event.queueKind !== "defense" || !event.planetId) {
+      return false;
+    }
+
+    const row = this.db.query(`
+      SELECT item_id, backlog_json
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(queueKey(event)) as Pick<QueueRow, "item_id" | "backlog_json"> | null;
+    if (!row || row.item_id === event.itemId) {
+      return false;
+    }
+
+    const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
+    const nextBacklog = Array.isArray(backlog) ? backlog : [];
+    nextBacklog.push(queueStateFromEvent(event));
+    this.db.query(`
+      UPDATE contract_production_queues
+      SET backlog_json = ?
+      WHERE queue_key = ?
+    `).run(JSON.stringify(nextBacklog), queueKey(event));
+    return true;
   }
 
   private subtractPlanetResources(
@@ -1867,7 +1957,7 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKeyValue) as QueueRow | null;
@@ -1890,6 +1980,12 @@ export class SettlementIndexer {
     }
     if (row.quantity !== null) {
       queue.quantity = row.quantity;
+    }
+    if (row.backlog_json) {
+      const backlog = parseEvent<QueueState[]>(row.backlog_json);
+      if (Array.isArray(backlog) && backlog.length > 0) {
+        queue.backlog = backlog;
+      }
     }
     return queue;
   }
@@ -2144,6 +2240,7 @@ type CanonicalReconciliationState = {
   ships: Map<string, ShipyardState["ships"]>;
   research: Map<`0x${string}`, ResearchState["technologies"]>;
   researchQueues: Map<`0x${string}`, QueueState>;
+  verifiedEmptyQueues: Set<string>;
 };
 
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
@@ -2241,6 +2338,21 @@ function subtractResources(left: QueueState["cost"], right: QueueState["cost"]):
     crystal: subtractResource(left.crystal, right.crystal),
     deuterium: subtractResource(left.deuterium, right.deuterium)
   };
+}
+
+function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
+  const queue: QueueState = {
+    active: true,
+    kind: event.queueKind,
+    itemId: event.itemId,
+    readyAt: event.readyAt,
+    cost: event.cost
+  };
+  if (event.targetLevel !== undefined) queue.targetLevel = event.targetLevel;
+  if (event.quantity !== undefined) queue.quantity = event.quantity;
+  if (event.startedAt !== undefined) queue.startedAt = event.startedAt;
+  if (event.backlog?.length) queue.backlog = event.backlog;
+  return queue;
 }
 
 function subtractResource(left: string, right: string): string {

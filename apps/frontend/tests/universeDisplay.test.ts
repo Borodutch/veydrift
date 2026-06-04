@@ -8,7 +8,7 @@ import {
   planetImageForType,
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
-import { buildingCatalog, shipCatalog } from "../src/playableMvp";
+import { buildingCatalog, defenseCatalog, shipCatalog } from "../src/playableMvp";
 import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
@@ -73,6 +73,19 @@ const APPROVED_BUILDING_ASSETS = [
     key: "interdimensionalRiftStabilizer",
     label: "Interdimensional Rift Stabilizer",
     sha256: "ba1c702dc91797791f810c0dc1a7b6db2b5ad8a5034ede515a1dad16805582b9",
+  },
+] as const;
+
+const APPROVED_MISSILE_DEFENSE_ASSETS = [
+  {
+    key: "antiBallisticMissile",
+    label: "Anti-Ballistic Missile",
+    sha256: "30038cef31c6f50390af3303bd6d7f59005cde9100fe4e0d7e2bbbbe393c1d89",
+  },
+  {
+    key: "interplanetaryMissile",
+    label: "Interplanetary Missile",
+    sha256: "7f507427bb6f232147e06346db6ab155c1d6629666561f977c4f762f7128ccd4",
   },
 ] as const;
 
@@ -734,6 +747,23 @@ describe("tester universe display data", () => {
       for (const width of VARIANT_WIDTHS) {
         const variant = buildingAsset!.replace("/assets/game/", `/assets/game/sizes/${width}/`);
         expect(getSrcSet(buildingAsset!), approvedAsset.label).toContain(`${variant} ${width}w`);
+        expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
+      }
+    }
+  });
+
+  test("approved missile defense assets exist with responsive variants", async () => {
+    for (const approvedAsset of APPROVED_MISSILE_DEFENSE_ASSETS) {
+      const defenseAsset = defenseCatalog.find((defense) => defense.key === approvedAsset.key)?.asset;
+
+      expect(defenseAsset, approvedAsset.label).toBeDefined();
+      expect(defenseAsset, approvedAsset.label).toContain("/assets/game/style-pass/generated/defenses/");
+      expect(existsSync(join(PUBLIC_DIR, defenseAsset!.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
+      expect(await assetHash(defenseAsset!), approvedAsset.label).toBe(approvedAsset.sha256);
+
+      for (const width of VARIANT_WIDTHS) {
+        const variant = defenseAsset!.replace("/assets/game/", `/assets/game/sizes/${width}/`);
+        expect(getSrcSet(defenseAsset!), approvedAsset.label).toContain(`${variant} ${width}w`);
         expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
       }
     }

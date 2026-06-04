@@ -1255,6 +1255,7 @@ describe("Veydrift backend", () => {
         }
         if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;
         if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0x4f5ed437") return abiWords(32n, 0n) as T;
         if (selector === "0xe512884c") return abiWords(0n) as T;
 
         throw new Error(`Unexpected individual call ${selector}`);
@@ -1551,6 +1552,7 @@ describe("Veydrift backend", () => {
         if (selector === "0x0adbf924") return abiWords(5_000n, 4_900n, 4_800n) as T;
         if (selector === "0xd9b24865") return abiWords(1n) as T;
         if (selector === "0xb6f4b7b7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0x4f5ed437") return abiWords(32n, 0n) as T;
         if (selector === "0xe512884c") return abiWords(0n) as T;
         if (selector === "0x423f9f10") throw new Error("RPC 3: execution reverted");
         if (selector === "0x57686701" || selector === "0xc4222030") {
@@ -1623,6 +1625,7 @@ describe("Veydrift backend", () => {
           call.to === configuredTestConfig.gameContractAddress
           && (
             call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x2b98afc7")
           )
@@ -1701,6 +1704,9 @@ describe("Veydrift backend", () => {
         if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x5758361d")) {
           return abiWords(1n, 0n, 2n, readyAt, 4000n, 0n, 0n) as T;
         }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x4f5ed437")) {
+          return abiWords(32n, 1n, 1n, 1n, 3n, readyAt + 600n, 4500n, 1500n, 0n) as T;
+        }
         if (
           call.to === configuredTestConfig.gameContractAddress
           && (
@@ -1726,6 +1732,20 @@ describe("Veydrift backend", () => {
         quantity: 2,
         readyAt: readyAt.toString(),
         startedAt: startedAt.toString(),
+        backlog: [
+          {
+            active: true,
+            kind: "defense",
+            itemId: 1,
+            quantity: 3,
+            readyAt: (readyAt + 600n).toString(),
+            cost: {
+              metal: "4500",
+              crystal: "1500",
+              deuterium: "0"
+            }
+          }
+        ],
         cost: {
           metal: "4000",
           crystal: "0",
@@ -1783,6 +1803,7 @@ describe("Veydrift backend", () => {
           call.to === configuredTestConfig.gameContractAddress
           && (
             call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x2b98afc7")
           )
@@ -1863,6 +1884,7 @@ describe("Veydrift backend", () => {
           && (
             call.data.startsWith("0xb8e835ab")
             || call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
           )
         ) {
@@ -2138,6 +2160,72 @@ describe("Veydrift backend", () => {
       }
     });
     expect(response.status).toBe(200);
+  });
+
+  test("serves accrued indexed wallet resources for settlement, planets, and infrastructure", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getWalletSettlement = async () => {
+      throw new Error("settlement should not call live RPC");
+    };
+    chainReader.getWalletPlanets = async () => {
+      throw new Error("planets should not call live RPC");
+    };
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("infrastructure should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm accrued index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(3n)
+      ],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const settlementResponse = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+    const settlementBody = await settlementResponse.json();
+    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
+    const planetsBody = await planetsResponse.json();
+    const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const infrastructureBody = await infrastructureResponse.json();
+
+    expect(settlementResponse.status).toBe(200);
+    expect(planetsResponse.status).toBe(200);
+    expect(infrastructureResponse.status).toBe(200);
+    expect(settlementBody.planet.resources.metal).toBe("5064");
+    expect(planetsBody.planets[0].resources.metal).toBe("5064");
+    expect(infrastructureBody.resources.metal).toBe("5064");
+    expect(infrastructureBody.raidableResources.metal).toBe("5064");
   });
 
   test("does not rebuild a cold planet index during wallet settlement requests", async () => {

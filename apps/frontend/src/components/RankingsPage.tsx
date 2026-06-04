@@ -3,6 +3,7 @@ import { RotateCw } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
+import { OptimizedImage } from "./OptimizedImage";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type RankingsPageProps = {
@@ -247,10 +248,11 @@ function RankingRow({
             title={`Open ${homePlanetLabel(homePlanet)}`}
             type="button"
           >
-            <img
+            <OptimizedImage
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"
+              sizes="icon"
               src={planetImageForType(homePlanet.archetype)}
             />
           </button>

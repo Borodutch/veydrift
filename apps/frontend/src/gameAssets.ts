@@ -82,13 +82,13 @@ export const defenseAssetManifest = [
     key: "antiBallisticMissile",
     src: `${DEFENSE_BASE}/anti-ballistic-missile.webp`,
     category: "defense",
-    status: "generated-preview",
+    status: "production",
   },
   {
     key: "interplanetaryMissile",
     src: `${DEFENSE_BASE}/interplanetary-missile.webp`,
     category: "defense",
-    status: "generated-preview",
+    status: "production",
   },
 ] as const satisfies readonly GameAssetMapping<DefenseKey>[];
 

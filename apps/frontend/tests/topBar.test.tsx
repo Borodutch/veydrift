@@ -3,38 +3,30 @@ import type { ComponentChildren, VNode } from "preact";
 import { TopBar } from "../src/components/TopBar";
 
 describe("TopBar", () => {
-  test("keeps mobile resources and collect action in a compact row", () => {
+  test("keeps mobile resources and support action in a compact row", () => {
     const topBar = renderTopBar();
     const resourceRow = elementNodes(topBar).find(
       (node) =>
         typeof node.props?.className === "string" &&
-        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem_1.75rem]")
+        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem]")
     );
-    const collectButton = buttonWithLabel(topBar, "Collect accrued resources: Metal +10 / Crystal +5");
     const supportLink = linkWithLabel(topBar, "Telegram support");
 
     expect(resourceRow?.props?.className).toContain("sm:flex-wrap");
     expect(resourceRow?.props?.className).toContain("gap-0.5");
-    expect(resourceRow?.props?.className).toContain("_1.75rem_1.75rem]");
-    expect(collectButton?.props?.className).toContain("h-7 w-7");
-    expect(collectButton?.props?.className).toContain("col-start-6");
-    expect(collectButton?.props?.className).toContain("lg:w-auto");
-    expect(collectButton?.props?.title).toBe("Collect accrued resources: Metal +10 / Crystal +5");
+    expect(resourceRow?.props?.className).toContain("_1.75rem]");
+    expect(buttonsWithText(topBar, "Collect")).toHaveLength(0);
     expect(supportLink?.props?.className).toContain("h-7 w-7");
     expect(supportLink?.props?.className).toContain("sm:hidden");
   });
 
   test("keeps desktop actions icon-only until wide layouts have room for labels", () => {
     const topBar = renderTopBar();
-    const collectButton = buttonWithLabel(topBar, "Collect accrued resources: Metal +10 / Crystal +5");
     const desktopSupportLink = linksWithLabel(topBar, "Telegram support").find((link) =>
       typeof link.props?.className === "string" && link.props.className.includes("sm:inline-flex")
     );
 
-    expect(collectButton?.props?.className).toContain("w-7");
-    expect(collectButton?.props?.className).toContain("lg:w-auto");
-    expect(collectButton?.props?.className).not.toContain("sm:w-auto");
-    expect(visibleText(collectButton)).toContain("Collect");
+    expect(buttonsWithText(topBar, "Collect")).toHaveLength(0);
     expect(desktopSupportLink?.props?.className).toContain("w-7");
     expect(desktopSupportLink?.props?.className).toContain("lg:w-auto");
     expect(desktopSupportLink?.props?.className).toContain("lg:px-2");
@@ -53,7 +45,7 @@ describe("TopBar", () => {
     expect(text).toContain("Crystal");
     expect(text).toContain("Deuterium");
     expect(text).toContain("Energy");
-    expect(text).toContain("Collect");
+    expect(text).not.toContain("Collect");
   });
 
   test("renders an energy explanation info control", () => {
@@ -70,26 +62,29 @@ describe("TopBar", () => {
     expect(energyInfo?.props?.["aria-label"]).toContain("100 produced / 125 consumed");
     expect(energyInfo?.props?.["aria-label"]).toContain("Shortage 25");
     expect(energyInfo?.props?.["aria-label"]).toContain("Production in total: 100");
-    expect(energyInfo?.props?.["aria-label"]).toContain("By Fusion Generator: 20 from 11 DEUT/h");
-    expect(energyInfo?.props?.["aria-label"]).toContain("By Solar Satellites: 40 from 2 satellites (20 E/Sat)");
+    expect(energyInfo?.props?.["aria-label"]).toContain("Fusion Generator: 20 from 11 DEUT/h");
+    expect(energyInfo?.props?.["aria-label"]).toContain("Solar Satellites: 40 from 2 satellites (20 E/Sat)");
     expect(energyInfo?.props?.["aria-label"]).toContain("Mine output is reduced to 80%");
     expect(panelText).toContain("Solar Plant and Solar Satellites produce it");
     expect(panelText).toContain("Produced 100");
     expect(panelText).toContain("Consumed 125");
     expect(panelText).toContain("Balance -25");
     expect(panelText).toContain("Production in total 100");
-    expect(panelText).toContain("By Solar Plant 40");
-    expect(panelText).toContain("By Fusion Generator 20 from 11 DEUT/h");
-    expect(panelText.replace(/\(\s+/g, "(")).toContain("By Solar Satellites 40 from 2 satellites (20 E/Sat)");
+    expect(panelText).toContain("Solar Plant 40");
+    expect(panelText).toContain("Fusion Generator 20 from 11 DEUT/h");
+    expect(panelText.replace(/\(\s+/g, "(")).toContain("Solar Satellites 40 from 2 satellites (20 E/Sat)");
+    expect(panelText).not.toContain("By Solar Plant");
+    expect(panelText).not.toContain("By Fusion Generator");
+    expect(panelText).not.toContain("By Solar Satellites");
     expect(panelText).toContain("Insufficient energy reduces mine output to 80%");
   });
 
-  test("shows compact nonzero collectable deltas next to mobile resources", () => {
+  test("does not render pending collectable deltas next to resources", () => {
     const topBar = renderTopBar();
     const text = visibleText(topBar).replace(/\s+/g, "");
 
-    expect(text).toContain("(+10)");
-    expect(text).toContain("(+5)");
+    expect(text).not.toContain("(+10)");
+    expect(text).not.toContain("(+5)");
     expect(text).not.toContain("(+0)");
   });
 
@@ -98,19 +93,6 @@ describe("TopBar", () => {
     expect(visibleText(renderTopBar({ resourceStatus: "loading" }))).not.toContain("Resources loading");
     expect(visibleText(renderTopBar({ resourceStatus: "error" }))).toContain("Metal");
     expect(visibleText(renderTopBar({ resourceStatus: "error" }))).not.toContain("Resources unavailable");
-  });
-
-  test("surfaces resource collection wallet errors in the top bar", () => {
-    const label = "Resource collection failed: Unlock or reconnect your wallet, then retry.";
-    const topBar = renderTopBar({
-      collectResourcesActionLabel: label,
-      collectResourcesActionStatus: "error",
-    });
-    const feedback = elementNodes(topBar).find((item) => item.type === "p" && item.props?.children === label);
-
-    expect(visibleText(topBar)).toContain(label);
-    expect(feedback?.props?.role).toBe("alert");
-    expect(feedback?.props?.className).toContain("text-rose-200");
   });
 
   test("explains normal powered energy without low-energy impact copy", () => {
@@ -128,7 +110,6 @@ describe("TopBar", () => {
 
 function renderTopBar(overrides: Partial<Parameters<typeof TopBar>[0]> = {}): ComponentChildren {
   return TopBar({
-    canCollectResources: true,
     caps: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
     energy: {
       produced: 100,
@@ -144,12 +125,9 @@ function renderTopBar(overrides: Partial<Parameters<typeof TopBar>[0]> = {}): Co
       },
     },
     isWalletConnected: true,
-    onCollectResources: () => undefined,
     rates: { metal: 77, crystal: 29, deuterium: 14 },
-    resourceDeltas: { metal: 10, crystal: 5, deuterium: 0 },
-    resources: { metal: 56, crystal: 243, deuterium: 31 },
+    resources: { metal: 66, crystal: 248, deuterium: 31 },
     resourceStatus: "ready",
-    showCollectResources: true,
     ...overrides,
   });
 }
@@ -181,16 +159,16 @@ function textParts(node: ComponentChildren): string[] {
   return textParts(vnode.props?.children as ComponentChildren);
 }
 
-function buttonWithLabel(node: ComponentChildren, label: string): VNode | undefined {
-  return elementNodes(node).find((item) => item.type === "button" && item.props?.["aria-label"] === label);
-}
-
 function linkWithLabel(node: ComponentChildren, label: string): VNode | undefined {
   return elementNodes(node).find((item) => item.type === "a" && item.props?.["aria-label"] === label);
 }
 
 function linksWithLabel(node: ComponentChildren, label: string): VNode[] {
   return elementNodes(node).filter((item) => item.type === "a" && item.props?.["aria-label"] === label);
+}
+
+function buttonsWithText(node: ComponentChildren, text: string): VNode[] {
+  return elementNodes(node).filter((item) => item.type === "button" && visibleText(item).includes(text));
 }
 
 function elementNodes(node: ComponentChildren): VNode[] {

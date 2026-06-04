@@ -170,6 +170,7 @@ export type QueueStateResponse = {
   readyAt: string | null;
   startedAt?: string | null;
   cost: OnChainResources;
+  backlog?: QueueStateResponse[];
 };
 
 export type PlayerQueuesResponse = {
@@ -510,7 +511,6 @@ const START_PLANET_SELECTOR = "0xf45f1f18";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
   completeFleetMissionReturn: "0xc2472852",
-  collectResources: "0xdb43284d",
   createColony: "0x71358ab8",
   depositResource: "0x25819e15",
   finishDefenseProduction: "0xa5a0d597",
@@ -648,7 +648,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/timed out reading .* from the game api/i.test(message)) {
-    return `${message} The game API may be temporarily unavailable; the app will retry when state sync resumes.`;
+    return `${message} The game API may be temporarily unavailable; the app will retry with backend state.`;
   }
 
   if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
@@ -656,7 +656,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/execution reverted/i.test(message)) {
-    return "The game contract rejected a wallet read. Retry sync after the latest deployment finishes, or reconnect your wallet on Base Sepolia.";
+    return "The game contract rejected a wallet read. Retry after the latest deployment finishes, or reconnect your wallet on Base Sepolia.";
   }
 
   return message;
@@ -777,7 +777,13 @@ function isAccountProbeWallet(provider: Eip1193Provider): boolean {
 
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
   if (typeof chainId === "string") {
-    return chainId.toLowerCase() === BASE_SEPOLIA.chainIdHex;
+    const normalized = chainId.trim().toLowerCase();
+    if (normalized === BASE_SEPOLIA.chainIdHex) {
+      return true;
+    }
+
+    const decimalChainId = Number(normalized);
+    return Number.isFinite(decimalChainId) && decimalChainId === BASE_SEPOLIA.chainId;
   }
 
   return Number(chainId) === BASE_SEPOLIA.chainId;
@@ -1091,12 +1097,18 @@ export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promi
       throw error;
     }
 
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [
-        BASE_SEPOLIA
-      ]
-    });
+    try {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          BASE_SEPOLIA
+        ]
+      });
+    } catch (addError) {
+      if (!isAlreadyAddedChainError(addError)) {
+        throw addError;
+      }
+    }
     await switchToBaseSepolia(provider);
   }
 }
@@ -1124,6 +1136,16 @@ function isUnknownChainError(error: unknown): boolean {
 
   return typeof candidate.message === "string"
     && /unknown chain|unrecognized chain|chain .*not (?:been )?added|wallet_addEthereumChain/i.test(candidate.message);
+}
+
+function isAlreadyAddedChainError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { message?: unknown };
+  return typeof candidate.message === "string"
+    && /already (?:been )?(?:added|exists)|chain .*already/i.test(candidate.message);
 }
 
 export async function sendSettlementTransaction(
@@ -1549,29 +1571,6 @@ export async function sendFinishResearchTransaction(
   });
 }
 
-export async function sendCollectResourcesTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  const data = encodeGameCall(GAME_SELECTORS.collectResources, [planetId]);
-  const transaction: TransactionRequest = {
-    from: account,
-    to: contractAddress,
-    data
-  };
-
-  const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
-  if (!accountProbeReadyChecked) {
-    await assertWalletUnlocked(provider);
-  }
-
-  return sendWalletTransaction(provider, account, transaction, {
-    accountProbeReadyChecked
-  });
-}
-
 export async function sendFinishShipProductionTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -1714,30 +1713,6 @@ export async function sendCreateColonyTransaction(
       speedPercent,
     })
   });
-}
-
-export async function waitForReceipt(
-  provider: Eip1193Provider,
-  txHash: string,
-  maxAttempts = 40,
-  intervalMs = 3_000
-): Promise<unknown> {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const receipt = await provider.request<unknown>({
-      method: "eth_getTransactionReceipt",
-      params: [
-        txHash
-      ]
-    });
-
-    if (receipt) {
-      return receipt;
-    }
-
-    await delay(intervalMs);
-  }
-
-  throw new Error("Timed out waiting for settlement transaction confirmation.");
 }
 
 export function planetFromTransaction(account: string, txHash: string): PlanetSummary {
@@ -2018,19 +1993,19 @@ async function apiErrorMessage(response: Response, label: string): Promise<strin
     const error = typeof body.error === "string" ? body.error.trim() : "";
 
     if (response.status === 503 && error === "backend_not_configured") {
-      return `${label} API is temporarily unavailable while backend readiness is restored. The app will retry instead of requiring a wallet reconnect.`;
+      return `${label} API is temporarily unavailable. The app will retry instead of requiring a wallet reconnect.`;
     }
 
     if (response.status >= 500) {
       return error
-        ? `${label} API is temporarily unavailable (${response.status}: ${error}). The app will retry when game state sync recovers.`
-        : `${label} API is temporarily unavailable (${response.status}). The app will retry when game state sync recovers.`;
+        ? `${label} API is temporarily unavailable (${response.status}: ${error}). The app will retry.`
+        : `${label} API is temporarily unavailable (${response.status}). The app will retry.`;
     }
 
     return error ? `${fallback}: ${error}` : fallback;
   } catch {
     if (response.status >= 500) {
-      return `${label} API is temporarily unavailable (${response.status}). The app will retry when game state sync recovers.`;
+      return `${label} API is temporarily unavailable (${response.status}). The app will retry.`;
     }
 
     return fallback;

@@ -44,15 +44,6 @@ const groupLabels = {
   missile: "Missiles",
 } as const;
 
-const missileThumbnailFrames: Partial<Record<DefenseKey, { transform: string }>> = {
-  antiBallisticMissile: {
-    transform: "translate(-6%, -5%) scale(1.25)",
-  },
-  interplanetaryMissile: {
-    transform: "translate(4%, 5%) scale(0.98)",
-  },
-};
-
 export function DefensePage({
   actionState,
   canTransact,
@@ -221,7 +212,6 @@ export function defenseProductionItems({
     const requirements = getDefenseRequirementStates(defense, defenseState);
     const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
-    const queueBlocker = getQueueBlocker(defense.id, queue);
     const blockedReason = getBlockedReason({
       affordable,
       canTransact,
@@ -230,7 +220,6 @@ export function defenseProductionItems({
       limitReason,
       missing,
       productionRates,
-      queueBlocker,
       resources,
       totalCost,
     });
@@ -266,7 +255,6 @@ export function defenseProductionItems({
       notes: combatStats.notes,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked",
-      thumbnailStyle: missileThumbnailFrames[defense.key],
     };
   });
 }
@@ -379,7 +367,6 @@ function getBlockedReason({
   limitReason,
   missing,
   productionRates,
-  queueBlocker,
   resources,
   totalCost,
 }: {
@@ -390,7 +377,6 @@ function getBlockedReason({
   limitReason?: string | undefined;
   missing: string[];
   productionRates?: Resources | undefined;
-  queueBlocker?: string | undefined;
   resources: Resources | undefined;
   totalCost?: Resources | undefined;
 }): string | undefined {
@@ -398,7 +384,6 @@ function getBlockedReason({
   if (!defenseState) return "Waiting for chain state";
   if (defenseState.productionAvailable === false) return "Defense production unavailable";
   if (!hasPlanet) return "No game planet";
-  if (queueBlocker) return queueBlocker;
   if (missing.length > 0) return missing[0];
   if (limitReason) return limitReason;
   if (!resources) return "Resources unavailable";
@@ -411,13 +396,19 @@ export function getQueueBlocker(
   defenseId: number,
   queue?: ChainDefenseState["queue"] | undefined,
 ): string | undefined {
-  if (!queue?.active || queue.itemId === defenseId) return undefined;
-  const activeDefense = defenseCatalog.find((item) => item.id === queue.itemId);
-  return `Active queue: ${activeDefense?.label ?? "another defense"}`;
+  void defenseId;
+  void queue;
+  return undefined;
 }
 
 function queuedDefenseCount(defenseId: number, queue?: ChainDefenseState["queue"] | undefined): number {
-  return queue?.active && queue.itemId === defenseId ? queue.quantity ?? 0 : 0;
+  let quantity = queue?.active && queue.itemId === defenseId ? queue.quantity ?? 0 : 0;
+  for (const backlog of queue?.backlog ?? []) {
+    if (backlog.active && backlog.itemId === defenseId) {
+      quantity += backlog.quantity ?? 0;
+    }
+  }
+  return quantity;
 }
 
 function queuedDefenseCountByKey(key: DefenseKey, queue?: ChainDefenseState["queue"] | undefined): number {

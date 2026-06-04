@@ -40,6 +40,12 @@ State includes, at minimum:
 
 Before merging or broadcasting a contract-affecting task, the handoff must state:
 
+Run `node scripts/veydrift-redeploy-preflight.mjs` against the target API/RPC
+and attach or paste the JSON result in the Kaneo workpad before any full deploy
+or upgrade broadcast. The script is a fail-closed evidence collector; a failing
+result blocks broadcast unless the blocker is explicitly resolved by the
+approved migration/no-state evidence below.
+
 1. Current network and contract addresses: game, implementation when applicable,
    resource tokens, alliance system, randomness engine, moon system, and any
    auxiliary module contracts.
@@ -106,6 +112,29 @@ The migration plan must cover:
 6. Rebuild or reconcile the backend indexer from the preserved canonical state.
 7. Run post-migration verification against representative wallets and compare
    pre/post state exports.
+
+Do not treat the public API, backend indexer, or generated event export as a
+complete replacement-contract migration source unless every internal game-state
+index is explicitly covered. The current direct `VeydriftGame` stores several
+state classes that are not enumerable from public getters alone, including:
+
+- owned-planet indexes: `_ownedPlanetIds` and `_ownedPlanetIndex`;
+- pending mission-resolution indexes by planet and player;
+- phalanx mission indexes by system;
+- linked counterplay mission lists such as ACS/intercept state;
+- attack windows and attack-protection exemptions;
+- player activity timestamps and honor points.
+
+If a full redeploy plan relies on reconstructing these from logs or backend
+state, the plan must name the source of truth for each class and include a
+pre/post parity check. If any class is intentionally dropped, record the product
+decision and compensation/rollback plan before broadcast.
+
+The approved VEY-313 Base Sepolia `VeydriftGame` replacement path is a migrated
+redeploy because the live game is a direct non-proxy deployment with existing
+alpha state and nonzero game-held resource reserves. Follow
+`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before any replacement
+broadcast.
 
 ## Done Gate
 

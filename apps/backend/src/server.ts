@@ -14,6 +14,7 @@ import {
   type InfrastructureState,
   type MoonChanceReportEvent,
   type MoonState,
+  type PlanetState,
   type PlayerQueues,
   type ResearchState,
   type Resources,
@@ -290,8 +291,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
           const snapshot = indexer.snapshot();
+          const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
           return Response.json({
-            ...withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet),
+            ...withPlayerProfile(settlement, indexer, wallet),
             indexer: snapshot,
             liveReadSkippedAt: new Date().toISOString(),
             source: "contract-state-indexer",
@@ -332,7 +334,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
-          return Response.json(withPlayerProfile(indexer.walletPlanets(wallet), indexer, wallet), {
+          return Response.json(withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet), {
             headers: corsHeaders
           });
         }
@@ -1111,10 +1113,17 @@ function indexedWalletSettlement(
 ): { settlement: ReturnType<SettlementIndexer["walletSettlement"]>; planet: SettledPlanetEvent | null } | null {
   const settlement = indexer.walletSettlement(wallet);
   if (!selectedPlanetId) {
-    return { settlement, planet: settlement.planet };
+    const planet = accruedPlanetState(indexer, settlement.planet);
+    return {
+      settlement: {
+        ...settlement,
+        planet
+      },
+      planet
+    };
   }
 
-  const planet = indexer.planet(selectedPlanetId.toString());
+  const planet = accruedPlanetState(indexer, indexer.planet(selectedPlanetId.toString()));
   if (!planet || planet.owner.toLowerCase() !== wallet.toLowerCase()) {
     return null;
   }
@@ -1126,6 +1135,33 @@ function indexedWalletSettlement(
       planet
     },
     planet
+  };
+}
+
+function indexedWalletPlanets(
+  indexer: SettlementIndexer,
+  wallet: `0x${string}`
+): ReturnType<SettlementIndexer["walletPlanets"]> {
+  const response = indexer.walletPlanets(wallet);
+  return {
+    ...response,
+    planets: response.planets.map((planet) => accruedPlanetState(indexer, planet))
+  };
+}
+
+function accruedPlanetState<T extends PlanetState | null>(
+  indexer: SettlementIndexer,
+  planet: T
+): T {
+  if (!planet) return planet;
+
+  const buildings = indexer.infrastructureRows(planet.planetId);
+  const ships = indexer.shipRows(planet.planetId);
+  const technologyLevels = indexer.technologyLevels(planet.owner);
+  const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
+  return {
+    ...planet,
+    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
   };
 }
 

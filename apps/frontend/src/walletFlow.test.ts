@@ -34,7 +34,6 @@ import {
   miniAppUnsupportedChainMessage,
   mergePlayerProfile,
   parseRiftTokenAmount,
-  sendCollectResourcesTransaction,
   sendCompleteFleetMissionReturnTransaction,
   sendApproveResourceTokenTransaction,
   sendDepositResourceTransaction,
@@ -79,6 +78,7 @@ const contract = "0x2222222222222222222222222222222222222222";
 describe("walletFlow", () => {
   test("classifies Base Sepolia chain ids", () => {
     expect(isBaseSepoliaChain("0x14a34")).toBe(true);
+    expect(isBaseSepoliaChain("84532")).toBe(true);
     expect(isBaseSepoliaChain(84532)).toBe(true);
     expect(isBaseSepoliaChain("0x1")).toBe(false);
   });
@@ -788,6 +788,51 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("retries Base Sepolia switch when Rabby iOS reports the chain is already added", async () => {
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "wallet_switchEthereumChain") {
+        if (calls.filter((call) => call === "wallet_switchEthereumChain").length > 1) {
+          return null;
+        }
+        throw { code: 4902 };
+      }
+      if (method === "wallet_addEthereumChain") {
+        throw { code: -32603, message: "Base Sepolia has already been added." };
+      }
+      return null;
+    });
+
+    await ensureBaseSepoliaNetwork(provider);
+
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
+      "wallet_switchEthereumChain",
+    ]);
+  });
+
+  test("surfaces rejected Base Sepolia add requests when the chain is genuinely missing", async () => {
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "wallet_switchEthereumChain") {
+        throw { code: 4902 };
+      }
+      if (method === "wallet_addEthereumChain") {
+        throw { code: 4001, message: "User rejected the request." };
+      }
+      return null;
+    });
+
+    await expect(ensureBaseSepoliaNetwork(provider)).rejects.toMatchObject({ code: 4001 });
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
+    ]);
+  });
+
   test("surfaces rejected Base Sepolia switch requests without adding the chain", async () => {
     const calls: string[] = [];
     const provider = mockProvider(async ({ method }) => {
@@ -819,6 +864,9 @@ describe("walletFlow", () => {
     );
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
       "game API may be temporarily unavailable"
+    );
+    expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).not.toContain(
+      "sync resumes"
     );
     expect(walletRequestErrorMessage(new Error("MetaMask is locked"))).toBe(
       "Wallet is locked. Please unlock your wallet and try again."
@@ -913,38 +961,25 @@ describe("walletFlow", () => {
     });
 
     await expect(
-      sendCollectResourcesTransaction(provider, account, contract, "7")
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
     ).resolves.toBe("0xtx1");
     await expect(
-      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
+      sendFinishBuildingUpgradeTransaction(provider, account, contract, "7")
     ).resolves.toBe("0xtx2");
     await expect(
-      sendFinishBuildingUpgradeTransaction(provider, account, contract, "7")
+      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
     ).resolves.toBe("0xtx3");
     await expect(
-      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
+      sendFinishShipProductionTransaction(provider, account, contract, "7")
     ).resolves.toBe("0xtx4");
     await expect(
-      sendFinishShipProductionTransaction(provider, account, contract, "7")
+      sendStartDefenseProductionTransaction(provider, account, contract, "7", 0, 2)
     ).resolves.toBe("0xtx5");
     await expect(
-      sendStartDefenseProductionTransaction(provider, account, contract, "7", 0, 2)
-    ).resolves.toBe("0xtx6");
-    await expect(
       sendFinishDefenseProductionTransaction(provider, account, contract, "7")
-    ).resolves.toBe("0xtx7");
+    ).resolves.toBe("0xtx6");
 
     expect(requests).toEqual([
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      },
       {
         method: "eth_sendTransaction",
         params: [
@@ -1585,7 +1620,7 @@ describe("walletFlow", () => {
     )) as unknown as typeof fetch;
     try {
       await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
-        "backend readiness is restored"
+        "API is temporarily unavailable. The app will retry"
       );
     } finally {
       globalThis.fetch = originalFetch;

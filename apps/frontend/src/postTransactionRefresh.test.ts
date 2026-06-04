@@ -1,14 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   isTransientGameStateReadFailure,
-  isCollectedResourcesStateVisible,
   isFinishedBuildingStateVisible,
   isFinishedResearchStateVisible,
   isAllianceApplicationCleared,
   isStartedDefenseProductionVisible,
   isStartedShipProductionVisible,
   isStartedResearchStateVisible,
-  waitForCollectedResourcesState,
   waitForFinishedResearchState,
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
@@ -17,7 +15,6 @@ import {
   waitForFinishedBuildingState,
   waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
-  type CollectedResourcesSnapshot,
   type FinishedResearchSnapshot,
   type StartedDefenseProductionSnapshot,
   type StartedShipProductionSnapshot,
@@ -178,6 +175,14 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.queues.defense?.quantity).toBe(2);
   });
 
+  test("accepts started defense production when the expected item is in the backlog", () => {
+    expect(isStartedDefenseProductionVisible(startedDefenseBacklogProductionSnapshot(), {
+      itemId: 1,
+      planetId: "7",
+      quantity: 1,
+    })).toBe(true);
+  });
+
   test("polls until started ship production is visible on Shipyard and Overview state", async () => {
     expect(isStartedShipProductionVisible(staleShipProductionSnapshot(), {
       itemId: 0,
@@ -263,36 +268,6 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.research.queue).toBeNull();
     expect(result.queues.research).toBeNull();
     expect(result.research.technologyLevels["4"]).toBe(2);
-  });
-
-  test("does not accept stale indexed collect resources while infrastructure has newer resources", () => {
-    expect(isCollectedResourcesStateVisible(staleCollectedResourcesSnapshot(), {
-      planetId: "7",
-      previousLastSettledAt: "1770000000",
-    })).toBe(false);
-  });
-
-  test("polls until indexed collect resources match the infrastructure refresh", async () => {
-    const snapshots = [
-      staleCollectedResourcesSnapshot(),
-      collectedResourcesSnapshot(),
-    ];
-    const loads: CollectedResourcesSnapshot[] = [];
-
-    const result = await waitForCollectedResourcesState(
-      async () => {
-        const snapshot = snapshots.shift() ?? collectedResourcesSnapshot();
-        loads.push(snapshot);
-        return snapshot;
-      },
-      { planetId: "7", previousLastSettledAt: "1770000000" },
-      { attempts: 3, intervalMs: 1, delay: async () => undefined },
-    );
-
-    expect(loads).toHaveLength(2);
-    expect(result.settlement.planet?.lastSettledAt).toBe("1770000600");
-    expect(result.infrastructure.resources).not.toBeNull();
-    expect(result.settlement.planet?.resources).toEqual(result.infrastructure.resources ?? undefined);
   });
 
   test("polls until a confirmed settlement has hydrated planet resources", async () => {
@@ -470,6 +445,38 @@ function startedDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
   };
 }
 
+function startedDefenseBacklogProductionSnapshot(): StartedDefenseProductionSnapshot {
+  const activeDefenseQueue = {
+    active: true,
+    kind: "defense" as const,
+    itemId: 0,
+    quantity: 2,
+    readyAt: "1770000060",
+    cost: { metal: "4000", crystal: "0", deuterium: "0" },
+    backlog: [
+      {
+        active: true,
+        kind: "defense" as const,
+        itemId: 1,
+        quantity: 1,
+        readyAt: "1770000120",
+        cost: { metal: "1500", crystal: "500", deuterium: "0" },
+      },
+    ],
+  };
+
+  return {
+    defense: {
+      ...staleDefenseProductionSnapshot().defense,
+      queue: activeDefenseQueue,
+    },
+    queues: {
+      ...staleDefenseProductionSnapshot().queues,
+      defense: activeDefenseQueue,
+    },
+  };
+}
+
 function staleShipProductionSnapshot(): StartedShipProductionSnapshot {
   return {
     shipyard: {
@@ -608,39 +615,6 @@ function finishedSolarPlantSnapshot(): FinishedBuildingSnapshot {
         { id: 3, level: 2, cost: { metal: "300", crystal: "120", deuterium: "0" } },
       ],
       queue: null,
-    },
-  };
-}
-
-function staleCollectedResourcesSnapshot(): CollectedResourcesSnapshot {
-  return {
-    settlement: settlementSnapshot(),
-    infrastructure: {
-      wallet,
-      homePlanetId: "7",
-      infrastructureAvailable: true,
-      resources: { metal: "5060", crystal: "4930", deuterium: "4800" },
-      productionPerHour: { metal: "60", crystal: "30", deuterium: "0" },
-      energyBalance: null,
-      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
-      buildings: [
-        { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
-      ],
-      queue: null,
-    },
-  };
-}
-
-function collectedResourcesSnapshot(): CollectedResourcesSnapshot {
-  return {
-    ...staleCollectedResourcesSnapshot(),
-    settlement: {
-      ...settlementSnapshot(),
-      planet: {
-        ...settlementSnapshot().planet,
-        lastSettledAt: "1770000600",
-        resources: { metal: "5060", crystal: "4930", deuterium: "4800" },
-      },
     },
   };
 }

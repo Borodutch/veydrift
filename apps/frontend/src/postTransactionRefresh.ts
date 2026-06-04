@@ -22,16 +22,6 @@ export type FinishedBuildingSnapshot = {
   settlement: WalletSettlementResponse;
 };
 
-export type CollectedResourcesExpectation = {
-  planetId: string;
-  previousLastSettledAt?: string | undefined;
-};
-
-export type CollectedResourcesSnapshot = {
-  infrastructure: ChainInfrastructureState;
-  settlement: WalletSettlementResponse;
-};
-
 export type StartedDefenseProductionExpectation = {
   itemId: number;
   planetId?: string | undefined;
@@ -109,25 +99,6 @@ export function isFinishedBuildingStateVisible(
 
   const row = snapshot.infrastructure.buildings.find((building) => building.id === expectation.itemId);
   return (row?.level ?? 0) >= expectation.targetLevel;
-}
-
-export function isCollectedResourcesStateVisible(
-  snapshot: CollectedResourcesSnapshot,
-  expectation: CollectedResourcesExpectation,
-): boolean {
-  const settlementPlanet = snapshot.settlement.planet;
-  if (!settlementPlanet || settlementPlanet.planetId !== expectation.planetId) return false;
-  if (snapshot.infrastructure.homePlanetId !== expectation.planetId) return false;
-  if (!snapshot.infrastructure.resources) return false;
-
-  const settlementResources = settlementPlanet.resources;
-  const resourcesMatch = settlementResources.metal === snapshot.infrastructure.resources.metal
-    && settlementResources.crystal === snapshot.infrastructure.resources.crystal
-    && settlementResources.deuterium === snapshot.infrastructure.resources.deuterium;
-  if (!resourcesMatch) return false;
-
-  if (!expectation.previousLastSettledAt) return true;
-  return BigInt(settlementPlanet.lastSettledAt) > BigInt(expectation.previousLastSettledAt);
 }
 
 export function hydratedWalletPlanetSnapshot(
@@ -214,11 +185,18 @@ function defenseQueueMatches(
   queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
   expectation: StartedDefenseProductionExpectation,
 ): boolean {
-  return Boolean(
-    queue?.active
-    && queue.itemId === expectation.itemId
-    && (queue.quantity ?? 0) >= expectation.quantity,
+  return defenseQueueEntries(queue).some((entry) =>
+    entry.active
+      && entry.itemId === expectation.itemId
+      && (entry.quantity ?? 0) >= expectation.quantity
   );
+}
+
+function defenseQueueEntries(
+  queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
+): NonNullable<ChainDefenseState["queue"]>[] {
+  if (!queue) return [];
+  return [queue, ...(queue.backlog ?? [])];
 }
 
 function shipQueueMatches(
@@ -399,36 +377,6 @@ export async function waitForAllianceApplicationCleared(
   throw new Error(allianceApplicationClearTimeoutMessage(latest, expectation, lastError));
 }
 
-export async function waitForCollectedResourcesState(
-  load: () => Promise<CollectedResourcesSnapshot>,
-  expectation: CollectedResourcesExpectation,
-  options: WaitOptions = {},
-): Promise<CollectedResourcesSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
-  const delay = options.delay ?? defaultDelay;
-  let latest: CollectedResourcesSnapshot | undefined;
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      latest = await load();
-      lastError = undefined;
-      if (isCollectedResourcesStateVisible(latest, expectation)) {
-        return latest;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-
-    if (attempt < attempts - 1) {
-      await delay(intervalMs);
-    }
-  }
-
-  throw new Error(collectedResourcesTimeoutMessage(latest, expectation, lastError));
-}
-
 export async function waitForHydratedWalletPlanet(
   load: () => Promise<WalletPlanetSyncSnapshot>,
   preferredPlanetId?: string | undefined,
@@ -487,19 +435,6 @@ export async function waitForRenamedWalletPlanet(
   throw new Error(renamedPlanetTimeoutMessage(latest, lastError, expectation, attempts * intervalMs));
 }
 
-function collectedResourcesTimeoutMessage(
-  snapshot: CollectedResourcesSnapshot | undefined,
-  expectation: CollectedResourcesExpectation,
-  lastError?: unknown,
-): string {
-  const recovery = transientGameStateReadFailureMessage(lastError);
-  if (recovery) return recovery;
-
-  const lastSettledAt = snapshot?.settlement.planet?.lastSettledAt ?? "unavailable";
-  const hasInfrastructureResources = Boolean(snapshot?.infrastructure.resources);
-  return `Collect transaction confirmed, but indexed wallet resources for planet ${expectation.planetId} are still syncing. Last settledAt: ${lastSettledAt}; infrastructure resources loaded: ${hasInfrastructureResources}. Try refreshing in a few seconds.`;
-}
-
 function finishedBuildingTimeoutMessage(
   snapshot: FinishedBuildingSnapshot | undefined,
   expectation: FinishedBuildingExpectation,
@@ -528,7 +463,7 @@ function finishedBuildingTimeoutMessage(
 function transientGameStateReadFailureMessage(error: unknown): string | undefined {
   if (!isTransientGameStateReadFailure(error)) return undefined;
 
-  return "The game API or RPC is temporarily unavailable while the confirmed transaction state is being checked. Keeping the last known game state and retrying from live sync; this is not a wallet network mismatch.";
+  return "The game API or RPC is temporarily unavailable while the confirmed transaction state is being checked. Keeping the last known game state and retrying from backend state; this is not a wallet network mismatch.";
 }
 
 export function isTransientGameStateReadFailure(error: unknown): boolean {
@@ -542,14 +477,19 @@ function startedDefenseProductionTimeoutMessage(
 ): string {
   const defenseQueue = snapshot?.defense.queue;
   const overviewQueue = snapshot?.queues.defense;
-  const defenseQuantity = defenseQueue?.active && defenseQueue.itemId === expectation.itemId
-    ? defenseQueue.quantity ?? 0
-    : 0;
-  const overviewQuantity = overviewQueue?.active && overviewQueue.itemId === expectation.itemId
-    ? overviewQueue.quantity ?? 0
-    : 0;
+  const defenseQuantity = matchingDefenseQueueQuantity(defenseQueue, expectation.itemId);
+  const overviewQuantity = matchingDefenseQueueQuantity(overviewQueue, expectation.itemId);
 
   return `Defense production transaction confirmed, but indexed defense queue state is still syncing. Expected item ${expectation.itemId} x${expectation.quantity}; Defenses page queue x${defenseQuantity}; Overview queue x${overviewQuantity}. Try refreshing in a few seconds.`;
+}
+
+function matchingDefenseQueueQuantity(
+  queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"] | undefined,
+  itemId: number,
+): number {
+  return defenseQueueEntries(queue ?? null)
+    .filter((entry) => entry.active && entry.itemId === itemId)
+    .reduce((total, entry) => total + (entry.quantity ?? 0), 0);
 }
 
 function startedShipProductionTimeoutMessage(
@@ -641,7 +581,7 @@ function walletPlanetHydrationTimeoutMessage(
       ? `home planet ${homePlanetId} is visible, but complete resources are not hydrated yet`
       : "home planet id is not visible from the game API yet";
 
-  return `Settlement transaction is confirmed, but the game API did not hydrate a complete planet after ${waitedSeconds}s. Last status: ${reason}. Indexed planets: ${planetCount}. Retry sync in a few seconds; if it repeats, share this status with the transaction hash.`;
+  return `Settlement transaction is confirmed, but the game API did not hydrate a complete planet after ${waitedSeconds}s. Last status: ${reason}. Indexed planets: ${planetCount}. Retry in a few seconds; if it repeats, share this status with the transaction hash.`;
 }
 
 function renamedPlanetTimeoutMessage(
@@ -655,7 +595,7 @@ function renamedPlanetTimeoutMessage(
   const latestName = hydrated?.selectedPlanet.name ?? "unavailable";
   const reason = lastError instanceof Error ? lastError.message : `latest name: ${latestName}`;
 
-  return `Rename transaction is confirmed, but indexed planet ${expectation.planetId} did not show "${expectation.name}" after ${waitedSeconds}s. Last status: ${reason}. Retry sync in a few seconds; if it repeats, share this status with the transaction hash.`;
+  return `Rename transaction is confirmed, but indexed planet ${expectation.planetId} did not show "${expectation.name}" after ${waitedSeconds}s. Last status: ${reason}. Retry in a few seconds; if it repeats, share this status with the transaction hash.`;
 }
 
 function defaultDelay(ms: number): Promise<void> {

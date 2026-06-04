@@ -175,6 +175,9 @@ export function OverviewPage({
     : undefined;
   const activeResearchProgress = onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress;
   const onChainDefenseQueue = defenseQueuePreview(onChainQueues?.defense);
+  const onChainDefenseBacklog = onChainQueues?.defense?.backlog
+    ?.filter((queue) => queue.active)
+    .map((queue) => defenseQueuePreview(queue)) ?? [];
   const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
   const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt);
   const defenseHasCanonicalTimeline =
@@ -212,6 +215,10 @@ export function OverviewPage({
   const overviewBuildingNotice = overviewBuildingActionNoticeFor(
     scopedBuildingNotice ?? pendingBuildingNotice,
     buildingNoticeKey,
+  );
+  const overviewBuildingNoticeToRender = overviewBuildingNoticeForFinishAction(
+    overviewBuildingNotice,
+    buildingFinishAction,
   );
 
   const planetName = homePlanet?.name
@@ -592,7 +599,7 @@ export function OverviewPage({
               <OverviewBuildingFinishButton
                 action={buildingFinishAction}
               />
-              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
+              <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
             </QueuePanelContent>
           ) : buildingQueue ? (
             <QueuePanelContent>
@@ -608,7 +615,7 @@ export function OverviewPage({
               <OverviewBuildingFinishButton
                 action={buildingFinishAction}
               />
-              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
+              <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
             </QueuePanelContent>
           ) : (
             <EmptyQueue actionLabel="Build" onAction={() => onNavigate("infrastructure")}>
@@ -635,6 +642,14 @@ export function OverviewPage({
                 now={now}
               />
               <OverviewDefenseFinishButton action={defenseFinishAction} />
+              {onChainDefenseBacklog.length > 0 ? (
+                <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-400">
+                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
+                  {onChainDefenseBacklog.map((queue, index) => (
+                    <span className="truncate" key={`${queue.label}-${index}`}>{queue.label}</span>
+                  ))}
+                </div>
+              ) : null}
             </QueuePanelContent>
           ) : (
             <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
@@ -786,6 +801,7 @@ export function overviewBuildingFinishAction({
   label: string;
   onFinish?: (() => void) | undefined;
   reason?: string | undefined;
+  reasonTone: InfrastructureActionNotice["tone"];
   visible: boolean;
 } {
   const ready = shouldShowOverviewBuildingFinishAction({
@@ -801,9 +817,10 @@ export function overviewBuildingFinishAction({
 
   return {
     disabled: Boolean(reason),
-    label: reason ?? "Finish upgrade",
+    label: actionPending ? "Completing building" : "Complete building",
     onFinish: visible && !reason ? onFinishBuilding : undefined,
     reason,
+    reasonTone: actionPending ? "pending" : "error",
     visible,
   };
 }
@@ -814,6 +831,18 @@ export function overviewBuildingActionNoticeFor(
 ): InfrastructureActionNotice | undefined {
   if (!buildingKey) return actionNotice;
   return actionNoticeForBuilding(actionNotice, buildingKey);
+}
+
+export function overviewBuildingNoticeForFinishAction(
+  notice: InfrastructureActionNotice | undefined,
+  action: Pick<ReturnType<typeof overviewBuildingFinishAction>, "reason" | "reasonTone" | "visible">,
+): InfrastructureActionNotice | undefined {
+  if (notice || !action.visible || !action.reason) return notice;
+
+  return {
+    label: action.reason,
+    tone: action.reasonTone,
+  };
 }
 
 export function overviewDefenseFinishAction({
@@ -880,13 +909,15 @@ function OverviewBuildingFinishButton({
   return (
     <button
       aria-label={action.reason ?? "Finish building upgrade"}
-      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      className="mt-auto flex h-9 w-full min-w-0 items-center justify-center overflow-hidden rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
       disabled={action.disabled}
       onClick={action.onFinish}
       title={action.reason ?? "Finish building upgrade"}
       type="button"
     >
-      {action.label}
+      <span className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+        {action.label}
+      </span>
     </button>
   );
 }
