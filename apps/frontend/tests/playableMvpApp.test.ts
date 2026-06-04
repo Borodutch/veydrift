@@ -7,6 +7,7 @@ import {
   buildingFinishActionErrorLabel,
   canLoadIndexedPageState,
   canonicalInfrastructureBuildingCompletionQueue,
+  completedBuildingFinishSyncReasonFor,
   hasInfrastructureDisplayState,
   infrastructureBackendSyncPausedLabel,
   infrastructureBackendSyncPausedReasonFor,
@@ -884,6 +885,57 @@ describe("Playable MVP app display helpers", () => {
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
     })).toBe("Wallet or game contract is unavailable.");
+  });
+
+  test("blocks duplicate finish attempts while a submitted building completion is still visible", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(completedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: readyQueue,
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toContain("Waiting for backend state to clear this completed queue");
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      completedBuildingFinishExpectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toContain("Waiting for backend state to clear this completed queue");
+  });
+
+  test("clears duplicate finish blocking when the active building queue changes", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(completedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: {
+        ...readyQueue,
+        targetLevel: 3,
+      },
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toBeUndefined();
+    expect(completedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: null,
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toBeUndefined();
   });
 
   test("allows building completion wallet submission after backend ready queue revalidation", () => {
