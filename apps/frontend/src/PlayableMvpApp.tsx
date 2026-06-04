@@ -18,11 +18,12 @@ import { RankingsPage } from "./components/RankingsPage";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
+  infrastructureDisplayActionNoticeFor,
   type BuildingActionState,
 } from "./buildingActionNotice";
 import { buildingUpgradeStatus } from "./buildingDetails";
 
-export { infrastructureActionNoticeFor } from "./buildingActionNotice";
+export { infrastructureActionNoticeFor, infrastructureDisplayActionNoticeFor } from "./buildingActionNotice";
 import {
   mergePlanetWithSettlement,
   planetFromSettlementPlanet,
@@ -2119,14 +2120,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainStatus,
     runtimeConfig.status,
   ]);
-  const buildingFinishUnavailableNotice = buildingFinishUnavailableReason
-    ? {
-        buildingKey: buildingKeyForContractId(activeBuildingQueue?.itemId) ?? buildingQueue?.key,
-        label: buildingFinishUnavailableReason,
-        tone: "error" as const,
-      }
-    : undefined;
-  const infrastructureActionNotice = infrastructureActionNoticeFor(buildingAction) ?? buildingFinishUnavailableNotice;
+  const infrastructureActionNotice = infrastructureDisplayActionNoticeFor({
+    action: buildingAction,
+    finishUnavailableReason: buildingFinishUnavailableReason,
+  });
   const infrastructureActionPendingLabel = buildingAction.status === "pending" ? buildingAction.label : undefined;
   const topBarEnergy = useMemo(() => {
     return topBarEnergyFor({
