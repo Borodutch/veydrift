@@ -352,16 +352,6 @@ export class ChainSyncService {
       }
     }
 
-    if (removed && this.indexer?.rebuildPlanets) {
-      void this.indexer.rebuildPlanets().catch((error) => {
-        this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed planet state after removed log.";
-      });
-    } else if (!removed && this.indexer?.rebuildPlanets) {
-      void this.indexer.rebuildPlanets().catch((error) => {
-        this.lastError = error instanceof Error ? error.message : "Failed to refresh indexed planet state.";
-      });
-    }
-
     this.notify({
       kind: "chain-event",
       blockNumber: this.latestSyncedBlock,
