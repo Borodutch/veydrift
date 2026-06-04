@@ -1095,6 +1095,18 @@ export function canLoadIndexedPageState({
   return expectedKey === undefined || hydratedWalletSnapshotKey === expectedKey;
 }
 
+export function defenseCompletionPlanetIdFor({
+  activePlanetId,
+  defenseState,
+  walletQueues,
+}: {
+  activePlanetId: string | undefined;
+  defenseState: ChainDefenseState | null;
+  walletQueues: PlayerQueuesResponse | undefined;
+}): string | undefined {
+  return activePlanetId ?? defenseState?.homePlanetId ?? walletQueues?.homePlanetId ?? undefined;
+}
+
 function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
   return {
     wallet,
@@ -2705,18 +2717,23 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   ]);
 
   const handleFinishDefenseProduction = useCallback(() => {
-    if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
+    const planetId = defenseCompletionPlanetIdFor({
+      activePlanetId,
+      defenseState,
+      walletQueues: onChainQueues,
+    });
+    if (!provider || !account || !gameContract || !planetId) {
       setDefenseAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
-    void runDefenseTransaction("Defense completion", `defense:finish:${defenseState.homePlanetId ?? "0"}`, () => sendFinishDefenseProductionTransaction(
+    void runDefenseTransaction("Defense completion", `defense:finish:${planetId}`, () => sendFinishDefenseProductionTransaction(
       provider,
       account,
       gameContract,
-      defenseState.homePlanetId ?? "0",
+      planetId,
     ));
-  }, [account, defenseState?.homePlanetId, gameContract, provider, runDefenseTransaction]);
+  }, [account, activePlanetId, defenseState, gameContract, onChainQueues, provider, runDefenseTransaction]);
 
   const handleCreateAlliance = useCallback((tag: string, name: string, description: string) => {
     if (!provider || !account || !allianceContract) {
