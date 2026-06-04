@@ -717,7 +717,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
-  test("blocks ready indexed building completion while backend canonical state is stale", () => {
+  test("keeps stale ready indexed building completion blocked until a visible ready queue can be reused", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: infrastructureState({
@@ -736,6 +736,18 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_000_000,
     })).toBe(infrastructureBackendSyncPausedLabel);
+
+    const readyQueue = readyBuildingQueue();
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
   });
 
   test("allows indexed ready building queues after backend revalidation without readonly preflight gating", () => {
@@ -774,7 +786,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("keeps ready indexed infrastructure paused during backend reconciliation", () => {
+  test("allows ready indexed building completion to recover during backend reconciliation", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(buildingCompletionReadyToFinishFlag({
@@ -785,11 +797,37 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
+    })).toBe(true);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        queue: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
+  test("keeps degraded ready indexed building completion paused", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        degraded: true,
+        queue: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
     })).toBe(false);
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       fallbackBuildingQueue: readyQueue,
       infrastructureState: infrastructureState({
+        degraded: true,
         queue: null,
         source: "contract-state-indexer",
         stale: true,
@@ -810,6 +848,20 @@ describe("Playable MVP app display helpers", () => {
         stale: false,
       }),
       isBuildingReadyToFinish: false,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isBuildingReadyToFinish: true,
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
     })).toBeUndefined();
@@ -1094,6 +1146,43 @@ describe("Playable MVP app display helpers", () => {
       activePlanetId: "7",
       apiBaseUrl: "https://api.test",
       fallback,
+      loadInfrastructureState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(latest);
+      }) as never,
+      now: 1_700_000_000_000,
+    });
+
+    expect(result).toEqual({
+      infrastructureState: latest,
+      unavailableReason: undefined,
+    });
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+    ]]);
+  });
+
+  test("allows building completion revalidation to recover when the refreshed indexed queue is still stale", async () => {
+    const readyQueue = readyBuildingQueue();
+    const latest = infrastructureState({
+      queue: readyQueue,
+      source: "contract-state-indexer",
+      stale: true,
+    });
+    const calls: unknown[][] = [];
+
+    const result = await buildingCompletionUnavailableReasonAfterBackendRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      knownBuildingQueue: readyQueue,
       loadInfrastructureState: ((...args: unknown[]) => {
         calls.push(args);
         return Promise.resolve(latest);
