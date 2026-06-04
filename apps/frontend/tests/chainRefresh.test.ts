@@ -22,6 +22,6 @@ describe("playable chain refresh", () => {
     expect(source).toContain("sendStartBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          building,\n        )");
     expect(source).not.toContain("building,\n          { readProvider },");
     expect(source).toContain("sendFinishBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n        )");
-    expect(source).toContain("sendCollectResourcesTransaction(\n      provider,\n      account,\n      gameContract,\n      planetId,\n    )");
+    expect(source).not.toContain("sendCollectResourcesTransaction");
   });
 });

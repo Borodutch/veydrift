@@ -22,16 +22,6 @@ export type FinishedBuildingSnapshot = {
   settlement: WalletSettlementResponse;
 };
 
-export type CollectedResourcesExpectation = {
-  planetId: string;
-  previousLastSettledAt?: string | undefined;
-};
-
-export type CollectedResourcesSnapshot = {
-  infrastructure: ChainInfrastructureState;
-  settlement: WalletSettlementResponse;
-};
-
 export type StartedDefenseProductionExpectation = {
   itemId: number;
   planetId?: string | undefined;
@@ -109,25 +99,6 @@ export function isFinishedBuildingStateVisible(
 
   const row = snapshot.infrastructure.buildings.find((building) => building.id === expectation.itemId);
   return (row?.level ?? 0) >= expectation.targetLevel;
-}
-
-export function isCollectedResourcesStateVisible(
-  snapshot: CollectedResourcesSnapshot,
-  expectation: CollectedResourcesExpectation,
-): boolean {
-  const settlementPlanet = snapshot.settlement.planet;
-  if (!settlementPlanet || settlementPlanet.planetId !== expectation.planetId) return false;
-  if (snapshot.infrastructure.homePlanetId !== expectation.planetId) return false;
-  if (!snapshot.infrastructure.resources) return false;
-
-  const settlementResources = settlementPlanet.resources;
-  const resourcesMatch = settlementResources.metal === snapshot.infrastructure.resources.metal
-    && settlementResources.crystal === snapshot.infrastructure.resources.crystal
-    && settlementResources.deuterium === snapshot.infrastructure.resources.deuterium;
-  if (!resourcesMatch) return false;
-
-  if (!expectation.previousLastSettledAt) return true;
-  return BigInt(settlementPlanet.lastSettledAt) > BigInt(expectation.previousLastSettledAt);
 }
 
 export function hydratedWalletPlanetSnapshot(
@@ -399,36 +370,6 @@ export async function waitForAllianceApplicationCleared(
   throw new Error(allianceApplicationClearTimeoutMessage(latest, expectation, lastError));
 }
 
-export async function waitForCollectedResourcesState(
-  load: () => Promise<CollectedResourcesSnapshot>,
-  expectation: CollectedResourcesExpectation,
-  options: WaitOptions = {},
-): Promise<CollectedResourcesSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
-  const delay = options.delay ?? defaultDelay;
-  let latest: CollectedResourcesSnapshot | undefined;
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      latest = await load();
-      lastError = undefined;
-      if (isCollectedResourcesStateVisible(latest, expectation)) {
-        return latest;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-
-    if (attempt < attempts - 1) {
-      await delay(intervalMs);
-    }
-  }
-
-  throw new Error(collectedResourcesTimeoutMessage(latest, expectation, lastError));
-}
-
 export async function waitForHydratedWalletPlanet(
   load: () => Promise<WalletPlanetSyncSnapshot>,
   preferredPlanetId?: string | undefined,
@@ -485,19 +426,6 @@ export async function waitForRenamedWalletPlanet(
   }
 
   throw new Error(renamedPlanetTimeoutMessage(latest, lastError, expectation, attempts * intervalMs));
-}
-
-function collectedResourcesTimeoutMessage(
-  snapshot: CollectedResourcesSnapshot | undefined,
-  expectation: CollectedResourcesExpectation,
-  lastError?: unknown,
-): string {
-  const recovery = transientGameStateReadFailureMessage(lastError);
-  if (recovery) return recovery;
-
-  const lastSettledAt = snapshot?.settlement.planet?.lastSettledAt ?? "unavailable";
-  const hasInfrastructureResources = Boolean(snapshot?.infrastructure.resources);
-  return `Collect transaction confirmed, but indexed wallet resources for planet ${expectation.planetId} are still syncing. Last settledAt: ${lastSettledAt}; infrastructure resources loaded: ${hasInfrastructureResources}. Try refreshing in a few seconds.`;
 }
 
 function finishedBuildingTimeoutMessage(

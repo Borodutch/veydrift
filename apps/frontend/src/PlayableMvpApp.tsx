@@ -35,7 +35,6 @@ import {
   buildingContractIds,
   collectibleResourceDeltas,
   energyBalance,
-  hasCollectableResources,
   productionPerHour,
   progress,
   researchCatalog,
@@ -68,7 +67,6 @@ import {
 } from "./overviewData";
 import {
   isTransientGameStateReadFailure,
-  waitForCollectedResourcesState,
   waitForFinishedResearchState,
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
@@ -78,7 +76,6 @@ import {
   waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
   type AllianceApplicationExpectation,
-  type CollectedResourcesExpectation,
   type FinishedResearchExpectation,
   type StartedDefenseProductionExpectation,
   type StartedShipProductionExpectation,
@@ -116,7 +113,6 @@ import {
   fetchWalletSettlement,
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
-  sendCollectResourcesTransaction,
   sendFinishBuildingUpgradeTransaction,
   sendCompleteFleetMissionReturnTransaction,
   sendFinishResourceWithdrawalTransaction,
@@ -590,12 +586,6 @@ type ShipyardActionState =
   | { status: "pending"; label: string }
   | { status: "success"; label: string }
   | { status: "error"; label: string };
-
-export const resourceCollectionSuccessFeedbackMs = 4_000;
-
-export function isTransientResourceCollectionSuccess(action: ShipyardActionState): boolean {
-  return action.status === "success" && action.label === "Resource collection confirmed.";
-}
 
 type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
@@ -1290,17 +1280,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   });
 
   useEffect(() => {
-    if (!isTransientResourceCollectionSuccess(shipyardAction)) return;
-
-    const timer = window.setTimeout(() => {
-      setShipyardAction((current) =>
-        isTransientResourceCollectionSuccess(current) ? { status: "idle" } : current
-      );
-    }, resourceCollectionSuccessFeedbackMs);
-    return () => window.clearTimeout(timer);
-  }, [shipyardAction]);
-
-  useEffect(() => {
     setPlayerProfile(undefined);
     setPlayerProfileAction({ status: "idle" });
   }, [account]);
@@ -1608,54 +1587,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load completed building state.";
-      if (isTransientGameStateReadFailure(error) && infrastructureChainState) {
-        setOnChainError(undefined);
-        setOnChainStatus("ready");
-        setInfrastructureError(message);
-        return false;
-      }
-
-      setOnChainError(message);
-      setOnChainStatus("error");
-      setInfrastructureError(message);
-      throw error;
-    } finally {
-      setInfrastructureLoading(false);
-    }
-  }, [account, activePlanetId, apiBaseUrl, infrastructureChainState, refreshInfrastructureState, refreshOnChainState]);
-
-  const refreshCollectedResourcesState = useCallback(async (expectation: CollectedResourcesExpectation): Promise<boolean> => {
-    if (!apiBaseUrl || !account) {
-      await refreshOnChainState();
-      await refreshInfrastructureState();
-      return true;
-    }
-
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
-    setInfrastructureLoading(true);
-    setInfrastructureError(undefined);
-
-    try {
-      const snapshot = await waitForCollectedResourcesState(
-        async () => {
-          const [settlement, infrastructure] = await Promise.all([
-            fetchWalletSettlement(apiBaseUrl, account),
-            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
-          ]);
-
-          return { settlement, infrastructure };
-        },
-        expectation,
-      );
-
-      setOnChainSettlement(snapshot.settlement);
-      setOnChainError(undefined);
-      setOnChainStatus("ready");
-      setInfrastructureChainState(snapshot.infrastructure);
-      setInfrastructureError(undefined);
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load collected resource state.";
       if (isTransientGameStateReadFailure(error) && infrastructureChainState) {
         setOnChainError(undefined);
         setOnChainStatus("ready");
@@ -2012,16 +1943,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (!isWalletConnected || !onChainResources) return undefined;
     return resourcesWithCollectibleDeltas(onChainResources, collectibleDeltas);
   }, [collectibleDeltas, isWalletConnected, onChainResources]);
-  const isCollectReady = useMemo(() => {
-    if (collectibleDeltas) {
-      return collectibleDeltas.metal > 0
-        || collectibleDeltas.crystal > 0
-        || collectibleDeltas.deuterium > 0;
-    }
-
-    if (!isWalletConnected || !onChainSettlement?.planet?.lastSettledAt) return false;
-    return hasCollectableResources(rates, Number(onChainSettlement.planet.lastSettledAt), now);
-  }, [collectibleDeltas, isWalletConnected, onChainSettlement?.planet?.lastSettledAt, rates, now]);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
@@ -2581,33 +2502,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
     }
   }, [receiptProvider, refreshInfrastructureState, refreshOnChainState]);
-
-  const handleCollectResources = useCallback(() => {
-    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
-      setShipyardAction({
-        status: "error",
-        label: "Resource collection failed: Wallet, game contract, or home planet is unavailable.",
-      });
-      return;
-    }
-
-    const planetId = onChainSettlement.homePlanetId;
-    const previousLastSettledAt = onChainSettlement.planet?.lastSettledAt;
-    void runShipyardTransaction("Resource collection", `resources:collect:${planetId}`, () => sendCollectResourcesTransaction(
-      provider,
-      account,
-      gameContract,
-      planetId,
-    ), () => refreshCollectedResourcesState({ planetId, previousLastSettledAt }));
-  }, [
-    account,
-    gameContract,
-    onChainSettlement?.homePlanetId,
-    onChainSettlement?.planet?.lastSettledAt,
-    provider,
-    refreshCollectedResourcesState,
-    runShipyardTransaction,
-  ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
     const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
@@ -3577,32 +3471,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setPage("research");
   }, []);
 
-  const collectResourcesActionLabel = shipyardAction.status !== "idle"
-    && shipyardAction.label.startsWith("Resource collection")
-    ? shipyardAction.label
-    : undefined;
-  const collectResourcesActionStatus = collectResourcesActionLabel && shipyardAction.status !== "idle"
-    ? shipyardAction.status
-    : undefined;
-  const collectResourcesPending = shipyardAction.status === "pending" && Boolean(collectResourcesActionLabel);
   const topBar = (
     <TopBar
-      canCollectResources={isCollectReady}
       caps={caps}
       energy={topBarEnergy}
       isWalletConnected={isWalletConnected}
-      collectResourcesActionLabel={collectResourcesActionLabel}
-      collectResourcesActionStatus={collectResourcesActionStatus}
-      collectResourcesPending={collectResourcesPending}
-      collectResourcesPendingLabel={collectResourcesPending ? shipyardAction.label : undefined}
-      onCollectResources={handleCollectResources}
       queue={isWalletConnected ? undefined : settledState.queue}
       rates={rates}
       resourceStatus={isWalletConnected && !walletPlanetHydrated && onChainStatus !== "error" ? "loading" : isWalletConnected ? onChainStatus : "local"}
       researchQueue={isWalletConnected ? undefined : settledState.researchQueue}
-      resources={isWalletConnected ? onChainResources : settledState.resources}
-      resourceDeltas={collectibleDeltas}
-      showCollectResources={isCollectReady}
+      resources={isWalletConnected ? spendableResources : settledState.resources}
     />
   );
 

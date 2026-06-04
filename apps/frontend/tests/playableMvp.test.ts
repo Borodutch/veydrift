@@ -12,7 +12,6 @@ import {
   defenseCombatStats,
   defenseCatalog,
   energyBalance,
-  hasCollectableResources,
   missileSiloCapacity,
   productionCapacityPerHour,
   productionPerHour,
@@ -520,17 +519,6 @@ describe("playable MVP contract display helpers", () => {
       expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 1 }).metal);
       expect(effect.deltaPerHour).toBeGreaterThan(0);
     }
-  });
-
-  test("only enables resource collection when at least one whole resource accrued", () => {
-    const rates = { metal: 60, crystal: 0, deuterium: 0 };
-    const lastSettledAtSeconds = 1_000;
-
-    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_000_000)).toBe(false);
-    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_059_000)).toBe(false);
-    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_060_000)).toBe(true);
-    expect(hasCollectableResources({ metal: 0, crystal: 0, deuterium: 0 }, lastSettledAtSeconds, 1_600_000))
-      .toBe(false);
   });
 
   test("counts whole collectable deltas as spendable resources", () => {
