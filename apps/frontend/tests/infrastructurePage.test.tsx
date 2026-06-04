@@ -88,6 +88,33 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("24 required");
   });
 
+  test("keeps double-digit level labels separate from current and next badges", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 10,
+      },
+    };
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Metal Mine",
+      currentLevel: 10,
+      rows: buildingLevelInfoRows(state.buildings, "metalMine", undefined, 12),
+      onClose: () => undefined,
+    });
+    const cells = elementNodes(modal).filter((node) => node.type === "td");
+    const level10Cell = cells.find((cell) => visibleText(cell) === "Level 10");
+    const level11Cell = cells.find((cell) => visibleText(cell) === "Level 11");
+    const currentPill = elementNodes(modal).find((node) => node.type === "span" && visibleText(node) === "Current");
+    const nextPill = elementNodes(modal).find((node) => node.type === "span" && visibleText(node) === "Next");
+
+    expect(visibleText(modal)).toContain("Status");
+    expect(level10Cell?.props.className).toContain("whitespace-nowrap");
+    expect(level11Cell?.props.className).toContain("whitespace-nowrap");
+    expect(currentPill?.props.className).toContain("whitespace-nowrap");
+    expect(nextPill?.props.className).toContain("whitespace-nowrap");
+  });
+
   test("renders Solar Plant modal rows with energy output", () => {
     const modal = BuildingLevelInfoModal({
       buildingLabel: "Solar Plant",
@@ -413,4 +440,22 @@ function textParts(node: ComponentChildren): string[] {
   }
 
   return textParts(vnode.props?.children);
+}
+
+function elementNodes(node: ComponentChildren): VNode[] {
+  if (node === null || node === undefined || typeof node === "boolean" || typeof node === "string" || typeof node === "number") {
+    return [];
+  }
+
+  if (Array.isArray(node)) {
+    return node.flatMap(elementNodes);
+  }
+
+  const vnode = node as VNode;
+  if (typeof vnode.type === "function" && ["LevelInfoCell", "LevelPill"].includes(vnode.type.name)) {
+    const Component = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
+    return [vnode, ...elementNodes(Component(vnode.props ?? {}))];
+  }
+
+  return [vnode, ...elementNodes(vnode.props?.children)];
 }
