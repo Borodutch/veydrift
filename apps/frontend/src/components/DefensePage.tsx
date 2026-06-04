@@ -44,15 +44,6 @@ const groupLabels = {
   missile: "Missiles",
 } as const;
 
-const missileThumbnailFrames: Partial<Record<DefenseKey, { transform: string }>> = {
-  antiBallisticMissile: {
-    transform: "translate(-6%, -5%) scale(1.25)",
-  },
-  interplanetaryMissile: {
-    transform: "translate(4%, 5%) scale(0.98)",
-  },
-};
-
 export function DefensePage({
   actionState,
   canTransact,
@@ -266,7 +257,6 @@ export function defenseProductionItems({
       notes: combatStats.notes,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked",
-      thumbnailStyle: missileThumbnailFrames[defense.key],
     };
   });
 }
