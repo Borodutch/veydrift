@@ -162,6 +162,60 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
+  test("applies websocket logs incrementally without refreshing planets from chain", () => {
+    MockWebSocket.instances = [];
+    const applyLogCalls: unknown[] = [];
+    let rebuildPlanetsCalls = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog(log: unknown) {
+        applyLogCalls.push(log);
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: false,
+          snapshot: {}
+        };
+      },
+      async rebuildPlanets() {
+        rebuildPlanetsCalls += 1;
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x7c",
+          transactionHash: "0xabc",
+          topics: [
+            planetStartedTopic,
+            `0x${player.slice(2).padStart(64, "0")}`,
+            `0x${(7n).toString(16).padStart(64, "0")}`
+          ],
+          data: abiWords(2n, 44n, 9n, 211n, 1n)
+        }
+      }
+    });
+
+    expect(applyLogCalls).toHaveLength(1);
+    expect(rebuildPlanetsCalls).toBe(0);
+    expect(service.snapshot()).toMatchObject({
+      eventsReceived: 1,
+      latestSyncedBlock: "124"
+    });
+    service.stop();
+  });
+
   test("reconnects after websocket close", async () => {
     MockWebSocket.instances = [];
     const service = new ChainSyncService(config, undefined, {
@@ -174,6 +228,54 @@ describe("ChainSyncService", () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(MockWebSocket.instances).toHaveLength(2);
+    service.stop();
+  });
+
+  test("applies websocket logs incrementally without rebuilding all planets", async () => {
+    MockWebSocket.instances = [];
+    let appliedLogs = 0;
+    let planetRebuilds = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        appliedLogs += 1;
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: false,
+          snapshot: {}
+        };
+      },
+      async rebuildPlanets() {
+        planetRebuilds += 1;
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x7c",
+          transactionHash: "0xabc",
+          topics: [planetStartedTopic],
+          data: "0x"
+        }
+      }
+    });
+    await Promise.resolve();
+
+    expect(appliedLogs).toBe(1);
+    expect(planetRebuilds).toBe(0);
     service.stop();
   });
 

@@ -6,6 +6,7 @@ describe("playable chain refresh", () => {
 
     expect(source).toContain("new window.EventSource");
     expect(source).toContain("/chain/events");
+    expect(source).toContain("snapshot.subscribedToHeads && snapshot.subscribedToLogs");
     expect(source).toContain("120_000");
     expect(source).not.toContain("30_000");
     expect(source).not.toContain("2_500");
