@@ -34,7 +34,6 @@ import {
   miniAppUnsupportedChainMessage,
   mergePlayerProfile,
   parseRiftTokenAmount,
-  sendCollectResourcesTransaction,
   sendCompleteFleetMissionReturnTransaction,
   sendApproveResourceTokenTransaction,
   sendDepositResourceTransaction,
@@ -916,38 +915,25 @@ describe("walletFlow", () => {
     });
 
     await expect(
-      sendCollectResourcesTransaction(provider, account, contract, "7")
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
     ).resolves.toBe("0xtx1");
     await expect(
-      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
+      sendFinishBuildingUpgradeTransaction(provider, account, contract, "7")
     ).resolves.toBe("0xtx2");
     await expect(
-      sendFinishBuildingUpgradeTransaction(provider, account, contract, "7")
+      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
     ).resolves.toBe("0xtx3");
     await expect(
-      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
+      sendFinishShipProductionTransaction(provider, account, contract, "7")
     ).resolves.toBe("0xtx4");
     await expect(
-      sendFinishShipProductionTransaction(provider, account, contract, "7")
+      sendStartDefenseProductionTransaction(provider, account, contract, "7", 0, 2)
     ).resolves.toBe("0xtx5");
     await expect(
-      sendStartDefenseProductionTransaction(provider, account, contract, "7", 0, 2)
-    ).resolves.toBe("0xtx6");
-    await expect(
       sendFinishDefenseProductionTransaction(provider, account, contract, "7")
-    ).resolves.toBe("0xtx7");
+    ).resolves.toBe("0xtx6");
 
     expect(requests).toEqual([
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xdb43284d0000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      },
       {
         method: "eth_sendTransaction",
         params: [

@@ -510,7 +510,6 @@ const START_PLANET_SELECTOR = "0xf45f1f18";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
   completeFleetMissionReturn: "0xc2472852",
-  collectResources: "0xdb43284d",
   createColony: "0x71358ab8",
   depositResource: "0x25819e15",
   finishDefenseProduction: "0xa5a0d597",
@@ -1546,29 +1545,6 @@ export async function sendFinishResearchTransaction(
     from: account,
     to: contractAddress,
     data: GAME_SELECTORS.finishResearch
-  });
-}
-
-export async function sendCollectResourcesTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  const data = encodeGameCall(GAME_SELECTORS.collectResources, [planetId]);
-  const transaction: TransactionRequest = {
-    from: account,
-    to: contractAddress,
-    data
-  };
-
-  const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
-  if (!accountProbeReadyChecked) {
-    await assertWalletUnlocked(provider);
-  }
-
-  return sendWalletTransaction(provider, account, transaction, {
-    accountProbeReadyChecked
   });
 }
 

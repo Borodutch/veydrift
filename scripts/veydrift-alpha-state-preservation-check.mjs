@@ -7,7 +7,8 @@ const requiredFiles = [
   "docs/veydriftgame-replacement-plan-VEY-KANEO-313.md",
   "README.md",
   "packages/contracts/README.md",
-  "packages/contracts/script/Deploy.s.sol"
+  "packages/contracts/script/Deploy.s.sol",
+  "scripts/veydrift-redeploy-preflight.mjs"
 ];
 
 const read = (path) => readFileSync(path, "utf8");
@@ -35,6 +36,7 @@ requireIncludes("docs/open-alpha-state-preservation.md", [
 
 requireIncludes("docs/veydrift-contract-redeploy-runbook.md", [
   "Migration Verification Gate",
+  "veydrift-redeploy-preflight.mjs",
   "No alpha player state exists",
   "Migration plan approved",
   "VEYDRIFT_ALPHA_REDEPLOY_ACK",
@@ -49,6 +51,23 @@ requireIncludes("docs/veydriftgame-replacement-plan-VEY-KANEO-313.md", [
   "pre- and post-replacement preflight JSON",
   "replacement.resourceReserveRequirement() <= replacement resource token balances",
   "Rollback"
+]);
+
+requireIncludes("docs/open-alpha-state-preservation.md", [
+  "veydrift-redeploy-preflight.mjs",
+  "fail-closed evidence collector",
+  "Do not treat the public API, backend indexer, or generated event export as a",
+  "_ownedPlanetIds",
+  "player activity timestamps and honor points",
+  "pre/post parity check"
+]);
+
+requireIncludes("scripts/veydrift-redeploy-preflight.mjs", [
+  "ERC1967_IMPLEMENTATION_SLOT",
+  "backendSnapshots",
+  "migration-plan-approved",
+  "no-alpha-state",
+  "Full redeploy is blocked"
 ]);
 
 requireIncludes("packages/contracts/script/Deploy.s.sol", [

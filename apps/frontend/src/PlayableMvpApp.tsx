@@ -33,12 +33,10 @@ import {
 } from "./data/mockUniverse";
 import {
   buildingContractIds,
-  collectibleResourceDeltas,
   energyBalance,
   productionPerHour,
   progress,
   researchCatalog,
-  spendableResources as resourcesWithCollectibleDeltas,
   storageCaps,
   type BuildingKey,
   type DefenseKey,
@@ -187,6 +185,16 @@ export function researchStartTransactionLabel(
     ?? 0;
 
   return `${label} level ${currentLevel + 1} research`;
+}
+
+export function walletSpendableResourcesFor({
+  isWalletConnected,
+  onChainResources,
+}: {
+  isWalletConnected: boolean;
+  onChainResources: PlayableState["resources"] | undefined;
+}): PlayableState["resources"] | undefined {
+  return isWalletConnected ? onChainResources : undefined;
 }
 
 const buildingFinishStateReadFailureLabel =
@@ -1997,14 +2005,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       deuterium: Number(nextCaps.deuterium),
     };
   }, [infrastructureChainState?.storageCaps, settledState.buildings]);
-  const collectibleDeltas = useMemo(() => {
-    if (!isWalletConnected || !onChainResources || !onChainSettlement?.planet?.lastSettledAt) return undefined;
-    return collectibleResourceDeltas(rates, Number(onChainSettlement.planet.lastSettledAt), now, onChainResources, caps);
-  }, [caps, isWalletConnected, now, onChainResources, onChainSettlement?.planet?.lastSettledAt, rates]);
   const spendableResources = useMemo(() => {
-    if (!isWalletConnected || !onChainResources) return undefined;
-    return resourcesWithCollectibleDeltas(onChainResources, collectibleDeltas);
-  }, [collectibleDeltas, isWalletConnected, onChainResources]);
+    return walletSpendableResourcesFor({ isWalletConnected, onChainResources });
+  }, [isWalletConnected, onChainResources]);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
