@@ -760,6 +760,65 @@ contract VeydriftGameTest is Test {
         assertEq(required.deuterium, 0);
     }
 
+    function testBuildingUpgradeAutoCollectsAccruedResourcesBeforeSpend() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.MetalMine, 1);
+        _setBuildingLevel(planetId, Building.SolarPlant, 1);
+
+        VeydriftGameStorage.Resources memory cost =
+            game.buildingUpgradeCost(planetId, Building.CrystalMine);
+        _setResources(planetId, cost.metal - 1, cost.crystal, cost.deuterium);
+
+        vm.warp(block.timestamp + 1 hours);
+        uint64 settledAt = uint64(block.timestamp);
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.CrystalMine);
+
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+        assertEq(game.planet(planetId).lastSettledAt, settledAt);
+    }
+
+    function testShipProductionAutoCollectsAccruedResourcesBeforeSpend() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.MetalMine, 20);
+        _setBuildingLevel(planetId, Building.SolarPlant, 20);
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+
+        VeydriftGameStorage.Resources memory cost = game.shipCost(Ship.SmallCargo);
+        _setResources(planetId, cost.metal - 1, cost.crystal, cost.deuterium);
+
+        vm.warp(block.timestamp + 1 hours);
+        uint64 settledAt = uint64(block.timestamp);
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+
+        assertTrue(game.shipQueue(planetId).active);
+        assertEq(game.planet(planetId).lastSettledAt, settledAt);
+    }
+
+    function testResearchAutoCollectsAccruedResourcesBeforeSpend() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.MetalMine, 10);
+        _setBuildingLevel(planetId, Building.SolarPlant, 10);
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.Energy, 2);
+
+        VeydriftGameStorage.Resources memory cost = game.researchCost(player, Technology.Laser);
+        _setResources(planetId, cost.metal - 1, cost.crystal, cost.deuterium);
+
+        vm.warp(block.timestamp + 1 hours);
+        uint64 settledAt = uint64(block.timestamp);
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Laser);
+
+        assertTrue(game.researchQueue(player).active);
+        assertEq(game.planet(planetId).lastSettledAt, settledAt);
+    }
+
     function testBuildingUpgradeRejectsActiveQueueAndBadDependencies() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();

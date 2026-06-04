@@ -621,6 +621,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     }
 
     function _spend(uint256 planetId, Resources memory cost) private {
+        _settleResources(planetId);
         Resources storage available = _planets[planetId].resources;
         if (
             available.metal < cost.metal || available.crystal < cost.crystal
