@@ -76,6 +76,14 @@ describe("Playable MVP app display helpers", () => {
       label: "Building upgrade transaction failed.",
       tone: "error",
     });
+
+    expect(infrastructureDisplayActionNoticeFor({
+      action: {
+        status: "error",
+        label: infrastructureBackendSyncPausedLabel,
+      },
+      finishUnavailableReason: infrastructureBackendSyncPausedLabel,
+    })).toBeUndefined();
   });
 
   test("gates page state refreshes until the current wallet snapshot is hydrated", () => {

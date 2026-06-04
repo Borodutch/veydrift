@@ -1557,6 +1557,36 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("keeps a previously reconciled index serveable while background reconciliation runs", async () => {
+    let releaseRebuild = () => {};
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n);
+
+    await indexer.rebuild();
+    reader.listSettledPlanetEvents = async () => {
+      await new Promise<void>((resolve) => {
+        releaseRebuild = resolve;
+      });
+      return [planet];
+    };
+
+    const rebuilding = indexer.rebuild();
+
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      reconciliationInProgress: true,
+      safeToServeIndexedState: true,
+      staleReason: "reconciliation_in_progress"
+    });
+
+    releaseRebuild();
+    await rebuilding;
+  });
+
   test("rebuild preserves newer uncompleted event-derived production queues", async () => {
     const currentPlanet: SettledPlanetEvent = {
       ...planet,

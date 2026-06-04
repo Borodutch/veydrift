@@ -28,11 +28,16 @@ export function infrastructureActionNoticeFor(
 
 export function infrastructureDisplayActionNoticeFor({
   action,
+  finishUnavailableReason,
 }: {
   action: BuildingActionState;
   finishUnavailableReason?: string | undefined;
 }): InfrastructureActionNotice | undefined {
   // Finish-unavailable reasons already drive disabled finish controls and load warnings.
+  if (action.status === "error" && finishUnavailableReason && action.label === finishUnavailableReason) {
+    return undefined;
+  }
+
   return infrastructureActionNoticeFor(action);
 }
 
