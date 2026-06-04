@@ -48,6 +48,7 @@ requireIncludes("docs/veydriftgame-replacement-plan-VEY-KANEO-313.md", [
   "Use a migrated redeploy.",
   "Proxy upgrade is unavailable",
   "No-state redeploy is invalid",
+  "reviewed fail-closed evidence collector",
   "pre- and post-replacement preflight JSON",
   "replacement.resourceReserveRequirement() <= replacement resource token balances",
   "Rollback"
