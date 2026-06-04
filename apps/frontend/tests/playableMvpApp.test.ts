@@ -680,6 +680,10 @@ describe("Playable MVP app display helpers", () => {
     expect(buildingCompletionReadyToFinishFlag({
       infrastructureState: canonicalInfrastructure,
       now: 1_700_000_000_000,
+    })).toBe(false);
+    expect(buildingCompletionReadyToFinishFlag({
+      infrastructureState: canonicalInfrastructure,
+      now: 1_700_000_030_000,
     })).toBe(true);
   });
 
@@ -746,7 +750,7 @@ describe("Playable MVP app display helpers", () => {
         source: "contract-state-indexer",
         stale: false,
       }),
-      now: 1_700_000_000_000,
+      now: 1_700_000_030_000,
     })).toBeUndefined();
   });
 
@@ -1013,7 +1017,36 @@ describe("Playable MVP app display helpers", () => {
         source: "live-rpc",
         stale: false,
       }),
-      now: 1_700_000_000_000,
+      now: 1_700_000_030_000,
+    })).toBeUndefined();
+  });
+
+  test("blocks building completion during the client-clock safety window", () => {
+    expect(buildingCompletionReadyToFinishFlag({
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_029_000,
+    })).toBe(false);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_029_000,
+    })).toBe("Building upgrade is not ready to finish yet.");
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_030_000,
     })).toBeUndefined();
   });
 
@@ -1029,7 +1062,7 @@ describe("Playable MVP app display helpers", () => {
         source: "live-rpc",
         stale: false,
       }),
-      now: 1_700_000_000_000,
+      now: 1_700_000_030_000,
     })).toBeUndefined();
 
     expect(buildingCompletionUnavailableReasonFor({

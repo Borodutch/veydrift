@@ -205,6 +205,7 @@ const buildingFinishSubmittedSyncLabel =
   "Building completion submitted. Waiting for backend state to clear this completed queue before another finish attempt.";
 const buildingFinishFailedSyncLabel =
   "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.";
+const buildingFinishClientClockSafetyMs = 30_000;
 export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 const buildingWalletConfirmationLabel = (label: string) =>
@@ -336,7 +337,7 @@ export function buildingCompletionReadyToFinishFlag({
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): boolean {
-  return isBuildingQueueReadyToFinish(
+  return isBuildingQueueSafelyReadyToFinish(
     buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue),
     now,
   );
@@ -378,11 +379,19 @@ export function buildingCompletionUnavailableReasonFor({
     return "Building completion time is unavailable. Refresh infrastructure state before finishing.";
   }
 
-  if (readyAt > now) {
+  if (readyAt + buildingFinishClientClockSafetyMs > now) {
     return "Building upgrade is not ready to finish yet.";
   }
 
   return undefined;
+}
+
+function isBuildingQueueSafelyReadyToFinish(
+  queue: QueueStateResponse | null | undefined,
+  now = Date.now(),
+): boolean {
+  const readyAt = timestampToMs(queue?.readyAt);
+  return Boolean(queue?.active && readyAt !== undefined && readyAt + buildingFinishClientClockSafetyMs <= now);
 }
 
 function buildingCompletionQueueForVerification(

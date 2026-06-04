@@ -451,7 +451,7 @@ function BuildingDetailPanel({
       )}
 
       {actionNotice && (
-        <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold ${noticeClass}`}>
+        <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold break-words ${noticeClass}`}>
           {actionNotice.label}
         </div>
       )}
@@ -459,7 +459,7 @@ function BuildingDetailPanel({
       {finishAction.visible && (
         <button
           aria-label={finishAction.reason ?? "Finish building upgrade"}
-          className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          className="mt-3 min-h-10 w-full whitespace-normal break-words rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 py-2 text-sm font-semibold leading-5 text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
           disabled={finishAction.disabled}
           onClick={finishAction.onFinish}
           title={finishAction.reason ?? "Finish building upgrade"}

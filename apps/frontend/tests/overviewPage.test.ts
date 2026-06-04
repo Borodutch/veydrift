@@ -105,7 +105,8 @@ describe("overview queue progress display", () => {
     expect(overviewSource).toContain("function QueuePanelContent");
     expect(overviewSource).toContain("flex min-h-0 flex-1 flex-col gap-2");
     expect(overviewSource).toContain("mt-auto flex min-h-9 w-full min-w-0");
-    expect(overviewSource.match(/mt-auto flex h-9 w-full/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(overviewSource).toContain("mt-auto flex min-h-9 w-full items-center justify-center whitespace-normal break-words");
+    expect(overviewSource.match(/mt-auto flex h-9 w-full/g)?.length).toBeGreaterThanOrEqual(2);
     expect(overviewSource).toContain("<ArrowRight");
     expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
   });

@@ -892,7 +892,7 @@ function OverviewBuildingFinishButton({
   return (
     <button
       aria-label={action.reason ?? "Finish building upgrade"}
-      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      className="mt-auto flex min-h-9 w-full items-center justify-center whitespace-normal break-words rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 py-2 text-center text-xs font-semibold leading-4 text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
       disabled={action.disabled}
       onClick={action.onFinish}
       title={action.reason ?? "Finish building upgrade"}
@@ -917,7 +917,7 @@ function OverviewBuildingActionNotice({
   const role = notice.tone === "error" ? "alert" : "status";
 
   return (
-    <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${className}`} role={role}>
+    <div className={`rounded-md border px-3 py-2 text-xs leading-5 break-words ${className}`} role={role}>
       {notice.label}
     </div>
   );
