@@ -762,7 +762,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
-  test("keeps stale ready indexed building completion blocked until a visible ready queue can be reused", () => {
+  test("blocks ready indexed building completion while backend indexed state is stale", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: infrastructureState({
@@ -792,7 +792,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
   test("allows indexed ready building queues after backend revalidation without readonly preflight gating", () => {
@@ -831,7 +831,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
-  test("allows ready indexed building completion to recover during backend reconciliation", () => {
+  test("keeps visible ready queues paused while indexed infrastructure is stale", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(buildingCompletionReadyToFinishFlag({
@@ -842,7 +842,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBe(true);
+    })).toBe(false);
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       fallbackBuildingQueue: readyQueue,
@@ -852,7 +852,7 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       now: 1_700_000_000_000,
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
   test("keeps degraded ready indexed building completion paused", () => {
@@ -881,7 +881,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
-  test("keeps displayed building finish verification open when backend indexed queue is ready", () => {
+  test("keeps displayed building finish verification open only when backend indexed queue is ready", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(buildingFinishUnavailableReasonForDisplay({
@@ -909,7 +909,7 @@ describe("Playable MVP app display helpers", () => {
       isBuildingReadyToFinish: true,
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
   test("routes degraded ready building finish actions to backend-unavailable copy", () => {
@@ -929,6 +929,19 @@ describe("Playable MVP app display helpers", () => {
         queue: readyQueue,
         source: "contract-state-indexer",
         stale: true,
+      }),
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+        indexer: {
+          indexedState: "stale",
+          safeToServeIndexedState: false,
+          staleReason: "planet_resources_pending:98",
+        },
       }),
     })).toBe(infrastructureBackendSyncPausedLabel);
 
@@ -1217,7 +1230,7 @@ describe("Playable MVP app display helpers", () => {
     ]]);
   });
 
-  test("allows building completion revalidation to recover when the refreshed indexed queue is still stale", async () => {
+  test("keeps building completion revalidation blocked when the refreshed indexed queue is still stale", async () => {
     const readyQueue = readyBuildingQueue();
     const latest = infrastructureState({
       queue: readyQueue,
@@ -1245,7 +1258,7 @@ describe("Playable MVP app display helpers", () => {
 
     expect(result).toEqual({
       infrastructureState: latest,
-      unavailableReason: undefined,
+      unavailableReason: infrastructureBackendSyncPausedLabel,
     });
     expect(calls).toEqual([[
       "https://api.test",
@@ -1825,15 +1838,17 @@ describe("Playable MVP app display helpers", () => {
 function infrastructureState({
   degraded,
   energyBalance,
+  indexer,
   queue,
   resources,
   source,
   stale,
-}: Partial<Pick<ChainInfrastructureState, "degraded" | "energyBalance" | "queue" | "resources" | "source" | "stale">> = {}): ChainInfrastructureState {
+}: Partial<Pick<ChainInfrastructureState, "degraded" | "energyBalance" | "indexer" | "queue" | "resources" | "source" | "stale">> = {}): ChainInfrastructureState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
     degraded,
+    indexer,
     source,
     stale,
     infrastructureAvailable: true,

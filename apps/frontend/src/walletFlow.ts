@@ -129,6 +129,8 @@ export type WalletSettlementResponse = {
   stale?: boolean;
 };
 
+export type BackendIndexerState = NonNullable<WalletSettlementResponse["indexer"]>;
+
 export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet"]> & {
   coordinates: string;
   isHomePlanet: boolean;
@@ -258,6 +260,7 @@ export type ChainDefenseState = {
 export type ChainInfrastructureState = {
   wallet: string;
   homePlanetId: string | null;
+  indexer?: BackendIndexerState;
   source?: "contract-state-indexer" | string;
   degraded?: boolean;
   stale?: boolean;
