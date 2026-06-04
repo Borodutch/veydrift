@@ -26,7 +26,7 @@ export function transactionAwaitingWalletLabel(label?: string): string {
 }
 
 export function transactionConfirmingLabel(label: string, txHash: string): string {
-  return `${label}: confirming ${txHash.slice(0, 10)}...`;
+  return `${label}: submitted ${txHash.slice(0, 10)}...`;
 }
 
 export function transactionSyncingLabel(label: string): string {
