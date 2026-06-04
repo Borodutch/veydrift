@@ -213,6 +213,10 @@ export function OverviewPage({
     scopedBuildingNotice ?? pendingBuildingNotice,
     buildingNoticeKey,
   );
+  const overviewBuildingNoticeToRender = overviewBuildingNoticeForFinishAction(
+    overviewBuildingNotice,
+    buildingFinishAction,
+  );
 
   const planetName = homePlanet?.name
     ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
@@ -592,7 +596,7 @@ export function OverviewPage({
               <OverviewBuildingFinishButton
                 action={buildingFinishAction}
               />
-              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
+              <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
             </QueuePanelContent>
           ) : buildingQueue ? (
             <QueuePanelContent>
@@ -608,7 +612,7 @@ export function OverviewPage({
               <OverviewBuildingFinishButton
                 action={buildingFinishAction}
               />
-              <OverviewBuildingActionNotice notice={overviewBuildingNotice} />
+              <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
             </QueuePanelContent>
           ) : (
             <EmptyQueue actionLabel="Build" onAction={() => onNavigate("infrastructure")}>
@@ -814,6 +818,14 @@ export function overviewBuildingActionNoticeFor(
 ): InfrastructureActionNotice | undefined {
   if (!buildingKey) return actionNotice;
   return actionNoticeForBuilding(actionNotice, buildingKey);
+}
+
+export function overviewBuildingNoticeForFinishAction(
+  notice: InfrastructureActionNotice | undefined,
+  action: Pick<ReturnType<typeof overviewBuildingFinishAction>, "reason" | "visible">,
+): InfrastructureActionNotice | undefined {
+  if (!notice || !action.visible || !action.reason) return notice;
+  return notice.label.trim() === action.reason.trim() ? undefined : notice;
 }
 
 export function overviewDefenseFinishAction({

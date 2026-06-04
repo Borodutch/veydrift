@@ -7,6 +7,7 @@ import {
   isOverviewResearchReadyToFinish,
   overviewBuildingActionNoticeFor,
   overviewBuildingFinishAction,
+  overviewBuildingNoticeForFinishAction,
   overviewDefenseFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
@@ -378,6 +379,37 @@ describe("overview queue progress display", () => {
     expect(overviewBuildingActionNoticeFor(notice, "shipyard")).toBe(notice);
     expect(overviewBuildingActionNoticeFor(notice, "metalMine")).toBeUndefined();
     expect(overviewBuildingActionNoticeFor(notice, undefined)).toBe(notice);
+  });
+
+  test("deduplicates identical ready building completion prompts on Overview", () => {
+    const duplicatePrompt = "Building completion: unlock your wallet if needed, then confirm in your wallet.";
+    const notice = {
+      buildingKey: "metalMine" as const,
+      label: duplicatePrompt,
+      tone: "pending" as const,
+    };
+    const action = overviewBuildingFinishAction({
+      actionPending: true,
+      actionPendingLabel: duplicatePrompt,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding: () => undefined,
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 1_700_000_000_000,
+        startedAt: 1_699_999_000_000,
+        targetLevel: 9,
+      },
+    });
+
+    expect(action.reason).toBe(duplicatePrompt);
+    expect(overviewBuildingNoticeForFinishAction(notice, action)).toBeUndefined();
+    expect(overviewBuildingNoticeForFinishAction({
+      ...notice,
+      label: "Infrastructure API is temporarily unavailable.",
+      tone: "error",
+    }, action)?.label).toBe("Infrastructure API is temporarily unavailable.");
   });
 
   test("shows and invokes the ready defense completion action on Overview", () => {
