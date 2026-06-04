@@ -12,6 +12,7 @@ import {
   infrastructureBackendSyncPausedReasonFor,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
+  infrastructureDisplayActionNoticeFor,
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   isTransientResourceCollectionSuccess,
@@ -52,6 +53,26 @@ describe("Playable MVP app display helpers", () => {
       status: "pending",
       label: "Waiting for wallet confirmation",
     })).toBeUndefined();
+  });
+
+  test("keeps API finish warnings out of building-card action notices", () => {
+    expect(infrastructureDisplayActionNoticeFor({
+      action: { status: "idle" },
+      finishUnavailableReason: infrastructureBackendSyncPausedLabel,
+    })).toBeUndefined();
+
+    expect(infrastructureDisplayActionNoticeFor({
+      action: {
+        status: "error",
+        buildingKey: "solarPlant",
+        label: "Building upgrade transaction failed.",
+      },
+      finishUnavailableReason: infrastructureBackendSyncPausedLabel,
+    })).toEqual({
+      buildingKey: "solarPlant",
+      label: "Building upgrade transaction failed.",
+      tone: "error",
+    });
   });
 
   test("gates page state refreshes until the current wallet snapshot is hydrated", () => {
