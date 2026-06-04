@@ -2002,6 +2002,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
   );
+  const overviewOnChainQueues = useMemo<PlayerQueuesResponse | undefined>(() => {
+    if (!onChainQueues) return undefined;
+    return onChainQueues.building === activeBuildingQueue
+      ? onChainQueues
+      : { ...onChainQueues, building: activeBuildingQueue };
+  }, [activeBuildingQueue, onChainQueues]);
   const isDisplayedBuildingQueueReady = useMemo(() => {
     return isBuildingQueueReadyToFinish(activeBuildingQueue, now);
   }, [activeBuildingQueue, now]);
@@ -2368,13 +2374,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           activeBuildingQueue,
           expectation: finishExpectation,
         });
-        if (!isUserRejected(error) && failedSyncReason) {
+        const isRejectedByUser = isUserRejected(error);
+        if (finishExpectation) {
+          try {
+            await Promise.all([
+              refreshOnChainState(),
+              refreshInfrastructureState(),
+            ]);
+          } catch (refreshError) {
+            console.error(refreshError);
+          }
+        }
+        if (!isRejectedByUser && failedSyncReason) {
           setFailedBuildingFinishExpectation(finishExpectation);
         }
         setBuildingAction({
           status: "error",
           buildingKey: completionBuildingKey,
-          label: !isUserRejected(error) && failedSyncReason ? failedSyncReason : label,
+          label: failedSyncReason ?? label,
         });
       }
     });
@@ -2391,6 +2408,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainSettlement?.homePlanetId,
     provider,
     refreshFinishedBuildingState,
+    refreshInfrastructureState,
+    refreshOnChainState,
     transactionActionGate,
   ]);
 
@@ -3834,7 +3853,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         now={now}
         onChainError={onChainError}
         fleetVisibility={fleetVisibility}
-        onChainQueues={onChainQueues}
+        onChainQueues={overviewOnChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onCounterplay={handleCounterplay}
