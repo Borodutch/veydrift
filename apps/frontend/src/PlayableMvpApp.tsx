@@ -441,6 +441,15 @@ export function buildingFinishUnavailableReasonForDisplay({
     return backendSyncPausedReason;
   }
 
+  if (!infrastructureState) {
+    return buildingCompletionUnavailableReasonFor({
+      canTransact,
+      fallbackBuildingQueue: activeBuildingQueue,
+      infrastructureState,
+      now,
+    });
+  }
+
   if (isBuildingReadyToFinish) {
     return undefined;
   }

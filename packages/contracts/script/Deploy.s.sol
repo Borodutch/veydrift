@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -24,6 +25,9 @@ contract Deploy is ResourceTokenDeployment {
         address metalToken,
         address crystalToken,
         address deuteriumToken
+    );
+    event VeydriftAuxiliaryProxyDeployed(
+        string system, address indexed proxy, address indexed implementation
     );
 
     function run()
@@ -58,20 +62,49 @@ contract Deploy is ResourceTokenDeployment {
             address(colonizationModule)
         );
         gameAddress = address(game);
-        VeydriftAllianceSystem allianceSystem =
+        VeydriftAllianceSystem allianceImplementation =
             new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
-        allianceSystemAddress = address(allianceSystem);
-        RandomnessEngine randomnessEngine = new RandomnessEngine(admin, admin);
-        randomnessEngineAddress = address(randomnessEngine);
-        VeydriftMoonSystem moonSystem = new VeydriftMoonSystem(gameAddress, randomnessEngineAddress);
-        moonSystemAddress = address(moonSystem);
+        allianceSystemAddress = address(
+            new ERC1967Proxy(
+                address(allianceImplementation),
+                abi.encodeCall(
+                    VeydriftAllianceSystem.initialize, (IVeydriftAllianceGame(address(game)), admin)
+                )
+            )
+        );
+        emit VeydriftAuxiliaryProxyDeployed(
+            "alliance", allianceSystemAddress, address(allianceImplementation)
+        );
+
+        RandomnessEngine randomnessImplementation = new RandomnessEngine(admin, admin);
+        randomnessEngineAddress = address(
+            new ERC1967Proxy(
+                address(randomnessImplementation),
+                abi.encodeCall(RandomnessEngine.initialize, (admin, admin))
+            )
+        );
+        emit VeydriftAuxiliaryProxyDeployed(
+            "randomness", randomnessEngineAddress, address(randomnessImplementation)
+        );
+
+        VeydriftMoonSystem moonImplementation =
+            new VeydriftMoonSystem(gameAddress, randomnessEngineAddress);
+        moonSystemAddress = address(
+            new ERC1967Proxy(
+                address(moonImplementation),
+                abi.encodeCall(
+                    VeydriftMoonSystem.initialize, (gameAddress, randomnessEngineAddress, admin)
+                )
+            )
+        );
+        emit VeydriftAuxiliaryProxyDeployed("moon", moonSystemAddress, address(moonImplementation));
         (metalToken, crystalToken, deuteriumToken) = _deployResourceTokens(admin, gameAddress);
         game.setResourceTokens(metalToken, crystalToken, deuteriumToken);
         game.setAllianceSystem(allianceSystemAddress);
         game.setMoonSystem(moonSystemAddress);
         game.setRandomnessEngine(randomnessEngineAddress);
-        randomnessEngine.setRequesterAuthorization(gameAddress, true);
-        randomnessEngine.setRequesterAuthorization(moonSystemAddress, true);
+        RandomnessEngine(randomnessEngineAddress).setRequesterAuthorization(gameAddress, true);
+        RandomnessEngine(randomnessEngineAddress).setRequesterAuthorization(moonSystemAddress, true);
         emit VeydriftDeployment(
             gameAddress,
             allianceSystemAddress,
