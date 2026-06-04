@@ -1772,11 +1772,13 @@ function backendReadiness(
   ready: boolean;
   configurationReady: boolean;
   chainSyncConnected: boolean | null;
+  subscribedToHeads: boolean | null;
   subscribedToLogs: boolean | null;
   indexedState: string | null;
   safeToServeIndexedState: boolean | null;
 } {
   const chainSyncConnected = booleanSnapshotField(chainSyncSnapshot, "connected");
+  const subscribedToHeads = booleanSnapshotField(chainSyncSnapshot, "subscribedToHeads");
   const subscribedToLogs = booleanSnapshotField(chainSyncSnapshot, "subscribedToLogs");
   const indexedState = stringSnapshotField(indexerSnapshot, "indexedState");
   const safeToServeIndexedState = booleanSnapshotField(indexerSnapshot, "safeToServeIndexedState");
@@ -1785,10 +1787,12 @@ function backendReadiness(
   return {
     ready: configurationReady
       && chainSyncConnected !== false
+      && subscribedToHeads !== false
       && subscribedToLogs !== false
       && safeToServeIndexedState !== false,
     configurationReady,
     chainSyncConnected,
+    subscribedToHeads,
     subscribedToLogs,
     indexedState,
     safeToServeIndexedState,
