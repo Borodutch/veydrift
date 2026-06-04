@@ -691,6 +691,96 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("auto-collects produced resources before indexing queue spending", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xmetal-mine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xsolar-plant",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xspend-after-production",
+      logIndex: "0x0",
+      topics: [
+        buildingStartedTopic,
+        topic(7n),
+        topic(5n)
+      ],
+      data: abiWords(1n, 1770003601n, 1n, 0n, 0n)
+    });
+
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      lastSettledAt: "1770003600",
+      resources: {
+        metal: "5031",
+        crystal: "4900",
+        deuterium: "4800"
+      }
+    });
+  });
+
+  test("subtracts only newly queued defense cost when extending an active defense queue", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xdefense-one",
+      logIndex: "0x0",
+      topics: [
+        defenseQueuedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1n, 1770002880n, 2000n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xdefense-two",
+      logIndex: "0x0",
+      topics: [
+        defenseQueuedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(2n, 1770005760n, 4000n, 0n, 0n)
+    });
+
+    expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
+      quantity: 2,
+      cost: {
+        metal: "4000",
+        crystal: "0",
+        deuterium: "0"
+      }
+    });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "1000",
+      crystal: "4900",
+      deuterium: "4800"
+    });
+  });
+
   test("keeps indexed building completion levels monotonic when older logs arrive late", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

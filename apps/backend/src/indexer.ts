@@ -59,6 +59,7 @@ import {
 } from "./evm";
 import {
   calculateIndexedHighscore,
+  deriveInfrastructureFields,
   deriveBuildingRows,
   deriveDefenseRows,
   deriveShipRows,
@@ -1704,17 +1705,11 @@ export class SettlementIndexer {
     event: IndexedQueueStartedEvent,
     options: { settleResources?: boolean } = {}
   ): void {
-    this.upsertQueue(event);
+    const existingQueue = this.queueState(queueKey(event));
     if (options.settleResources !== false) {
-      if (event.planetId) {
-        this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
-      } else if (event.queueKind === "research" && event.owner) {
-        const settlement = this.walletSettlement(event.owner);
-        if (settlement.homePlanetId) {
-          this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
-        }
-      }
+      this.spendQueuedResources(event, existingQueue);
     }
+    this.upsertQueue(event);
     this.touch();
   }
 
@@ -1866,12 +1861,11 @@ export class SettlementIndexer {
     }
   }
 
-  private subtractPlanetResources(
-    planetId: string,
-    cost: IndexedQueueStartedEvent["cost"],
-    transactionHash: string,
-    blockNumber: string
-  ): void {
+  private spendQueuedResources(event: IndexedQueueStartedEvent, existingQueue: QueueState | null): void {
+    const planetId = event.planetId ?? this.planetIdForResearchEvent(event);
+    if (!planetId) return;
+
+    const cost = this.resourceCostForQueueStart(event, existingQueue);
     const planet = this.planet(planetId);
     if (!planet) return;
 
@@ -1880,12 +1874,107 @@ export class SettlementIndexer {
       return;
     }
 
+    const settledPlanet = this.withImplicitQueueCollection(planet, event, existingQueue);
     this.upsertPlanet({
-      ...planet,
-      transactionHash,
-      blockNumber,
-      resources: subtractResources(planet.resources, cost)
+      ...settledPlanet,
+      transactionHash: event.transactionHash,
+      blockNumber: event.blockNumber,
+      resources: subtractResources(settledPlanet.resources, cost)
     });
+  }
+
+  private planetIdForResearchEvent(event: IndexedQueueStartedEvent): string | null {
+    if (event.queueKind !== "research" || !event.owner) return null;
+    return this.walletSettlement(event.owner).homePlanetId;
+  }
+
+  private resourceCostForQueueStart(
+    event: IndexedQueueStartedEvent,
+    existingQueue: QueueState | null
+  ): IndexedQueueStartedEvent["cost"] {
+    if (
+      event.queueKind === "defense"
+      && existingQueue?.active
+      && existingQueue.kind === "defense"
+      && existingQueue.itemId === event.itemId
+    ) {
+      return subtractResources(event.cost, existingQueue.cost);
+    }
+
+    return event.cost;
+  }
+
+  private withImplicitQueueCollection(
+    planet: SettledPlanetEvent,
+    event: IndexedQueueStartedEvent,
+    existingQueue: QueueState | null
+  ): SettledPlanetEvent {
+    const settledAt = this.queueStartSettledAt(planet.planetId, event, existingQueue);
+    if (settledAt === null || settledAt <= BigInt(planet.lastSettledAt)) {
+      return planet;
+    }
+
+    const derived = deriveInfrastructureFields(
+      planet,
+      this.infrastructureRows(planet.planetId),
+      this.shipRows(planet.planetId),
+      this.technologyLevels(planet.owner)
+    );
+    if (!derived.productionPerHour || !derived.storageCaps) return planet;
+
+    return {
+      ...planet,
+      lastSettledAt: settledAt.toString(),
+      resources: resourcesWithAccrual(
+        planet.resources,
+        derived.productionPerHour,
+        derived.storageCaps,
+        settledAt - BigInt(planet.lastSettledAt)
+      )
+    };
+  }
+
+  private queueStartSettledAt(
+    planetId: string,
+    event: IndexedQueueStartedEvent,
+    existingQueue: QueueState | null
+  ): bigint | null {
+    if (event.startedAt) {
+      return BigInt(event.startedAt);
+    }
+    if (existingQueue?.active) {
+      return null;
+    }
+
+    const duration = this.queueDurationSeconds(planetId, event);
+    if (duration === null) return null;
+
+    const readyAt = BigInt(event.readyAt);
+    return readyAt > duration ? readyAt - duration : null;
+  }
+
+  private queueDurationSeconds(planetId: string, event: IndexedQueueStartedEvent): bigint | null {
+    if (event.queueKind === "building") {
+      const roboticsLevel = this.indexedLevel("contract_building_levels", "building_id", planetId, 4);
+      const naniteLevel = this.indexedLevel("contract_building_levels", "building_id", planetId, 11);
+      return buildingDurationSeconds(roboticsLevel, naniteLevel, event.cost);
+    }
+    if (event.queueKind === "moon-building") {
+      return buildingDurationSeconds(0, 0, event.cost);
+    }
+    if ((event.queueKind === "ship" || event.queueKind === "defense") && event.quantity !== undefined) {
+      const shipyardLevel = this.indexedLevel("contract_building_levels", "building_id", planetId, 5);
+      const naniteLevel = this.indexedLevel("contract_building_levels", "building_id", planetId, 11);
+      return unitDurationSeconds(shipyardLevel, naniteLevel, event.cost);
+    }
+    if (event.queueKind === "research" && event.owner) {
+      const labLevel = this.indexedLevel("contract_building_levels", "building_id", planetId, 6);
+      const networkLevel = this.technologyLevels(event.owner)["13"] ?? 0;
+      if (networkLevel !== 0) return null;
+      return researchDurationSeconds(labLevel, event.cost);
+    }
+
+    return null;
   }
 
   private queueState(queueKeyValue: string): QueueState | null {
@@ -2292,6 +2381,62 @@ function subtractResources(left: QueueState["cost"], right: QueueState["cost"]):
 function subtractResource(left: string, right: string): string {
   const result = BigInt(left) - BigInt(right);
   return result > 0n ? result.toString() : "0";
+}
+
+function resourcesWithAccrual(
+  current: ResourceColumns,
+  productionPerHour: ResourceColumns,
+  storageCaps: ResourceColumns,
+  elapsedSeconds: bigint
+): ResourceColumns {
+  return {
+    metal: resourceWithAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
+    crystal: resourceWithAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
+    deuterium: resourceWithAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
+  };
+}
+
+function resourceWithAccrual(
+  current: string,
+  productionPerHour: string,
+  storageCap: string,
+  elapsedSeconds: bigint
+): string {
+  const currentValue = BigInt(current);
+  const cap = BigInt(storageCap);
+  if (currentValue >= cap) return current;
+
+  const produced = (BigInt(productionPerHour) * elapsedSeconds) / 3_600n;
+  const remainingCapacity = cap - currentValue;
+  const added = produced < remainingCapacity ? produced : remainingCapacity;
+  return (currentValue + added).toString();
+}
+
+function buildingDurationSeconds(
+  roboticsLevel: number,
+  naniteLevel: number,
+  cost: ResourceColumns
+): bigint {
+  const denominator = 2_500n * BigInt(roboticsLevel + 1) * (2n ** BigInt(naniteLevel));
+  const raw = ((BigInt(cost.metal) + BigInt(cost.crystal)) * 3_600n) / denominator;
+  return raw < 1n ? 1n : raw;
+}
+
+function unitDurationSeconds(
+  shipyardLevel: number,
+  naniteLevel: number,
+  cost: ResourceColumns
+): bigint {
+  const denominator = 2_500n * BigInt(shipyardLevel + 1) * (2n ** BigInt(naniteLevel));
+  const numerator = (BigInt(cost.metal) + BigInt(cost.crystal)) * 3_600n;
+  const raw = (numerator + denominator - 1n) / denominator;
+  return raw < 1n ? 1n : raw;
+}
+
+function researchDurationSeconds(labLevel: number, cost: ResourceColumns): bigint {
+  const raw = ((BigInt(cost.metal) + BigInt(cost.crystal)) * 3_600n)
+    / (1_000n * BigInt(labLevel + 1));
+  return raw < 1n ? 1n : raw;
 }
 
 const moonBuildingRows = [
