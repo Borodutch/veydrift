@@ -2,6 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {Building} from "./libraries/VeydriftTypes.sol";
 
@@ -28,7 +30,7 @@ interface IVeydriftAllianceGame {
 }
 
 /// @notice Canonical on-chain alliance roster and public profile authority.
-contract VeydriftAllianceSystem {
+contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     uint128 private constant ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL = 20_000;
 
     enum AllianceRole {
@@ -85,9 +87,10 @@ contract VeydriftAllianceSystem {
         uint64 joinCutoffAt;
     }
 
-    IVeydriftAllianceGame public immutable game;
-    uint256 public nextAllianceId = 1;
-    uint256 public nextDefenseIntentId = 1;
+    IVeydriftAllianceGame public game;
+    address public owner;
+    uint256 public nextAllianceId;
+    uint256 public nextDefenseIntentId;
 
     mapping(uint256 allianceId => Alliance alliance) internal _alliances;
     mapping(address player => Membership membership) internal _memberships;
@@ -115,8 +118,11 @@ contract VeydriftAllianceSystem {
     error NoPlanet(address player);
     error NotAllianceMember(address player, uint256 allianceId);
     error NotAuthorized(address player, uint256 allianceId);
+    error NotOwner(address account);
     error NotPlanetOwner(uint256 planetId, address player);
     error SelfDiplomacy(uint256 allianceId);
+    error SnapshotLengthMismatch();
+    error ZeroAddress();
 
     event AllianceCreated(
         uint256 indexed allianceId, address indexed owner, string tag, string name
@@ -154,9 +160,98 @@ contract VeydriftAllianceSystem {
         address coordinator,
         uint64 joinCutoffAt
     );
+    event AllianceSnapshotImported(uint256 indexed allianceId, uint32 memberCount);
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
 
     constructor(IVeydriftAllianceGame gameContract) {
-        game = gameContract;
+        _initializeAllianceSystem(gameContract, msg.sender);
+        _disableInitializers();
+    }
+
+    function initialize(IVeydriftAllianceGame gameContract, address initialOwner)
+        external
+        initializer
+    {
+        _initializeAllianceSystem(gameContract, initialOwner);
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner(msg.sender);
+        _;
+    }
+
+    function transferOwnership(address nextOwner) external onlyOwner {
+        if (nextOwner == address(0)) revert ZeroAddress();
+        address oldOwner = owner;
+        owner = nextOwner;
+        emit OwnershipTransferred(oldOwner, nextOwner);
+    }
+
+    function importAllianceSnapshot(
+        uint256 allianceId,
+        Alliance calldata profile,
+        address[] calldata members,
+        AllianceRole[] calldata roles,
+        uint64[] calldata joinedAts
+    ) external onlyOwner {
+        if (allianceId == 0 || !profile.active || profile.owner == address(0)) {
+            revert InvalidAlliance(allianceId);
+        }
+        if (_alliances[allianceId].active) revert InvalidAlliance(allianceId);
+        if (
+            members.length != roles.length || roles.length != joinedAts.length
+                || members.length != profile.memberCount
+        ) {
+            revert SnapshotLengthMismatch();
+        }
+
+        _alliances[allianceId] = Alliance({
+            active: true,
+            tag: profile.tag,
+            name: profile.name,
+            description: profile.description,
+            owner: profile.owner,
+            createdAt: profile.createdAt,
+            memberCount: 0
+        });
+        if (allianceId >= nextAllianceId) nextAllianceId = allianceId + 1;
+
+        bool ownerImported = false;
+        for (uint256 i = 0; i < members.length; i++) {
+            if (members[i] == address(0)) revert ZeroAddress();
+            if (_memberships[members[i]].allianceId != 0) {
+                revert AlreadyInAlliance(members[i], _memberships[members[i]].allianceId);
+            }
+            if (
+                roles[i] != AllianceRole.Member && roles[i] != AllianceRole.Officer
+                    && roles[i] != AllianceRole.Owner
+            ) {
+                revert InvalidRole(roles[i]);
+            }
+            if (members[i] == profile.owner) {
+                if (roles[i] != AllianceRole.Owner) revert InvalidRole(roles[i]);
+                ownerImported = true;
+            } else if (roles[i] == AllianceRole.Owner) {
+                revert InvalidRole(roles[i]);
+            }
+            _importMember(allianceId, members[i], roles[i], joinedAts[i]);
+        }
+        if (!ownerImported) revert NotAllianceMember(profile.owner, allianceId);
+
+        emit AllianceSnapshotImported(allianceId, uint32(members.length));
+    }
+
+    function importDiplomacy(uint256 allianceId, uint256 otherAllianceId, DiplomacyStatus status)
+        external
+        onlyOwner
+    {
+        _requireAlliance(allianceId);
+        _requireAlliance(otherAllianceId);
+        if (allianceId == otherAllianceId) revert SelfDiplomacy(allianceId);
+
+        _diplomacy[allianceId][otherAllianceId] = status;
+        _diplomacy[otherAllianceId][allianceId] = status;
+        emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, status);
     }
 
     function createAlliance(string calldata tag, string calldata name, string calldata description)
@@ -577,6 +672,16 @@ contract VeydriftAllianceSystem {
         emit AllianceJoined(allianceId, player, role);
     }
 
+    function _importMember(uint256 allianceId, address player, AllianceRole role, uint64 joinedAt)
+        private
+    {
+        _memberships[player] = Membership({allianceId: allianceId, role: role, joinedAt: joinedAt});
+        _memberIndexes[allianceId][player] = _memberLists[allianceId].length + 1;
+        _memberLists[allianceId].push(player);
+        _alliances[allianceId].memberCount += 1;
+        emit AllianceJoined(allianceId, player, role);
+    }
+
     function _removeMember(uint256 allianceId, address player) private {
         uint256 indexPlusOne = _memberIndexes[allianceId][player];
         if (indexPlusOne == 0) revert NotAllianceMember(player, allianceId);
@@ -666,4 +771,19 @@ contract VeydriftAllianceSystem {
     function _now() private view returns (uint64) {
         return uint64(block.timestamp);
     }
+
+    function _initializeAllianceSystem(IVeydriftAllianceGame gameContract, address initialOwner)
+        private
+    {
+        if (address(gameContract) == address(0) || initialOwner == address(0)) {
+            revert ZeroAddress();
+        }
+        game = gameContract;
+        owner = initialOwner;
+        nextAllianceId = 1;
+        nextDefenseIntentId = 1;
+        emit OwnershipTransferred(address(0), initialOwner);
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 }

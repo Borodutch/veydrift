@@ -24,6 +24,8 @@ import {
 
 contract VeydriftResourceTokenTest is Test {
     uint256 internal constant INITIAL_SUPPLY = 10_000_000_000 * 10 ** 6;
+    bytes32 internal constant ERC1967_IMPLEMENTATION_SLOT =
+        bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
 
     address internal admin = address(0xA11CE);
     address internal game = address(0x9A3E);
@@ -166,6 +168,12 @@ contract VeydriftResourceTokenTest is Test {
         assertEq(deployedGame.resourceToken(Resource.Metal), metalToken);
         assertEq(deployedGame.resourceToken(Resource.Crystal), crystalToken);
         assertEq(deployedGame.resourceToken(Resource.Deuterium), deuteriumToken);
+        _assertErc1967Proxy(allianceSystemAddress);
+        _assertErc1967Proxy(moonSystemAddress);
+        _assertErc1967Proxy(randomnessEngineAddress);
+        _assertErc1967Proxy(metalToken);
+        _assertErc1967Proxy(crystalToken);
+        _assertErc1967Proxy(deuteriumToken);
         assertEq(VeydriftMetal(metalToken).owner(), deployer);
         assertEq(VeydriftCrystal(crystalToken).owner(), deployer);
         assertEq(VeydriftDeuterium(deuteriumToken).owner(), deployer);
@@ -211,6 +219,12 @@ contract VeydriftResourceTokenTest is Test {
         assertTrue(allianceSystemAddress.code.length > 0);
         assertTrue(moonSystemAddress.code.length > 0);
         assertTrue(randomnessEngineAddress.code.length > 0);
+        _assertErc1967Proxy(allianceSystemAddress);
+        _assertErc1967Proxy(moonSystemAddress);
+        _assertErc1967Proxy(randomnessEngineAddress);
+        _assertErc1967Proxy(metalToken);
+        _assertErc1967Proxy(crystalToken);
+        _assertErc1967Proxy(deuteriumToken);
         assertEq(VeydriftMetal(metalToken).balanceOf(gameAddress), INITIAL_SUPPLY);
         assertEq(VeydriftCrystal(crystalToken).balanceOf(gameAddress), INITIAL_SUPPLY);
         assertEq(VeydriftDeuterium(deuteriumToken).balanceOf(gameAddress), INITIAL_SUPPLY);
@@ -262,6 +276,13 @@ contract VeydriftResourceTokenTest is Test {
         returns (address)
     {
         return address(new ERC1967Proxy(implementation, initializer));
+    }
+
+    function _assertErc1967Proxy(address proxy) internal view {
+        address implementation =
+            address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT))));
+        assertNotEq(implementation, address(0));
+        assertTrue(implementation.code.length > 0);
     }
 
     function _setDeployEnv() internal returns (address deployer) {
