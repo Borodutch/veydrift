@@ -645,7 +645,8 @@ export function BuildingLevelInfoModal({
           <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
             <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
               <tr>
-                <LevelInfoHeader className="min-w-28">Level</LevelInfoHeader>
+                <LevelInfoHeader className="min-w-24 whitespace-nowrap">Level</LevelInfoHeader>
+                <LevelInfoHeader className="min-w-24 whitespace-nowrap">Status</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>
                 {columns.production && <LevelInfoHeader className="min-w-40">Production</LevelInfoHeader>}
@@ -668,12 +669,12 @@ export function BuildingLevelInfoModal({
                   }`}
                   key={row.level}
                 >
-                  <LevelInfoCell>
-                    <span className="inline-flex items-center gap-2">
-                      <span className="font-semibold text-white">Level {row.level}</span>
-                      {row.current && <LevelPill tone="current">Current</LevelPill>}
-                      {row.next && <LevelPill tone="next">Next</LevelPill>}
-                    </span>
+                  <LevelInfoCell className="whitespace-nowrap">
+                    <span className="font-semibold text-white">Level {row.level}</span>
+                  </LevelInfoCell>
+                  <LevelInfoCell className="min-w-24">
+                    {row.current && <LevelPill tone="current">Current</LevelPill>}
+                    {row.next && <LevelPill tone="next">Next</LevelPill>}
                   </LevelInfoCell>
                   <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
                   <LevelInfoCell>{formatDuration(row.durationSeconds)}</LevelInfoCell>
@@ -733,9 +734,15 @@ function LevelInfoHeader({
   );
 }
 
-function LevelInfoCell({ children }: { children: ComponentChildren }) {
+function LevelInfoCell({
+  children,
+  className = "",
+}: {
+  children: ComponentChildren;
+  className?: string | undefined;
+}) {
   return (
-    <td className="border-b border-white/10 px-3 py-2 align-top text-slate-200">
+    <td className={`border-b border-white/10 px-3 py-2 align-top text-slate-200 ${className}`}>
       {children}
     </td>
   );
@@ -747,7 +754,7 @@ function LevelPill({ children, tone }: { children: string; tone: "current" | "ne
     : "border-signal/30 bg-signal/10 text-signal";
 
   return (
-    <span className={`rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
+    <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
       {children}
     </span>
   );
