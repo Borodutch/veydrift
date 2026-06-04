@@ -170,6 +170,7 @@ export type QueueStateResponse = {
   readyAt: string | null;
   startedAt?: string | null;
   cost: OnChainResources;
+  backlog?: QueueStateResponse[];
 };
 
 export type PlayerQueuesResponse = {

@@ -97,6 +97,7 @@ export type QueueState = {
   readyAt: string | null;
   startedAt?: string | null;
   cost: Resources;
+  backlog?: QueueState[];
 };
 
 export type PlayerQueues = {
@@ -1006,7 +1007,7 @@ export class VeydriftGameReader implements ChainReader {
     const planetId = BigInt(settlement.homePlanetId);
     const [building, defense, ship, research] = await Promise.all([
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
-      this.readPlanetQueue("0x5758361d", planetId, "defense"),
+      this.readDefenseQueue(planetId),
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readResearchQueue(wallet)
     ]);
@@ -1963,6 +1964,39 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     return queue;
+  }
+
+  private async readDefenseQueue(planetId: bigint): Promise<QueueState> {
+    const queue = await this.readPlanetQueue("0x5758361d", planetId, "defense");
+    const backlog = await this.readDefenseQueueBacklog(planetId);
+    if (backlog.length > 0) {
+      queue.backlog = backlog;
+    }
+    return queue;
+  }
+
+  private async readDefenseQueueBacklog(planetId: bigint): Promise<QueueState[]> {
+    try {
+      const words = splitWords(await this.call("0x4f5ed437", [encodeUint(planetId)]));
+      const length = Number(decodeUintWord(wordAt(words, 1)));
+      const backlog: QueueState[] = [];
+      for (let index = 0; index < length; index += 1) {
+        const offset = 2 + index * 7;
+        const active = decodeBoolWord(wordAt(words, offset));
+        backlog.push({
+          active,
+          kind: active ? "defense" : null,
+          ...(active ? { itemId: Number(decodeUintWord(wordAt(words, offset + 1))) } : {}),
+          quantity: Number(decodeUintWord(wordAt(words, offset + 2))),
+          readyAt: active ? decodeUintWord(wordAt(words, offset + 3)).toString() : null,
+          cost: decodeResources(words.slice(offset + 4, offset + 7))
+        });
+      }
+      return backlog;
+    } catch (error) {
+      if (isRpcRevert(error)) return [];
+      throw error;
+    }
   }
 
   private async readMoonQueue(planetId: bigint): Promise<QueueState> {

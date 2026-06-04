@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftDefenseProductionModule} from "./VeydriftDefenseProductionModule.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
@@ -14,12 +15,17 @@ import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol
 contract VeydriftColonizationModule is VeydriftResourceReserves {
     using SafeCast for uint256;
 
+    address private immutable _defenseProductionModule;
+
     uint256 private constant COLONIZATION_COORDINATE_FLAG = 1 << 255;
     uint256 private constant COLONIZATION_GALAXY_SHIFT = 24;
     uint256 private constant COLONIZATION_SYSTEM_SHIFT = 8;
     uint256 private constant COLONIZATION_COORDINATE_MASK = 0xffff;
     uint256 private constant COLONIZATION_POSITION_MASK = 0xff;
-    constructor() VeydriftResourceReserves(address(0)) {}
+
+    constructor() VeydriftResourceReserves(address(0)) {
+        _defenseProductionModule = address(new VeydriftDefenseProductionModule());
+    }
 
     function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
         _spaceDockSystem = nextSpaceDockSystem;
@@ -51,45 +57,8 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         );
     }
 
-    function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity) external {
-        _requirePlanetOwner(planetId);
-        if (quantity == 0) revert InvalidQuantity();
-        DefenseQueue memory activeQueue = defenseQueues[planetId];
-        if (activeQueue.active && activeQueue.defense != defense) revert QueueActive();
-
-        _requireDefenseDependencies(planetId, defense);
-        _requireDefenseCapacity(planetId, defense, quantity);
-        _settleResources(planetId);
-
-        Resources memory unitCost = _defenseCost(defense);
-        Resources memory totalCost = _multiply(unitCost, quantity);
-        _spend(planetId, totalCost);
-
-        uint256 currentTime = _currentTimestamp();
-        uint256 baseReadyAt = activeQueue.active && activeQueue.readyAt > currentTime
-            ? activeQueue.readyAt
-            : currentTime;
-        uint64 readyAt = (baseReadyAt + _defenseDuration(planetId, unitCost, quantity)).toUint64();
-        uint32 queuedQuantity = activeQueue.active ? activeQueue.quantity + quantity : quantity;
-        Resources memory queuedCost =
-            activeQueue.active ? _add(activeQueue.cost, totalCost) : totalCost;
-        defenseQueues[planetId] = DefenseQueue({
-            active: true,
-            defense: defense,
-            quantity: queuedQuantity,
-            readyAt: readyAt,
-            cost: queuedCost
-        });
-
-        emit DefenseQueued(
-            planetId,
-            defense,
-            queuedQuantity,
-            readyAt,
-            queuedCost.metal,
-            queuedCost.crystal,
-            queuedCost.deuterium
-        );
+    function startDefenseProduction(uint256, Defense, uint32) external {
+        _delegateToDefenseProductionModule();
     }
 
     function finishShipProduction(uint256 planetId) external {
@@ -105,17 +74,8 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
     }
 
-    function finishDefenseProduction(uint256 planetId) external {
-        _requirePlanetOwner(planetId);
-        _requireNoPendingMissionResolutionForPlanet(planetId);
-        DefenseQueue memory queue = defenseQueues[planetId];
-        if (!queue.active) revert QueueInactive();
-        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
-
-        delete defenseQueues[planetId];
-        uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
-        _defenseCounts[planetId][queue.defense] = total;
-        emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
+    function finishDefenseProduction(uint256) external {
+        _delegateToDefenseProductionModule();
     }
 
     function createColonyAtNextSlot(uint256 originPlanetId, uint256 salt)
@@ -513,80 +473,6 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         return Resources(metal, crystal, deuterium);
     }
 
-    function _defenseCost(Defense defense) private pure returns (Resources memory) {
-        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.defenseCost(defense);
-        return Resources(metal, crystal, deuterium);
-    }
-
-    function _defenseDuration(uint256 planetId, Resources memory unitCost, uint32 quantity)
-        private
-        view
-        returns (uint256)
-    {
-        return VeydriftFormulas.unitDuration(
-            _buildingLevels[planetId][Building.Shipyard],
-            _buildingLevels[planetId][Building.NaniteFactory],
-            unitCost.metal,
-            unitCost.crystal,
-            unitCost.deuterium,
-            quantity,
-            QUEUE_UNIVERSE_SPEED,
-            MIN_QUEUE_SECONDS
-        );
-    }
-
-    function _requireDefenseDependencies(uint256 planetId, Defense defense) private view {
-        address player = _planets[planetId].owner;
-        VeydriftDependencies.requireDefense(
-            defense,
-            _buildingLevels[planetId][Building.Shipyard],
-            _buildingLevels[planetId][Building.MissileSilo],
-            _technologyLevels[player][Technology.Energy],
-            _technologyLevels[player][Technology.Laser],
-            _technologyLevels[player][Technology.Ion],
-            _technologyLevels[player][Technology.Weapons],
-            _technologyLevels[player][Technology.Shielding],
-            _technologyLevels[player][Technology.ImpulseDrive],
-            _technologyLevels[player][Technology.Plasma]
-        );
-    }
-
-    function _requireDefenseCapacity(uint256 planetId, Defense defense, uint32 quantity)
-        private
-        view
-    {
-        DefenseQueue memory activeQueue = defenseQueues[planetId];
-        uint32 queuedQuantity =
-            activeQueue.active && activeQueue.defense == defense ? activeQueue.quantity : 0;
-        if (VeydriftCatalog.isShieldDome(defense)) {
-            if (_defenseCounts[planetId][defense] + queuedQuantity + quantity > 1) {
-                revert DefenseLimitReached(defense);
-            }
-        }
-
-        uint8 slotsPerUnit = VeydriftCatalog.missileSlots(defense);
-        if (slotsPerUnit == 0) return;
-
-        uint32 usedSlots = _missileSiloSlotsUsed(planetId) + _queuedMissileSiloSlots(planetId);
-        uint32 requestedSlots = uint32(slotsPerUnit) * quantity;
-        uint32 capacity =
-            VeydriftCatalog.missileSiloCapacity(_buildingLevels[planetId][Building.MissileSilo]);
-        if (usedSlots + requestedSlots > capacity) {
-            revert MissileSiloCapacityExceeded(usedSlots + requestedSlots, capacity);
-        }
-    }
-
-    function _missileSiloSlotsUsed(uint256 planetId) private view returns (uint32) {
-        return _defenseCounts[planetId][Defense.AntiBallisticMissile]
-            + (_defenseCounts[planetId][Defense.InterplanetaryMissile] * 2);
-    }
-
-    function _queuedMissileSiloSlots(uint256 planetId) private view returns (uint32) {
-        DefenseQueue memory queue = defenseQueues[planetId];
-        if (!queue.active) return 0;
-        return uint32(VeydriftCatalog.missileSlots(queue.defense)) * queue.quantity;
-    }
-
     function _multiply(Resources memory resources, uint32 quantity)
         private
         pure
@@ -695,6 +581,18 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         uint256 total = uint256(current) + addition;
         uint256 effectiveCap = current > cap ? current : cap;
         return _toUint128(total > effectiveCap ? effectiveCap : total);
+    }
+
+    function _delegateToDefenseProductionModule() private {
+        (bool ok, bytes memory result) = _defenseProductionModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
     }
 
     function _coordinateKey(uint16 galaxy, uint16 system, uint8 position)
