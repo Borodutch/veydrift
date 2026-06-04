@@ -254,6 +254,7 @@ export type ChainInfrastructureState = {
   wallet: string;
   homePlanetId: string | null;
   source?: "contract-state-indexer" | string;
+  degraded?: boolean;
   stale?: boolean;
   infrastructureAvailable?: boolean;
   unavailableReason?: string;
