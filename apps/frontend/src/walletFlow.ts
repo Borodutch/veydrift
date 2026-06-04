@@ -648,7 +648,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/timed out reading .* from the game api/i.test(message)) {
-    return `${message} The game API may be temporarily unavailable; the app will retry when state sync resumes.`;
+    return `${message} The game API may be temporarily unavailable; the app will retry with backend state.`;
   }
 
   if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
@@ -656,7 +656,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/execution reverted/i.test(message)) {
-    return "The game contract rejected a wallet read. Retry sync after the latest deployment finishes, or reconnect your wallet on Base Sepolia.";
+    return "The game contract rejected a wallet read. Retry after the latest deployment finishes, or reconnect your wallet on Base Sepolia.";
   }
 
   return message;
@@ -1716,30 +1716,6 @@ export async function sendCreateColonyTransaction(
   });
 }
 
-export async function waitForReceipt(
-  provider: Eip1193Provider,
-  txHash: string,
-  maxAttempts = 40,
-  intervalMs = 3_000
-): Promise<unknown> {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const receipt = await provider.request<unknown>({
-      method: "eth_getTransactionReceipt",
-      params: [
-        txHash
-      ]
-    });
-
-    if (receipt) {
-      return receipt;
-    }
-
-    await delay(intervalMs);
-  }
-
-  throw new Error("Timed out waiting for settlement transaction confirmation.");
-}
-
 export function planetFromTransaction(account: string, txHash: string): PlanetSummary {
   return {
     label: `Settled by ${shortAddress(account)}`,
@@ -2018,19 +1994,19 @@ async function apiErrorMessage(response: Response, label: string): Promise<strin
     const error = typeof body.error === "string" ? body.error.trim() : "";
 
     if (response.status === 503 && error === "backend_not_configured") {
-      return `${label} API is temporarily unavailable while backend readiness is restored. The app will retry instead of requiring a wallet reconnect.`;
+      return `${label} API is temporarily unavailable. The app will retry instead of requiring a wallet reconnect.`;
     }
 
     if (response.status >= 500) {
       return error
-        ? `${label} API is temporarily unavailable (${response.status}: ${error}). The app will retry when game state sync recovers.`
-        : `${label} API is temporarily unavailable (${response.status}). The app will retry when game state sync recovers.`;
+        ? `${label} API is temporarily unavailable (${response.status}: ${error}). The app will retry.`
+        : `${label} API is temporarily unavailable (${response.status}). The app will retry.`;
     }
 
     return error ? `${fallback}: ${error}` : fallback;
   } catch {
     if (response.status >= 500) {
-      return `${label} API is temporarily unavailable (${response.status}). The app will retry when game state sync recovers.`;
+      return `${label} API is temporarily unavailable (${response.status}). The app will retry.`;
     }
 
     return fallback;

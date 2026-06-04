@@ -14,11 +14,15 @@ describe("playable chain refresh", () => {
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+    const walletFlowSource = await Bun.file(new URL("../src/walletFlow.ts", import.meta.url)).text();
 
     expect(source).not.toContain("baseSepoliaReadProvider");
     expect(source).not.toContain("transactionReadProvider");
     expect(source).not.toContain("{ readProvider }");
-    expect(source).toContain("const receiptProvider = provider;");
+    expect(source).not.toContain("receiptProvider");
+    expect(source).not.toContain("waitForReceipt(");
+    expect(walletFlowSource).not.toContain("eth_getTransactionReceipt");
+    expect(walletFlowSource).not.toContain("waitForReceipt(");
     expect(source).toContain("sendStartBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          building,\n        )");
     expect(source).not.toContain("building,\n          { readProvider },");
     expect(source).toContain("sendFinishBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n        )");

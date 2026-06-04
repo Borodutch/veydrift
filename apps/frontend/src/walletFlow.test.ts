@@ -820,6 +820,9 @@ describe("walletFlow", () => {
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
       "game API may be temporarily unavailable"
     );
+    expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).not.toContain(
+      "sync resumes"
+    );
     expect(walletRequestErrorMessage(new Error("MetaMask is locked"))).toBe(
       "Wallet is locked. Please unlock your wallet and try again."
     );
@@ -1585,7 +1588,7 @@ describe("walletFlow", () => {
     )) as unknown as typeof fetch;
     try {
       await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
-        "backend readiness is restored"
+        "API is temporarily unavailable. The app will retry"
       );
     } finally {
       globalThis.fetch = originalFetch;

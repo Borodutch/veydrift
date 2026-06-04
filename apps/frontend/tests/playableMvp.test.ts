@@ -271,6 +271,10 @@ describe("playable MVP contract display helpers", () => {
     expect(researchAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/research/"))).toBe(true);
     expect(researchAssetManifest.some((asset) => asset.src.includes("/style-pass/generated/buildings/"))).toBe(false);
     expect(defenseAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/defenses/"))).toBe(true);
+    expect(defenseAssetManifest.filter((asset) => asset.status === "production").map((asset) => asset.key)).toEqual([
+      "antiBallisticMissile",
+      "interplanetaryMissile",
+    ]);
   });
 
   test("reports Research Lab requirement without queuing local research", () => {
