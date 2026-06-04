@@ -46,11 +46,11 @@ Recorded preflight summary:
 - resource-token owner/runtime authority:
   `0xc2142a4918754abe5975ecd486a66dfeba39a419`
 
-The current `main` checkout does not include
-`scripts/veydrift-redeploy-preflight.mjs`. A replacement branch must include the
-preflight script or equivalent reviewed command before broadcast, rerun it
-before and after replacement, and preserve both JSON outputs in the Kaneo
-workpad or deploy artifact directory.
+Current `main` includes `scripts/veydrift-redeploy-preflight.mjs` as the
+reviewed fail-closed evidence collector for replacement planning. A replacement
+branch must rerun it before and after replacement, or include an equivalent
+reviewed command, and preserve both JSON outputs in the Kaneo workpad or deploy
+artifact directory.
 
 ## Pre-Broadcast Gate
 
