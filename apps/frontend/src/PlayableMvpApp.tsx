@@ -312,7 +312,7 @@ export function failedBuildingFinishSyncReasonFor({
 export function canonicalInfrastructureBuildingCompletionQueue(
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
-  if (!infrastructureState) {
+  if (!infrastructureState || isInfrastructureBackendSyncPaused(infrastructureState)) {
     return null;
   }
 
@@ -328,6 +328,10 @@ export function buildingCompletionReadyToFinishFlag({
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): boolean {
+  if (isInfrastructureBackendSyncPaused(infrastructureState)) {
+    return false;
+  }
+
   return isBuildingQueueReadyToFinish(
     buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue),
     now,
@@ -347,6 +351,11 @@ export function buildingCompletionUnavailableReasonFor({
 }): string | undefined {
   if (!canTransact) {
     return "Wallet or game contract is unavailable.";
+  }
+
+  const syncPausedReason = infrastructureBackendSyncPausedReasonFor({ infrastructureChainState: infrastructureState });
+  if (syncPausedReason) {
+    return syncPausedReason;
   }
 
   const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
@@ -745,10 +754,23 @@ export function infrastructureBackendSyncPausedReasonFor({
   infrastructureChainState: ChainInfrastructureState | null;
   infrastructureError?: string | undefined;
 }): string | undefined {
-  if (infrastructureError || infrastructureChainState?.degraded === true) {
+  if (infrastructureError || isInfrastructureBackendSyncPaused(infrastructureChainState)) {
     return infrastructureBackendSyncPausedLabel;
   }
   return undefined;
+}
+
+function isInfrastructureBackendSyncPaused(
+  infrastructureChainState: ChainInfrastructureState | null,
+): boolean {
+  if (!infrastructureChainState) return false;
+  if (infrastructureChainState.degraded === true || infrastructureChainState.stale === true) return true;
+
+  const indexer = infrastructureChainState.indexer;
+  if (!indexer) return false;
+  return indexer.safeToServeIndexedState === false
+    || indexer.indexedState === "reconciling"
+    || indexer.indexedState === "stale";
 }
 
 export function infrastructureLoadErrorFor({
