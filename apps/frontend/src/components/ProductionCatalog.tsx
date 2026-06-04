@@ -52,6 +52,7 @@ export type ProductionQueue = {
   quantity?: number | undefined;
   readyAt: string | null;
   startedAt?: string | null | undefined;
+  backlog?: ProductionQueue[] | undefined;
 };
 
 export function selectedProductionItem<Key extends string>(
@@ -73,6 +74,16 @@ export function productionQueueViewModel(
     quantity: queue.quantity,
     readyAt: queue.readyAt,
     startedAt: queue.startedAt,
+    backlog: queue.backlog?.filter((entry) => entry.active).map((entry) => {
+      const backlogItem = catalog.find((candidate) => candidate.id === entry.itemId);
+      return {
+        asset: backlogItem?.asset,
+        label: backlogItem?.label ?? (entry.kind === "defense" ? "Defense" : "Ship"),
+        quantity: entry.quantity,
+        readyAt: entry.readyAt,
+        startedAt: entry.startedAt,
+      };
+    }),
   };
 }
 
@@ -185,7 +196,22 @@ function ProductionQueuePanel({
       title="Active queue"
       tone="cyan"
     >
-      {ready ? "Ready now." : "Production in progress."}
+      <div className="grid gap-2">
+        <span>{ready ? "Ready now." : "Production in progress."}</span>
+        {queue.backlog && queue.backlog.length > 0 ? (
+          <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-300">
+            <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
+            {queue.backlog.map((entry, index) => (
+              <div className="flex items-center justify-between gap-3" key={`${entry.label}-${index}`}>
+                <span className="min-w-0 truncate">
+                  {entry.label}{entry.quantity ? ` x${formatter.format(entry.quantity)}` : ""}
+                </span>
+                <span className="shrink-0 text-slate-500">{formatQueueReadyAt(entry.readyAt)}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </QueueProgressPanel>
   );
 }
@@ -386,6 +412,14 @@ function Stat({ hint, label, value }: { hint?: string | undefined; label: string
 
 function isQueueReady(readyAt: string | null): boolean {
   return readyAt ? Number(readyAt) <= Math.floor(Date.now() / 1_000) : false;
+}
+
+function formatQueueReadyAt(readyAt: string | null): string {
+  if (!readyAt) return "Ready time unknown";
+  return new Date(Number(readyAt) * 1_000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function format(value: number): string {

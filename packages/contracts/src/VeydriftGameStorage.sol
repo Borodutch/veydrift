@@ -271,6 +271,7 @@ abstract contract VeydriftGameStorage {
     mapping(bytes32 systemKey => uint256[] missionIds) internal _phalanxMissionIdsBySystem;
     mapping(bytes32 systemKey => mapping(uint256 missionId => uint256 indexPlusOne)) internal
         _phalanxMissionIndexBySystem;
+    mapping(uint256 planetId => DefenseQueue[] queue) internal _defenseQueueBacklogs;
 
     error AlreadyStarted();
     error BadStartPayment();

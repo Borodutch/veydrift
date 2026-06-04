@@ -1255,6 +1255,7 @@ describe("Veydrift backend", () => {
         }
         if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;
         if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0x4f5ed437") return abiWords(32n, 0n) as T;
         if (selector === "0xe512884c") return abiWords(0n) as T;
 
         throw new Error(`Unexpected individual call ${selector}`);
@@ -1551,6 +1552,7 @@ describe("Veydrift backend", () => {
         if (selector === "0x0adbf924") return abiWords(5_000n, 4_900n, 4_800n) as T;
         if (selector === "0xd9b24865") return abiWords(1n) as T;
         if (selector === "0xb6f4b7b7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0x4f5ed437") return abiWords(32n, 0n) as T;
         if (selector === "0xe512884c") return abiWords(0n) as T;
         if (selector === "0x423f9f10") throw new Error("RPC 3: execution reverted");
         if (selector === "0x57686701" || selector === "0xc4222030") {
@@ -1623,6 +1625,7 @@ describe("Veydrift backend", () => {
           call.to === configuredTestConfig.gameContractAddress
           && (
             call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x2b98afc7")
           )
@@ -1701,6 +1704,9 @@ describe("Veydrift backend", () => {
         if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x5758361d")) {
           return abiWords(1n, 0n, 2n, readyAt, 4000n, 0n, 0n) as T;
         }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x4f5ed437")) {
+          return abiWords(32n, 1n, 1n, 1n, 3n, readyAt + 600n, 4500n, 1500n, 0n) as T;
+        }
         if (
           call.to === configuredTestConfig.gameContractAddress
           && (
@@ -1726,6 +1732,20 @@ describe("Veydrift backend", () => {
         quantity: 2,
         readyAt: readyAt.toString(),
         startedAt: startedAt.toString(),
+        backlog: [
+          {
+            active: true,
+            kind: "defense",
+            itemId: 1,
+            quantity: 3,
+            readyAt: (readyAt + 600n).toString(),
+            cost: {
+              metal: "4500",
+              crystal: "1500",
+              deuterium: "0"
+            }
+          }
+        ],
         cost: {
           metal: "4000",
           crystal: "0",
@@ -1783,6 +1803,7 @@ describe("Veydrift backend", () => {
           call.to === configuredTestConfig.gameContractAddress
           && (
             call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x2b98afc7")
           )
@@ -1863,6 +1884,7 @@ describe("Veydrift backend", () => {
           && (
             call.data.startsWith("0xb8e835ab")
             || call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
           )
         ) {

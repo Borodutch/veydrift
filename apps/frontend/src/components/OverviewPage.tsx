@@ -175,6 +175,9 @@ export function OverviewPage({
     : undefined;
   const activeResearchProgress = onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress;
   const onChainDefenseQueue = defenseQueuePreview(onChainQueues?.defense);
+  const onChainDefenseBacklog = onChainQueues?.defense?.backlog
+    ?.filter((queue) => queue.active)
+    .map((queue) => defenseQueuePreview(queue)) ?? [];
   const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
   const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt);
   const defenseHasCanonicalTimeline =
@@ -639,6 +642,14 @@ export function OverviewPage({
                 now={now}
               />
               <OverviewDefenseFinishButton action={defenseFinishAction} />
+              {onChainDefenseBacklog.length > 0 ? (
+                <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-400">
+                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
+                  {onChainDefenseBacklog.map((queue, index) => (
+                    <span className="truncate" key={`${queue.label}-${index}`}>{queue.label}</span>
+                  ))}
+                </div>
+              ) : null}
             </QueuePanelContent>
           ) : (
             <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
