@@ -219,6 +219,40 @@ describe("Infrastructure page display helpers", () => {
     expect(mineRows.some((row) => row.delta?.includes("required"))).toBe(false);
   });
 
+  test("keeps Solar Plant delta visible without inheriting Fusion Reactor deuterium use", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 1,
+      solarPlant: 11,
+    };
+    const solarRows = detailEffectRows(
+      buildingEffectMetrics(buildings, "solarPlant", undefined, 3),
+      buildingEnergyDetail(buildings, "solarPlant", 3),
+    );
+
+    expect(solarRows).toContainEqual({
+      delta: "+126",
+      label: "Energy output",
+      next: "785 produced",
+      value: "659 produced",
+    });
+    expect(solarRows.some((row) => row.label === "Deuterium consumed")).toBe(false);
+
+    const fusionRows = detailEffectRows(
+      buildingEffectMetrics(buildings, "fusionReactor", undefined, 3),
+      buildingEnergyDetail(buildings, "fusionReactor", 3),
+    );
+
+    expect(fusionRows).toContainEqual({
+      delta: "(+14/h)",
+      label: "Deuterium consumed",
+      next: "25/h",
+      tone: "warning",
+      value: "11/h",
+    });
+  });
+
   test("keeps build-level production capacity positive when current power would throttle output", () => {
     const state = createInitialPlayableState(1_000);
     const unpoweredMineBuild = {

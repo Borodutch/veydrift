@@ -213,6 +213,7 @@ export type BuildingEffectMetrics =
       deltaProduced: number;
       nextDeuteriumConsumed: number;
       required: number;
+      showsDeuteriumConsumption: boolean;
     }
   | {
       kind: "storage";
@@ -1389,6 +1390,7 @@ export function buildingEffectMetrics(
       nextDeuteriumConsumed: next.deuteriumConsumed,
       nextProduced: next.produced,
       required: current.required,
+      showsDeuteriumConsumption: key === "fusionReactor",
     };
   }
 
