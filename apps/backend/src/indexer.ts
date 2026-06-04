@@ -1788,6 +1788,10 @@ export class SettlementIndexer {
   }
 
   private upsertQueue(event: QueueUpsertEvent): void {
+    if (this.appendDefenseBacklogQueue(event)) {
+      return;
+    }
+
     this.db.query(`
       INSERT INTO indexed_planet_queues (
         queue_key, kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at, cost_json, event_json
@@ -1880,6 +1884,31 @@ export class SettlementIndexer {
         JSON.stringify(event)
       );
     }
+  }
+
+  private appendDefenseBacklogQueue(event: QueueUpsertEvent): boolean {
+    if (event.queueKind !== "defense" || !event.planetId) {
+      return false;
+    }
+
+    const row = this.db.query(`
+      SELECT item_id, backlog_json
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(queueKey(event)) as Pick<QueueRow, "item_id" | "backlog_json"> | null;
+    if (!row || row.item_id === event.itemId) {
+      return false;
+    }
+
+    const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
+    const nextBacklog = Array.isArray(backlog) ? backlog : [];
+    nextBacklog.push(queueStateFromEvent(event));
+    this.db.query(`
+      UPDATE contract_production_queues
+      SET backlog_json = ?
+      WHERE queue_key = ?
+    `).run(JSON.stringify(nextBacklog), queueKey(event));
+    return true;
   }
 
   private subtractPlanetResources(
@@ -2309,6 +2338,21 @@ function subtractResources(left: QueueState["cost"], right: QueueState["cost"]):
     crystal: subtractResource(left.crystal, right.crystal),
     deuterium: subtractResource(left.deuterium, right.deuterium)
   };
+}
+
+function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
+  const queue: QueueState = {
+    active: true,
+    kind: event.queueKind,
+    itemId: event.itemId,
+    readyAt: event.readyAt,
+    cost: event.cost
+  };
+  if (event.targetLevel !== undefined) queue.targetLevel = event.targetLevel;
+  if (event.quantity !== undefined) queue.quantity = event.quantity;
+  if (event.startedAt !== undefined) queue.startedAt = event.startedAt;
+  if (event.backlog?.length) queue.backlog = event.backlog;
+  return queue;
 }
 
 function subtractResource(left: string, right: string): string {

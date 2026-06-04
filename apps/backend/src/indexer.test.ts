@@ -1072,6 +1072,52 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("appends different defense queue events to the indexed backlog", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0xa0",
+      transactionHash: "0xqueue-light-laser",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 1770001000n, 100n, 50n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0xa1",
+      transactionHash: "0xqueue-rocket-backlog",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 1770001600n, 200n, 0n, 0n)
+    });
+
+    expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
+      kind: "defense",
+      itemId: 1,
+      quantity: 2,
+      readyAt: "1770001000",
+      cost: { metal: "100", crystal: "50", deuterium: "0" },
+      backlog: [
+        {
+          kind: "defense",
+          itemId: 0,
+          quantity: 3,
+          readyAt: "1770001600",
+          cost: { metal: "200", crystal: "0", deuterium: "0" }
+        }
+      ]
+    });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "4700",
+      crystal: "4850",
+      deuterium: "4800"
+    });
+  });
+
   test("indexes rift deposits and withdrawal lifecycle", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

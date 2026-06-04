@@ -77,6 +77,15 @@ contract ShortTransferResourceToken is MockResourceToken {
 
 contract VeydriftGameTest is Test {
     event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
+    event DefenseQueued(
+        uint256 indexed planetId,
+        Defense indexed defense,
+        uint32 quantity,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
 
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
     bytes32 internal constant DEP_SHIPYARD_2 = "SHIPYARD_2";
@@ -1107,6 +1116,18 @@ contract VeydriftGameTest is Test {
         uint256 backlogDuration =
             VeydriftFormulas.unitDuration(8, 0, metalCost, crystalCost, deuteriumCost, 3, 1, 1);
 
+        vm.expectEmit(true, true, false, true, address(game));
+        emit DefenseQueued(
+            planetId,
+            Defense.RocketLauncher,
+            3,
+            // The test inputs produce a readyAt value backed by the uint64 defense queue field.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint64(activeQueue.readyAt + backlogDuration),
+            metalCost * 3,
+            crystalCost * 3,
+            deuteriumCost * 3
+        );
         vm.prank(player);
         game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
 

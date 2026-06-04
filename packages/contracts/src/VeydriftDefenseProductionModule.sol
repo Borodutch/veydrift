@@ -45,6 +45,15 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
                     cost: totalCost
                 })
             );
+            emit DefenseQueued(
+                planetId,
+                defense,
+                quantity,
+                readyAt,
+                totalCost.metal,
+                totalCost.crystal,
+                totalCost.deuterium
+            );
         } else {
             uint256 baseReadyAt = activeQueue.active && activeQueue.readyAt > currentTime
                 ? activeQueue.readyAt
