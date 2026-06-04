@@ -44,7 +44,11 @@ requireIncludes("docs/veydrift-contract-redeploy-runbook.md", [
 
 requireIncludes("docs/open-alpha-state-preservation.md", [
   "veydrift-redeploy-preflight.mjs",
-  "fail-closed evidence collector"
+  "fail-closed evidence collector",
+  "Do not treat the public API, backend indexer, or generated event export as a",
+  "_ownedPlanetIds",
+  "player activity timestamps and honor points",
+  "pre/post parity check"
 ]);
 
 requireIncludes("scripts/veydrift-redeploy-preflight.mjs", [

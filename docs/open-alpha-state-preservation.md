@@ -113,6 +113,23 @@ The migration plan must cover:
 7. Run post-migration verification against representative wallets and compare
    pre/post state exports.
 
+Do not treat the public API, backend indexer, or generated event export as a
+complete replacement-contract migration source unless every internal game-state
+index is explicitly covered. The current direct `VeydriftGame` stores several
+state classes that are not enumerable from public getters alone, including:
+
+- owned-planet indexes: `_ownedPlanetIds` and `_ownedPlanetIndex`;
+- pending mission-resolution indexes by planet and player;
+- phalanx mission indexes by system;
+- linked counterplay mission lists such as ACS/intercept state;
+- attack windows and attack-protection exemptions;
+- player activity timestamps and honor points.
+
+If a full redeploy plan relies on reconstructing these from logs or backend
+state, the plan must name the source of truth for each class and include a
+pre/post parity check. If any class is intentionally dropped, record the product
+decision and compensation/rollback plan before broadcast.
+
 ## Done Gate
 
 Do not mark a redeploy or upgrade task done unless the Kaneo workpad and PR
