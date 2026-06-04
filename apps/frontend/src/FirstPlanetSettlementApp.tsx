@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import heroUrl from "./assets/veydrift-hero.webp";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
-import { gameContractAddress, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
+import { gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
 import { detectFarcasterMiniApp, hasMiniAppUrlHint } from "./farcasterReady";
@@ -38,6 +38,7 @@ import {
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
+const RUNTIME_CONFIG_RETRY_MS = 5_000;
 export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
 export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
 const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
@@ -139,18 +140,43 @@ export function FirstPlanetSettlementApp() {
 
   useEffect(() => {
     const abortController = new AbortController();
+    let retryTimeout: ReturnType<typeof setTimeout> | undefined;
 
-    fetch(runtimeConfigUrl(), {
-      headers: { accept: "application/json" },
-      signal: abortController.signal
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
-        return response.json() as Promise<RuntimeConfig>;
+    const loadRuntimeConfig = () => {
+      fetch(runtimeConfigUrl(), {
+        headers: { accept: "application/json" },
+        signal: abortController.signal
       })
-      .then((runtimeConfig) => {
+        .then((response) => {
+          if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
+          return response.json() as Promise<RuntimeConfig>;
+        })
+        .then((runtimeConfig) => {
+          if (abortController.signal.aborted) return;
+          applyRuntimeConfig(runtimeConfig, settlementConfig);
+        })
+        .catch((error) => {
+          if (abortController.signal.aborted) return;
+          console.error(error);
+          setSettlementConfigState({
+            status: "ready",
+            apiUrl: playableApiUrl,
+            config: settlementConfig,
+          });
+          retryTimeout = setTimeout(loadRuntimeConfig, RUNTIME_CONFIG_RETRY_MS);
+        });
+    };
+
+    loadRuntimeConfig();
+
+    return () => {
+      abortController.abort();
+      if (retryTimeout !== undefined) clearTimeout(retryTimeout);
+    };
+
+    function applyRuntimeConfig(runtimeConfig: RuntimeConfig, fallbackConfig: SettlementConfig) {
         if (abortController.signal.aborted) return;
-        const address = gameContractAddress(runtimeConfig) ?? settlementConfig.address;
+        const address = gameContractAddress(runtimeConfig) ?? fallbackConfig.address;
         const legacyAddress = runtimeConfig.contractAddress && runtimeConfig.contractAddress !== address
           ? runtimeConfig.contractAddress
           : undefined;
@@ -165,17 +191,9 @@ export function FirstPlanetSettlementApp() {
                 && runtimeConfig.resourceTokenAddresses.crystal
                 && runtimeConfig.resourceTokenAddresses.deuterium
             )
-          } : settlementConfig
+          } : fallbackConfig
         });
-      })
-      .catch((error) => {
-        if (!abortController.signal.aborted) {
-          console.error(error);
-          setSettlementConfigState({ status: "ready", config: settlementConfig });
-        }
-      });
-
-    return () => abortController.abort();
+    }
   }, []);
 
   useEffect(() => {
