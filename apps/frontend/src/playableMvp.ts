@@ -179,6 +179,14 @@ export type EnergyBalance = {
   produced: number;
   required: number;
   scaleBps: number;
+  sources?: {
+    solarPlant: number;
+    fusionReactor: number;
+    fusionReactorDeuteriumConsumed: number;
+    solarSatellites: number;
+    solarSatelliteCount: number;
+    solarSatelliteEnergy: number;
+  };
 };
 
 export type PlanetProductionProfile = {
@@ -370,6 +378,7 @@ export const shipCatalog: Array<{
   group: "civil" | "combat" | "special";
   baseCost: Resources;
   requirements: UnlockRequirement[];
+  description: string;
   asset: string;
 }> = [
   {
@@ -382,6 +391,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 2 },
     ],
+    description: "A nimble freighter for early raids and supply runs. Its hold is modest, but it is cheap enough to mass-produce while a young colony is still finding its footing.",
     asset: shipAssetByKey.smallCargo,
   },
   {
@@ -394,6 +404,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 1 },
     ],
+    description: "A cheap interceptor built around speed and numbers. Light Fighters are fragile alone, yet large wings can screen heavier ships and add efficient firepower.",
     asset: shipAssetByKey.lightFighter,
   },
   {
@@ -407,6 +418,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 6 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 2 },
     ],
+    description: "A recovery vessel with reinforced storage bays for debris-field salvage. Recyclers are slow and lightly armed, so they work best behind secured battle plans.",
     asset: shipAssetByKey.recycler,
   },
   {
@@ -419,6 +431,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 3 },
     ],
+    description: "A self-contained settlement ark carrying the equipment needed to found a new planet. It is expensive, slow, and strategically decisive.",
     asset: shipAssetByKey.colonyShip,
   },
   {
@@ -431,6 +444,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
       { kind: "technology", key: "combustionDrive", label: "Combustion Drive", level: 6 },
     ],
+    description: "The standard bulk hauler for mature economies. Large Cargos trade speed for capacity and move resources efficiently between planets or after attacks.",
     asset: shipAssetByKey.largeCargo,
   },
   {
@@ -444,6 +458,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 2 },
       { kind: "technology", key: "armor", label: "Armor", level: 2 },
     ],
+    description: "A tougher fighter platform with heavier guns and stronger plating. Heavy Fighters can punch through light screens but still need support against capital ships.",
     asset: shipAssetByKey.heavyFighter,
   },
   {
@@ -457,6 +472,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 4 },
       { kind: "technology", key: "ion", label: "Ion", level: 2 },
     ],
+    description: "A fast strike ship that excels at hunting light fleets. Cruisers combine high speed with credible armor, making them a flexible offensive workhorse.",
     asset: shipAssetByKey.cruiser,
   },
   {
@@ -469,6 +485,7 @@ export const shipCatalog: Array<{
       { kind: "building", key: "shipyard", label: "Shipyard", level: 7 },
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 4 },
     ],
+    description: "A mainline capital ship with heavy batteries and durable armor. Battleships anchor mid-game fleets before specialized hulls take over.",
     asset: shipAssetByKey.battleship,
   },
   {
@@ -482,6 +499,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "impulseDrive", label: "Impulse Drive", level: 6 },
       { kind: "technology", key: "plasma", label: "Plasma", level: 5 },
     ],
+    description: "A siege craft built to crack entrenched defenses. Bombers are costly to launch, but their payloads make them valuable when static defenses block progress.",
     asset: shipAssetByKey.bomber,
   },
   {
@@ -493,6 +511,7 @@ export const shipCatalog: Array<{
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
     ],
+    description: "An orbital energy platform with almost no combat role. Solar Satellites are efficient power sources, but their fragile frames remain exposed during attacks.",
     asset: shipAssetByKey.solarSatellite,
   },
   {
@@ -506,6 +525,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 6 },
       { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
     ],
+    description: "A heavy assault ship designed to remove large threats. Destroyers are slow and expensive, but their hull and firepower dominate prolonged fleet battles.",
     asset: shipAssetByKey.destroyer,
   },
   {
@@ -520,6 +540,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 6 },
       { kind: "technology", key: "graviton", label: "Graviton", level: 1 },
     ],
+    description: "A colossal strategic platform with extreme armor, shielding, and cargo capacity. The Dreadstar is slow, rare, and built for decisive projection of force.",
     asset: shipAssetByKey.deathstar,
   },
   {
@@ -534,6 +555,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "hyperspace", label: "Hyperspace", level: 5 },
       { kind: "technology", key: "laser", label: "Laser", level: 12 },
     ],
+    description: "A precision capital hunter with strong shields and efficient hyperspace engines. Battlecruisers are leaner than Battleships and built for fast fleet combat.",
     asset: shipAssetByKey.battlecruiser,
   },
   {
@@ -549,6 +571,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "shielding", label: "Shielding", level: 6 },
       { kind: "technology", key: "energy", label: "Energy", level: 5 },
     ],
+    description: "A late-era raider with brutal weapons and a generous hold. Reapers are expensive, but they bring the range and punch needed for high-value attacks.",
     asset: shipAssetByKey.reaper,
   },
   {
@@ -562,6 +585,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 4 },
     ],
+    description: "A reconnaissance and expedition vessel with strong sensors and flexible cargo space. Pathfinders are useful whenever scouting value matters as much as combat value.",
     asset: shipAssetByKey.pathfinder,
   },
   {
@@ -576,6 +600,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "armor", label: "Armor", level: 4 },
       { kind: "technology", key: "laser", label: "Laser", level: 4 },
     ],
+    description: "A planetary support machine rather than a fleet ship. Crawlers help an economy develop but are too slow and static for normal fleet missions.",
     asset: shipAssetByKey.crawler,
   },
 ];
@@ -724,6 +749,11 @@ export type CombatStatBlock = {
   notes: string[];
 };
 
+export type ShipSpecRow = {
+  label: string;
+  value: string;
+};
+
 const shipCargoCapacityByKey: Record<ShipKey, number> = {
   smallCargo: 5_000,
   lightFighter: 50,
@@ -740,6 +770,44 @@ const shipCargoCapacityByKey: Record<ShipKey, number> = {
   battlecruiser: 750,
   reaper: 7_000,
   pathfinder: 12_000,
+  crawler: 0,
+};
+
+const shipBaseSpeedByKey: Record<ShipKey, number> = {
+  smallCargo: 5_000,
+  lightFighter: 12_500,
+  recycler: 2_000,
+  colonyShip: 2_500,
+  largeCargo: 7_500,
+  heavyFighter: 10_000,
+  cruiser: 15_000,
+  battleship: 10_000,
+  bomber: 4_000,
+  solarSatellite: 0,
+  destroyer: 5_000,
+  deathstar: 100,
+  battlecruiser: 10_000,
+  reaper: 7_000,
+  pathfinder: 12_000,
+  crawler: 0,
+};
+
+const shipFuelConsumptionByKey: Record<ShipKey, number> = {
+  smallCargo: 10,
+  lightFighter: 20,
+  recycler: 300,
+  colonyShip: 1_000,
+  largeCargo: 50,
+  heavyFighter: 75,
+  cruiser: 300,
+  battleship: 500,
+  bomber: 1_000,
+  solarSatellite: 0,
+  destroyer: 1_000,
+  deathstar: 1,
+  battlecruiser: 250,
+  reaper: 1_000,
+  pathfinder: 300,
   crawler: 0,
 };
 
@@ -790,6 +858,19 @@ const fleetMissionShipKeys = new Set<ShipKey>([
   "pathfinder",
 ]);
 
+export function shipSpecRows(ship: (typeof shipCatalog)[number]): ShipSpecRow[] {
+  const stats = shipBattleStatsByKey[ship.key];
+
+  return [
+    { label: "Structure", value: formatSpecValue(stats.hull) },
+    { label: "Shield", value: formatSpecValue(stats.shield) },
+    { label: "Attack", value: formatSpecValue(stats.attack) },
+    { label: "Cargo", value: formatSpecValue(shipCargoCapacityByKey[ship.key]) },
+    { label: "Base speed", value: formatShipSpeed(shipBaseSpeedByKey[ship.key]) },
+    { label: "Fuel use", value: formatShipFuel(shipFuelConsumptionByKey[ship.key]) },
+  ];
+}
+
 export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatBlock {
   const stats = shipBattleStatsByKey[ship.key];
   const notes = [
@@ -826,6 +907,18 @@ export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatB
     ],
     notes,
   };
+}
+
+function formatSpecValue(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
+function formatShipSpeed(value: number): string {
+  return value > 0 ? formatSpecValue(value) : "Stationary";
+}
+
+function formatShipFuel(value: number): string {
+  return value > 0 ? formatSpecValue(value) : "None";
 }
 
 export function defenseCombatStats(defense: (typeof defenseCatalog)[number]): CombatStatBlock {
@@ -1213,17 +1306,28 @@ export function energyBalance(
     + scaledLevelValue(10, buildings.crystalMine)
     + scaledLevelValue(20, buildings.deuteriumSynthesizer)
   );
-  const produced = scaledLevelValue(20, buildings.solarPlant)
-    + fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel)
-    + solarSatelliteEnergy(profile.maxTemperature ?? PLANET.maxTemperature) * solarSatelliteCount;
+  const solarPlant = scaledLevelValue(20, buildings.solarPlant);
+  const fusionReactor = fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel);
+  const fusionReactorDeuteriumConsumed = fusionReactorDeuteriumConsumption(buildings.fusionReactor);
+  const solarSatelliteEnergyPerUnit = solarSatelliteEnergy(profile.maxTemperature ?? PLANET.maxTemperature);
+  const solarSatellites = solarSatelliteEnergyPerUnit * solarSatelliteCount;
+  const produced = solarPlant + fusionReactor + solarSatellites;
 
   return {
-    deuteriumConsumed: fusionReactorDeuteriumConsumption(buildings.fusionReactor),
+    deuteriumConsumed: fusionReactorDeuteriumConsumed,
     produced,
     required,
     scaleBps: required === 0 || produced >= required
       ? BPS
       : Math.floor((produced * BPS) / required),
+    sources: {
+      solarPlant,
+      fusionReactor,
+      fusionReactorDeuteriumConsumed,
+      solarSatellites,
+      solarSatelliteCount,
+      solarSatelliteEnergy: solarSatelliteEnergyPerUnit,
+    },
   };
 }
 
@@ -1582,12 +1686,14 @@ export function canAfford(resources: Resources, cost: Resources): boolean {
     && resources.deuterium >= cost.deuterium;
 }
 
-export function hasCollectableResources(
-  rates: Resources,
-  lastSettledAtSeconds: number,
-  now = Date.now(),
-): boolean {
-  return resourceEntries(collectibleResourceDeltas(rates, lastSettledAtSeconds, now)).some(([, value]) => value > 0);
+export function spendableResources(resources: Resources, collectibleDeltas?: Resources | undefined): Resources {
+  if (!collectibleDeltas) return resources;
+
+  return {
+    metal: resources.metal + Math.max(0, Math.floor(collectibleDeltas.metal)),
+    crystal: resources.crystal + Math.max(0, Math.floor(collectibleDeltas.crystal)),
+    deuterium: resources.deuterium + Math.max(0, Math.floor(collectibleDeltas.deuterium)),
+  };
 }
 
 export function collectibleResourceDeltas(

@@ -12,7 +12,6 @@ import {
   defenseCombatStats,
   defenseCatalog,
   energyBalance,
-  hasCollectableResources,
   missileSiloCapacity,
   productionCapacityPerHour,
   productionPerHour,
@@ -23,6 +22,8 @@ import {
   shipDurationEstimate,
   shipCatalog,
   shipCombatStats,
+  shipSpecRows,
+  spendableResources,
   storageCaps,
   unmetResearchRequirement,
 } from "../src/playableMvp";
@@ -188,6 +189,22 @@ describe("playable MVP contract display helpers", () => {
     expect(shipCombatStats(solarSatellite).notes[0]).toContain("Cannot be assigned to fleet missions");
   });
 
+  test("derives classic ship spec rows for Shipyard display", () => {
+    const recycler = shipCatalog.find((ship) => ship.key === "recycler")!;
+    const solarSatellite = shipCatalog.find((ship) => ship.key === "solarSatellite")!;
+
+    expect(shipSpecRows(recycler)).toEqual([
+      { label: "Structure", value: "1,600" },
+      { label: "Shield", value: "10" },
+      { label: "Attack", value: "1" },
+      { label: "Cargo", value: "20,000" },
+      { label: "Base speed", value: "2,000" },
+      { label: "Fuel use", value: "300" },
+    ]);
+    expect(shipSpecRows(solarSatellite)).toContainEqual({ label: "Base speed", value: "Stationary" });
+    expect(shipSpecRows(solarSatellite)).toContainEqual({ label: "Fuel use", value: "None" });
+  });
+
   test("maps the Solidity defense catalog for Defenses display", () => {
     expect(defenseCatalog.map((defense) => [defense.id, defense.key, defense.label])).toEqual([
       [0, "rocketLauncher", "Rocket Launcher"],
@@ -254,6 +271,10 @@ describe("playable MVP contract display helpers", () => {
     expect(researchAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/research/"))).toBe(true);
     expect(researchAssetManifest.some((asset) => asset.src.includes("/style-pass/generated/buildings/"))).toBe(false);
     expect(defenseAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/defenses/"))).toBe(true);
+    expect(defenseAssetManifest.filter((asset) => asset.status === "production").map((asset) => asset.key)).toEqual([
+      "antiBallisticMissile",
+      "interplanetaryMissile",
+    ]);
   });
 
   test("reports Research Lab requirement without queuing local research", () => {
@@ -504,15 +525,15 @@ describe("playable MVP contract display helpers", () => {
     }
   });
 
-  test("only enables resource collection when at least one whole resource accrued", () => {
-    const rates = { metal: 60, crystal: 0, deuterium: 0 };
-    const lastSettledAtSeconds = 1_000;
-
-    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_000_000)).toBe(false);
-    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_059_000)).toBe(false);
-    expect(hasCollectableResources(rates, lastSettledAtSeconds, 1_060_000)).toBe(true);
-    expect(hasCollectableResources({ metal: 0, crystal: 0, deuterium: 0 }, lastSettledAtSeconds, 1_600_000))
-      .toBe(false);
+  test("counts whole collectable deltas as spendable resources", () => {
+    expect(spendableResources(
+      { metal: 10, crystal: 20, deuterium: 30 },
+      { metal: 2.9, crystal: -5, deuterium: 0.5 },
+    )).toEqual({
+      metal: 12,
+      crystal: 20,
+      deuterium: 30,
+    });
   });
 
   test("reports collectible resource deltas with storage caps applied", () => {

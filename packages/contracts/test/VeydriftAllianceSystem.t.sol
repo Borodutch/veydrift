@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -175,6 +176,99 @@ contract VeydriftAllianceSystemTest is Test {
         assertEq(alliances.allianceJoinRequests(enemyAllianceId).length, 0);
     }
 
+    function testProxyInitializationImportsAllianceRosterAndDiplomacy() public {
+        VeydriftAllianceSystem proxied = VeydriftAllianceSystem(
+            address(
+                new ERC1967Proxy(
+                    address(new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)))),
+                    abi.encodeCall(
+                        VeydriftAllianceSystem.initialize,
+                        (IVeydriftAllianceGame(address(game)), admin)
+                    )
+                )
+            )
+        );
+
+        assertEq(proxied.owner(), admin);
+        assertEq(address(proxied.game()), address(game));
+        assertEq(proxied.nextAllianceId(), 1);
+        assertEq(proxied.nextDefenseIntentId(), 1);
+
+        address[] memory eggsMembers = new address[](2);
+        eggsMembers[0] = leader;
+        eggsMembers[1] = member;
+        VeydriftAllianceSystem.AllianceRole[] memory eggsRoles =
+            new VeydriftAllianceSystem.AllianceRole[](2);
+        eggsRoles[0] = VeydriftAllianceSystem.AllianceRole.Owner;
+        eggsRoles[1] = VeydriftAllianceSystem.AllianceRole.Officer;
+        uint64[] memory eggsJoinedAt = new uint64[](2);
+        eggsJoinedAt[0] = 1_700_000_001;
+        eggsJoinedAt[1] = 1_700_000_002;
+
+        vm.prank(admin);
+        proxied.importAllianceSnapshot(
+            7,
+            VeydriftAllianceSystem.Alliance({
+                active: true,
+                tag: "EGGS",
+                name: "Eggs Alliance",
+                description: "$EGGS testnet roster",
+                owner: leader,
+                createdAt: 1_700_000_000,
+                memberCount: 2
+            }),
+            eggsMembers,
+            eggsRoles,
+            eggsJoinedAt
+        );
+
+        address[] memory rivalMembers = new address[](1);
+        rivalMembers[0] = enemy;
+        VeydriftAllianceSystem.AllianceRole[] memory rivalRoles =
+            new VeydriftAllianceSystem.AllianceRole[](1);
+        rivalRoles[0] = VeydriftAllianceSystem.AllianceRole.Owner;
+        uint64[] memory rivalJoinedAt = new uint64[](1);
+        rivalJoinedAt[0] = 1_700_000_003;
+
+        vm.prank(admin);
+        proxied.importAllianceSnapshot(
+            8,
+            VeydriftAllianceSystem.Alliance({
+                active: true,
+                tag: "RIVL",
+                name: "Rivals",
+                description: "War target",
+                owner: enemy,
+                createdAt: 1_700_000_003,
+                memberCount: 1
+            }),
+            rivalMembers,
+            rivalRoles,
+            rivalJoinedAt
+        );
+
+        vm.prank(admin);
+        proxied.importDiplomacy(7, 8, VeydriftAllianceSystem.DiplomacyStatus.War);
+
+        VeydriftAllianceSystem.Alliance memory eggs = proxied.allianceProfile(7);
+        VeydriftAllianceSystem.Membership memory leaderMembership = proxied.allianceOf(leader);
+        VeydriftAllianceSystem.Membership memory memberMembership = proxied.allianceOf(member);
+        assertEq(eggs.tag, "EGGS");
+        assertEq(eggs.memberCount, 2);
+        assertEq(proxied.nextAllianceId(), 9);
+        assertEq(uint8(leaderMembership.role), uint8(VeydriftAllianceSystem.AllianceRole.Owner));
+        assertEq(leaderMembership.joinedAt, 1_700_000_001);
+        assertEq(uint8(memberMembership.role), uint8(VeydriftAllianceSystem.AllianceRole.Officer));
+        assertEq(memberMembership.joinedAt, 1_700_000_002);
+        assertEq(proxied.allianceMembers(7).length, 2);
+        assertEq(
+            uint8(proxied.diplomacyStatus(7, 8)), uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
+        );
+        assertEq(
+            uint8(proxied.diplomacyStatus(8, 7)), uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
+        );
+    }
+
     function testJoinRequestApprovalRevertReasonsForStaleAndIneligibleApplicants() public {
         vm.prank(leader);
         uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
@@ -233,6 +327,61 @@ contract VeydriftAllianceSystemTest is Test {
             abi.encodeWithSelector(VeydriftAllianceSystem.NotAuthorized.selector, enemy, allianceId)
         );
         alliances.approveJoinRequest(allianceId, member);
+    }
+
+    function testOfficerCanDismissStaleJoinRequest() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+
+        vm.prank(enemy);
+        uint256 enemyAllianceId = alliances.createAlliance("RIVL", "Rivals", "");
+
+        _inviteAndAccept(allianceId, member);
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        vm.prank(recruit);
+        alliances.requestJoinAlliance(allianceId);
+        assertEq(alliances.allianceJoinRequests(allianceId).length, 1);
+
+        vm.prank(enemy);
+        alliances.inviteMember(enemyAllianceId, recruit);
+        vm.prank(recruit);
+        alliances.acceptInvite(enemyAllianceId);
+
+        vm.prank(member);
+        alliances.dismissJoinRequest(allianceId, recruit);
+
+        assertEq(alliances.allianceJoinRequests(allianceId).length, 0);
+        VeydriftAllianceSystem.JoinRequest memory request =
+            alliances.allianceJoinRequest(recruit, allianceId);
+        assertEq(request.active, false);
+
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.InvalidJoinRequest.selector, recruit, allianceId
+            )
+        );
+        alliances.approveJoinRequest(allianceId, recruit);
+    }
+
+    function testJoinRequestDismissalRequiresOfficer() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+
+        vm.prank(recruit);
+        alliances.requestJoinAlliance(allianceId);
+
+        vm.prank(enemy);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftAllianceSystem.NotAuthorized.selector, enemy, allianceId)
+        );
+        alliances.dismissJoinRequest(allianceId, recruit);
+
+        vm.prank(leader);
+        alliances.dismissJoinRequest(allianceId, recruit);
+        assertEq(alliances.allianceJoinRequests(allianceId).length, 0);
     }
 
     function testOwnerOfficerMemberPermissionBoundaries() public {

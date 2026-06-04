@@ -20,7 +20,7 @@ describe("Defense page display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("explains when another defense type is already queued", () => {
+  test("allows different defense types behind the active queue", () => {
     expect(getQueueBlocker(1, {
       active: true,
       kind: "defense",
@@ -32,7 +32,7 @@ describe("Defense page display helpers", () => {
         crystal: "0",
         deuterium: "0",
       },
-    })).toBe("Active queue: Rocket Launcher");
+    })).toBeUndefined();
   });
 
   test("returns visible met and unmet requirement states", () => {
@@ -97,6 +97,12 @@ describe("Defense page display helpers", () => {
     expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
       countLabel: "Deployed",
       countValue: 12,
+      description: expect.stringContaining("kinetic"),
+      detailStats: expect.arrayContaining([
+        expect.objectContaining({ label: "Attack", value: "80" }),
+        expect.objectContaining({ label: "Shield", value: "20" }),
+        expect.objectContaining({ label: "Hull", value: "200" }),
+      ]),
       status: "ready",
     });
     expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
@@ -126,7 +132,11 @@ describe("Defense page display helpers", () => {
       actionPending: false,
       canTransact: true,
       defenseState: defenseState({
-        shipyardLevel: 1,
+        shipyardLevel: 2,
+        technologyLevels: {
+          "0": 1,
+          "1": 3,
+        },
         defenses: [
           {
             id: 0,
@@ -134,6 +144,15 @@ describe("Defense page display helpers", () => {
             cost: {
               metal: "2000",
               crystal: "0",
+              deuterium: "0",
+            },
+          },
+          {
+            id: 1,
+            count: 0,
+            cost: {
+              metal: "1500",
+              crystal: "500",
               deuterium: "0",
             },
           },
@@ -156,7 +175,121 @@ describe("Defense page display helpers", () => {
       status: "queued",
       statusLabel: "Queued",
     });
-    expect(items.find((item) => item.key === "lightLaser")?.blockedReason).toBe("Active queue: Rocket Launcher");
+    expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
+      actionLabel: "Build",
+      blockedReason: undefined,
+      status: "ready",
+    });
+  });
+
+  test("counts defense backlog quantities in catalog rows", () => {
+    const queue = {
+      active: true,
+      kind: "defense",
+      itemId: 1,
+      quantity: 2,
+      readyAt: "1700000100",
+      cost: {
+        metal: "3000",
+        crystal: "1000",
+        deuterium: "0",
+      },
+      backlog: [
+        {
+          active: true,
+          kind: "defense",
+          itemId: 0,
+          quantity: 4,
+          readyAt: "1700000200",
+          cost: {
+            metal: "8000",
+            crystal: "0",
+            deuterium: "0",
+          },
+        },
+      ],
+    };
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 2,
+        technologyLevels: {
+          "0": 1,
+          "1": 3,
+        },
+        defenses: [
+          {
+            id: 0,
+            count: 5,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+          {
+            id: 1,
+            count: 0,
+            cost: {
+              metal: "1500",
+              crystal: "500",
+              deuterium: "0",
+            },
+          },
+        ],
+        queue,
+      }),
+      productionAvailable: true,
+      quantities: {},
+      queue,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+    });
+
+    expect(selectedProductionItem(items, "rocketLauncher")).toMatchObject({
+      actionLabel: "Add",
+      queued: 4,
+      status: "queued",
+    });
+  });
+
+  test("uses spendable accrued resources in insufficient-resource copy", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 1,
+        defenses: [
+          {
+            id: 0,
+            count: 0,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+      productionAvailable: true,
+      productionRates: { metal: 500, crystal: 0, deuterium: 0 },
+      quantities: { rocketLauncher: 2 },
+      queue: undefined,
+      resources: {
+        metal: 3_500,
+        crystal: 0,
+        deuterium: 0,
+      },
+    });
+
+    expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      blockedReason: "Requires 500 more Metal (affordable in 1h)",
+      disabled: true,
+    });
   });
 });
 

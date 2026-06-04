@@ -26,6 +26,16 @@ export function infrastructureActionNoticeFor(
   };
 }
 
+export function infrastructureDisplayActionNoticeFor({
+  action,
+}: {
+  action: BuildingActionState;
+  finishUnavailableReason?: string | undefined;
+}): InfrastructureActionNotice | undefined {
+  // Finish-unavailable reasons already drive disabled finish controls and load warnings.
+  return infrastructureActionNoticeFor(action);
+}
+
 export function actionNoticeForBuilding(
   actionNotice: InfrastructureActionNotice | undefined,
   buildingKey: BuildingKey,

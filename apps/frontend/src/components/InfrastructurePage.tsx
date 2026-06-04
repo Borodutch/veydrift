@@ -1,6 +1,6 @@
-import { Info, X } from "lucide-preact";
+import { Hammer, Info, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
   buildingCatalog,
@@ -21,7 +21,7 @@ import {
   formatSigned,
   mineSolarPlantPrerequisiteFor,
 } from "../buildingDetails";
-import { buildingQueueAsset, buildingQueueLabel } from "../overviewData";
+import { buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
 import {
   InspectCatalogTile,
@@ -29,9 +29,11 @@ import {
   InspectDetailImage,
   InspectDetailShell,
   InspectInfoBlock,
+  InspectPageHeader,
+  InspectTwoColumnLayout,
   SingleItemQueueProgress,
+  useInspectDetailSelection,
 } from "./InspectProgressLayout";
-import { OptimizedImage } from "./OptimizedImage";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -77,6 +79,8 @@ interface InfrastructurePageProps {
   actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
+  finishUnavailableReason?: string | undefined;
+  hasLoadedInfrastructureState?: boolean | undefined;
   isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   loadError?: string | undefined;
@@ -84,7 +88,9 @@ interface InfrastructurePageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
+  productionRates?: Resources | undefined;
   selectedBuildingKey?: BuildingKey | undefined;
+  spendableResources?: Resources | undefined;
   state: PlayableState;
   settledState: PlayableState;
   now?: number | undefined;
@@ -96,6 +102,8 @@ export function InfrastructurePage({
   actionPendingLabel,
   actionUnavailableReason,
   chainCosts,
+  finishUnavailableReason,
+  hasLoadedInfrastructureState = false,
   isActionPending = false,
   isBuildingReadyToFinish,
   loadError,
@@ -104,104 +112,108 @@ export function InfrastructurePage({
   onOpenRequirement,
   onSelectBuilding,
   planetProductionProfile,
+  productionRates,
   selectedBuildingKey,
+  spendableResources,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
   const [localSelectedKey, setLocalSelectedKey] = useState<BuildingKey>("metalMine");
   const selectedKey = selectedBuildingKey ?? localSelectedKey;
-  const detailPanelRef = useRef<HTMLDivElement>(null);
   const selectedBuilding = buildingCatalog.find((building) => building.key === selectedKey)
     ?? buildingCatalog[0]!;
+  const showInitialLoadError = shouldShowInfrastructureInitialLoadError({
+    hasLoadedInfrastructureState,
+    loadError,
+  });
+  const initialLoadError = showInitialLoadError ? loadError : undefined;
+  const activeBuildingQueue = settledState.queue?.kind === "building" ? settledState.queue : undefined;
+  const finishAction = infrastructureFinishAction({
+    actionUnavailableReason: finishUnavailableReason ?? actionUnavailableReason ?? actionPendingLabel,
+    isActionPending,
+    isBuildingReadyToFinish,
+    onFinishBuilding,
+    queue: activeBuildingQueue,
+  });
+  const headerFinishAction = infrastructureHeaderFinishAction(finishAction);
 
-  function handleSelectBuilding(key: BuildingKey) {
+  const { detailPanelRef, selectInspectItem: handleSelectBuilding } = useInspectDetailSelection<BuildingKey>((key) => {
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
+  });
 
-    if (window.matchMedia("(max-width: 1279px)").matches) {
-      window.setTimeout(() => {
-        detailPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-      }, 0);
-    }
-  }
-
-  if (loadError) {
+  if (initialLoadError) {
     return (
       <div className="grid gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-white">Infrastructure</h2>
-            <p className="text-xs text-slate-400">
-              Building levels and production are hidden until live infrastructure state loads.
-            </p>
-          </div>
-        </div>
-        <InfrastructureLoadErrorPanel reason={loadError} />
+        <InspectPageHeader
+          description="Building levels and production are hidden until live infrastructure state loads."
+          title="Infrastructure"
+        />
+        <InfrastructureLoadErrorPanel reason={initialLoadError} />
       </div>
     );
   }
 
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-white">Infrastructure</h2>
-          <p className="text-xs text-slate-400">
-            Select a building to inspect real production, power, cost, and upgrade timing.
-          </p>
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <InspectPageHeader
+        actions={(
+          <>
           {settledState.queue?.kind === "building" ? (
             <ActiveBuildingBadge
-              asset={buildingQueueAsset(settledState.queue.key)}
               label={buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)}
             />
           ) : null}
-          {isBuildingReadyToFinish && onFinishBuilding ? (
+          {headerFinishAction ? (
             <button
+              aria-label={headerFinishAction.reason ?? "Finish building upgrade"}
               className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={isActionPending}
-              onClick={onFinishBuilding}
+              disabled={headerFinishAction.disabled}
+              onClick={headerFinishAction.onFinish}
+              title={headerFinishAction.reason ?? "Finish building upgrade"}
               type="button"
             >
-              Finish upgrade
+              {headerFinishAction.label}
             </button>
           ) : null}
-        </div>
-      </div>
+          </>
+        )}
+        description="Select a building to inspect real production, power, cost, and upgrade timing."
+        title="Infrastructure"
+      />
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
-        <div className="order-2 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:order-1 xl:grid-cols-3 2xl:grid-cols-4">
-          {buildingCatalog.map((building) => {
-            const currentLevel = settledState.buildings[building.key];
-            const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
-            const isSelected = building.key === selectedBuilding.key;
-            const missingRequirement = unmetBuildingRequirement(settledState, building.key);
-            const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
+      {loadError ? <InfrastructureRefreshErrorPanel reason={loadError} /> : null}
 
-            return (
-              <InspectCatalogTile
-                asset={building.asset}
-                currentText={buildingStatusText(building.label, currentLevel)}
-                isDimmed={currentLevel === 0}
-                isSelected={isSelected}
-                key={building.key}
-                label={building.label}
-                statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : compactEffect(effect)}
-                statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
-                onClick={() => handleSelectBuilding(building.key)}
-              />
-            );
-          })}
-        </div>
+      <InspectTwoColumnLayout
+        catalog={buildingCatalog.map((building) => {
+          const currentLevel = settledState.buildings[building.key];
+          const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
+          const isSelected = building.key === selectedBuilding.key;
+          const missingRequirement = unmetBuildingRequirement(settledState, building.key);
+          const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
 
-        <div className="order-1 xl:order-2" ref={detailPanelRef}>
+          return (
+            <InspectCatalogTile
+              asset={building.asset}
+              currentText={buildingStatusText(building.label, currentLevel)}
+              isDimmed={currentLevel === 0}
+              isSelected={isSelected}
+              key={building.key}
+              label={building.label}
+              statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : compactEffect(effect)}
+              statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
+              onClick={() => handleSelectBuilding(building.key)}
+            />
+          );
+        })}
+        detail={(
           <BuildingDetailPanel
             actionNotice={actionNoticeForBuilding(actionNotice, selectedBuilding.key)}
             actionPendingLabel={actionPendingLabel}
             actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
+            finishUnavailableReason={finishUnavailableReason}
             isActionPending={isActionPending}
             isBuildingReadyToFinish={isBuildingReadyToFinish}
             onFinishBuilding={onFinishBuilding}
@@ -209,12 +221,25 @@ export function InfrastructurePage({
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             now={now}
             planetProductionProfile={planetProductionProfile}
+            productionRates={productionRates}
+            spendableResources={spendableResources}
             state={settledState}
           />
-        </div>
-      </div>
+        )}
+        detailPanelRef={detailPanelRef}
+      />
     </div>
   );
+}
+
+export function shouldShowInfrastructureInitialLoadError({
+  hasLoadedInfrastructureState,
+  loadError,
+}: {
+  hasLoadedInfrastructureState: boolean;
+  loadError?: string | undefined;
+}): boolean {
+  return Boolean(loadError && !hasLoadedInfrastructureState);
 }
 
 export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
@@ -231,21 +256,22 @@ export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
   );
 }
 
-function ActiveBuildingBadge({ asset, label }: { asset?: string | undefined; label: string }) {
+export function InfrastructureRefreshErrorPanel({ reason }: { reason: string }) {
   return (
-    <span className="inline-flex min-w-0 items-center gap-2 rounded border border-amber-300/20 bg-amber-300/10 py-1 pl-1 pr-2.5 text-xs text-amber-300">
-      {asset ? (
-        <span className="h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-white/5">
-          <OptimizedImage
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-            sizes="icon"
-            src={asset}
-          />
-        </span>
-      ) : null}
-      <span className="min-w-0 truncate">Building: {label}</span>
+    <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+      <p className="font-semibold">Infrastructure refresh failed.</p>
+      <p className="mt-1 text-amber-100/80">
+        Showing the last loaded building data. {reason}
+      </p>
+    </div>
+  );
+}
+
+function ActiveBuildingBadge({ label }: { label: string }) {
+  return (
+    <span className="inline-flex max-w-full min-w-0 items-center gap-2 rounded border border-amber-300/20 bg-amber-300/10 px-2.5 py-1.5 text-xs font-semibold leading-5 text-amber-200">
+      <Hammer aria-hidden="true" className="shrink-0" size={14} strokeWidth={2.2} />
+      <span className="min-w-0 break-words">Building: {label}</span>
     </span>
   );
 }
@@ -264,6 +290,7 @@ function BuildingDetailPanel({
   actionUnavailableReason,
   building,
   chainCost,
+  finishUnavailableReason,
   isActionPending,
   isBuildingReadyToFinish,
   onFinishBuilding,
@@ -271,6 +298,8 @@ function BuildingDetailPanel({
   onUpgrade,
   now,
   planetProductionProfile,
+  productionRates,
+  spendableResources,
   state,
 }: {
   actionNotice?: InfrastructureActionNotice | undefined;
@@ -278,6 +307,7 @@ function BuildingDetailPanel({
   actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
+  finishUnavailableReason?: string | undefined;
   isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
   now: number;
@@ -285,6 +315,8 @@ function BuildingDetailPanel({
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onUpgrade: () => void;
   planetProductionProfile?: PlanetProductionProfile | undefined;
+  productionRates?: Resources | undefined;
+  spendableResources?: Resources | undefined;
   state: PlayableState;
 }) {
   const currentLevel = state.buildings[building.key];
@@ -299,6 +331,8 @@ function BuildingDetailPanel({
   const status = buildingUpgradeStatus(state, building.key, {
     actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
     chainCost,
+    productionRates,
+    spendableResources,
   });
   const effectRows = detailEffectRows(effect, energy);
   const levelInfoRows = buildingLevelInfoRows(
@@ -318,6 +352,14 @@ function BuildingDetailPanel({
     statusDisabled: status.disabled,
   });
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
+  const finishAction = infrastructureFinishAction({
+    actionUnavailableReason: finishUnavailableReason ?? actionUnavailableReason ?? actionPendingLabel,
+    binary,
+    isActionPending,
+    isBuildingReadyToFinish,
+    onFinishBuilding,
+    queue: activeBuildingQueue,
+  });
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -414,14 +456,16 @@ function BuildingDetailPanel({
         </div>
       )}
 
-      {isBuildingReadyToFinish && onFinishBuilding && (
+      {finishAction.visible && (
         <button
+          aria-label={finishAction.reason ?? "Finish building upgrade"}
           className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-          disabled={Boolean(actionUnavailableReason || isActionPending)}
-          onClick={onFinishBuilding}
+          disabled={finishAction.disabled}
+          onClick={finishAction.onFinish}
+          title={finishAction.reason ?? "Finish building upgrade"}
           type="button"
         >
-          {infrastructureFinishButtonLabel(actionUnavailableReason, binary)}
+          {finishAction.label}
         </button>
       )}
 
@@ -472,6 +516,46 @@ export function infrastructureFinishButtonLabel(
   binary: boolean,
 ): string {
   return actionUnavailableReason ?? (binary ? "Finish build" : "Finish upgrade");
+}
+
+export function infrastructureFinishAction({
+  actionUnavailableReason,
+  binary = false,
+  isActionPending,
+  isBuildingReadyToFinish,
+  onFinishBuilding,
+  queue,
+}: {
+  actionUnavailableReason?: string | undefined;
+  binary?: boolean | undefined;
+  isActionPending?: boolean | undefined;
+  isBuildingReadyToFinish?: boolean | undefined;
+  onFinishBuilding?: (() => void) | undefined;
+  queue?: BuildingQueueItem | undefined;
+}): {
+  disabled: boolean;
+  label: string;
+  onFinish?: (() => void) | undefined;
+  reason?: string | undefined;
+  visible: boolean;
+} {
+  const visible = Boolean(queue && onFinishBuilding);
+  const reason = actionUnavailableReason
+    ?? (isActionPending ? "Building transaction is already in progress." : undefined)
+    ?? (isBuildingReadyToFinish ? undefined : "Building upgrade is not ready to finish yet.");
+
+  return {
+    disabled: Boolean(reason),
+    label: reason ?? infrastructureFinishButtonLabel(undefined, binary),
+    onFinish: visible && !reason ? onFinishBuilding : undefined,
+    reason,
+    visible,
+  };
+}
+
+export function infrastructureHeaderFinishAction(action: ReturnType<typeof infrastructureFinishAction>) {
+  if (!action.visible || action.disabled) return undefined;
+  return action;
 }
 
 export function ActiveBuildingQueueDetail({
@@ -561,7 +645,8 @@ export function BuildingLevelInfoModal({
           <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
             <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
               <tr>
-                <LevelInfoHeader className="min-w-28">Level</LevelInfoHeader>
+                <LevelInfoHeader className="min-w-24 whitespace-nowrap">Level</LevelInfoHeader>
+                <LevelInfoHeader className="min-w-24 whitespace-nowrap">Status</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>
                 {columns.production && <LevelInfoHeader className="min-w-40">Production</LevelInfoHeader>}
@@ -584,12 +669,12 @@ export function BuildingLevelInfoModal({
                   }`}
                   key={row.level}
                 >
-                  <LevelInfoCell>
-                    <span className="inline-flex items-center gap-2">
-                      <span className="font-semibold text-white">Level {row.level}</span>
-                      {row.current && <LevelPill tone="current">Current</LevelPill>}
-                      {row.next && <LevelPill tone="next">Next</LevelPill>}
-                    </span>
+                  <LevelInfoCell className="whitespace-nowrap">
+                    <span className="font-semibold text-white">Level {row.level}</span>
+                  </LevelInfoCell>
+                  <LevelInfoCell className="min-w-24">
+                    {row.current && <LevelPill tone="current">Current</LevelPill>}
+                    {row.next && <LevelPill tone="next">Next</LevelPill>}
                   </LevelInfoCell>
                   <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
                   <LevelInfoCell>{formatDuration(row.durationSeconds)}</LevelInfoCell>
@@ -649,9 +734,15 @@ function LevelInfoHeader({
   );
 }
 
-function LevelInfoCell({ children }: { children: ComponentChildren }) {
+function LevelInfoCell({
+  children,
+  className = "",
+}: {
+  children: ComponentChildren;
+  className?: string | undefined;
+}) {
   return (
-    <td className="border-b border-white/10 px-3 py-2 align-top text-slate-200">
+    <td className={`border-b border-white/10 px-3 py-2 align-top text-slate-200 ${className}`}>
       {children}
     </td>
   );
@@ -663,7 +754,7 @@ function LevelPill({ children, tone }: { children: string; tone: "current" | "ne
     : "border-signal/30 bg-signal/10 text-signal";
 
   return (
-    <span className={`rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
+    <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
       {children}
     </span>
   );

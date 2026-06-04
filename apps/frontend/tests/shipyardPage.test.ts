@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
-import { getBlockedReason, getShipRequirementStates, shipProductionItems } from "../src/components/ShipyardPage";
+import { getBlockedReason, getShipRequirementStates, shipProductionItems, shipyardRefreshErrorLabel } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
 import { shipCatalog } from "../src/playableMvp";
 
@@ -53,6 +53,17 @@ describe("Shipyard page display helpers", () => {
     })).toBe("Waiting for chain state");
   });
 
+  test("labels refresh errors as stale-data notices when shipyard state remains loaded", () => {
+    expect(shipyardRefreshErrorLabel({
+      error: "Shipyard request failed with 503",
+      shipyardState: shipyardState(),
+    })).toBe("Refreshing shipyard state: Shipyard request failed with 503");
+    expect(shipyardRefreshErrorLabel({
+      error: "Shipyard request failed with 503",
+      shipyardState: null,
+    })).toBeUndefined();
+  });
+
   test("returns visible met and unmet ship requirement states", () => {
     const smallCargo = shipCatalog.find((item) => item.key === "smallCargo");
     expect(smallCargo).toBeDefined();
@@ -89,12 +100,55 @@ describe("Shipyard page display helpers", () => {
       actionLabel: "Build",
       countLabel: "Owned",
       countValue: 4,
+      description: expect.stringContaining("freighter"),
+      detailStats: expect.arrayContaining([
+        { label: "Structure", value: "400" },
+        { label: "Cargo", value: "5,000" },
+        { label: "Fuel use", value: "10" },
+      ]),
       quantity: 3,
       status: "ready",
     });
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
       status: "locked",
       statusLabel: "Locked",
+    });
+  });
+
+  test("shows Solar Satellite energy per unit from shipyard state", () => {
+    const baseState = shipyardState();
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: {},
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState({
+        ships: [
+          ...baseState.ships,
+          {
+            id: 9,
+            count: 3,
+            cost: {
+              metal: "0",
+              crystal: "2000",
+              deuterium: "500",
+            },
+            energyPerUnit: "22",
+          },
+        ],
+      }),
+    });
+
+    expect(items.find((item) => item.key === "solarSatellite")?.detailStats).toContainEqual({
+      label: "E/unit",
+      value: "22",
     });
   });
 
@@ -138,6 +192,29 @@ describe("Shipyard page display helpers", () => {
       quantity: 2,
       readyAt: "1700000120",
       startedAt: "1700000000",
+    });
+  });
+
+  test("uses spendable accrued resources in insufficient-resource copy", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      productionRates: { metal: 500, crystal: 250, deuterium: 0 },
+      quantities: { smallCargo: 2 },
+      queue: undefined,
+      resources: {
+        metal: 3_500,
+        crystal: 3_900,
+        deuterium: 0,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState(),
+    });
+
+    expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+      blockedReason: "Requires 500 more Metal, 100 more Crystal (affordable in 1h)",
+      disabled: true,
     });
   });
 });

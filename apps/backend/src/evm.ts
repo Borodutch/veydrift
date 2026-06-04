@@ -15,6 +15,14 @@ export type EnergyBalance = {
   produced: string;
   required: string;
   scaleBps: string;
+  sources?: {
+    solarPlant: string;
+    fusionReactor: string;
+    fusionReactorDeuteriumConsumed: string;
+    solarSatellites: string;
+    solarSatelliteCount: number;
+    solarSatelliteEnergy: string;
+  };
 };
 
 export type PlanetState = Coordinates & {
@@ -72,6 +80,14 @@ export type WalletSettlement = {
   contractKind?: "game" | "settlement";
 };
 
+export type SettlementFundingState = {
+  affordable: boolean;
+  balanceWei: string | null;
+  contractKind: "game" | "legacy";
+  startPriceWei: string | null;
+  unavailableReason?: string;
+};
+
 export type QueueState = {
   active: boolean;
   kind: string | null;
@@ -81,6 +97,7 @@ export type QueueState = {
   readyAt: string | null;
   startedAt?: string | null;
   cost: Resources;
+  backlog?: QueueState[];
 };
 
 export type PlayerQueues = {
@@ -206,6 +223,7 @@ export type ShipyardState = {
     id: number;
     count: number;
     cost: Resources;
+    energyPerUnit?: string;
   }>;
   queue: QueueState | null;
 };
@@ -335,6 +353,7 @@ export type RiftState = {
 export type AllianceState = {
   wallet: Address;
   allianceAvailable: boolean;
+  dismissJoinRequestAvailable?: boolean;
   unavailableReason?: string;
   membership: {
     allianceId: string;
@@ -484,6 +503,7 @@ export type DebrisFieldEvent = {
 
 export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
+  getSettlementFunding(wallet: Address): Promise<SettlementFundingState>;
   getWalletPlanets(wallet: Address): Promise<WalletPlanets>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address, planetId?: bigint): Promise<PlayerQueues>;
@@ -882,6 +902,37 @@ export class VeydriftGameReader implements ChainReader {
     }
   }
 
+  async getSettlementFunding(wallet: Address): Promise<SettlementFundingState> {
+    assertAddress(wallet);
+    const startPrice = await this.readStartPrice();
+    if (startPrice === undefined) {
+      return {
+        affordable: true,
+        balanceWei: null,
+        contractKind: "legacy",
+        startPriceWei: null
+      };
+    }
+
+    if (!this.resourceTokensConfigured()) {
+      return {
+        affordable: false,
+        balanceWei: null,
+        contractKind: "game",
+        startPriceWei: startPrice.toString(),
+        unavailableReason: "Resource token reserves are not configured for this game deployment yet."
+      };
+    }
+
+    const balance = await this.readNativeBalance(wallet);
+    return {
+      affordable: balance >= startPrice,
+      balanceWei: balance.toString(),
+      contractKind: "game",
+      startPriceWei: startPrice.toString()
+    };
+  }
+
   async getPlanet(planetId: bigint): Promise<PlanetState | null> {
     const words = splitWords(await this.call("0x181c1bc4", [encodeUint(planetId)]));
     const owner = decodeAddressWord(wordAt(words, 0));
@@ -956,7 +1007,7 @@ export class VeydriftGameReader implements ChainReader {
     const planetId = BigInt(settlement.homePlanetId);
     const [building, defense, ship, research] = await Promise.all([
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
-      this.readPlanetQueue("0x5758361d", planetId, "defense"),
+      this.readDefenseQueue(planetId),
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readResearchQueue(wallet)
     ]);
@@ -1222,7 +1273,7 @@ export class VeydriftGameReader implements ChainReader {
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
       this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
       this.readTechnologyLevels(wallet),
-      this.readShipRows(planetId),
+      this.readShipRows(planetId, settlement.planet?.temperature),
       this.readOptionalUintCall("0x423f9f10", [encodeAddress(wallet)])
     ]);
 
@@ -1537,11 +1588,14 @@ export class VeydriftGameReader implements ChainReader {
       if (!decodeBoolWord(wordAt(words, 0))) return [];
 
       const membershipWords = splitWords(joinRequestMemberships[index] ?? "0x");
+      const requesterAllianceId = decodeUintWord(wordAt(membershipWords, 0));
+      if (requesterAllianceId !== 0n) return [];
+
       return [{
         allianceId: allianceId.toString(),
         requester: address,
         requesterMembership: {
-          allianceId: decodeUintWord(wordAt(membershipWords, 0)).toString(),
+          allianceId: requesterAllianceId.toString(),
           role: allianceRoleName(Number(decodeUintWord(wordAt(membershipWords, 1)))),
           joinedAt: decodeUintWord(wordAt(membershipWords, 2)).toString()
         },
@@ -1912,6 +1966,39 @@ export class VeydriftGameReader implements ChainReader {
     return queue;
   }
 
+  private async readDefenseQueue(planetId: bigint): Promise<QueueState> {
+    const queue = await this.readPlanetQueue("0x5758361d", planetId, "defense");
+    const backlog = await this.readDefenseQueueBacklog(planetId);
+    if (backlog.length > 0) {
+      queue.backlog = backlog;
+    }
+    return queue;
+  }
+
+  private async readDefenseQueueBacklog(planetId: bigint): Promise<QueueState[]> {
+    try {
+      const words = splitWords(await this.call("0x4f5ed437", [encodeUint(planetId)]));
+      const length = Number(decodeUintWord(wordAt(words, 1)));
+      const backlog: QueueState[] = [];
+      for (let index = 0; index < length; index += 1) {
+        const offset = 2 + index * 7;
+        const active = decodeBoolWord(wordAt(words, offset));
+        backlog.push({
+          active,
+          kind: active ? "defense" : null,
+          ...(active ? { itemId: Number(decodeUintWord(wordAt(words, offset + 1))) } : {}),
+          quantity: Number(decodeUintWord(wordAt(words, offset + 2))),
+          readyAt: active ? decodeUintWord(wordAt(words, offset + 3)).toString() : null,
+          cost: decodeResources(words.slice(offset + 4, offset + 7))
+        });
+      }
+      return backlog;
+    } catch (error) {
+      if (isRpcRevert(error)) return [];
+      throw error;
+    }
+  }
+
   private async readMoonQueue(planetId: bigint): Promise<QueueState> {
     const words = splitWords(await this.moonCall("0x2216f950", [encodeUint(planetId)]));
     const active = decodeBoolWord(wordAt(words, 0));
@@ -2116,7 +2203,9 @@ export class VeydriftGameReader implements ChainReader {
     return Object.fromEntries(entries);
   }
 
-  private async readShipRows(planetId: bigint): Promise<ShipyardState["ships"]> {
+  private async readShipRows(planetId: bigint, maxTemperature?: number): Promise<ShipyardState["ships"]> {
+    const solarSatelliteEnergyPerUnit = maxTemperature === undefined ? undefined : solarSatelliteEnergy(maxTemperature).toString();
+
     try {
       const results = await this.batchCallContract(
         this.gameContractAddress,
@@ -2135,7 +2224,8 @@ export class VeydriftGameReader implements ChainReader {
       return supportedShipIds.map((id, index) => ({
         id,
         count: Number(decodeUintWord(wordAt(splitWords(results[index * 2] ?? "0x"), 0))),
-        cost: decodeResources(splitWords(results[index * 2 + 1] ?? "0x"))
+        cost: decodeResources(splitWords(results[index * 2 + 1] ?? "0x")),
+        ...(id === 9 && solarSatelliteEnergyPerUnit ? { energyPerUnit: solarSatelliteEnergyPerUnit } : {})
       }));
     } catch (error) {
       if (!isRpcRevert(error)) {
@@ -2145,13 +2235,13 @@ export class VeydriftGameReader implements ChainReader {
 
     const rows: Array<ShipyardState["ships"][number] | null> = [];
     for (const id of supportedShipIds) {
-      rows.push(await this.readShipRow(planetId, id));
+      rows.push(await this.readShipRow(planetId, id, solarSatelliteEnergyPerUnit));
     }
 
     return rows.filter((row): row is ShipyardState["ships"][number] => row !== null);
   }
 
-  private async readShipRow(planetId: bigint, id: number): Promise<ShipyardState["ships"][number] | null> {
+  private async readShipRow(planetId: bigint, id: number, solarSatelliteEnergyPerUnit?: string): Promise<ShipyardState["ships"][number] | null> {
     try {
       const [count, cost] = await Promise.all([
         this.readUintCall("0x57686701", [encodeUint(planetId), encodeUint(BigInt(id))]),
@@ -2161,7 +2251,8 @@ export class VeydriftGameReader implements ChainReader {
       return {
         id,
         count: Number(count),
-        cost
+        cost,
+        ...(id === 9 && solarSatelliteEnergyPerUnit ? { energyPerUnit: solarSatelliteEnergyPerUnit } : {})
       };
     } catch (error) {
       if (isRpcRevert(error)) {
@@ -2598,6 +2689,30 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readUintCall(selector: string, args: string[]): Promise<bigint> {
     return decodeUintWord(wordAt(splitWords(await this.call(selector, args)), 0));
+  }
+
+  private async readStartPrice(): Promise<bigint | undefined> {
+    try {
+      return await this.readUintCall("0xf1a9af89", []);
+    } catch (error) {
+      if (isRpcRevert(error)) return undefined;
+      throw error;
+    }
+  }
+
+  private async readNativeBalance(wallet: Address): Promise<bigint> {
+    return decodeUint(await this.transport.request<string>("eth_getBalance", [
+      wallet,
+      "latest"
+    ]));
+  }
+
+  private resourceTokensConfigured(): boolean {
+    return Boolean(
+      this.resourceTokenAddresses.metal
+        && this.resourceTokenAddresses.crystal
+        && this.resourceTokenAddresses.deuterium
+    );
   }
 
   private async readMoonUintCall(selector: string, args: string[]): Promise<bigint> {
@@ -3524,6 +3639,10 @@ function decodeSignedWord(word: string): bigint {
 
 function decodeBoolWord(word: string): boolean {
   return decodeUintWord(word) !== 0n;
+}
+
+function solarSatelliteEnergy(maxTemperature: number): number {
+  return Math.max(1, Math.min(65, Math.floor((maxTemperature + 140) / 6)));
 }
 
 function decodeAddressWord(word: string): Address {

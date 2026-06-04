@@ -1,6 +1,8 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
-import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate } from "../playableMvp";
+import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
+import { formatMissingResources, formatNumber } from "../buildingDetails";
+import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
 import {
   Notice,
@@ -29,8 +31,11 @@ interface ShipyardPageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectShip?: ((key: ShipKey) => void) | undefined;
+  overviewQueue?: ChainShipyardState["queue"] | undefined;
+  productionRates?: Resources | undefined;
   selectedShipKey?: ShipKey | undefined;
   shipyardState: ChainShipyardState | null;
+  spendableResources?: Resources | undefined;
 }
 
 const groupLabels = {
@@ -50,15 +55,18 @@ export function ShipyardPage({
   onOpenRequirement,
   onRefresh,
   onSelectShip,
+  overviewQueue,
+  productionRates,
   selectedShipKey,
   shipyardState,
+  spendableResources,
 }: ShipyardPageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<ShipKey>("smallCargo");
   const selectedKey = selectedShipKey ?? localSelectedKey;
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
   const resources = toResources(shipyardState?.resources);
-  const queue = shipyardState?.queue?.active ? shipyardState.queue : undefined;
+  const queue = activeProductionQueue(shipyardState?.queue, overviewQueue, "ship");
   const productionAvailable = shipyardState?.productionAvailable !== false;
   const initialLoading = loading && !shipyardState;
 
@@ -104,9 +112,10 @@ export function ShipyardPage({
             actionPending: actionState.status === "pending",
             canTransact,
             productionAvailable,
+            productionRates,
             quantities,
             queue,
-            resources,
+            resources: spendableResources ?? resources,
             shipyardLevel,
             shipyardState,
           })}
@@ -146,6 +155,11 @@ function StatusPanel({
     return null;
   }
 
+  const refreshError = shipyardRefreshErrorLabel({ error, shipyardState });
+  if (refreshError) {
+    return <Notice tone="neutral">{refreshError}</Notice>;
+  }
+
   if (error) {
     return <Notice tone="danger">{error}</Notice>;
   }
@@ -174,10 +188,22 @@ function StatusPanel({
   return null;
 }
 
+export function shipyardRefreshErrorLabel({
+  error,
+  shipyardState,
+}: {
+  error: string | undefined;
+  shipyardState?: ChainShipyardState | null | undefined;
+}): string | undefined {
+  if (!error || !shipyardState) return undefined;
+  return `Refreshing shipyard state: ${error}`;
+}
+
 export function shipProductionItems({
   actionPending,
   canTransact,
   productionAvailable,
+  productionRates,
   quantities,
   queue,
   resources,
@@ -187,6 +213,7 @@ export function shipProductionItems({
   actionPending: boolean;
   canTransact: boolean;
   productionAvailable: boolean;
+  productionRates?: Resources | undefined;
   quantities: Record<string, number>;
   queue?: ChainShipyardState["queue"] | undefined;
   resources: Resources | undefined;
@@ -212,13 +239,20 @@ export function shipProductionItems({
       canTransact,
       hasPlanet: Boolean(shipyardState?.homePlanetId),
       missing,
+      productionRates,
       queueActive: Boolean(queue),
       resources,
       shipUnavailable,
       shipyardState,
+      totalCost,
     });
     const disabled = Boolean(blockedReason) || actionPending;
-    const stats = shipCombatStats(ship).rows.slice(0, 3).map((row) => `${row.label} ${row.value}`).join(" · ");
+    const combatStats = shipCombatStats(ship);
+    const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
+    const detailStats = shipSpecRows(ship);
+    if (ship.key === "solarSatellite" && chainShip?.energyPerUnit) {
+      detailStats.push({ label: "E/unit", value: formatNumber(Number(chainShip.energyPerUnit)) });
+    }
 
     return {
       actionLabel: "Build",
@@ -228,6 +262,8 @@ export function shipProductionItems({
       countLabel: "Owned",
       countValue: owned,
       detailNote: stats || "Production unit",
+      description: ship.description,
+      detailStats,
       disabled,
       durationSeconds,
       group: ship.group,
@@ -239,6 +275,7 @@ export function shipProductionItems({
       quantity,
       queued,
       requirements,
+      notes: combatStats.notes,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
     };
@@ -296,19 +333,23 @@ export function getBlockedReason({
   canTransact,
   hasPlanet,
   missing,
+  productionRates,
   queueActive,
   resources,
   shipUnavailable,
   shipyardState,
+  totalCost,
 }: {
   affordable: boolean;
   canTransact: boolean;
   hasPlanet: boolean;
   missing: string[];
+  productionRates?: Resources | undefined;
   queueActive: boolean;
   resources: Resources | undefined;
   shipUnavailable: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
+  totalCost?: Resources | undefined;
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!shipyardState) return "Waiting for chain state";
@@ -318,6 +359,7 @@ export function getBlockedReason({
   if (queueActive) return "Queue active";
   if (missing.length > 0) return missing[0];
   if (!resources) return "Resources unavailable";
+  if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;
 }

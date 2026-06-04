@@ -110,6 +110,7 @@ type EventRow = {
 };
 
 type QueueRow = {
+  backlog_json: string | null;
   crystal_cost: string;
   deuterium_cost: string;
   item_id: number;
@@ -157,16 +158,37 @@ type PendingWithdrawalRow = {
   withdrawal_key: string;
 };
 
+type MoonBuildingQueueRow = {
+  crystal_cost: string;
+  deuterium_cost: string;
+  event_json: string;
+  metal_cost: string;
+  moon_building_id: number;
+  planet_id: string;
+  ready_at: string;
+  target_level: number;
+};
+
 type ResourceColumns = {
   metal: string;
   crystal: string;
   deuterium: string;
 };
 
+type PlanetResourceRow = ResourceColumns & {
+  block_number: string;
+  last_settled_at: string;
+  transaction_hash: string;
+};
+
 type PlayerProfileRow = {
   display_name: string | null;
   updated_at: string | null;
   wallet: string;
+};
+
+type QueueUpsertEvent = IndexedQueueStartedEvent & {
+  backlog?: QueueState[];
 };
 
 export type IndexedRpcLog = RpcLog & {
@@ -234,7 +256,7 @@ export class SettlementIndexer {
   }
 
   settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
-    return this.rows<SettledPlanetEvent>(
+    return this.planetsFromRows(
       "SELECT event_json FROM contract_planets WHERE galaxy = ? AND system_number = ? ORDER BY position ASC",
       galaxy,
       system
@@ -276,7 +298,7 @@ export class SettlementIndexer {
   }
 
   settledPlanets(): SettledPlanetEvent[] {
-    return this.rows<SettledPlanetEvent>("SELECT event_json FROM contract_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
+    return this.planetsFromRows("SELECT event_json FROM contract_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
   }
 
   settledPlanetsByOwner(): Map<string, SettledPlanetEvent[]> {
@@ -290,7 +312,7 @@ export class SettlementIndexer {
 
   planet(planetId: string): SettledPlanetEvent | null {
     const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
-    return row ? parseEvent<SettledPlanetEvent>(row.event_json) : null;
+    return row ? this.withResourceSnapshot(parseEvent<SettledPlanetEvent>(row.event_json)) : null;
   }
 
   playerProfile(wallet: string): PlayerProfile {
@@ -328,7 +350,7 @@ export class SettlementIndexer {
   }
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
-    const planets = this.rows<SettledPlanetEvent>(
+    const planets = this.planetsFromRows(
       "SELECT event_json FROM contract_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
     );
@@ -345,7 +367,7 @@ export class SettlementIndexer {
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
-    const planets = this.rows<SettledPlanetEvent>(
+    const planets = this.planetsFromRows(
       "SELECT event_json FROM contract_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
     ).map((planet) => indexedManagedPlanet(
@@ -420,7 +442,10 @@ export class SettlementIndexer {
   }
 
   shipRows(planetId: string): ShipyardState["ships"] {
-    return deriveShipRows((id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id));
+    return deriveShipRows(
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      this.planet(planetId)?.temperature
+    );
   }
 
   defenseRows(planetId: string): DefenseState["defenses"] {
@@ -713,6 +738,7 @@ export class SettlementIndexer {
         this.upsertPlanet(event);
       }
       this.applyCanonicalState(canonicalState);
+      this.replayEventDerivedQueueStateFromEventLogs(canonicalState);
       for (const event of debrisEvents) {
         this.upsertDebris(event);
       }
@@ -918,6 +944,7 @@ export class SettlementIndexer {
         metal_cost TEXT NOT NULL,
         crystal_cost TEXT NOT NULL,
         deuterium_cost TEXT NOT NULL,
+        backlog_json TEXT,
         event_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS contract_production_queues_planet_idx
@@ -1061,7 +1088,14 @@ export class SettlementIndexer {
         updated_at TEXT NOT NULL
       );
     `);
+    this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.backfillCanonicalTables();
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (columns.some((candidate) => candidate.name === column)) return;
+    this.db.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
   }
 
   private backfillCanonicalTables(): void {
@@ -1125,6 +1159,24 @@ export class SettlementIndexer {
         cost.deuterium,
         queue.event_json
       );
+      if (queue.kind === "moon-building" && queue.planet_id && queue.target_level !== null) {
+        this.db.query(`
+          INSERT OR IGNORE INTO contract_moon_building_queues (
+            planet_id, moon_building_id, target_level, ready_at,
+            metal_cost, crystal_cost, deuterium_cost, event_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          queue.planet_id,
+          queue.item_id,
+          queue.target_level,
+          queue.ready_at,
+          cost.metal,
+          cost.crystal,
+          cost.deuterium,
+          queue.event_json
+        );
+      }
     }
 
     this.db.query(`
@@ -1132,6 +1184,82 @@ export class SettlementIndexer {
       SELECT wallet, home_planet_id, ?
       FROM contract_players
     `).run(now);
+
+    this.replayMaterializedStateFromEventLogs();
+  }
+
+  private replayMaterializedStateFromEventLogs(): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (isIndexedQueueStartedLog(log)) {
+        const event = decodeIndexedQueueStartedLog(log);
+        if (!this.queueStartProvenCompleted(event)) {
+          this.applyQueueStartedEvent(event, { settleResources: false });
+        }
+      } else if (isIndexedQueueCompletedLog(log)) {
+        this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+      } else if (isShipCountChangedLog(log)) {
+        this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      }
+    }
+  }
+
+  private replayEventDerivedQueueStateFromEventLogs(canonicalState?: CanonicalReconciliationState): void {
+    const activeEventQueues = new Set<string>();
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (isIndexedQueueStartedLog(log)) {
+        const event = decodeIndexedQueueStartedLog(log);
+        if (this.queueStartProvenCompleted(event) || canonicalState?.verifiedEmptyQueues.has(queueKey(event))) {
+          activeEventQueues.delete(queueKey(event));
+          continue;
+        }
+        this.applyQueueStartedEvent(event, { settleResources: false });
+        activeEventQueues.add(queueKey(event));
+      } else if (isIndexedQueueCompletedLog(log)) {
+        const event = decodeIndexedQueueCompletedLog(log);
+        const key = queueKey(event);
+        if (activeEventQueues.has(key)) {
+          this.applyQueueCompletedEvent(event);
+          activeEventQueues.delete(key);
+        } else {
+          this.applyQueueCompletionEffects(event);
+        }
+      }
+    }
+  }
+
+  private queueStartProvenCompleted(event: IndexedQueueStartedEvent): boolean {
+    if (event.queueKind === "building" && event.planetId && event.targetLevel !== undefined) {
+      return this.indexedLevel("contract_building_levels", "building_id", event.planetId, event.itemId) >= event.targetLevel;
+    }
+    if (event.queueKind === "moon-building" && event.planetId && event.targetLevel !== undefined) {
+      return this.indexedLevel("contract_moon_building_levels", "moon_building_id", event.planetId, event.itemId) >= event.targetLevel;
+    }
+    if (event.queueKind === "research" && event.owner && event.targetLevel !== undefined) {
+      const row = this.db.query(`
+        SELECT level
+        FROM contract_technology_levels
+        WHERE owner = lower(?) AND technology_id = ?
+      `).get(event.owner, event.itemId) as { level: number } | null;
+      return (row?.level ?? 0) >= event.targetLevel;
+    }
+
+    return false;
   }
 
   private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
@@ -1141,7 +1269,8 @@ export class SettlementIndexer {
       defenses: new Map(),
       ships: new Map(),
       research: new Map(),
-      researchQueues: new Map()
+      researchQueues: new Map(),
+      verifiedEmptyQueues: new Set()
     };
     const owners = new Set(planets.map((planet) => planet.owner.toLowerCase() as `0x${string}`));
 
@@ -1164,18 +1293,27 @@ export class SettlementIndexer {
         state.buildings.set(planetId, infrastructure.buildings);
         if (infrastructure.queue?.active) {
           state.planetQueues.set(`building:${planetId}`, infrastructure.queue);
+          state.verifiedEmptyQueues.delete(`building:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`building:${planetId}`);
         }
       }
       if (defenses) {
         state.defenses.set(planetId, defenses.defenses);
         if (defenses.queue?.active) {
           state.planetQueues.set(`defense:${planetId}`, defenses.queue);
+          state.verifiedEmptyQueues.delete(`defense:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`defense:${planetId}`);
         }
       }
       if (shipyard) {
         state.ships.set(planetId, shipyard.ships);
         if (shipyard.queue?.active) {
           state.planetQueues.set(`ship:${planetId}`, shipyard.queue);
+          state.verifiedEmptyQueues.delete(`ship:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`ship:${planetId}`);
         }
       }
       if (queues) {
@@ -1183,6 +1321,10 @@ export class SettlementIndexer {
         this.addActiveQueue(state.planetQueues, `defense:${planetId}`, queues.defense);
         this.addActiveQueue(state.planetQueues, `ship:${planetId}`, queues.ship);
         this.addActiveResearchQueue(state.researchQueues, owner, queues.research);
+        if (queues.building?.active) state.verifiedEmptyQueues.delete(`building:${planetId}`);
+        if (queues.defense?.active) state.verifiedEmptyQueues.delete(`defense:${planetId}`);
+        if (queues.ship?.active) state.verifiedEmptyQueues.delete(`ship:${planetId}`);
+        if (queues.research?.active) state.verifiedEmptyQueues.delete(`research:${owner.toLowerCase()}`);
       }
     }));
 
@@ -1190,7 +1332,12 @@ export class SettlementIndexer {
       const research = await this.chainReader.getResearchState?.(owner);
       if (!research) return;
       state.research.set(owner, research.technologies);
-      this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
+      if (research.queue?.active) {
+        this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
+        state.verifiedEmptyQueues.delete(`research:${owner.toLowerCase()}`);
+      } else {
+        state.verifiedEmptyQueues.add(`research:${owner.toLowerCase()}`);
+      }
     }));
 
     return state;
@@ -1212,6 +1359,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_ship_counts").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
+    this.db.query("DELETE FROM contract_moon_building_queues").run();
   }
 
   private applyCanonicalState(state: CanonicalReconciliationState): void {
@@ -1287,11 +1435,14 @@ export class SettlementIndexer {
       ...(queue.quantity !== undefined ? { quantity: queue.quantity } : {}),
       readyAt: queue.readyAt ?? "0",
       ...(queue.startedAt ? { startedAt: queue.startedAt } : {}),
-      cost: queue.cost
+      cost: queue.cost,
+      ...(queue.backlog?.length ? { backlog: queue.backlog } : {})
     });
   }
 
   private upsertPlanet(event: SettledPlanetEvent): void {
+    const planetEvent = this.withKnownPlanetResources(event);
+    const placeholderResources = isZeroResourcePlaceholder(planetEvent);
     this.db.query(`
       INSERT INTO indexed_planets (planet_id, owner, galaxy, system, position, event_json)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -1302,12 +1453,12 @@ export class SettlementIndexer {
         position = excluded.position,
         event_json = excluded.event_json
     `).run(
-      event.planetId,
-      event.owner.toLowerCase(),
-      event.galaxy,
-      event.system,
-      event.position,
-      JSON.stringify(event)
+      planetEvent.planetId,
+      planetEvent.owner.toLowerCase(),
+      planetEvent.galaxy,
+      planetEvent.system,
+      planetEvent.position,
+      JSON.stringify(planetEvent)
     );
     this.db.query(`
       INSERT INTO contract_players (wallet, home_planet_id, planet_count, event_json, updated_at)
@@ -1325,12 +1476,12 @@ export class SettlementIndexer {
         event_json = excluded.event_json,
         updated_at = excluded.updated_at
     `).run(
-      event.owner,
-      event.planetId,
-      JSON.stringify(event),
+      planetEvent.owner,
+      planetEvent.planetId,
+      JSON.stringify(planetEvent),
       new Date().toISOString(),
-      event.owner,
-      event.planetId
+      planetEvent.owner,
+      planetEvent.planetId
     );
     this.db.query(`
       INSERT INTO contract_planets (
@@ -1353,20 +1504,102 @@ export class SettlementIndexer {
         last_settled_at = excluded.last_settled_at,
         event_json = excluded.event_json
     `).run(
-      event.planetId,
-      event.owner,
-      event.name,
-      event.galaxy,
-      event.system,
-      event.position,
-      event.fields,
-      event.temperature,
-      event.metalMultiplierBps,
-      event.crystalMultiplierBps,
-      event.deuteriumMultiplierBps,
-      event.lastSettledAt,
-      JSON.stringify(event)
+      planetEvent.planetId,
+      planetEvent.owner,
+      planetEvent.name,
+      planetEvent.galaxy,
+      planetEvent.system,
+      planetEvent.position,
+      planetEvent.fields,
+      planetEvent.temperature,
+      planetEvent.metalMultiplierBps,
+      planetEvent.crystalMultiplierBps,
+      planetEvent.deuteriumMultiplierBps,
+      planetEvent.lastSettledAt,
+      JSON.stringify(planetEvent)
     );
+    if (placeholderResources) {
+      this.markStale(pendingPlanetResourcesReason(planetEvent.planetId));
+      return;
+    }
+
+    this.upsertPlanetResourceSnapshot(
+      planetEvent.planetId,
+      planetEvent.resources,
+      planetEvent.lastSettledAt,
+      planetEvent.transactionHash,
+      planetEvent.blockNumber
+    );
+    this.clearPlanetResourcePendingIfResolved();
+  }
+
+  private updatePlanetResources(event: PlanetSettledEvent): void {
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
+    if (!row) {
+      this.upsertPlanetResourceSnapshot(event.planetId, event.resources, event.lastSettledAt, event.transactionHash, event.blockNumber);
+      this.markStale(`planet_identity_pending:${event.planetId}`);
+      return;
+    }
+
+    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
+    this.upsertPlanet({
+      ...planet,
+      transactionHash: event.transactionHash,
+      blockNumber: event.blockNumber,
+      lastSettledAt: event.lastSettledAt,
+      resources: event.resources
+    });
+  }
+
+  private withKnownPlanetResources(event: SettledPlanetEvent): SettledPlanetEvent {
+    if (!isZeroResourcePlaceholder(event)) return event;
+
+    const resources = this.planetResourceSnapshot(event.planetId);
+    if (!resources) return event;
+
+    return {
+      ...event,
+      blockNumber: resources.block_number,
+      lastSettledAt: resources.last_settled_at,
+      resources: {
+        metal: resources.metal,
+        crystal: resources.crystal,
+        deuterium: resources.deuterium
+      },
+      transactionHash: resources.transaction_hash
+    };
+  }
+
+  private withResourceSnapshot(planet: SettledPlanetEvent): SettledPlanetEvent {
+    const resources = this.planetResourceSnapshot(planet.planetId);
+    return resources ? {
+      ...planet,
+      blockNumber: resources.block_number,
+      lastSettledAt: resources.last_settled_at,
+      resources: {
+        metal: resources.metal,
+        crystal: resources.crystal,
+        deuterium: resources.deuterium
+      },
+      transactionHash: resources.transaction_hash
+    } : planet;
+  }
+
+  private planetResourceSnapshot(planetId: string): PlanetResourceRow | null {
+    return this.db.query(`
+      SELECT metal, crystal, deuterium, last_settled_at, transaction_hash, block_number
+      FROM contract_planet_resources
+      WHERE planet_id = ?
+    `).get(planetId) as PlanetResourceRow | null;
+  }
+
+  private upsertPlanetResourceSnapshot(
+    planetId: string,
+    resources: ResourceColumns,
+    lastSettledAt: string,
+    transactionHash: string,
+    blockNumber: string
+  ): void {
     this.db.query(`
       INSERT INTO contract_planet_resources (
         planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number
@@ -1380,28 +1613,25 @@ export class SettlementIndexer {
         transaction_hash = excluded.transaction_hash,
         block_number = excluded.block_number
     `).run(
-      event.planetId,
-      event.resources.metal,
-      event.resources.crystal,
-      event.resources.deuterium,
-      event.lastSettledAt,
-      event.transactionHash,
-      event.blockNumber
+      planetId,
+      resources.metal,
+      resources.crystal,
+      resources.deuterium,
+      lastSettledAt,
+      transactionHash,
+      blockNumber
     );
   }
 
-  private updatePlanetResources(event: PlanetSettledEvent): void {
-    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
-    if (!row) return;
-
-    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
-    this.upsertPlanet({
-      ...planet,
-      transactionHash: event.transactionHash,
-      blockNumber: event.blockNumber,
-      lastSettledAt: event.lastSettledAt,
-      resources: event.resources
-    });
+  private clearPlanetResourcePendingIfResolved(): void {
+    const pending = this.metadata("pendingReconciliationReason");
+    if (!pending?.startsWith("planet_resources_pending:") && !pending?.startsWith("planet_identity_pending:")) return;
+    const planetsMissingResources = this.settledPlanets().some((planet) => (
+      isZeroResourcePlaceholder(planet) && !this.planetResourceSnapshot(planet.planetId)
+    ));
+    if (!planetsMissingResources) {
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'pendingReconciliationReason'").run();
+    }
   }
 
   private applyPlanetRenamedEvent(event: PlanetRenamedEvent): void {
@@ -1484,14 +1714,19 @@ export class SettlementIndexer {
     );
   }
 
-  private applyQueueStartedEvent(event: IndexedQueueStartedEvent): void {
+  private applyQueueStartedEvent(
+    event: IndexedQueueStartedEvent,
+    options: { settleResources?: boolean } = {}
+  ): void {
     this.upsertQueue(event);
-    if (event.planetId) {
-      this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
-    } else if (event.queueKind === "research" && event.owner) {
-      const settlement = this.walletSettlement(event.owner);
-      if (settlement.homePlanetId) {
-        this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
+    if (options.settleResources !== false) {
+      if (event.planetId) {
+        this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
+      } else if (event.queueKind === "research" && event.owner) {
+        const settlement = this.walletSettlement(event.owner);
+        if (settlement.homePlanetId) {
+          this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
+        }
       }
     }
     this.touch();
@@ -1520,11 +1755,18 @@ export class SettlementIndexer {
   private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
     this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
     this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
+    this.applyQueueCompletionEffects(event);
+    this.touch();
+  }
+
+  private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent): void {
     if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
-      this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
-      this.upsertIndexedLevel("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.upsertIndexedLevelAtLeast("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.upsertIndexedLevelAtLeast("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-building" && event.planetId && event.level !== undefined) {
-      this.upsertIndexedLevel("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
+      this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      this.upsertIndexedLevelAtLeast("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "defense" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
       this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
@@ -1543,10 +1785,13 @@ export class SettlementIndexer {
         ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
       `).run(event.owner, event.itemId, event.level);
     }
-    this.touch();
   }
 
-  private upsertQueue(event: IndexedQueueStartedEvent): void {
+  private upsertQueue(event: QueueUpsertEvent): void {
+    if (this.appendDefenseBacklogQueue(event)) {
+      return;
+    }
+
     this.db.query(`
       INSERT INTO indexed_planet_queues (
         queue_key, kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at, cost_json, event_json
@@ -1579,9 +1824,9 @@ export class SettlementIndexer {
     this.db.query(`
       INSERT INTO contract_production_queues (
         queue_key, queue_kind, planet_id, owner, item_id, target_level, quantity,
-        ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, event_json
+        ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json, event_json
       )
-      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(queue_key) DO UPDATE SET
         queue_kind = excluded.queue_kind,
         planet_id = excluded.planet_id,
@@ -1594,6 +1839,7 @@ export class SettlementIndexer {
         metal_cost = excluded.metal_cost,
         crystal_cost = excluded.crystal_cost,
         deuterium_cost = excluded.deuterium_cost,
+        backlog_json = excluded.backlog_json,
         event_json = excluded.event_json
     `).run(
       queueKey(event),
@@ -1608,8 +1854,61 @@ export class SettlementIndexer {
       event.cost.metal,
       event.cost.crystal,
       event.cost.deuterium,
+      event.backlog?.length ? JSON.stringify(event.backlog) : null,
       JSON.stringify(event)
     );
+
+    if (event.queueKind === "moon-building" && event.planetId && event.targetLevel !== undefined) {
+      this.db.query(`
+        INSERT INTO contract_moon_building_queues (
+          planet_id, moon_building_id, target_level, ready_at,
+          metal_cost, crystal_cost, deuterium_cost, event_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(planet_id) DO UPDATE SET
+          moon_building_id = excluded.moon_building_id,
+          target_level = excluded.target_level,
+          ready_at = excluded.ready_at,
+          metal_cost = excluded.metal_cost,
+          crystal_cost = excluded.crystal_cost,
+          deuterium_cost = excluded.deuterium_cost,
+          event_json = excluded.event_json
+      `).run(
+        event.planetId,
+        event.itemId,
+        event.targetLevel,
+        event.readyAt,
+        event.cost.metal,
+        event.cost.crystal,
+        event.cost.deuterium,
+        JSON.stringify(event)
+      );
+    }
+  }
+
+  private appendDefenseBacklogQueue(event: QueueUpsertEvent): boolean {
+    if (event.queueKind !== "defense" || !event.planetId) {
+      return false;
+    }
+
+    const row = this.db.query(`
+      SELECT item_id, backlog_json
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(queueKey(event)) as Pick<QueueRow, "item_id" | "backlog_json"> | null;
+    if (!row || row.item_id === event.itemId) {
+      return false;
+    }
+
+    const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
+    const nextBacklog = Array.isArray(backlog) ? backlog : [];
+    nextBacklog.push(queueStateFromEvent(event));
+    this.db.query(`
+      UPDATE contract_production_queues
+      SET backlog_json = ?
+      WHERE queue_key = ?
+    `).run(JSON.stringify(nextBacklog), queueKey(event));
+    return true;
   }
 
   private subtractPlanetResources(
@@ -1618,10 +1917,14 @@ export class SettlementIndexer {
     transactionHash: string,
     blockNumber: string
   ): void {
-    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
-    if (!row) return;
+    const planet = this.planet(planetId);
+    if (!planet) return;
 
-    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
+    if (isZeroResourcePlaceholder(planet) && !this.planetResourceSnapshot(planetId)) {
+      this.markStale(pendingPlanetResourcesReason(planetId));
+      return;
+    }
+
     this.upsertPlanet({
       ...planet,
       transactionHash,
@@ -1631,8 +1934,30 @@ export class SettlementIndexer {
   }
 
   private queueState(queueKeyValue: string): QueueState | null {
+    if (queueKeyValue.startsWith("moon-building:")) {
+      const row = this.db.query(`
+        SELECT planet_id, moon_building_id, target_level, ready_at, metal_cost, crystal_cost, deuterium_cost, event_json
+        FROM contract_moon_building_queues
+        WHERE planet_id = ?
+      `).get(queueKeyValue.slice("moon-building:".length)) as MoonBuildingQueueRow | null;
+      if (row) {
+        return {
+          active: true,
+          kind: "moon-building",
+          itemId: row.moon_building_id,
+          targetLevel: row.target_level,
+          readyAt: row.ready_at,
+          cost: {
+            metal: row.metal_cost,
+            crystal: row.crystal_cost,
+            deuterium: row.deuterium_cost
+          }
+        };
+      }
+    }
+
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKeyValue) as QueueRow | null;
@@ -1655,6 +1980,12 @@ export class SettlementIndexer {
     }
     if (row.quantity !== null) {
       queue.quantity = row.quantity;
+    }
+    if (row.backlog_json) {
+      const backlog = parseEvent<QueueState[]>(row.backlog_json);
+      if (Array.isArray(backlog) && backlog.length > 0) {
+        queue.backlog = backlog;
+      }
     }
     return queue;
   }
@@ -1686,6 +2017,21 @@ export class SettlementIndexer {
       INSERT INTO ${table} (planet_id, ${idColumn}, ${valueColumn})
       VALUES (?, ?, ?)
       ON CONFLICT(planet_id, ${idColumn}) DO UPDATE SET ${valueColumn} = excluded.${valueColumn}
+    `).run(planetId, itemId, value);
+  }
+
+  private upsertIndexedLevelAtLeast(
+    table: "contract_building_levels" | "contract_moon_building_levels" | "indexed_building_levels" | "indexed_moon_building_levels",
+    idColumn: string,
+    valueColumn: string,
+    planetId: string,
+    itemId: number,
+    value: number
+  ): void {
+    this.db.query(`
+      INSERT INTO ${table} (planet_id, ${idColumn}, ${valueColumn})
+      VALUES (?, ?, ?)
+      ON CONFLICT(planet_id, ${idColumn}) DO UPDATE SET ${valueColumn} = max(${table}.${valueColumn}, excluded.${valueColumn})
     `).run(planetId, itemId, value);
   }
 
@@ -1872,6 +2218,10 @@ export class SettlementIndexer {
     return (this.db.query(sql).all(...params) as EventRow[]).map((row) => parseEvent<T>(row.event_json));
   }
 
+  private planetsFromRows(sql: string, ...params: SQLQueryBindings[]): SettledPlanetEvent[] {
+    return this.rows<SettledPlanetEvent>(sql, ...params).map((planet) => this.withResourceSnapshot(planet));
+  }
+
   private staleReason(reconciliationInProgress: boolean): string | null {
     if (reconciliationInProgress) return "reconciliation_in_progress";
     const error = this.metadata("lastReconciliationError");
@@ -1890,6 +2240,7 @@ type CanonicalReconciliationState = {
   ships: Map<string, ShipyardState["ships"]>;
   research: Map<`0x${string}`, ResearchState["technologies"]>;
   researchQueues: Map<`0x${string}`, QueueState>;
+  verifiedEmptyQueues: Set<string>;
 };
 
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
@@ -1970,12 +2321,38 @@ function indexedManagedPlanet(
   };
 }
 
+function isZeroResourcePlaceholder(event: SettledPlanetEvent): boolean {
+  return event.lastSettledAt === "0"
+    && event.resources.metal === "0"
+    && event.resources.crystal === "0"
+    && event.resources.deuterium === "0";
+}
+
+function pendingPlanetResourcesReason(planetId: string): string {
+  return `planet_resources_pending:${planetId}`;
+}
+
 function subtractResources(left: QueueState["cost"], right: QueueState["cost"]): QueueState["cost"] {
   return {
     metal: subtractResource(left.metal, right.metal),
     crystal: subtractResource(left.crystal, right.crystal),
     deuterium: subtractResource(left.deuterium, right.deuterium)
   };
+}
+
+function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
+  const queue: QueueState = {
+    active: true,
+    kind: event.queueKind,
+    itemId: event.itemId,
+    readyAt: event.readyAt,
+    cost: event.cost
+  };
+  if (event.targetLevel !== undefined) queue.targetLevel = event.targetLevel;
+  if (event.quantity !== undefined) queue.quantity = event.quantity;
+  if (event.startedAt !== undefined) queue.startedAt = event.startedAt;
+  if (event.backlog?.length) queue.backlog = event.backlog;
+  return queue;
 }
 
 function subtractResource(left: string, right: string): string {

@@ -14,8 +14,10 @@ import {
   type InfrastructureState,
   type MoonChanceReportEvent,
   type MoonState,
+  type PlanetState,
   type PlayerQueues,
   type ResearchState,
+  type Resources,
   type RiftState,
   type RpcLog,
   type SettledPlanetEvent,
@@ -163,15 +165,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
+      const chainSyncSnapshot = chainSync?.snapshot() ?? null;
+      const missionResolutionSnapshot = missionResolver?.snapshot() ?? null;
+      const indexerSnapshot = indexer?.snapshot() ?? null;
       return Response.json(
         {
           ok: true,
           service: "veydrift-backend",
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
-          chainSync: chainSync?.snapshot() ?? null,
-          missionResolution: missionResolver?.snapshot() ?? null,
-          indexer: indexer?.snapshot() ?? null,
+          readiness: backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot),
+          chainSync: chainSyncSnapshot,
+          missionResolution: missionResolutionSnapshot,
+          indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
         {
@@ -283,9 +289,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (hasWarmPlanetIndex(indexer)) {
-          return Response.json(withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet), {
-            headers: corsHeaders
+        if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
+          const snapshot = indexer.snapshot();
+          const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
+          return Response.json({
+            ...withPlayerProfile(settlement, indexer, wallet),
+            indexer: snapshot,
+            liveReadSkippedAt: new Date().toISOString(),
+            source: "contract-state-indexer",
+            stale: !snapshot.safeToServeIndexedState
+          }, {
+            headers: {
+              ...corsHeaders,
+              "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
+            }
           });
         }
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
@@ -298,12 +315,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/settlement-funding$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
+        if (ready instanceof Response) return ready;
+        return Response.json(await liveWalletRead(ready.getSettlementFunding(wallet), "settlement funding"), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/planets$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (hasWarmPlanetIndex(indexer)) {
-          return Response.json(withPlayerProfile(indexer.walletPlanets(wallet), indexer, wallet), {
+        if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
+          return Response.json(withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet), {
             headers: corsHeaders
           });
         }
@@ -600,7 +631,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         }
 
         const profiles = indexer?.playerProfiles(planetsByOwner.keys()) ?? new Map<string, PlayerProfile>();
-        const rankings = highscoreRankings(entries, limit, planetsByOwner, profiles);
+        const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), chainReader);
+        const rankings = highscoreRankings(entries, limit, planetsByOwner, profiles, allianceIntel);
 
         return Response.json(
           {
@@ -685,6 +717,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           ).map((planet) => ({
             ...planet,
             occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
+            publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
             debrisField: debrisFieldRef(debris.get(planet.position)),
             moonChance: moonChanceReportRef(moonChance.get(planet.position))
           }))
@@ -751,6 +784,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                 ).map((planet) => ({
                   ...planet,
                   occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
+                  publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
                   debrisField: debrisFieldRef(debris.get(planet.position)),
                   moonChance: moonChanceReportRef(moonChance.get(planet.position))
                 }))
@@ -938,7 +972,8 @@ function enrichAllianceState(
   state: AllianceState,
   indexer: SettlementIndexer | undefined
 ): AllianceState {
-  if (!indexer) return state;
+  const dismissJoinRequestAvailable = process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED === "true";
+  if (!indexer) return { ...state, dismissJoinRequestAvailable };
 
   const displayNameField = <Key extends string>(key: Key, wallet: `0x${string}`): Record<Key, string> | Record<string, never> => {
     const displayName = indexer.playerProfile(wallet).displayName;
@@ -947,6 +982,7 @@ function enrichAllianceState(
 
   return {
     ...state,
+    dismissJoinRequestAvailable,
     profile: state.profile
       ? {
           ...state.profile,
@@ -1077,10 +1113,17 @@ function indexedWalletSettlement(
 ): { settlement: ReturnType<SettlementIndexer["walletSettlement"]>; planet: SettledPlanetEvent | null } | null {
   const settlement = indexer.walletSettlement(wallet);
   if (!selectedPlanetId) {
-    return { settlement, planet: settlement.planet };
+    const planet = accruedPlanetState(indexer, settlement.planet);
+    return {
+      settlement: {
+        ...settlement,
+        planet
+      },
+      planet
+    };
   }
 
-  const planet = indexer.planet(selectedPlanetId.toString());
+  const planet = accruedPlanetState(indexer, indexer.planet(selectedPlanetId.toString()));
   if (!planet || planet.owner.toLowerCase() !== wallet.toLowerCase()) {
     return null;
   }
@@ -1095,14 +1138,40 @@ function indexedWalletSettlement(
   };
 }
 
+function indexedWalletPlanets(
+  indexer: SettlementIndexer,
+  wallet: `0x${string}`
+): ReturnType<SettlementIndexer["walletPlanets"]> {
+  const response = indexer.walletPlanets(wallet);
+  return {
+    ...response,
+    planets: response.planets.map((planet) => accruedPlanetState(indexer, planet))
+  };
+}
+
+function accruedPlanetState<T extends PlanetState | null>(
+  indexer: SettlementIndexer,
+  planet: T
+): T {
+  if (!planet) return planet;
+
+  const buildings = indexer.infrastructureRows(planet.planetId);
+  const ships = indexer.shipRows(planet.planetId);
+  const technologyLevels = indexer.technologyLevels(planet.owner);
+  const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
+  return {
+    ...planet,
+    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
+  };
+}
+
 function isDegradableReadError(error: unknown): boolean {
   return error instanceof Error
     && (error.message === "backend_not_configured" || isRpcTransportError(error));
 }
 
-function requestsLiveState(url: URL): boolean {
-  const source = url.searchParams.get("source") ?? url.searchParams.get("stateSource");
-  return source === "live" || url.searchParams.get("live") === "1";
+function requestsLiveState(_url: URL): boolean {
+  return false;
 }
 
 function selectedPlanetIdOrUndefined(url: URL): bigint | undefined {
@@ -1368,15 +1437,95 @@ function occupiedPlanetRef(
     : null;
 }
 
+function publicPlanetStateRef(
+  planet: SettledPlanetEvent | undefined,
+  indexer: SettlementIndexer | undefined
+): {
+  resources: SettledPlanetEvent["resources"];
+  buildings: Array<{ id: number; level: number }>;
+  fleet: Array<{ id: number; count: number }>;
+  defenses: Array<{ id: number; count: number }>;
+  research: Array<{ id: number; level: number }>;
+  queues: {
+    building: PlayerQueues["building"];
+    defense: PlayerQueues["defense"];
+    ship: PlayerQueues["ship"];
+    research: PlayerQueues["research"];
+  };
+} | null {
+  if (!planet || !indexer) return null;
+  const buildings = indexer.infrastructureRows(planet.planetId);
+  const ships = indexer.shipRows(planet.planetId);
+  const technologyLevels = indexer.technologyLevels(planet.owner);
+  const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
+
+  return {
+    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt),
+    buildings: buildings.map(({ id, level }) => ({ id, level })),
+    fleet: ships.map(({ id, count }) => ({ id, count })),
+    defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+    research: indexer.technologyRows(planet.owner).map(({ id, level }) => ({ id, level })),
+    queues: {
+      building: indexer.planetQueue(planet.planetId, "building"),
+      defense: indexer.planetQueue(planet.planetId, "defense"),
+      ship: indexer.planetQueue(planet.planetId, "ship"),
+      research: indexer.researchQueue(planet.owner)
+    }
+  };
+}
+
+function resourcesWithClaimableAccrual(
+  current: Resources,
+  productionPerHour: Resources | null,
+  storageCaps: Resources | null,
+  lastSettledAt: string,
+  now = Date.now()
+): Resources {
+  if (!productionPerHour || !storageCaps) return current;
+
+  const lastSettledAtSeconds = Number(lastSettledAt);
+  if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return current;
+
+  const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
+  return {
+    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
+    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
+    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
+  };
+}
+
+function resourceWithClaimableAccrual(
+  current: string,
+  productionPerHour: string,
+  storageCap: string,
+  elapsedSeconds: number
+): string {
+  const currentValue = Number(current);
+  const rate = Math.max(0, Number(productionPerHour));
+  const cap = Number(storageCap);
+  if (!Number.isFinite(currentValue) || !Number.isFinite(rate) || !Number.isFinite(cap)) return current;
+
+  const produced = Math.floor((rate * elapsedSeconds) / 3_600);
+  const remainingCapacity = Math.max(0, cap - currentValue);
+  return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
+}
+
 async function allianceIntelForOccupiedPlanets(
   planets: readonly SettledPlanetEvent[],
   chainReader: ChainReader | undefined
 ): Promise<Map<string, AllianceIdentity>> {
+  return allianceIntelForPlayers(planets.map((planet) => planet.owner), chainReader);
+}
+
+async function allianceIntelForPlayers(
+  wallets: readonly string[],
+  chainReader: ChainReader | undefined
+): Promise<Map<string, AllianceIdentity>> {
   const result = new Map<string, AllianceIdentity>();
-  if (!chainReader?.getAllianceIntelForPlayers || planets.length === 0) return result;
+  if (!chainReader?.getAllianceIntelForPlayers || wallets.length === 0) return result;
 
   try {
-    const owners = Array.from(new Set(planets.map((planet) => planet.owner.toLowerCase() as Address)));
+    const owners = Array.from(new Set(wallets.map((wallet) => wallet.toLowerCase() as Address)));
     const intel = await chainReader.getAllianceIntelForPlayers(owners);
     for (const [owner, alliance] of intel) result.set(owner.toLowerCase(), alliance);
   } catch (error) {
@@ -1559,6 +1708,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 type RankedHighscoreEntry = HighscoreEntry & {
+  alliance: AllianceIdentity | null;
   displayName: string | null;
   homePlanet: RankedHighscorePlanet | null;
   rank: number;
@@ -1581,10 +1731,11 @@ function highscoreRankings(
   entries: HighscoreEntry[],
   limit: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-  profiles: ReadonlyMap<string, PlayerProfile> = new Map()
+  profiles: ReadonlyMap<string, PlayerProfile> = new Map(),
+  allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map()
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
   return Object.fromEntries(
-    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner, profiles)])
+    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner, profiles, allianceIntel)])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
 
@@ -1593,7 +1744,8 @@ function rankHighscores(
   category: HighscoreCategory,
   limit: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-  profiles: ReadonlyMap<string, PlayerProfile>
+  profiles: ReadonlyMap<string, PlayerProfile>,
+  allianceIntel: ReadonlyMap<string, AllianceIdentity>
 ): RankedHighscoreEntry[] {
   return [...entries]
     .sort((left, right) => {
@@ -1604,6 +1756,7 @@ function rankHighscores(
     .slice(0, limit)
     .map((entry, index) => ({
       ...entry,
+      alliance: allianceIntel.get(entry.wallet.toLowerCase()) ?? null,
       displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
       homePlanet: rankedHighscoreHomePlanet(entry, planetsByOwner),
       rank: index + 1
@@ -1645,6 +1798,53 @@ function unavailableResponse(problems: ConfigProblem[]): Response {
       status: 503
     }
   );
+}
+
+function backendReadiness(
+  problems: ConfigProblem[],
+  chainSyncSnapshot: unknown,
+  indexerSnapshot: unknown,
+): {
+  ready: boolean;
+  configurationReady: boolean;
+  chainSyncConnected: boolean | null;
+  subscribedToHeads: boolean | null;
+  subscribedToLogs: boolean | null;
+  indexedState: string | null;
+  safeToServeIndexedState: boolean | null;
+} {
+  const chainSyncConnected = booleanSnapshotField(chainSyncSnapshot, "connected");
+  const subscribedToHeads = booleanSnapshotField(chainSyncSnapshot, "subscribedToHeads");
+  const subscribedToLogs = booleanSnapshotField(chainSyncSnapshot, "subscribedToLogs");
+  const indexedState = stringSnapshotField(indexerSnapshot, "indexedState");
+  const safeToServeIndexedState = booleanSnapshotField(indexerSnapshot, "safeToServeIndexedState");
+  const configurationReady = problems.length === 0;
+
+  return {
+    ready: configurationReady
+      && chainSyncConnected !== false
+      && subscribedToHeads !== false
+      && subscribedToLogs !== false
+      && safeToServeIndexedState !== false,
+    configurationReady,
+    chainSyncConnected,
+    subscribedToHeads,
+    subscribedToLogs,
+    indexedState,
+    safeToServeIndexedState,
+  };
+}
+
+function booleanSnapshotField(snapshot: unknown, key: string): boolean | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const value = (snapshot as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function stringSnapshotField(snapshot: unknown, key: string): string | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const value = (snapshot as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
 }
 
 function errorResponse(error: unknown, status: number): Response {

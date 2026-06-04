@@ -16,6 +16,7 @@ import type {
   RiftState,
   RpcMetrics,
   SettledPlanetEvent,
+  SettlementFundingState,
   ShipyardState,
   WalletSettlement
 } from "./evm";
@@ -40,6 +41,10 @@ export class CachedChainReader implements ChainReader {
 
   getWalletSettlement(wallet: Address): Promise<WalletSettlement> {
     return this.cached(`settlement:${wallet.toLowerCase()}`, () => this.inner.getWalletSettlement(wallet));
+  }
+
+  getSettlementFunding(wallet: Address): Promise<SettlementFundingState> {
+    return this.cached(`settlement-funding:${wallet.toLowerCase()}`, () => this.inner.getSettlementFunding(wallet));
   }
 
   getWalletPlanets(wallet: Address): Promise<WalletPlanets> {

@@ -14,6 +14,26 @@ repeatable path.
 
 Before broadcasting a full deploy:
 
+Run the executable preflight first and keep its JSON output with the Kaneo
+workpad evidence:
+
+```sh
+node scripts/veydrift-redeploy-preflight.mjs \
+  --api-url https://api-test.veydrift.com \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --out /tmp/veydrift-redeploy-preflight.json
+```
+
+The preflight fails closed when backend health/runtime/indexer evidence is
+unavailable, the current game is a direct non-proxy deployment, current alpha
+state is present or unknown, or the current game holds nonzero resource-token
+reserves without an approved migration plan. Its JSON output includes raw
+public backend snapshots for `/health`, `/runtime-config`, and `/debug/indexer`
+alongside the derived blockers so the state evidence remains reviewable after
+the live backend moves on. Passing
+`--migration-plan-approved` or `--no-alpha-state` is an explicit declaration,
+not a substitute for recording the evidence described below.
+
 1. Decide whether the change can be handled as a proxy upgrade instead. If yes,
    use the proxy upgrade path and record old/new implementation addresses,
    storage-layout evidence, upgrade tx, and post-upgrade state checks.
@@ -31,6 +51,11 @@ Before broadcasting a full deploy:
    debris, moon chance, rift state, and backend indexed DB position.
 5. Define rollback and verification. The Kaneo handoff must include the
    migration verification note before the task can move to done.
+
+For the VEY-313 Base Sepolia `VeydriftGame` replacement, the approved path is
+migrated redeploy. The live game is not proxy-upgradeable and no-state redeploy
+is invalid. Complete
+`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before broadcasting.
 
 Full deploys through `Deploy.s.sol` also require:
 

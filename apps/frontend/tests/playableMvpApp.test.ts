@@ -1,23 +1,56 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildingCompletionUnavailableReasonFor,
+  buildingCompletionUnavailableReasonAfterBackendRevalidation,
+  buildingCompletionReadyToFinishFlag,
+  buildingFinishUnavailableReasonForDisplay,
+  buildingFinishActionErrorLabel,
+  canLoadIndexedPageState,
+  canonicalInfrastructureBuildingCompletionQueue,
+  completedBuildingFinishSyncReasonFor,
+  defenseCompletionPlanetIdFor,
+  failedBuildingFinishSyncReasonFor,
+  hasInfrastructureDisplayState,
+  infrastructureBackendSyncPausedLabel,
+  infrastructureBackendSyncPausedReasonFor,
+  infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
+  infrastructureDisplayActionNoticeFor,
+  infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  overviewBuildingReadyToFinishFlag,
+  overviewResearchCompletionUnavailableReasonFor,
+  preserveActiveResearchQueue,
+  preserveActiveResearchState,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
+  researchStateWithFallbackQueue,
+  researchStartUnavailableReasonAfterLiveRevalidation,
+  researchStartUnavailableReasonFor,
   researchStateForCompletionRevalidation,
+  researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
   topBarEnergyFor,
+  walletSpendableResourcesFor,
+  walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
 import {
+  infrastructureHeaderFinishAction,
+  infrastructureFinishAction,
   infrastructureFinishButtonLabel,
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainInfrastructureState, ChainResearchState } from "../src/walletFlow";
+import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
+  const buildingFinishStateReadFailureLabel =
+    "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
+  const buildingFinishLiveStateRequiredLabel =
+    "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
+
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
       status: "pending",
@@ -25,11 +58,53 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
+  test("keeps API finish warnings out of building-card action notices", () => {
+    expect(infrastructureDisplayActionNoticeFor({
+      action: { status: "idle" },
+      finishUnavailableReason: infrastructureBackendSyncPausedLabel,
+    })).toBeUndefined();
+
+    expect(infrastructureDisplayActionNoticeFor({
+      action: {
+        status: "error",
+        buildingKey: "solarPlant",
+        label: "Building upgrade transaction failed.",
+      },
+      finishUnavailableReason: infrastructureBackendSyncPausedLabel,
+    })).toEqual({
+      buildingKey: "solarPlant",
+      label: "Building upgrade transaction failed.",
+      tone: "error",
+    });
+  });
+
+  test("gates page state refreshes until the current wallet snapshot is hydrated", () => {
+    const apiBaseUrl = "https://api.test";
+    const account = "0x2222222222222222222222222222222222222222";
+    const hydratedWalletSnapshotKey = walletSnapshotHydrationKey(apiBaseUrl, account);
+
+    expect(canLoadIndexedPageState({
+      account,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey,
+    })).toBe(true);
+    expect(canLoadIndexedPageState({
+      account,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey: walletSnapshotHydrationKey(apiBaseUrl, "0x3333333333333333333333333333333333333333"),
+    })).toBe(false);
+    expect(canLoadIndexedPageState({
+      account: undefined,
+      apiBaseUrl,
+      hydratedWalletSnapshotKey: undefined,
+    })).toBe(true);
+  });
+
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: {
         status: "pending",
-        label: "Building completion: awaiting wallet",
+        label: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
       },
       gameContract: "0x3333333333333333333333333333333333333333",
       homePlanetId: "7",
@@ -47,6 +122,83 @@ describe("Playable MVP app display helpers", () => {
       statusDisabled: true,
     })).toBe("Upgrade Level 2");
     expect(infrastructureFinishButtonLabel(undefined, false)).toBe("Finish upgrade");
+  });
+
+  test("keeps infrastructure finish controls visible with disabled reasons", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+    let calls = 0;
+    const onFinishBuilding = () => {
+      calls += 1;
+    };
+
+    expect(infrastructureFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+      queue,
+    })).toEqual({
+      disabled: true,
+      label: "Building upgrade is not ready to finish yet.",
+      onFinish: undefined,
+      reason: "Building upgrade is not ready to finish yet.",
+      visible: true,
+    });
+
+    expect(infrastructureFinishAction({
+      actionUnavailableReason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      isActionPending: true,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    })).toEqual({
+      disabled: true,
+      label: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      onFinish: undefined,
+      reason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      visible: true,
+    });
+
+    const ready = infrastructureFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(ready.disabled).toBe(false);
+    expect(ready.label).toBe("Finish upgrade");
+    ready.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("keeps disabled infrastructure finish reasons out of the page header", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+    const onFinishBuilding = () => undefined;
+
+    expect(infrastructureHeaderFinishAction(infrastructureFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+      queue,
+    }))).toBeUndefined();
+
+    const ready = infrastructureFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+
+    expect(infrastructureHeaderFinishAction(ready)).toBe(ready);
   });
 
   test("keeps terminal infrastructure action notices visible", () => {
@@ -67,6 +219,21 @@ describe("Playable MVP app display helpers", () => {
     });
   });
 
+  test("translates transient building finish state-read failures into recovery copy", () => {
+    expect(buildingFinishActionErrorLabel(
+      new Error("The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered."),
+    )).toBe(buildingFinishStateReadFailureLabel);
+
+    expect(buildingFinishActionErrorLabel(new Error("Internal JSON-RPC error.")))
+      .toBe(buildingFinishStateReadFailureLabel);
+  });
+
+  test("keeps actionable building finish preflight errors specific", () => {
+    expect(buildingFinishActionErrorLabel(
+      new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry."),
+    )).toBe("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
+  });
+
   test("keeps loaded top bar energy available during infrastructure refresh", () => {
     const settledState = createInitialPlayableState();
     const infrastructureChainState = infrastructureState({
@@ -81,7 +248,7 @@ describe("Playable MVP app display helpers", () => {
       infrastructureChainState,
       isWalletConnected: true,
       settledState,
-    })).toEqual({
+    })).toMatchObject({
       deuteriumConsumed: 0,
       produced: 100,
       required: 40,
@@ -102,7 +269,7 @@ describe("Playable MVP app display helpers", () => {
       }),
       isWalletConnected: true,
       settledState,
-    })).toEqual({
+    })).toMatchObject({
       deuteriumConsumed: 0,
       produced: 100,
       required: 40,
@@ -144,6 +311,14 @@ describe("Playable MVP app display helpers", () => {
       produced: 108,
       required: 11,
       scaleBps: 10000,
+      sources: {
+        solarPlant: 0,
+        fusionReactor: 0,
+        fusionReactorDeuteriumConsumed: 0,
+        solarSatellites: 108,
+        solarSatelliteCount: 3,
+        solarSatelliteEnergy: 36,
+      },
     });
 
     expect(topBarEnergyFor({
@@ -194,6 +369,20 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Energy Technology level 2 research");
   });
 
+  test("uses backend-accrued wallet resources without adding local pending deltas", () => {
+    const resources = { metal: 1_240, crystal: 930, deuterium: 410 };
+
+    expect(walletSpendableResourcesFor({
+      isWalletConnected: true,
+      onChainResources: resources,
+    })).toBe(resources);
+
+    expect(walletSpendableResourcesFor({
+      isWalletConnected: false,
+      onChainResources: resources,
+    })).toBeUndefined();
+  });
+
   test("blocks research completion transactions until the active queue is ready", () => {
     expect(researchCompletionUnavailableReasonFor({
       canTransact: true,
@@ -228,7 +417,41 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("revalidates research completion against live research state before wallet submission", async () => {
+  test("allows research completion with normalized millisecond readyAt values", () => {
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_600_000,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600000",
+          startedAt: "1699997000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+    })).toBeUndefined();
+
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_600_000,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600001",
+          startedAt: "1699997000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+    })).toBe("Research is not ready to complete yet.");
+  });
+
+  test("revalidates research completion against backend canonical state before wallet submission", async () => {
     const fallback = researchState();
     const latest = researchState({
       queue: {
@@ -259,11 +482,789 @@ describe("Playable MVP app display helpers", () => {
       "https://api.test",
       "0x2222222222222222222222222222222222222222",
       "7",
-      { source: "live" },
     ]]);
   });
 
-  test("does not replace loaded infrastructure action reasons while background refreshes run", () => {
+  test("preserves a recently known active research queue when a refresh returns empty queue data", () => {
+    const knownQueue = activeResearchQueue();
+    const next = researchState({ queue: null });
+
+    expect(researchStateWithPreservedActiveQueue({
+      knownResearchQueue: knownQueue,
+      next,
+    }).queue).toBe(knownQueue);
+
+    expect(researchStartUnavailableReasonFor({
+      canTransact: true,
+      knownResearchQueue: knownQueue,
+      researchState: next,
+    })).toBe("Another research is already active. Finish or refresh the active research before starting a new one.");
+  });
+
+  test("blocks research start when live wallet queues still report active research", async () => {
+    const latestResearch = researchState({ queue: null });
+    const latestQueues = walletQueues({ research: activeResearchQueue({ itemId: 1, targetLevel: 4 }) });
+    const calls: unknown[][] = [];
+
+    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: researchState({ queue: null }),
+      loadResearchState: ((...args: unknown[]) => {
+        calls.push(["research", ...args]);
+        return Promise.resolve(latestResearch);
+      }) as never,
+      loadWalletQueues: ((...args: unknown[]) => {
+        calls.push(["queues", ...args]);
+        return Promise.resolve(latestQueues);
+      }) as never,
+    });
+
+    expect(result).toEqual({
+      researchState: latestResearch,
+      queues: latestQueues,
+      unavailableReason: "Another research is already active. Finish or refresh the active research before starting a new one.",
+    });
+    expect(calls).toEqual([
+      [
+        "research",
+        "https://api.test",
+        "0x2222222222222222222222222222222222222222",
+        "7",
+      ],
+      [
+        "queues",
+        "https://api.test",
+        "0x2222222222222222222222222222222222222222",
+        "7",
+      ],
+    ]);
+  });
+
+  test("keeps research start preflight blocked when live state transiently omits a known active queue", async () => {
+    const latestResearch = researchState({ queue: null });
+    const latestQueues = walletQueues({ research: null });
+    const knownQueue = activeResearchQueue();
+
+    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: researchState({ queue: knownQueue }),
+      knownResearchQueue: knownQueue,
+      loadResearchState: (() => Promise.resolve(latestResearch)) as never,
+      loadWalletQueues: (() => Promise.resolve(latestQueues)) as never,
+    });
+
+    expect(result.unavailableReason).toBe("Another research is already active. Finish or refresh the active research before starting a new one.");
+  });
+
+  test("allows Overview-ready research completion to reach backend revalidation before wallet submission", () => {
+    const readyOverviewQueue = {
+      active: true,
+      cost: { metal: "800", crystal: "400", deuterium: "0" },
+      itemId: 0,
+      kind: "research",
+      readyAt: "1700000000",
+      targetLevel: 2,
+    };
+
+    expect(overviewResearchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_700_000_000_000,
+      overviewQueue: readyOverviewQueue,
+      researchState: null,
+    })).toBeUndefined();
+
+    expect(overviewResearchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_699_999_000_000,
+      overviewQueue: readyOverviewQueue,
+      researchState: null,
+    })).toBe("No active research queue is available to complete.");
+  });
+
+  test("lets Overview defense completion use the selected wallet queue planet before Defenses state is loaded", () => {
+    expect(defenseCompletionPlanetIdFor({
+      activePlanetId: "9",
+      defenseState: null,
+      walletQueues: playerQueues({
+        defense: {
+          active: true,
+          cost: { metal: "2000", crystal: "0", deuterium: "0" },
+          itemId: 0,
+          kind: "defense",
+          quantity: 1,
+          readyAt: "1700000000",
+        },
+        homePlanetId: "7",
+      }),
+    })).toBe("9");
+  });
+
+  test("falls back to wallet queue home planet for Overview defense completion when page state is absent", () => {
+    expect(defenseCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      defenseState: null,
+      walletQueues: playerQueues({ homePlanetId: "7" }),
+    })).toBe("7");
+  });
+
+  test("keeps loaded defense state as a defense completion fallback", () => {
+    expect(defenseCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      defenseState: defenseState({ homePlanetId: "11" }),
+      walletQueues: undefined,
+    })).toBe("11");
+  });
+
+  test("preserves active research queues when a background wallet poll returns an empty research queue", () => {
+    const activeResearch = activeResearchQueue();
+    const currentQueues = playerQueues({ research: activeResearch });
+    const emptyPollQueues = playerQueues({ research: null });
+
+    expect(preserveActiveResearchQueue(currentQueues, emptyPollQueues).research).toEqual(activeResearch);
+  });
+
+  test("preserves active research state during transient empty research refreshes", () => {
+    const activeResearch = activeResearchQueue({ targetLevel: 2 });
+    const currentState = researchState({ queue: activeResearch });
+    const emptyRefresh = researchState({ queue: null });
+
+    expect(preserveActiveResearchState(currentState, emptyRefresh).queue).toEqual(activeResearch);
+  });
+
+  test("clears preserved research queues once the refreshed research level confirms completion", () => {
+    const activeResearch = activeResearchQueue({ targetLevel: 2 });
+    const currentState = researchState({ queue: activeResearch });
+    const completedRefresh = researchState({
+      queue: null,
+      technologyLevels: { "0": 2 },
+      technologies: [
+        { id: 0, level: 2, cost: { metal: "0", crystal: "3200", deuterium: "1600" } },
+      ],
+    });
+
+    expect(preserveActiveResearchState(currentState, completedRefresh).queue).toBeNull();
+  });
+
+  test("uses a preserved wallet research queue to keep new research starts disabled", () => {
+    const activeResearch = activeResearchQueue({ itemId: 0, targetLevel: 2 });
+    const loadedResearch = researchState({ queue: null });
+    const effectiveResearchState = researchStateWithFallbackQueue(loadedResearch, activeResearch);
+
+    expect(effectiveResearchState?.queue).toEqual(activeResearch);
+    expect(researchCompletionUnavailableReasonFor({
+      canTransact: true,
+      now: 1_699_999_000_000,
+      researchState: effectiveResearchState,
+    })).toBe("Research is not ready to complete yet.");
+  });
+
+  test("lets Overview derive building readiness only when no canonical active building queue is available", () => {
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: null,
+      isBuildingReadyToFinish: false,
+    })).toBeUndefined();
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000600",
+      }),
+      isBuildingReadyToFinish: false,
+    })).toBe(false);
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000000",
+      }),
+      isBuildingReadyToFinish: true,
+    })).toBe(true);
+  });
+
+  test("keeps Overview finish disabled when ready wallet queues lack canonical infrastructure verification", () => {
+    const readyWalletQueue = buildingQueue({
+      readyAt: "1700000000",
+    });
+    const unverifiedInfrastructure = infrastructureState({
+      queue: null,
+      source: "contract-state-indexer",
+      stale: true,
+    });
+
+    expect(canonicalInfrastructureBuildingCompletionQueue(unverifiedInfrastructure)).toBeNull();
+    expect(buildingCompletionReadyToFinishFlag({
+      infrastructureState: unverifiedInfrastructure,
+      now: 1_700_000_000_000,
+    })).toBe(false);
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: readyWalletQueue,
+      isBuildingReadyToFinish: buildingCompletionReadyToFinishFlag({
+        infrastructureState: unverifiedInfrastructure,
+        now: 1_700_000_000_000,
+      }),
+    })).toBe(false);
+
+    const canonicalInfrastructure = infrastructureState({
+      queue: readyWalletQueue,
+      source: "contract-state-indexer",
+      stale: false,
+    });
+    expect(canonicalInfrastructureBuildingCompletionQueue(canonicalInfrastructure)).toBe(readyWalletQueue);
+    expect(buildingCompletionReadyToFinishFlag({
+      infrastructureState: canonicalInfrastructure,
+      now: 1_700_000_000_000,
+    })).toBe(true);
+  });
+
+  test("blocks stale building completion transactions when backend infrastructure has no active queue", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({ queue: null }),
+      now: 1_700_000_000_000,
+    })).toBe("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
+  });
+
+  test("blocks stale building completion transactions when the backend queue is not ready", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: {
+          active: true,
+          kind: "building",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000600",
+          startedAt: "1699997000",
+          cost: { metal: "60", crystal: "15", deuterium: "0" },
+        },
+      }),
+      now: 1_700_000_000_000,
+    })).toBe("Building upgrade is not ready to finish yet.");
+  });
+
+  test("blocks building completion transactions when backend infrastructure state is missing", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: null,
+      now: 1_700_000_000_000,
+    })).toBe(buildingFinishLiveStateRequiredLabel);
+  });
+
+  test("keeps stale ready indexed building completion blocked until a visible ready queue can be reused", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    const readyQueue = readyBuildingQueue();
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
+  test("allows indexed ready building queues after backend revalidation without readonly preflight gating", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
+  test("blocks indexed ready building queues while infrastructure detail state is still loading", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: null,
+      now: 1_700_000_000_000,
+    })).toBe(false);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: null,
+      now: 1_700_000_000_000,
+    })).toBe(buildingFinishLiveStateRequiredLabel);
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      infrastructureState: null,
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBe(buildingFinishLiveStateRequiredLabel);
+  });
+
+  test("allows ready indexed building completion to recover during backend reconciliation", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        queue: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(true);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        queue: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
+  test("keeps degraded ready indexed building completion paused", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        degraded: true,
+        queue: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(false);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        degraded: true,
+        queue: null,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
+  });
+
+  test("keeps displayed building finish verification open when backend indexed queue is ready", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      isBuildingReadyToFinish: false,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
+  test("routes degraded ready building finish actions to backend-unavailable copy", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      infrastructureError: "Moon API could not be reached from this browser.",
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState: infrastructureState({
+        degraded: true,
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
+    expect(infrastructureBackendSyncPausedLabel).toContain("Infrastructure API is temporarily unavailable");
+    expect(infrastructureBackendSyncPausedLabel).not.toContain("Syncing building queue");
+  });
+
+  test("does not show queue catch-up copy for shared wallet building queues", () => {
+    const readyQueue = readyBuildingQueue();
+    const walletPaths = ["Farcaster mobile", "Rabby", "OKX", "MetaMask", "generic injected wallet"];
+
+    for (const walletPath of walletPaths) {
+      const unavailableReason = buildingFinishUnavailableReasonForDisplay({
+        activeBuildingQueue: readyQueue,
+        backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+        canTransact: true,
+        infrastructureState: infrastructureState({
+          queue: readyQueue,
+          source: "contract-state-indexer",
+          stale: false,
+        }),
+        isBuildingReadyToFinish: true,
+        isDisplayedBuildingQueueReady: true,
+        now: 1_700_000_000_000,
+      });
+
+      expect(`${walletPath}: ${unavailableReason}`).not.toContain("Syncing building queue");
+      expect(unavailableReason).toBe(infrastructureBackendSyncPausedLabel);
+    }
+  });
+
+  test("does not let backend building finish verification bypass wallet availability", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+      canTransact: false,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: false,
+      }),
+      isBuildingReadyToFinish: false,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBe("Wallet or game contract is unavailable.");
+  });
+
+  test("blocks duplicate finish attempts while a submitted building completion is still visible", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(completedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: readyQueue,
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toContain("Waiting for backend state to clear this completed queue");
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      completedBuildingFinishExpectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toContain("Waiting for backend state to clear this completed queue");
+  });
+
+  test("clears duplicate finish blocking when the active building queue changes", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(completedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: {
+        ...readyQueue,
+        targetLevel: 3,
+      },
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toBeUndefined();
+    expect(completedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: null,
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toBeUndefined();
+  });
+
+  test("blocks failed finish attempts while the same stale building queue is still visible", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(failedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: readyQueue,
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toContain("Building completion failed for this ready queue");
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      failedBuildingFinishExpectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toContain("Building completion failed for this ready queue");
+  });
+
+  test("clears failed finish blocking when the active building queue changes", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(failedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: {
+        ...readyQueue,
+        targetLevel: 3,
+      },
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toBeUndefined();
+    expect(failedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: null,
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toBeUndefined();
+  });
+
+  test("allows building completion wallet submission after backend ready queue revalidation", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyBuildingQueue(),
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+  });
+
+  test("allows building completion revalidation with normalized millisecond readyAt values", () => {
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: {
+          ...readyBuildingQueue(),
+          readyAt: "1700000000000",
+          startedAt: "1699997000000",
+        },
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
+
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: {
+          ...readyBuildingQueue(),
+          readyAt: "1700000000001",
+          startedAt: "1699997000000",
+        },
+        source: "live-rpc",
+        stale: false,
+      }),
+      now: 1_700_000_000_000,
+    })).toBe("Building upgrade is not ready to finish yet.");
+  });
+
+  test("revalidates building completion against backend canonical infrastructure state before wallet submission", async () => {
+    const fallback = infrastructureState();
+    const latest = infrastructureState({
+      queue: readyBuildingQueue(),
+    });
+    const calls: unknown[][] = [];
+
+    const result = await infrastructureStateForCompletionRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback,
+      loadInfrastructureState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(latest);
+      }) as never,
+    });
+
+    expect(result).toBe(latest);
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+    ]]);
+  });
+
+  test("uses backend building completion revalidation even when the local queue snapshot is stale", async () => {
+    const fallback = infrastructureState({
+      queue: {
+        ...readyBuildingQueue(),
+        readyAt: "1700000600",
+      },
+      source: "contract-state-indexer",
+      stale: true,
+    });
+    const latest = infrastructureState({
+      queue: readyBuildingQueue(),
+      source: "live-rpc",
+      stale: false,
+    });
+    const calls: unknown[][] = [];
+
+    const result = await buildingCompletionUnavailableReasonAfterBackendRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback,
+      loadInfrastructureState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(latest);
+      }) as never,
+      now: 1_700_000_000_000,
+    });
+
+    expect(result).toEqual({
+      infrastructureState: latest,
+      unavailableReason: undefined,
+    });
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+    ]]);
+  });
+
+  test("allows building completion revalidation to recover when the refreshed indexed queue is still stale", async () => {
+    const readyQueue = readyBuildingQueue();
+    const latest = infrastructureState({
+      queue: readyQueue,
+      source: "contract-state-indexer",
+      stale: true,
+    });
+    const calls: unknown[][] = [];
+
+    const result = await buildingCompletionUnavailableReasonAfterBackendRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      knownBuildingQueue: readyQueue,
+      loadInfrastructureState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(latest);
+      }) as never,
+      now: 1_700_000_000_000,
+    });
+
+    expect(result).toEqual({
+      infrastructureState: latest,
+      unavailableReason: undefined,
+    });
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+    ]]);
+  });
+
+  test("blocks the indexed wallet building queue when completion revalidation has no infrastructure detail yet", async () => {
+    const readyQueue = readyBuildingQueue();
+    const calls: unknown[][] = [];
+
+    const result = await buildingCompletionUnavailableReasonAfterBackendRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: null,
+      knownBuildingQueue: readyQueue,
+      loadInfrastructureState: ((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(null);
+      }) as never,
+      now: 1_700_000_000_000,
+    });
+
+    expect(result).toEqual({
+      infrastructureState: null,
+      unavailableReason: buildingFinishLiveStateRequiredLabel,
+    });
+    expect(calls).toEqual([[
+      "https://api.test",
+      "0x2222222222222222222222222222222222222222",
+      "7",
+    ]]);
+  });
+
+  test("keeps loaded infrastructure usable while a background refresh is pending", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: { status: "idle" },
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -275,7 +1276,9 @@ describe("Playable MVP app display helpers", () => {
       onChainStatus: "loading",
       runtimeConfigStatus: "ready",
     })).toBeUndefined();
+  });
 
+  test("pauses infrastructure actions while loaded backend state is refresh-degraded", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: { status: "idle" },
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -287,7 +1290,19 @@ describe("Playable MVP app display helpers", () => {
       onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
       onChainStatus: "error",
       runtimeConfigStatus: "ready",
-    })).toBeUndefined();
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(infrastructureUnavailableReasonFor({
+      buildingAction: { status: "idle" },
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState({ degraded: true, stale: true }),
+      infrastructureLoading: false,
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 400, deuterium: 300 },
+      onChainStatus: "ready",
+      runtimeConfigStatus: "ready",
+    })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
   test("uses infrastructure loading and error reasons before the first state arrives", () => {
@@ -317,7 +1332,54 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Game state unavailable; upgrades are disabled until your wallet resources and building levels load.");
   });
 
-  test("allows building transactions from refreshed live infrastructure resources", () => {
+  test("keeps active construction visible when reload has a queue but infrastructure details fail", () => {
+    const activeBuilding = {
+      active: true,
+      kind: "building",
+      itemId: 3,
+      targetLevel: 9,
+      readyAt: "1770000600",
+      startedAt: "1770000000",
+      cost: { metal: "300", crystal: "120", deuterium: "0" },
+    };
+
+    expect(infrastructureLoadErrorFor({
+      activeBuildingQueue: activeBuilding,
+      infrastructureChainState: null,
+      infrastructureError: "Infrastructure request failed with 503.",
+      isWalletConnected: true,
+    })).toBe("Infrastructure request failed with 503.");
+
+    expect(infrastructureLoadErrorFor({
+      activeBuildingQueue: null,
+      infrastructureChainState: null,
+      infrastructureError: "Infrastructure request failed with 503.",
+      isWalletConnected: true,
+    })).toBe("Infrastructure request failed with 503.");
+
+    expect(infrastructureLoadErrorFor({
+      activeBuildingQueue: null,
+      infrastructureChainState: infrastructureState(),
+      infrastructureError: "Infrastructure request failed with 503.",
+      isWalletConnected: true,
+    })).toBe("Infrastructure request failed with 503.");
+
+    expect(hasInfrastructureDisplayState({
+      activeBuildingQueue: activeBuilding,
+      homePlanetId: "7",
+      infrastructureChainState: null,
+      onChainResources: { metal: 500, crystal: 300, deuterium: 100 },
+    })).toBe(true);
+
+    expect(hasInfrastructureDisplayState({
+      activeBuildingQueue: null,
+      homePlanetId: "7",
+      infrastructureChainState: null,
+      onChainResources: { metal: 500, crystal: 300, deuterium: 100 },
+    })).toBe(false);
+  });
+
+  test("allows building transactions from refreshed backend infrastructure resources", () => {
     expect(refreshedInfrastructureUnavailableReasonFor({
       gameContract: "0x3333333333333333333333333333333333333333",
       homePlanetId: "7",
@@ -343,7 +1405,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Infrastructure is unavailable on this deployment.");
   });
 
-  test("blocks building transactions when refreshed live resources cannot afford the upgrade", () => {
+  test("blocks building transactions when refreshed backend resources cannot afford the upgrade", () => {
     expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
       buildingKey: "solarPlant",
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -357,7 +1419,7 @@ describe("Playable MVP app display helpers", () => {
     })).toContain("Requires");
   });
 
-  test("blocks building transactions when refreshed live infrastructure has an active building queue", () => {
+  test("blocks building transactions when refreshed backend infrastructure has an active building queue", () => {
     expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
       buildingKey: "metalMine",
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -378,7 +1440,7 @@ describe("Playable MVP app display helpers", () => {
     })).toContain("currently upgrading");
   });
 
-  test("hydrates indexed planet state before requesting live settlement state", async () => {
+  test("hydrates indexed planet state before requesting canonical settlement state", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
     const requestedPaths: string[] = [];
@@ -388,13 +1450,14 @@ describe("Playable MVP app display helpers", () => {
       requestedPaths.push(`${url.pathname}${url.search}`);
 
       if (url.pathname.endsWith("/settlement")) {
-        throw new Error("indexed state should hydrate before live settlement reads");
+        throw new Error("indexed state should hydrate before canonical settlement reads");
       }
 
       if (url.pathname.endsWith("/planets")) {
         return Promise.resolve(Response.json({
           wallet,
           homePlanetId: "7",
+          queues: { research: null },
           planets: [indexedPlanet(wallet)],
         }));
       }
@@ -445,6 +1508,7 @@ describe("Playable MVP app display helpers", () => {
         return Promise.resolve(Response.json({
           wallet,
           homePlanetId: "7",
+          queues: { research: null },
           planets: [indexedPlanet(wallet)],
         }));
       }
@@ -488,6 +1552,7 @@ describe("Playable MVP app display helpers", () => {
         return Promise.resolve(Response.json({
           wallet,
           homePlanetId: "7",
+          queues: { research: null },
           planets: [{
             ...indexedPlanet(wallet),
             queues: {
@@ -557,6 +1622,64 @@ describe("Playable MVP app display helpers", () => {
     }
   });
 
+  test("fetches active research queues when indexed planets omit the global queue snapshot", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const requestedPaths: string[] = [];
+    const activeResearch = {
+      active: true,
+      kind: "research",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: "1770000600",
+      startedAt: "1770000000",
+      cost: {
+        metal: "800",
+        crystal: "400",
+        deuterium: "0",
+      },
+    };
+
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      requestedPaths.push(url.pathname);
+
+      if (url.pathname.endsWith("/settlement")) {
+        throw new Error("indexed state should hydrate before canonical settlement reads");
+      }
+
+      if (url.pathname.endsWith("/planets")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          planets: [indexedPlanet(wallet)],
+        }));
+      }
+
+      if (url.pathname.endsWith("/queues")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          building: null,
+          defense: null,
+          ship: null,
+          research: activeResearch,
+        }));
+      }
+
+      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
+
+      expect(snapshot.queues.research).toEqual(activeResearch);
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`, `/wallet/${wallet}/queues`]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("uses indexed queues for the requested active planet", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
@@ -615,7 +1738,7 @@ describe("Playable MVP app display helpers", () => {
     }
   });
 
-  test("falls back to live settlement state when indexed planets are empty", async () => {
+  test("falls back to canonical settlement state when indexed planets are empty", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
     const requestedPaths: string[] = [];
@@ -682,15 +1805,17 @@ describe("Playable MVP app display helpers", () => {
 });
 
 function infrastructureState({
+  degraded,
   energyBalance,
   queue,
   resources,
   source,
   stale,
-}: Partial<Pick<ChainInfrastructureState, "energyBalance" | "queue" | "resources" | "source" | "stale">> = {}): ChainInfrastructureState {
+}: Partial<Pick<ChainInfrastructureState, "degraded" | "energyBalance" | "queue" | "resources" | "source" | "stale">> = {}): ChainInfrastructureState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
+    degraded,
     source,
     stale,
     infrastructureAvailable: true,
@@ -703,9 +1828,69 @@ function infrastructureState({
   };
 }
 
+function readyBuildingQueue(): QueueStateResponse {
+  return {
+    active: true,
+    kind: "building",
+    itemId: 0,
+    targetLevel: 2,
+    readyAt: "1700000000",
+    startedAt: "1699997000",
+    cost: { metal: "60", crystal: "15", deuterium: "0" },
+  };
+}
+
+function activeResearchQueue({
+  itemId = 0,
+  targetLevel = 2,
+}: Partial<Pick<QueueStateResponse, "itemId" | "targetLevel">> = {}): QueueStateResponse {
+  return {
+    active: true,
+    kind: "research",
+    itemId,
+    targetLevel,
+    readyAt: "1700000600",
+    startedAt: "1699997000",
+    cost: { metal: "0", crystal: "1600", deuterium: "800" },
+  };
+}
+
+function playerQueues({
+  defense,
+  homePlanetId,
+  research,
+}: Partial<Pick<PlayerQueuesResponse, "defense" | "homePlanetId" | "research">> = {}): PlayerQueuesResponse {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: homePlanetId ?? "7",
+    building: null,
+    defense: defense ?? null,
+    ship: null,
+    research: research ?? null,
+  };
+}
+
+function defenseState({
+  homePlanetId,
+}: Partial<Pick<ChainDefenseState, "homePlanetId">> = {}): ChainDefenseState {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: homePlanetId ?? "7",
+    productionAvailable: true,
+    resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+    shipyardLevel: 1,
+    missileSiloLevel: 0,
+    technologyLevels: {},
+    defenses: [],
+    queue: null,
+  };
+}
+
 function researchState({
   queue,
-}: Partial<Pick<ChainResearchState, "queue">> = {}): ChainResearchState {
+  technologyLevels,
+  technologies,
+}: Partial<Pick<ChainResearchState, "queue" | "technologies" | "technologyLevels">> = {}): ChainResearchState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
@@ -713,11 +1898,53 @@ function researchState({
     resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
     researchLabLevel: 1,
     researchNetworkLabLevels: [],
-    technologyLevels: { "0": 1 },
-    technologies: [
+    technologyLevels: technologyLevels ?? { "0": 1 },
+    technologies: technologies ?? [
       { id: 0, level: 1, cost: { metal: "0", crystal: "1600", deuterium: "800" } },
     ],
     queue: queue ?? null,
+  };
+}
+
+function activeResearchQueue({
+  itemId = 0,
+  targetLevel = 2,
+}: Partial<Pick<QueueStateResponse, "itemId" | "targetLevel">> = {}): QueueStateResponse {
+  return {
+    active: true,
+    kind: "research",
+    itemId,
+    targetLevel,
+    readyAt: "1700000600",
+    startedAt: "1699997000",
+    cost: { metal: "0", crystal: "1600", deuterium: "800" },
+  };
+}
+
+function walletQueues({
+  research,
+}: {
+  research: QueueStateResponse | null;
+}) {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: "7",
+    building: null,
+    defense: null,
+    ship: null,
+    research,
+  };
+}
+
+function buildingQueue(overrides: Partial<QueueStateResponse> = {}): QueueStateResponse {
+  return {
+    active: true,
+    cost: { metal: "60", crystal: "15", deuterium: "0" },
+    itemId: 0,
+    kind: "building",
+    readyAt: "1700000000",
+    targetLevel: 2,
+    ...overrides,
   };
 }
 

@@ -6,6 +6,7 @@ import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222";
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
+const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 
 const config: BackendConfig = {
@@ -162,6 +163,60 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
+  test("applies websocket logs incrementally without refreshing planets from chain", () => {
+    MockWebSocket.instances = [];
+    const applyLogCalls: unknown[] = [];
+    let rebuildPlanetsCalls = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog(log: unknown) {
+        applyLogCalls.push(log);
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: false,
+          snapshot: {}
+        };
+      },
+      async rebuildPlanets() {
+        rebuildPlanetsCalls += 1;
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x7c",
+          transactionHash: "0xabc",
+          topics: [
+            planetStartedTopic,
+            `0x${player.slice(2).padStart(64, "0")}`,
+            `0x${(7n).toString(16).padStart(64, "0")}`
+          ],
+          data: abiWords(2n, 44n, 9n, 211n, 1n)
+        }
+      }
+    });
+
+    expect(applyLogCalls).toHaveLength(1);
+    expect(rebuildPlanetsCalls).toBe(0);
+    expect(service.snapshot()).toMatchObject({
+      eventsReceived: 1,
+      latestSyncedBlock: "124"
+    });
+    service.stop();
+  });
+
   test("reconnects after websocket close", async () => {
     MockWebSocket.instances = [];
     const service = new ChainSyncService(config, undefined, {
@@ -174,6 +229,54 @@ describe("ChainSyncService", () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(MockWebSocket.instances).toHaveLength(2);
+    service.stop();
+  });
+
+  test("applies websocket logs incrementally without rebuilding all planets", async () => {
+    MockWebSocket.instances = [];
+    let appliedLogs = 0;
+    let planetRebuilds = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        appliedLogs += 1;
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: false,
+          snapshot: {}
+        };
+      },
+      async rebuildPlanets() {
+        planetRebuilds += 1;
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x7c",
+          transactionHash: "0xabc",
+          topics: [planetStartedTopic],
+          data: "0x"
+        }
+      }
+    });
+    await Promise.resolve();
+
+    expect(appliedLogs).toBe(1);
+    expect(planetRebuilds).toBe(0);
     service.stop();
   });
 
@@ -193,6 +296,12 @@ describe("ChainSyncService", () => {
       }
     };
     const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+    const syncStatusBlocks: Array<string | null> = [];
+    service.addListener((event) => {
+      if (event.kind === "sync-status") {
+        syncStatusBlocks.push(event.blockNumber);
+      }
+    });
 
     service.start();
     const socket = MockWebSocket.instances[0];
@@ -225,6 +334,73 @@ describe("ChainSyncService", () => {
     });
     expect(staleReasons).toEqual(["websocket head gap 124-127"]);
     expect(reconcileReasons).toEqual(["websocket head gap 124-127"]);
+    expect(syncStatusBlocks).toEqual(expect.arrayContaining(["123", "127"]));
+    service.stop();
+  });
+
+  test("applies queue logs incrementally without rebuilding canonical state", async () => {
+    MockWebSocket.instances = [];
+    const appliedTransactions: string[] = [];
+    const staleReasons: string[] = [];
+    const rebuildReasons: string[] = [];
+    const reconcileReasons: string[] = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog(log: { transactionHash: string; removed?: boolean }) {
+        appliedTransactions.push(log.transactionHash);
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: log.removed === true,
+          snapshot: {}
+        };
+      },
+      markStale(reason: string) {
+        staleReasons.push(reason);
+      },
+      async rebuildPlanets() {
+        rebuildReasons.push("rebuildPlanets");
+      },
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x90",
+          transactionHash: "0xqueue-start",
+          topics: [
+            buildingStartedTopic,
+            `0x${(7n).toString(16).padStart(64, "0")}`,
+            `0x${(6n).toString(16).padStart(64, "0")}`
+          ],
+          data: abiWords(2n, 1770002000n, 100n, 50n, 0n)
+        }
+      }
+    });
+    await Promise.resolve();
+
+    expect(appliedTransactions).toEqual(["0xqueue-start"]);
+    expect(rebuildReasons).toEqual([]);
+    expect(reconcileReasons).toEqual([]);
+    expect(staleReasons).toEqual([]);
+    expect(service.snapshot()).toMatchObject({
+      eventsReceived: 1,
+      latestSyncedBlock: "144"
+    });
     service.stop();
   });
 

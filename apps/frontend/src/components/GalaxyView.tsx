@@ -29,10 +29,15 @@ import {
   galaxyActionsForSlot,
   type GalaxyAction,
 } from "../galaxyActions";
+import {
+  commitCoordinateDraft,
+  coordinateDraftAfterExternalValueChange,
+  sanitizeCoordinateDraft,
+} from "../galaxyCoordinateInput";
 import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
@@ -150,9 +155,12 @@ export function GalaxyView({
   const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>();
+  const [loadedSystemKey, setLoadedSystemKey] = useState<string | undefined>();
   const [reloadNonce, setReloadNonce] = useState(0);
   const [missionSpeedPercent, setMissionSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const [source, setSource] = useState<GalaxySystemSource>("loading");
+  const currentSystemKey = galaxySystemKey(galaxy, system);
+  const loadedSystemKeyRef = useRef<string | undefined>();
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
     : undefined;
@@ -161,7 +169,12 @@ export function GalaxyView({
     : undefined;
 
   useEffect(() => {
+    loadedSystemKeyRef.current = loadedSystemKey;
+  }, [loadedSystemKey]);
+
+  useEffect(() => {
     const abortController = new AbortController();
+    const canPreserveCurrentSystem = loadedSystemKeyRef.current === currentSystemKey;
     setLoading(true);
     setLoadError(undefined);
     setSource("loading");
@@ -176,12 +189,16 @@ export function GalaxyView({
       })
       .then((payload) => {
         setPlanets(withHomePlanet(planetsFromSystemResponse(payload), homePlanetOverride));
+        setLoadedSystemKey(currentSystemKey);
         setSource("api");
       })
       .catch((error) => {
         if (!abortController.signal.aborted) {
           console.error(error);
-          setPlanets(planetsForFailedGalaxyLoad());
+          if (!canPreserveCurrentSystem) {
+            setPlanets(planetsForFailedGalaxyLoad());
+            setLoadedSystemKey(undefined);
+          }
           setLoadError(systemLoadErrorLabel(error));
           setSource("error");
         }
@@ -191,7 +208,7 @@ export function GalaxyView({
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, galaxy, homeCoordsInSystem?.position, homePlanetOverride?.fields, homePlanetOverride?.image, reloadNonce, system]);
+  }, [apiBaseUrl, currentSystemKey, galaxy, homeCoordsInSystem?.position, homePlanetOverride?.fields, homePlanetOverride?.image, reloadNonce, system]);
 
   useEffect(() => {
     const occupiedTargets = planets
@@ -273,6 +290,10 @@ export function GalaxyView({
   const emptyCount = POSITION_COUNT - planets.length;
   const occupiedSummary = formatGalaxyOccupancySummary(occupiedCount);
   const occupancySource = formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem));
+  const hasCurrentSystemData = loadedSystemKey === currentSystemKey;
+  const showInitialGalaxyLoader = shouldShowGalaxyInitialLoader({ hasCurrentSystemData, loading });
+  const showGalaxyRows = shouldShowGalaxyRows({ hasCurrentSystemData });
+  const showInitialLoadError = Boolean(loadError && !hasCurrentSystemData && !loading);
 
   return (
     <div className="grid gap-4">
@@ -337,7 +358,7 @@ export function GalaxyView({
       <div className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-2 sm:p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-1 pb-2">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            {loadError ? (
+            {loadError && !hasCurrentSystemData ? (
               <span>System unavailable</span>
             ) : (
               <>
@@ -382,9 +403,10 @@ export function GalaxyView({
         ) : null}
 
         <div className="grid gap-1.5">
-          {loading && <VeydriftLoader label="Mapping galaxy" />}
+          {showInitialGalaxyLoader ? <VeydriftLoader label="Mapping galaxy" /> : null}
+          {loading && hasCurrentSystemData ? <InlineSyncIndicator label="Refreshing galaxy" /> : null}
 
-          {!loading && loadError ? (
+          {showInitialLoadError ? (
             <div className="rounded border border-rose-300/20 bg-rose-300/5 px-3 py-4 text-sm text-rose-100">
               <p className="font-semibold">Galaxy system could not be loaded.</p>
               <p className="mt-1 text-rose-100/80">{loadError}</p>
@@ -398,8 +420,16 @@ export function GalaxyView({
             </div>
           ) : null}
 
-          {!loading &&
-            !loadError &&
+          {loadError && hasCurrentSystemData ? (
+            <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+              <p className="font-semibold">Galaxy refresh failed.</p>
+              <p className="mt-1 text-amber-100/80">
+                Showing the last loaded system rows. {loadError}
+              </p>
+            </div>
+          ) : null}
+
+          {showGalaxyRows &&
             positions.map((pos) => {
               const planet = planetByPosition.get(pos);
               const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
@@ -445,22 +475,25 @@ function CoordinateInput({
   onCommit: (value: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
+  const focusedRef = useRef(false);
+  const skipBlurCommitRef = useRef(false);
 
   useEffect(() => {
-    setDraft(String(value));
+    setDraft((currentDraft) => coordinateDraftAfterExternalValueChange(currentDraft, value, focusedRef.current));
   }, [value]);
 
   const commitDraft = () => {
-    const parsed = Number.parseInt(draft, 10);
+    focusedRef.current = false;
 
-    if (!Number.isFinite(parsed)) {
+    if (skipBlurCommitRef.current) {
+      skipBlurCommitRef.current = false;
       setDraft(String(value));
       return;
     }
 
-    const nextValue = clampInteger(parsed, 1, max);
-    setDraft(String(nextValue));
-    if (nextValue !== value) onCommit(nextValue);
+    const commit = commitCoordinateDraft(draft, value, max);
+    setDraft(commit.draft);
+    if (commit.value !== null) onCommit(commit.value);
   };
 
   return (
@@ -471,12 +504,16 @@ function CoordinateInput({
         inputMode="numeric"
         maxLength={String(max).length}
         onBlur={commitDraft}
-        onChange={(event) => setDraft((event.currentTarget as HTMLInputElement).value.replace(/\D/g, ""))}
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onInput={(event) => setDraft(sanitizeCoordinateDraft((event.currentTarget as HTMLInputElement).value))}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             (event.currentTarget as HTMLInputElement).blur();
           }
           if (event.key === "Escape") {
+            skipBlurCommitRef.current = true;
             setDraft(String(value));
             (event.currentTarget as HTMLInputElement).blur();
           }
@@ -491,6 +528,10 @@ function CoordinateInput({
 
 function clampInteger(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+function galaxySystemKey(galaxy: number, system: number): string {
+  return `${galaxy}:${system}`;
 }
 
 export function formatGalaxyOccupancySummary(occupiedCount: number): string {
@@ -509,6 +550,24 @@ export function formatGalaxyOccupancySource(
 
 export function planetsForFailedGalaxyLoad(): Planet[] {
   return [];
+}
+
+export function shouldShowGalaxyInitialLoader({
+  hasCurrentSystemData,
+  loading,
+}: {
+  hasCurrentSystemData: boolean;
+  loading: boolean;
+}): boolean {
+  return loading && !hasCurrentSystemData;
+}
+
+export function shouldShowGalaxyRows({
+  hasCurrentSystemData,
+}: {
+  hasCurrentSystemData: boolean;
+}): boolean {
+  return hasCurrentSystemData;
 }
 
 export function systemLoadErrorLabel(error: unknown): string {
@@ -867,20 +926,20 @@ export function formatAttackBlockReason(status: AttackProtectionStatus | undefin
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit";
   if (status.blockedReason === "score_protection") return "Attack blocked by score protection";
-  if (status.blockedReason === "same_alliance") return "Attack blocked by alliance rules";
+  if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
   return "Attack blocked";
 }
 
 export function formatAttackRuleLabels(status: AttackProtectionStatus | undefined): string[] {
   if (!status) return [];
   const labels: string[] = [];
-  if (status.relation === "stronger") labels.push("Stronger");
-  if (status.relation === "weaker") labels.push("Weaker");
-  if (status.defenderHonorStatus === "honorable") labels.push("Honorable");
-  if (status.defenderHonorStatus === "bandit") labels.push("Bandit");
-  if (status.defenderInactive) labels.push("Inactive");
+  if (status.relation === "stronger") labels.push("Stronger target");
+  if (status.relation === "weaker") labels.push("Weaker target");
+  if (status.defenderHonorStatus === "honorable") labels.push("Honor target");
+  if (status.defenderHonorStatus === "bandit") labels.push("Bandit target");
+  if (status.defenderInactive) labels.push("Inactive target");
   if (status.plunderBps && status.plunderBps !== 5000) {
-    labels.push(`${Math.floor(status.plunderBps / 100)}% plunder`);
+    labels.push(`Loot: ${Math.floor(status.plunderBps / 100)}%`);
   }
   return labels;
 }

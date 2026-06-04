@@ -1,6 +1,8 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
+import { formatMissingResources } from "../buildingDetails";
+import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainDefenseState } from "../walletFlow";
 import {
   Notice,
@@ -29,7 +31,10 @@ interface DefensePageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
+  overviewQueue?: ChainDefenseState["queue"] | undefined;
+  productionRates?: Resources | undefined;
   selectedDefenseKey?: DefenseKey | undefined;
+  spendableResources?: Resources | undefined;
 }
 
 const groupLabels = {
@@ -38,15 +43,6 @@ const groupLabels = {
   shield: "Shield domes",
   missile: "Missiles",
 } as const;
-
-const missileThumbnailFrames: Partial<Record<DefenseKey, { transform: string }>> = {
-  antiBallisticMissile: {
-    transform: "translate(-6%, -5%) scale(1.25)",
-  },
-  interplanetaryMissile: {
-    transform: "translate(4%, 5%) scale(0.98)",
-  },
-};
 
 export function DefensePage({
   actionState,
@@ -59,14 +55,17 @@ export function DefensePage({
   onOpenRequirement,
   onRefresh,
   onSelectDefense,
+  overviewQueue,
+  productionRates,
   selectedDefenseKey,
+  spendableResources,
 }: DefensePageProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
   const selectedKey = selectedDefenseKey ?? localSelectedKey;
   const shipyardLevel = defenseState?.shipyardLevel ?? 0;
   const resources = toResources(defenseState?.resources);
-  const queue = defenseState?.queue?.active ? defenseState.queue : undefined;
+  const queue = activeProductionQueue(defenseState?.queue, overviewQueue, "defense");
   const productionAvailable = defenseState?.productionAvailable !== false;
   const initialLoading = loading && !defenseState;
 
@@ -113,9 +112,10 @@ export function DefensePage({
             canTransact,
             defenseState,
             productionAvailable,
+            productionRates,
             quantities,
             queue,
-            resources,
+            resources: spendableResources ?? resources,
           })}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
           onFinishQueue={onFinish}
@@ -188,6 +188,7 @@ export function defenseProductionItems({
   canTransact,
   defenseState,
   productionAvailable,
+  productionRates,
   quantities,
   queue,
   resources,
@@ -196,6 +197,7 @@ export function defenseProductionItems({
   canTransact: boolean;
   defenseState: ChainDefenseState | null;
   productionAvailable: boolean;
+  productionRates?: Resources | undefined;
   quantities: Record<string, number>;
   queue?: ChainDefenseState["queue"] | undefined;
   resources: Resources | undefined;
@@ -210,7 +212,6 @@ export function defenseProductionItems({
     const requirements = getDefenseRequirementStates(defense, defenseState);
     const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
-    const queueBlocker = getQueueBlocker(defense.id, queue);
     const blockedReason = getBlockedReason({
       affordable,
       canTransact,
@@ -218,12 +219,14 @@ export function defenseProductionItems({
       hasPlanet: Boolean(defenseState?.homePlanetId),
       limitReason,
       missing,
-      queueBlocker,
+      productionRates,
       resources,
+      totalCost,
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const queued = queuedDefenseCount(defense.id, queue);
-    const stats = defenseCombatStats(defense).rows.slice(0, 3).map((row) => `${row.label} ${row.value}`).join(" · ");
+    const combatStats = defenseCombatStats(defense);
+    const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
 
     return {
       actionLabel: queued > 0 ? "Add" : "Build",
@@ -232,7 +235,13 @@ export function defenseProductionItems({
       cost: totalCost,
       countLabel: "Deployed",
       countValue: deployed,
+      description: defenseDescriptions[defense.key],
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
+      detailStats: combatStats.rows.map((row) => ({
+        hint: row.hint,
+        label: row.label,
+        value: formatStatValue(row.value),
+      })),
       disabled,
       group: defense.group,
       groupLabel: groupLabels[defense.group],
@@ -243,12 +252,29 @@ export function defenseProductionItems({
       quantity,
       queued,
       requirements,
+      notes: combatStats.notes,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked",
-      thumbnailStyle: missileThumbnailFrames[defense.key],
     };
   });
 }
+
+function formatStatValue(value: number | string): string {
+  return typeof value === "number" ? value.toLocaleString("en-US") : value;
+}
+
+const defenseDescriptions: Record<DefenseKey, string> = {
+  rocketLauncher: "Baseline kinetic defense that is cheap to deploy and useful as early battle mass.",
+  lightLaser: "Energy defense with efficient early attack once Energy and Laser research are online.",
+  heavyLaser: "Heavier beam emplacement with stronger attack and hull than Light Laser batteries.",
+  smallShieldDome: "Planetary shield dome that adds a one-per-planet defensive barrier.",
+  gaussCannon: "Magnetic accelerator defense with high armor-piercing attack power.",
+  ionCannon: "Ionized-particle defense with strong shield profile and specialized energy output.",
+  plasmaTurret: "Top-tier static weapon with heavy attack against advanced fleets.",
+  largeShieldDome: "Upgraded shield dome for late-game planetary defense; limited to one per planet.",
+  antiBallisticMissile: "Silo interceptor that automatically counters incoming interplanetary missiles.",
+  interplanetaryMissile: "Long-range missile ordnance used to attack enemy planetary defenses.",
+};
 
 export function getMissingDefenseRequirements(
   defense: (typeof defenseCatalog)[number],
@@ -340,8 +366,9 @@ function getBlockedReason({
   hasPlanet,
   limitReason,
   missing,
-  queueBlocker,
+  productionRates,
   resources,
+  totalCost,
 }: {
   affordable: boolean;
   canTransact: boolean;
@@ -349,17 +376,18 @@ function getBlockedReason({
   hasPlanet: boolean;
   limitReason?: string | undefined;
   missing: string[];
-  queueBlocker?: string | undefined;
+  productionRates?: Resources | undefined;
   resources: Resources | undefined;
+  totalCost?: Resources | undefined;
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!defenseState) return "Waiting for chain state";
   if (defenseState.productionAvailable === false) return "Defense production unavailable";
   if (!hasPlanet) return "No game planet";
-  if (queueBlocker) return queueBlocker;
   if (missing.length > 0) return missing[0];
   if (limitReason) return limitReason;
   if (!resources) return "Resources unavailable";
+  if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;
 }
@@ -368,13 +396,19 @@ export function getQueueBlocker(
   defenseId: number,
   queue?: ChainDefenseState["queue"] | undefined,
 ): string | undefined {
-  if (!queue?.active || queue.itemId === defenseId) return undefined;
-  const activeDefense = defenseCatalog.find((item) => item.id === queue.itemId);
-  return `Active queue: ${activeDefense?.label ?? "another defense"}`;
+  void defenseId;
+  void queue;
+  return undefined;
 }
 
 function queuedDefenseCount(defenseId: number, queue?: ChainDefenseState["queue"] | undefined): number {
-  return queue?.active && queue.itemId === defenseId ? queue.quantity ?? 0 : 0;
+  let quantity = queue?.active && queue.itemId === defenseId ? queue.quantity ?? 0 : 0;
+  for (const backlog of queue?.backlog ?? []) {
+    if (backlog.active && backlog.itemId === defenseId) {
+      quantity += backlog.quantity ?? 0;
+    }
+  }
+  return quantity;
 }
 
 function queuedDefenseCountByKey(key: DefenseKey, queue?: ChainDefenseState["queue"] | undefined): number {

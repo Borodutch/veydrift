@@ -1,5 +1,5 @@
 import { isPlanetSlotPopulated, parsePlanetSlot } from "@veydrift/universe";
-import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, Resources } from "../types";
+import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicPlanetState, Resources } from "../types";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
   "scorching-molten": "/assets/game/style-pass/generated/planets/scorching-molten.webp",
@@ -89,6 +89,7 @@ type ApiPlanet = {
   deuteriumMultiplierBps?: number;
   archetype?: PlanetType;
   occupiedBy?: OccupiedPlanet | null;
+  publicState?: PublicPlanetState | null;
   debrisField?: {
     metal: string | number;
     crystal: string | number;
@@ -197,6 +198,10 @@ export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Pl
 
 export function mergePlanetWithSettlement(planet: Planet, settlement: SettlementPlanetIdentity): Planet {
   const type = planetTypeFromTemperature(settlement.temperature);
+  const existingOccupant = planet.occupiedBy?.owner.toLowerCase() === settlement.owner.toLowerCase()
+    ? planet.occupiedBy
+    : null;
+  const alliance = existingOccupant?.alliance ?? planet.alliance ?? null;
 
   return {
     ...planet,
@@ -207,7 +212,10 @@ export function mergePlanetWithSettlement(planet: Planet, settlement: Settlement
     occupiedBy: {
       planetId: settlement.planetId,
       owner: settlement.owner,
+      ownerDisplayName: existingOccupant?.ownerDisplayName ?? null,
+      alliance,
     },
+    alliance,
     fields: settlement.fields,
     temperature: { min: settlement.temperature - 20, max: settlement.temperature + 20 },
     diameter: Math.max(5_000, Math.round(Math.sqrt(settlement.fields) * 1_000)),
@@ -254,6 +262,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     ownerId: occupiedBy?.owner ?? null,
     alliance,
     occupiedBy,
+    publicState: planet.publicState ?? null,
     debrisField: debrisFieldFromApi(planet.debrisField),
     moonChance: moonChanceFromApi(planet.moonChance),
     resources: resourcesFromMultipliers({
@@ -314,8 +323,8 @@ export function getPlanet(
   return planetFromCoordinates(galaxy, system, position);
 }
 
-export const GALAXY_COUNT = 5;
-export const SYSTEM_COUNT = 200;
+export const GALAXY_COUNT = 9;
+export const SYSTEM_COUNT = 499;
 export const POSITION_COUNT = 15;
 
 function planetFromCoordinates(galaxy: number, system: number, position: number): Planet {

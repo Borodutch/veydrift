@@ -90,7 +90,7 @@ export class ChainSyncService {
 
   constructor(
     private readonly config: BackendConfig,
-    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog" | "markStale" | "rebuild" | "rebuildPlanets" | "reconcile">> | undefined,
+    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog" | "markStale" | "rebuild" | "reconcile">> | undefined,
     private readonly options: {
       reconnectBaseMs?: number;
       WebSocketCtor?: WebSocketConstructor;
@@ -302,6 +302,7 @@ export class ChainSyncService {
       this.recordGap((previous + 1n).toString(), block.toString());
       this.requestReconciliation(`websocket head gap ${previous + 1n}-${block}`);
     }
+    this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
   }
 
   private handleLog(result: unknown): void {
@@ -349,16 +350,6 @@ export class ChainSyncService {
       } catch (error) {
         this.lastError = error instanceof Error ? error.message : "Failed to index moon chance log.";
       }
-    }
-
-    if (removed && this.indexer?.rebuildPlanets) {
-      void this.indexer.rebuildPlanets().catch((error) => {
-        this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed planet state after removed log.";
-      });
-    } else if (!removed && this.indexer?.rebuildPlanets) {
-      void this.indexer.rebuildPlanets().catch((error) => {
-        this.lastError = error instanceof Error ? error.message : "Failed to refresh indexed planet state.";
-      });
     }
 
     this.notify({

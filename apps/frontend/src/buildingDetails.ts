@@ -14,7 +14,8 @@ import {
   unmetBuildingRequirement,
   type PlanetProductionProfile,
 } from "./playableMvp";
-export { formatDuration } from "./durationFormat";
+import { formatDuration } from "./durationFormat";
+export { formatDuration };
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 export const MAX_BUILDING_LEVEL = 50;
@@ -89,9 +90,15 @@ export type BuildingLevelInfoColumns = {
 export function buildingUpgradeStatus(
   state: PlayableState,
   key: BuildingKey,
-  options: { actionUnavailableReason?: string | undefined; chainCost?: Resources | undefined } = {},
+  options: {
+    actionUnavailableReason?: string | undefined;
+    chainCost?: Resources | undefined;
+    productionRates?: Resources | undefined;
+    spendableResources?: Resources | undefined;
+  } = {},
 ): BuildingUpgradeStatus {
   const cost = options.chainCost ?? buildingCost(state.buildings, key);
+  const spendable = options.spendableResources ?? state.resources;
   const binary = isBinaryBuilding(key);
   const currentLevel = state.buildings[key];
   const targetLevel = binary ? 1 : currentLevel + 1;
@@ -153,12 +160,12 @@ export function buildingUpgradeStatus(
     };
   }
 
-  if (!canAfford(state.resources, cost)) {
+  if (!canAfford(spendable, cost)) {
     return {
       cost,
       disabled: true,
       durationSeconds,
-      reason: formatMissingResources(state.resources, cost),
+      reason: formatMissingResources(spendable, cost, options.productionRates),
       targetLevel,
     };
   }
@@ -323,19 +330,41 @@ export function formatCost(cost: Resources): string {
     .join(", ") || "No resource cost";
 }
 
-function formatMissingResources(resources: Resources, cost: Resources): string {
+export function formatMissingResources(resources: Resources, cost: Resources, productionRates?: Resources | undefined): string {
   const missing = resourceEntries(cost)
     .map(([resource, required]) => [resource, required - resources[resource]] as const)
     .filter(([, deficit]) => deficit > 0);
+  const timeToAfford = productionRates ? formatTimeToAfford(missing, productionRates) : "";
 
   if (missing.length === 1) {
     const [resource, deficit] = missing[0]!;
-    return `Requires ${formatNumber(deficit)} more ${resourceLabels[resource]}`;
+    return `Requires ${formatNumber(deficit)} more ${resourceLabels[resource]}${timeToAfford}`;
   }
 
   return `Requires ${missing
     .map(([resource, deficit]) => `${formatNumber(deficit)} more ${resourceLabels[resource]}`)
-    .join(", ")}`;
+    .join(", ")}${timeToAfford}`;
+}
+
+function formatTimeToAfford(
+  missing: Array<readonly [keyof Resources, number]>,
+  productionRates: Resources,
+): string {
+  if (missing.length === 0) return "";
+
+  const blocked = missing
+    .filter(([resource]) => productionRates[resource] <= 0)
+    .map(([resource]) => resourceLabels[resource]);
+
+  if (blocked.length > 0) {
+    return ` (time unavailable: no ${blocked.join(" or ")} production)`;
+  }
+
+  const seconds = Math.max(
+    ...missing.map(([resource, deficit]) => Math.ceil((deficit / productionRates[resource]) * 3_600)),
+  );
+
+  return ` (affordable in ${formatDuration(seconds)})`;
 }
 
 function formatBuildingQueueLabel(key: BuildingKey, label: string, targetLevel: number | undefined): string {

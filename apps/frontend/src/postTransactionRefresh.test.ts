@@ -1,24 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import {
-  isCollectedResourcesStateVisible,
+  isTransientGameStateReadFailure,
   isFinishedBuildingStateVisible,
   isFinishedResearchStateVisible,
+  isAllianceApplicationCleared,
   isStartedDefenseProductionVisible,
+  isStartedShipProductionVisible,
   isStartedResearchStateVisible,
-  waitForCollectedResourcesState,
   waitForFinishedResearchState,
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
+  waitForStartedShipProductionState,
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
+  waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
-  type CollectedResourcesSnapshot,
   type FinishedResearchSnapshot,
   type StartedDefenseProductionSnapshot,
+  type StartedShipProductionSnapshot,
   type StartedResearchSnapshot,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingSnapshot,
 } from "./postTransactionRefresh";
+import type { ChainAllianceState } from "./walletFlow";
 
 const wallet = "0x2222222222222222222222222222222222222222";
 
@@ -65,6 +69,74 @@ describe("post-transaction refresh reconciliation", () => {
     });
   });
 
+  test("polls past stale alliance applications after dismiss confirmation", async () => {
+    const snapshots = [
+      allianceStateWithApplication(),
+      allianceStateWithApplication({ allianceJoinRequests: [] }),
+    ];
+    const loads: ChainAllianceState[] = [];
+
+    const result = await waitForAllianceApplicationCleared(
+      async () => {
+        const snapshot = snapshots.shift() ?? allianceStateWithApplication({ allianceJoinRequests: [] });
+        loads.push(snapshot);
+        return snapshot;
+      },
+      {
+        allianceId: "7",
+        requester: "0x3333333333333333333333333333333333333333",
+      },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(isAllianceApplicationCleared(result, {
+      allianceId: "7",
+      requester: "0x3333333333333333333333333333333333333333",
+    })).toBe(true);
+  });
+
+  test("explains alliance application sync timeout after confirmation", async () => {
+    await expect(waitForAllianceApplicationCleared(
+      async () => allianceStateWithApplication(),
+      {
+        allianceId: "7",
+        requester: "0x3333333333333333333333333333333333333333",
+      },
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    )).rejects.toThrow("Alliance application transaction confirmed, but the pending application is still syncing in the game API.");
+  });
+
+  test("recovers from a transient post-finish game-state read failure", async () => {
+    let attempts = 0;
+
+    const result = await waitForFinishedBuildingState(
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("Failed to fetch");
+        }
+        return finishedSolarPlantSnapshot();
+      },
+      { itemId: 3, targetLevel: 2 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(attempts).toBe(2);
+    expect(result.infrastructure.queue).toBeNull();
+    expect(result.infrastructure.buildings.find((building) => building.id === 3)?.level).toBe(2);
+  });
+
+  test("reports transient backend recovery instead of wallet/network blame when post-finish reads stay down", async () => {
+    await expect(waitForFinishedBuildingState(
+      async () => {
+        throw new Error("Infrastructure API is temporarily unavailable (503: RPC HTTP 503).");
+      },
+      { itemId: 3, targetLevel: 2 },
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    )).rejects.toThrow("temporarily unavailable");
+  });
+
   test("does not report success when every post-finish snapshot is still stale", async () => {
     await expect(waitForFinishedBuildingState(
       async () => staleSolarPlantSnapshot(),
@@ -101,6 +173,44 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.defense.queue?.quantity).toBe(2);
     expect(result.queues.defense?.itemId).toBe(0);
     expect(result.queues.defense?.quantity).toBe(2);
+  });
+
+  test("accepts started defense production when the expected item is in the backlog", () => {
+    expect(isStartedDefenseProductionVisible(startedDefenseBacklogProductionSnapshot(), {
+      itemId: 1,
+      planetId: "7",
+      quantity: 1,
+    })).toBe(true);
+  });
+
+  test("polls until started ship production is visible on Shipyard and Overview state", async () => {
+    expect(isStartedShipProductionVisible(staleShipProductionSnapshot(), {
+      itemId: 0,
+      planetId: "7",
+      quantity: 3,
+    })).toBe(false);
+
+    const snapshots = [
+      staleShipProductionSnapshot(),
+      startedShipProductionSnapshot(),
+    ];
+    const loads: StartedShipProductionSnapshot[] = [];
+
+    const result = await waitForStartedShipProductionState(
+      async () => {
+        const snapshot = snapshots.shift() ?? startedShipProductionSnapshot();
+        loads.push(snapshot);
+        return snapshot;
+      },
+      { itemId: 0, planetId: "7", quantity: 3 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.shipyard.queue?.itemId).toBe(0);
+    expect(result.shipyard.queue?.quantity).toBe(3);
+    expect(result.queues.ship?.itemId).toBe(0);
+    expect(result.queues.ship?.quantity).toBe(3);
   });
 
   test("polls until started research is visible on Research and Overview state", async () => {
@@ -160,36 +270,6 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.research.technologyLevels["4"]).toBe(2);
   });
 
-  test("does not accept stale indexed collect resources while infrastructure has newer resources", () => {
-    expect(isCollectedResourcesStateVisible(staleCollectedResourcesSnapshot(), {
-      planetId: "7",
-      previousLastSettledAt: "1770000000",
-    })).toBe(false);
-  });
-
-  test("polls until indexed collect resources match the infrastructure refresh", async () => {
-    const snapshots = [
-      staleCollectedResourcesSnapshot(),
-      collectedResourcesSnapshot(),
-    ];
-    const loads: CollectedResourcesSnapshot[] = [];
-
-    const result = await waitForCollectedResourcesState(
-      async () => {
-        const snapshot = snapshots.shift() ?? collectedResourcesSnapshot();
-        loads.push(snapshot);
-        return snapshot;
-      },
-      { planetId: "7", previousLastSettledAt: "1770000000" },
-      { attempts: 3, intervalMs: 1, delay: async () => undefined },
-    );
-
-    expect(loads).toHaveLength(2);
-    expect(result.settlement.planet?.lastSettledAt).toBe("1770000600");
-    expect(result.infrastructure.resources).not.toBeNull();
-    expect(result.settlement.planet?.resources).toEqual(result.infrastructure.resources ?? undefined);
-  });
-
   test("polls until a confirmed settlement has hydrated planet resources", async () => {
     const snapshots = [
       unhydratedWalletPlanetSnapshot(),
@@ -229,6 +309,12 @@ describe("post-transaction refresh reconciliation", () => {
 
     expect(attempts).toBe(2);
     expect(result.selectedPlanet.planetId).toBe("7");
+  });
+
+  test("classifies browser/backend transport failures as transient game-state read failures", () => {
+    expect(isTransientGameStateReadFailure(new Error("Failed to fetch"))).toBe(true);
+    expect(isTransientGameStateReadFailure(new Error("Infrastructure API failed: 503"))).toBe(true);
+    expect(isTransientGameStateReadFailure(new Error("Internal JSON-RPC error."))).toBe(false);
   });
 
   test("polls past hydrated but stale planet names after rename confirmation", async () => {
@@ -359,6 +445,88 @@ function startedDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
   };
 }
 
+function startedDefenseBacklogProductionSnapshot(): StartedDefenseProductionSnapshot {
+  const activeDefenseQueue = {
+    active: true,
+    kind: "defense" as const,
+    itemId: 0,
+    quantity: 2,
+    readyAt: "1770000060",
+    cost: { metal: "4000", crystal: "0", deuterium: "0" },
+    backlog: [
+      {
+        active: true,
+        kind: "defense" as const,
+        itemId: 1,
+        quantity: 1,
+        readyAt: "1770000120",
+        cost: { metal: "1500", crystal: "500", deuterium: "0" },
+      },
+    ],
+  };
+
+  return {
+    defense: {
+      ...staleDefenseProductionSnapshot().defense,
+      queue: activeDefenseQueue,
+    },
+    queues: {
+      ...staleDefenseProductionSnapshot().queues,
+      defense: activeDefenseQueue,
+    },
+  };
+}
+
+function staleShipProductionSnapshot(): StartedShipProductionSnapshot {
+  return {
+    shipyard: {
+      wallet,
+      homePlanetId: "7",
+      planetId: "7",
+      productionAvailable: true,
+      resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+      fleetSlots: { active: 0, limit: 1 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [
+        { id: 0, count: 0, cost: { metal: "2000", crystal: "2000", deuterium: "0" } },
+      ],
+      queue: null,
+    },
+    queues: {
+      wallet,
+      homePlanetId: "7",
+      building: null,
+      defense: null,
+      ship: null,
+      research: null,
+    },
+  };
+}
+
+function startedShipProductionSnapshot(): StartedShipProductionSnapshot {
+  const shipQueue = {
+    active: true,
+    kind: "ship" as const,
+    itemId: 0,
+    quantity: 3,
+    readyAt: "1770000060",
+    cost: { metal: "6000", crystal: "6000", deuterium: "0" },
+  };
+
+  return {
+    shipyard: {
+      ...staleShipProductionSnapshot().shipyard,
+      queue: shipQueue,
+    },
+    queues: {
+      ...staleShipProductionSnapshot().queues,
+      ship: shipQueue,
+    },
+  };
+}
+
 function staleStartedResearchSnapshot(): StartedResearchSnapshot {
   return {
     research: baseResearchState(),
@@ -447,39 +615,6 @@ function finishedSolarPlantSnapshot(): FinishedBuildingSnapshot {
         { id: 3, level: 2, cost: { metal: "300", crystal: "120", deuterium: "0" } },
       ],
       queue: null,
-    },
-  };
-}
-
-function staleCollectedResourcesSnapshot(): CollectedResourcesSnapshot {
-  return {
-    settlement: settlementSnapshot(),
-    infrastructure: {
-      wallet,
-      homePlanetId: "7",
-      infrastructureAvailable: true,
-      resources: { metal: "5060", crystal: "4930", deuterium: "4800" },
-      productionPerHour: { metal: "60", crystal: "30", deuterium: "0" },
-      energyBalance: null,
-      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
-      buildings: [
-        { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
-      ],
-      queue: null,
-    },
-  };
-}
-
-function collectedResourcesSnapshot(): CollectedResourcesSnapshot {
-  return {
-    ...staleCollectedResourcesSnapshot(),
-    settlement: {
-      ...settlementSnapshot(),
-      planet: {
-        ...settlementSnapshot().planet,
-        lastSettledAt: "1770000600",
-        resources: { metal: "5060", crystal: "4930", deuterium: "4800" },
-      },
     },
   };
 }
@@ -583,6 +718,45 @@ function renamedWalletPlanetSyncSnapshot(name: string): WalletPlanetSyncSnapshot
       ...snapshot.planetsResponse,
       planets: [renamedPlanet],
     },
+  };
+}
+
+function allianceStateWithApplication(overrides: Partial<ChainAllianceState> = {}): ChainAllianceState {
+  return {
+    wallet,
+    allianceAvailable: true,
+    membership: {
+      allianceId: "7",
+      role: "officer",
+      joinedAt: "1770000000",
+    },
+    profile: {
+      active: true,
+      createdAt: "1770000000",
+      description: "Union",
+      memberCount: 2,
+      name: "Veydrift Union",
+      owner: wallet,
+      tag: "VDFT",
+    },
+    directory: [],
+    pendingInvites: [],
+    pendingJoinRequests: [],
+    allianceJoinRequests: [
+      {
+        allianceId: "7",
+        requester: "0x3333333333333333333333333333333333333333",
+        requestedAt: "1770000010",
+      },
+    ],
+    members: [
+      {
+        address: wallet,
+        role: "officer",
+        joinedAt: "1770000000",
+      },
+    ],
+    ...overrides,
   };
 }
 

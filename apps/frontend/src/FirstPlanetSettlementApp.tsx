@@ -6,6 +6,7 @@ import { PlayableMvpApp } from "./PlayableMvpApp";
 import { gameContractAddress, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
+import { detectFarcasterMiniApp, hasMiniAppUrlHint } from "./farcasterReady";
 import {
   createTransactionActionGate,
   transactionAwaitingWalletLabel,
@@ -14,21 +15,21 @@ import {
 } from "./transactionActionGate";
 import {
   ensureBaseSepoliaNetwork,
+  fetchSettlementFundingState,
+  fetchWalletSettlement,
   getChainId,
   getCurrentAccounts,
-  getInjectedProvider,
   isBaseSepoliaChain,
   isUserRejected,
-  readSettlementFundingState,
-  readSettlementState,
+  miniAppUnsupportedChainMessage,
   requestAccounts,
-  fetchWalletSettlement,
+  getAvailableWalletProviderDetails,
   sendSettlementTransaction,
   settlementContractConfigured,
-  waitForReceipt,
   walletRequestErrorMessage,
   type Eip1193Provider,
   type PlanetSummary,
+  type SettlementTransactionOptions,
   type SettlementFundingState,
   type SettlementConfig,
   type WalletSettlementResponse
@@ -37,16 +38,63 @@ import {
 const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
+export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
+export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
+const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
+const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
 
 type SettlementConfigState =
   | { status: "loading"; apiUrl?: string; config: SettlementConfig }
   | { status: "ready"; apiUrl?: string; config: SettlementConfig };
+
+export function shouldAutoConnectFarcasterWallet(input: {
+  miniAppMode: boolean;
+  providerAvailable: boolean;
+  settlementConfigReady: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+  alreadyAttempted: boolean;
+}): boolean {
+  return input.providerAvailable
+    && input.miniAppMode
+    && input.walletProviderSource === "farcaster"
+    && input.settlementConfigReady
+    && !input.alreadyAttempted;
+}
+
+export function shouldAttemptFarcasterNetworkSetup(input: {
+  miniAppMode: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+  chainId: string;
+  lastAttemptedChainId: string | undefined;
+}): boolean {
+  return input.miniAppMode
+    && input.walletProviderSource === "farcaster"
+    && !isBaseSepoliaChain(input.chainId)
+    && input.lastAttemptedChainId !== input.chainId;
+}
+
+export function shouldRetryFarcasterWalletProviderProbe(input: {
+  attempt: number;
+  maxAttempts?: number;
+  miniAppMode: boolean;
+  providerAvailable: boolean;
+}): boolean {
+  return input.miniAppMode
+    && !input.providerAvailable
+    && input.attempt < (input.maxAttempts ?? FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS);
+}
 
 type SettlementFunding =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; funding: SettlementFundingState }
   | { status: "error"; message: string };
+
+type WalletProviderDetails = Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>;
+type WalletProviderContext = {
+  miniAppMode: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+};
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -57,15 +105,37 @@ export function FirstPlanetSettlementApp() {
   const [wallet, setWallet] = useState<WalletState>({
     kind: "loading"
   });
+  const [networkSwitchPending, setNetworkSwitchPending] = useState(false);
+  const [walletProviderSource, setWalletProviderSource] = useState<"injected" | "farcaster" | undefined>();
   const [planet, setPlanet] = useState<PlanetState>({
     kind: "idle"
   });
+  const [miniAppMode, setMiniAppMode] = useState(() => (
+    typeof window !== "undefined" ? hasMiniAppUrlHint(window.location) : false
+  ));
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
+  const farcasterAutoConnectAttempted = useRef(false);
+  const farcasterNetworkSetupAttempted = useRef<string>();
+  const walletProviderCleanup = useRef<(() => void) | undefined>();
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
   const settlementConfig = settlementConfigState.config;
+
+  useEffect(() => {
+    let disposed = false;
+
+    void detectFarcasterMiniApp().then((detected) => {
+      if (!disposed && detected) {
+        setMiniAppMode(true);
+      }
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -109,21 +179,114 @@ export function FirstPlanetSettlementApp() {
   }, []);
 
   useEffect(() => {
-    const injected = getInjectedProvider(window as typeof window & { ethereum?: Eip1193Provider });
+    let disposed = false;
+
+    void (async () => {
+      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+      if (disposed) return;
+      bindWalletProviderDetails(walletProvider);
+
+      if (!walletProvider?.provider) {
+        setWallet({
+          kind: "no-wallet"
+        });
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      walletProviderCleanup.current?.();
+      walletProviderCleanup.current = undefined;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!miniAppMode || provider || wallet.kind !== "no-wallet") {
+      return;
+    }
+
+    let disposed = false;
+
+    void (async () => {
+      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: true });
+      if (disposed || !walletProvider?.provider) return;
+
+      bindWalletProviderDetails(walletProvider);
+      setWallet({ kind: "disconnected" });
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [miniAppMode, provider, wallet.kind]);
+
+  useEffect(() => {
+    if (!provider || settlementConfigState.status !== "ready") {
+      return;
+    }
+
+    void refreshWallet(provider, account);
+  }, [provider, settlementConfig.address, settlementConfigState.apiUrl, settlementConfigState.status]);
+
+  useEffect(() => {
+    if (!shouldAutoConnectFarcasterWallet({
+      alreadyAttempted: farcasterAutoConnectAttempted.current,
+      miniAppMode,
+      providerAvailable: Boolean(provider),
+      settlementConfigReady: settlementConfigState.status === "ready",
+      walletProviderSource,
+    })) {
+      return;
+    }
+
+    farcasterAutoConnectAttempted.current = true;
+    void connectWallet();
+  }, [miniAppMode, provider, settlementConfigState.status, walletProviderSource]);
+
+  async function loadWalletProviderDetails({
+    waitForFarcasterProvider = false,
+  }: { waitForFarcasterProvider?: boolean } = {}): Promise<WalletProviderDetails> {
+    let walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+
+    for (
+      let attempt = 1;
+      shouldRetryFarcasterWalletProviderProbe({
+        attempt,
+        miniAppMode: waitForFarcasterProvider,
+        providerAvailable: Boolean(walletProvider?.provider),
+      });
+      attempt += 1
+    ) {
+      await delay(FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS);
+      walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+    }
+
+    return walletProvider;
+  }
+
+  function bindWalletProviderDetails(
+    walletProvider: WalletProviderDetails,
+  ) {
+    const injected = walletProvider?.provider;
+    const providerContext = walletProviderContext(walletProvider?.source);
     setProvider(injected);
+    setWalletProviderSource(walletProvider?.source);
+    if (walletProvider?.source === "farcaster") {
+      setMiniAppMode(true);
+    }
+
+    walletProviderCleanup.current?.();
+    walletProviderCleanup.current = undefined;
 
     if (!injected) {
-      setWallet({
-        kind: "no-wallet"
-      });
-      return;
+      return undefined;
     }
 
     const handleAccountsChanged = (...args: unknown[]) => {
       const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
 
       if (nextAccounts[0]) {
-        void refreshWallet(injected, nextAccounts[0]);
+        void refreshWallet(injected, nextAccounts[0], providerContext);
       } else {
         setWallet({
           kind: "disconnected"
@@ -136,27 +299,28 @@ export function FirstPlanetSettlementApp() {
     };
 
     const handleChainChanged = () => {
-      void refreshWallet(injected);
+      void refreshWallet(injected, undefined, providerContext);
     };
 
     injected.on?.("accountsChanged", handleAccountsChanged);
     injected.on?.("chainChanged", handleChainChanged);
 
-    return () => {
+    walletProviderCleanup.current = () => {
       injected.removeListener?.("accountsChanged", handleAccountsChanged);
       injected.removeListener?.("chainChanged", handleChainChanged);
     };
-  }, []);
 
-  useEffect(() => {
-    if (!provider || settlementConfigState.status !== "ready") {
-      return;
-    }
+    return injected;
+  }
 
-    void refreshWallet(provider, account);
-  }, [provider, settlementConfig.address, settlementConfigState.apiUrl, settlementConfigState.status]);
+  function walletProviderContext(source = walletProviderSource): WalletProviderContext {
+    return {
+      miniAppMode: miniAppMode || source === "farcaster",
+      walletProviderSource: source,
+    };
+  }
 
-  async function refreshWallet(injected = provider, preferredAccount?: string) {
+  async function refreshWallet(injected = provider, preferredAccount?: string, context = walletProviderContext()) {
     if (!injected) {
       setWallet({
         kind: "no-wallet"
@@ -193,6 +357,40 @@ export function FirstPlanetSettlementApp() {
       const chainId = await getChainId(injected);
 
       if (!isBaseSepoliaChain(chainId)) {
+        if (shouldAttemptFarcasterNetworkSetup({
+          chainId,
+          lastAttemptedChainId: farcasterNetworkSetupAttempted.current,
+          miniAppMode: context.miniAppMode,
+          walletProviderSource: context.walletProviderSource,
+        })) {
+          farcasterNetworkSetupAttempted.current = chainId;
+          setWallet({
+            kind: "wrong-network",
+            account: accounts[0],
+            chainId
+          });
+          setPlanet({
+            kind: "checking"
+          });
+
+          try {
+            await ensureBaseSepoliaNetwork(injected);
+            await refreshWallet(injected, accounts[0], context);
+          } catch (error) {
+            console.error("Mini App Base Sepolia setup failed", error);
+            setWallet({
+              kind: "wrong-network",
+              account: accounts[0],
+              chainId
+            });
+            setPlanet({
+              kind: "idle"
+            });
+            setSettlementFunding({ status: "idle" });
+          }
+          return;
+        }
+
         setWallet({
           kind: "wrong-network",
           account: accounts[0],
@@ -226,60 +424,48 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function refreshPlanet(injected: Eip1193Provider, connectedAccount: string) {
+  async function refreshPlanet(_injected: Eip1193Provider, connectedAccount: string) {
     setPlanet({
       kind: "checking"
     });
 
     try {
       const indexedSettlement = await readIndexedSettlementState(settlementConfigState.apiUrl, connectedAccount);
-      if (indexedSettlement) {
-        if (indexedSettlement.kind === "settled") {
-          setSettlementFunding({ status: "idle" });
-          setPlanet({
-            kind: "already-settled",
-            planet: indexedSettlement.planet
-          });
-        } else {
-          setPlanet({
-            kind: "not-settled"
-          });
-          await refreshSettlementFunding(injected, connectedAccount);
-        }
-        return;
+      if (!indexedSettlement) {
+        throw new Error("Settlement state is unavailable because the game API is not configured.");
       }
-    } catch (error) {
-      console.error("Indexed settlement state read failed", error);
-    }
-
-    try {
-      const settlement = await readSettlementState(injected, connectedAccount, settlementConfig);
-
-      if (settlement.kind === "unconfigured") {
-        setSettlementFunding({ status: "idle" });
-        setPlanet({
-          kind: "contract-unconfigured"
-        });
-      } else if (settlement.kind === "settled") {
+      if (indexedSettlement.kind === "settled") {
         setSettlementFunding({ status: "idle" });
         setPlanet({
           kind: "already-settled",
-          planet: settlement.planet
+          planet: indexedSettlement.planet
         });
-      } else if (settlement.kind === "legacy-settled") {
+      } else if (indexedSettlement.kind === "indexing") {
+        setSettlementFunding({ status: "idle" });
         setPlanet({
-          kind: "legacy-settled",
-          planet: settlement.planet
+          kind: "pending",
+          label: POST_SETTLEMENT_INDEXING_LABEL
         });
-        await refreshSettlementFunding(injected, connectedAccount);
+        try {
+          const settled = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, connectedAccount);
+          setPlanet({
+            kind: "already-settled",
+            planet: settled.planet
+          });
+        } catch (error) {
+          setPlanet({
+            kind: "error",
+            message: walletRequestErrorMessage(error)
+          });
+        }
       } else {
         setPlanet({
           kind: "not-settled"
         });
-        await refreshSettlementFunding(injected, connectedAccount);
+        await refreshSettlementFunding(connectedAccount);
       }
     } catch (error) {
-      console.error("Wallet settlement state read failed", error);
+      console.error("Indexed settlement state read failed", error);
       setPlanet({
         kind: "error",
         message: walletRequestErrorMessage(error)
@@ -288,12 +474,15 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function refreshSettlementFunding(injected: Eip1193Provider, connectedAccount: string) {
+  async function refreshSettlementFunding(connectedAccount: string) {
     setSettlementFunding({ status: "loading" });
     try {
+      if (!settlementConfigState.apiUrl) {
+        throw new Error("Settlement funding is unavailable because the game API is not configured.");
+      }
       setSettlementFunding({
         status: "ready",
-        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig)
+        funding: await fetchSettlementFundingState(settlementConfigState.apiUrl, connectedAccount)
       });
     } catch (error) {
       setSettlementFunding({
@@ -304,20 +493,26 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function connectWallet() {
-    if (!provider) {
+    setWallet({
+      kind: "connecting"
+    });
+
+    const walletProvider = provider
+      ? undefined
+      : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+    const activeProvider = provider ?? bindWalletProviderDetails(walletProvider);
+    const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
+
+    if (!activeProvider) {
       setWallet({
         kind: "no-wallet"
       });
       return;
     }
 
-    setWallet({
-      kind: "connecting"
-    });
-
     try {
-      const accounts = await requestAccounts(provider);
-      await refreshWallet(provider, accounts[0]);
+      const accounts = await requestAccounts(activeProvider);
+      await refreshWallet(activeProvider, accounts[0], providerContext);
     } catch (error) {
       setWallet({
         kind: "disconnected"
@@ -330,10 +525,11 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function switchNetwork() {
-    if (!provider) {
+    if (!provider || networkSwitchPending) {
       return;
     }
 
+    setNetworkSwitchPending(true);
     setPlanet({
       kind: "checking"
     });
@@ -342,10 +538,21 @@ export function FirstPlanetSettlementApp() {
       await ensureBaseSepoliaNetwork(provider);
       await refreshWallet(provider, account);
     } catch (error) {
+      if (miniAppMode && wallet.kind === "wrong-network") {
+        farcasterNetworkSetupAttempted.current = undefined;
+        setWallet(wallet);
+        setPlanet({
+          kind: "idle"
+        });
+        return;
+      }
+
       setPlanet({
         kind: isUserRejected(error) ? "rejected" : "error",
         message: isUserRejected(error) ? "Network switch was rejected." : walletRequestErrorMessage(error)
       });
+    } finally {
+      setNetworkSwitchPending(false);
     }
   }
 
@@ -357,8 +564,8 @@ export function FirstPlanetSettlementApp() {
 
       const label = "First planet settlement";
 
-      const canLaunch = await refreshSettlementLaunchInfo(provider, wallet.account, planet);
-      if (!canLaunch) {
+      const funding = await refreshSettlementLaunchInfo(wallet.account, planet);
+      if (!funding) {
         return;
       }
 
@@ -368,20 +575,24 @@ export function FirstPlanetSettlementApp() {
       });
 
       try {
-        const txHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig);
+        const txHash = await sendSettlementTransaction(
+          provider,
+          wallet.account,
+          settlementConfig,
+          settlementTransactionOptions(funding)
+        );
         setPlanet({
           kind: "pending",
           label: transactionConfirmingLabel(label, txHash),
           txHash
         });
-        await waitForReceipt(provider, txHash);
         setPlanet({
           kind: "pending",
           label: transactionSyncingLabel(label),
           txHash
         });
 
-        const settlement = await waitForSettledPlanet(provider, wallet.account, settlementConfig);
+        const settlement = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, wallet.account);
 
         setPlanet({
           kind: "success",
@@ -397,19 +608,15 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshSettlementLaunchInfo(
-    injected: Eip1193Provider,
     connectedAccount: string,
     currentPlanet: PlanetState,
-  ): Promise<boolean> {
+  ): Promise<SettlementFundingState | undefined> {
     setSettlementFunding({ status: "loading" });
 
     try {
-      const settlement = await readSettlementState(injected, connectedAccount, settlementConfig);
-
-      if (settlement.kind === "unconfigured") {
-        setSettlementFunding({ status: "idle" });
-        setPlanet({ kind: "contract-unconfigured" });
-        return false;
+      const settlement = await readIndexedSettlementState(settlementConfigState.apiUrl, connectedAccount);
+      if (!settlement) {
+        throw new Error("Settlement state is unavailable because the game API is not configured.");
       }
 
       if (settlement.kind === "settled") {
@@ -418,32 +625,38 @@ export function FirstPlanetSettlementApp() {
           kind: "already-settled",
           planet: settlement.planet,
         });
-        return false;
+        return undefined;
       }
 
-      if (settlement.kind === "legacy-settled") {
+      if (settlement.kind === "indexing") {
+        setSettlementFunding({ status: "idle" });
         setPlanet({
-          kind: "legacy-settled",
-          planet: settlement.planet,
+          kind: "pending",
+          label: "Settlement confirmed. Indexing starting resources before opening planetary overview.",
         });
-      } else {
-        setPlanet({ kind: "not-settled" });
+        return undefined;
       }
 
+      setPlanet({ kind: "not-settled" });
+      if (!settlementConfigState.apiUrl) {
+        throw new Error("Settlement funding is unavailable because the game API is not configured.");
+      }
       const nextFunding: SettlementFunding = {
         status: "ready",
-        funding: await readSettlementFundingState(injected, connectedAccount, settlementConfig),
+        funding: await fetchSettlementFundingState(settlementConfigState.apiUrl, connectedAccount),
       };
       setSettlementFunding(nextFunding);
 
-      return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding) === undefined;
+      return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding) === undefined
+        ? nextFunding.funding
+        : undefined;
     } catch (error) {
       setPlanet(currentPlanet.kind === "legacy-settled" ? currentPlanet : { kind: "not-settled" });
       setSettlementFunding({
         status: "error",
         message: walletRequestErrorMessage(error),
       });
-      return false;
+      return undefined;
     }
   }
 
@@ -452,6 +665,7 @@ export function FirstPlanetSettlementApp() {
       <PlayableMvpApp
         provider={provider}
         account={account}
+        miniAppMode={miniAppMode}
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
       />
     );
@@ -482,6 +696,8 @@ export function FirstPlanetSettlementApp() {
             settlementFunding={settlementFunding}
             settlementReady={settlementContractConfigured(settlementConfig)}
             wallet={wallet}
+            networkSwitchPending={networkSwitchPending}
+            miniAppMode={miniAppMode}
           />
         </div>
 
@@ -515,7 +731,9 @@ function FlowBody({
   planet,
   settlementFunding,
   settlementReady,
-  wallet
+  wallet,
+  networkSwitchPending,
+  miniAppMode
 }: {
   mode: ReturnType<typeof preSettlementMode>;
   onConnect: () => void;
@@ -525,6 +743,8 @@ function FlowBody({
   settlementFunding: SettlementFunding;
   settlementReady: boolean;
   wallet: WalletState;
+  networkSwitchPending: boolean;
+  miniAppMode: boolean;
 }) {
   if (mode === "resolving") {
     return <StateMessage tone="scanning" title="Reading wallet link" body="Checking wallet signal and first-planet settlement state." />;
@@ -534,7 +754,7 @@ function FlowBody({
     return (
       <StateMessage
         title="No pilot wallet detected"
-        body="Open the bridge with MetaMask or another injected EVM wallet."
+        body={noWalletDetectedMessage(miniAppMode)}
         action={<PrimaryButton onClick={onConnect}>Check again</PrimaryButton>}
         tone="warning"
       />
@@ -544,20 +764,39 @@ function FlowBody({
   if (mode === "connect") {
     return (
       <StateMessage
-        title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : "Link pilot wallet"}
-        body="Connect a wallet to claim your first home world."
-        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Link wallet</PrimaryButton>}
+        title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : miniAppMode ? "Link Farcaster Wallet" : "Link pilot wallet"}
+        body={miniAppMode ? "Connect Farcaster Wallet to claim your first home world." : "Connect a wallet to claim your first home world."}
+        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>{miniAppMode ? "Connect Farcaster Wallet" : "Link wallet"}</PrimaryButton>}
         tone={wallet.kind === "connecting" ? "scanning" : "ready"}
       />
     );
   }
 
   if (mode === "wrong-network" && wallet.kind === "wrong-network") {
+    if (miniAppMode) {
+      return (
+        <StateMessage
+          title="Base Sepolia required"
+          body={miniAppUnsupportedChainMessage(wallet.chainId)}
+          action={
+            <PrimaryButton disabled={networkSwitchPending} onClick={onSwitchNetwork}>
+              {networkSwitchPending ? "Requesting Base Sepolia" : "Retry Base Sepolia"}
+            </PrimaryButton>
+          }
+          tone="warning"
+        />
+      );
+    }
+
     return (
       <StateMessage
         title="Wrong network"
         body={`Current chain ${wallet.chainId}. Switch to Base Sepolia to enter the settlement sector.`}
-        action={<PrimaryButton onClick={onSwitchNetwork}>Switch network</PrimaryButton>}
+        action={
+          <PrimaryButton disabled={networkSwitchPending} onClick={onSwitchNetwork}>
+            {networkSwitchPending ? "Switching network" : "Switch network"}
+          </PrimaryButton>
+        }
         tone="warning"
       />
     );
@@ -628,6 +867,12 @@ function FlowBody({
   );
 }
 
+export function noWalletDetectedMessage(miniAppMode: boolean): string {
+  return miniAppMode
+    ? "This Farcaster client does not expose a Base wallet. Open Veydrift in a Farcaster/Base client with wallet support, or use a browser wallet."
+    : "Open the bridge with an injected EVM wallet or browser wallet.";
+}
+
 export function settlementLaunchBlocker(
   settlementReady: boolean,
   settlementFunding: SettlementFunding,
@@ -649,6 +894,12 @@ export function settlementLaunchBlocker(
   return undefined;
 }
 
+function settlementTransactionOptions(funding: SettlementFundingState): SettlementTransactionOptions {
+  return {
+    startPriceWei: funding.startPriceWei,
+  };
+}
+
 function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding): string {
   const prefix = planet.kind === "legacy-settled"
     ? "This wallet has a legacy first planet but no game home planet yet. Launch a new game settlement to continue."
@@ -664,11 +915,15 @@ function settlementBody(planet: PlanetState, settlementFunding: SettlementFundin
 
   if (settlementFunding.status === "ready" && settlementFunding.funding.contractKind === "game") {
     const startPrice = formatEth(settlementFunding.funding.startPriceWei ?? 0n);
-    const balance = formatEth(settlementFunding.funding.balanceWei ?? 0n);
     if (settlementFunding.funding.unavailableReason) {
       return `${prefix} ${settlementFunding.funding.unavailableReason}`;
     }
 
+    if (settlementFunding.funding.balanceWei === null) {
+      return `${prefix} Settlement costs ${startPrice} ETH; Farcaster Wallet will verify this wallet's Base Sepolia balance before submission.`;
+    }
+
+    const balance = formatEth(settlementFunding.funding.balanceWei);
     return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on Base Sepolia.`;
   }
 
@@ -686,6 +941,7 @@ function formatEth(wei: bigint): string {
 
 type IndexedSettlementState =
   | { kind: "settled"; planet: PlanetSummary }
+  | { kind: "indexing" }
   | { kind: "not-settled" };
 
 async function readIndexedSettlementState(
@@ -699,6 +955,10 @@ async function readIndexedSettlementState(
 
 export function indexedSettlementState(settlement: WalletSettlementResponse): IndexedSettlementState {
   if (settlement.homePlanetId || settlement.hasFirstPlanet) {
+    if (!hasHydratedIndexedSettlementResources(settlement)) {
+      return { kind: "indexing" };
+    }
+
     return {
       kind: "settled",
       planet: planetSummaryFromIndexedSettlement(settlement),
@@ -732,6 +992,22 @@ function planetSummaryFromIndexedSettlement(settlement: WalletSettlementResponse
   }
 
   return summary;
+}
+
+function hasHydratedIndexedSettlementResources(settlement: WalletSettlementResponse): boolean {
+  const planet = settlement.planet;
+  if (!planet) return false;
+
+  const lastSettledAt = Number(planet.lastSettledAt);
+  return Number.isFinite(lastSettledAt)
+    && lastSettledAt > 0
+    && hasHydratedSettlementResources(planet);
+}
+
+function hasHydratedSettlementResources(planet: Pick<PlanetSummary, "resources">): boolean {
+  const resources = planet.resources;
+  return Boolean(resources)
+    && !(resources?.metal === "0" && resources.crystal === "0" && resources.deuterium === "0");
 }
 
 function StateMessage({
@@ -815,23 +1091,40 @@ function buildSettlementConfig(): SettlementConfig {
   return address ? { address } : {};
 }
 
-async function waitForSettledPlanet(
-  provider: Eip1193Provider,
+type WaitForIndexedSettledPlanetOptions = {
+  attempts?: number;
+  delay?: (ms: number) => Promise<void>;
+  fetchSettlement?: typeof fetchWalletSettlement;
+  intervalMs?: number;
+};
+
+export async function waitForIndexedSettledPlanet(
+  apiUrl: string | undefined,
   account: string,
-  settlementConfig: SettlementConfig,
+  options: WaitForIndexedSettledPlanetOptions = {},
 ) {
-  let lastSettlement = await readSettlementState(provider, account, settlementConfig);
-
-  for (let attempt = 0; attempt < POST_SETTLEMENT_READ_ATTEMPTS; attempt += 1) {
-    if (lastSettlement.kind === "settled" && lastSettlement.planet.coordinates) {
-      return lastSettlement;
-    }
-
-    await delay(POST_SETTLEMENT_READ_INTERVAL_MS);
-    lastSettlement = await readSettlementState(provider, account, settlementConfig);
+  if (!apiUrl) {
+    throw new Error("Settlement is confirmed, but the game API is unavailable. Retry once backend indexing is reachable.");
   }
 
-  throw new Error("Settlement is confirmed, but the planet is still syncing. Retry once the chain read catches up.");
+  const attempts = options.attempts ?? POST_SETTLEMENT_READ_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? POST_SETTLEMENT_READ_INTERVAL_MS;
+  const fetchSettlement = options.fetchSettlement ?? fetchWalletSettlement;
+  const wait = options.delay ?? delay;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const settlement = await fetchSettlement(apiUrl, account);
+    const indexed = indexedSettlementState(settlement);
+    if (indexed.kind === "settled" && indexed.planet.coordinates) {
+      return indexed;
+    }
+
+    if (attempt < attempts - 1) {
+      await wait(intervalMs);
+    }
+  }
+
+  throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
 }
 
 function delay(ms: number): Promise<void> {

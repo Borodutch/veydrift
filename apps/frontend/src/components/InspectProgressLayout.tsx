@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, Ref } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { formatDurationUntil } from "../durationFormat";
 import { queueProgressPercent, type QueueTimeline } from "../playableMvp";
@@ -6,6 +6,86 @@ import { formatUserTimestamp } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
 
 const loadedDetailImageKeys = new Set<string>();
+
+export const singleItemQueueProgressHeaderClassName = "grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start";
+export const singleItemQueueProgressLabelClassName = "mt-1 break-words text-xs leading-5 text-amber-200/85";
+export const singleItemQueueProgressPercentClassName = "w-fit rounded bg-black/20 px-2 py-1 text-xs font-semibold text-amber-100 sm:justify-self-end";
+
+export function useInspectDetailSelection<ItemKey>(
+  onSelectItem?: ((key: ItemKey) => void) | undefined,
+) {
+  const detailPanelRef = useRef<HTMLDivElement>(null);
+
+  function selectInspectItem(key: ItemKey) {
+    onSelectItem?.(key);
+
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches) {
+      window.setTimeout(() => {
+        detailPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, 0);
+    }
+  }
+
+  return { detailPanelRef, selectInspectItem };
+}
+
+export function InspectPageHeader({
+  actions,
+  description,
+  title,
+}: {
+  actions?: ComponentChildren | undefined;
+  description: string;
+  title: string;
+}) {
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 max-w-full">
+        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        <p className="break-words text-xs leading-5 text-slate-400">
+          {description}
+        </p>
+      </div>
+      {actions ? (
+        <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+          {actions}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function InspectTwoColumnLayout({
+  catalog,
+  catalogClassName = "grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-3 2xl:grid-cols-4",
+  detail,
+  detailPanelRef,
+}: {
+  catalog: ComponentChildren;
+  catalogClassName?: string | undefined;
+  detail: ComponentChildren;
+  detailPanelRef?: Ref<HTMLDivElement> | undefined;
+}) {
+  const detailPanel = detailPanelRef ? (
+    <div className="order-1 xl:order-2" ref={detailPanelRef}>
+      {detail}
+    </div>
+  ) : (
+    <div className="order-1 xl:order-2">
+      {detail}
+    </div>
+  );
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,25rem)] xl:items-start">
+      <div className={`order-2 xl:order-1 ${catalogClassName}`}>
+        {catalog}
+      </div>
+
+      {detailPanel}
+    </div>
+  );
+}
 
 export function InspectCatalogTile({
   asset,
@@ -201,16 +281,16 @@ export function SingleItemQueueProgress({
 
   return (
     <div className="mt-3 rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className={singleItemQueueProgressHeaderClassName}>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-amber-100">
             {isPrimaryItem ? title.active : title.context}
           </p>
-          <p className="mt-1 text-xs leading-5 text-amber-200/85">
+          <p className={singleItemQueueProgressLabelClassName}>
             {label}
           </p>
         </div>
-        <span className="shrink-0 rounded bg-black/20 px-2 py-1 text-xs font-semibold text-amber-100">
+        <span className={singleItemQueueProgressPercentClassName}>
           {percent}%
         </span>
       </div>

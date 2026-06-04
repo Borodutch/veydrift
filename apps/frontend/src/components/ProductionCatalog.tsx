@@ -13,6 +13,12 @@ const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 export type ProductionRequirementState = RequirementFlair;
 
+export type ProductionDetailStat = {
+  label: string;
+  value: string;
+  hint?: string | undefined;
+};
+
 export type ProductionCatalogItem<Key extends string = string> = {
   key: Key;
   id: number;
@@ -34,6 +40,9 @@ export type ProductionCatalogItem<Key extends string = string> = {
   disabled: boolean;
   actionLabel: string;
   detailNote: string;
+  description?: string | undefined;
+  notes?: string[] | undefined;
+  detailStats?: ProductionDetailStat[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
 
@@ -43,6 +52,7 @@ export type ProductionQueue = {
   quantity?: number | undefined;
   readyAt: string | null;
   startedAt?: string | null | undefined;
+  backlog?: ProductionQueue[] | undefined;
 };
 
 export function selectedProductionItem<Key extends string>(
@@ -64,6 +74,16 @@ export function productionQueueViewModel(
     quantity: queue.quantity,
     readyAt: queue.readyAt,
     startedAt: queue.startedAt,
+    backlog: queue.backlog?.filter((entry) => entry.active).map((entry) => {
+      const backlogItem = catalog.find((candidate) => candidate.id === entry.itemId);
+      return {
+        asset: backlogItem?.asset,
+        label: backlogItem?.label ?? (entry.kind === "defense" ? "Defense" : "Ship"),
+        quantity: entry.quantity,
+        readyAt: entry.readyAt,
+        startedAt: entry.startedAt,
+      };
+    }),
   };
 }
 
@@ -176,7 +196,22 @@ function ProductionQueuePanel({
       title="Active queue"
       tone="cyan"
     >
-      {ready ? "Ready now." : "Production in progress."}
+      <div className="grid gap-2">
+        <span>{ready ? "Ready now." : "Production in progress."}</span>
+        {queue.backlog && queue.backlog.length > 0 ? (
+          <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-300">
+            <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
+            {queue.backlog.map((entry, index) => (
+              <div className="flex items-center justify-between gap-3" key={`${entry.label}-${index}`}>
+                <span className="min-w-0 truncate">
+                  {entry.label}{entry.quantity ? ` x${formatter.format(entry.quantity)}` : ""}
+                </span>
+                <span className="shrink-0 text-slate-500">{formatQueueReadyAt(entry.readyAt)}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </QueueProgressPanel>
   );
 }
@@ -269,6 +304,23 @@ function SelectedProductionPanel<Key extends string>({
         </div>
       </div>
 
+      {item.description ? (
+        <p className="rounded border border-white/10 bg-black/20 p-3 text-sm leading-5 text-slate-300">
+          {item.description}
+        </p>
+      ) : null}
+
+      {item.detailStats?.length ? (
+        <div className="grid gap-2">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Specs</h4>
+          <dl className="grid grid-cols-2 gap-2 text-xs">
+            {item.detailStats.map((stat) => (
+              <Stat hint={stat.hint} label={stat.label} value={stat.value} key={stat.label} />
+            ))}
+          </dl>
+        </div>
+      ) : null}
+
       <dl className="grid grid-cols-2 gap-2 text-xs">
         <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
         <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
@@ -277,6 +329,12 @@ function SelectedProductionPanel<Key extends string>({
         <Stat label="Deut" value={item.cost ? format(item.cost.deuterium) : "-"} />
         <Stat label="Status" value={item.statusLabel} />
       </dl>
+
+      {item.notes?.length ? (
+        <ul className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs leading-5 text-slate-400">
+          {item.notes.map((note) => <li key={note}>{note}</li>)}
+        </ul>
+      ) : null}
 
       <ProductionRequirementFlairs
         missing={item.missing}
@@ -342,17 +400,26 @@ function ProductionRequirementFlairs({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ hint, label, value }: { hint?: string | undefined; label: string; value: string }) {
   return (
     <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
       <dt className="text-[10px] uppercase tracking-wide text-slate-500">{label}</dt>
       <dd className="truncate text-slate-200">{value}</dd>
+      {hint ? <dd className="mt-1 line-clamp-2 text-[10px] leading-3 text-slate-500">{hint}</dd> : null}
     </div>
   );
 }
 
 function isQueueReady(readyAt: string | null): boolean {
   return readyAt ? Number(readyAt) <= Math.floor(Date.now() / 1_000) : false;
+}
+
+function formatQueueReadyAt(readyAt: string | null): string {
+  if (!readyAt) return "Ready time unknown";
+  return new Date(Number(readyAt) * 1_000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function format(value: number): string {

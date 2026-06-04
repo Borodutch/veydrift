@@ -4,7 +4,13 @@ import {
   overviewHeroImage,
 } from "../src/overviewHeroImage";
 import {
+  isOverviewResearchReadyToFinish,
+  overviewBuildingActionNoticeFor,
+  overviewBuildingFinishAction,
+  overviewBuildingNoticeForFinishAction,
   overviewDefenseFinishAction,
+  overviewResearchActionNoticeFor,
+  overviewResearchFinishAction,
   shouldShowOverviewBuildingFinishAction,
 } from "../src/components/OverviewPage";
 import {
@@ -15,6 +21,8 @@ import {
 } from "../src/overviewData";
 import { queueProgressPercent } from "../src/playableMvp";
 import type { Planet } from "../src/types";
+
+const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
 
 const homePlanet: Planet = {
   alliance: null,
@@ -44,6 +52,18 @@ const homePlanet: Planet = {
 };
 
 describe("overview planet hero image", () => {
+  test("renders commander identity before the current planet block", () => {
+    const commanderIndex = overviewSource.indexOf(">Commander<");
+    const planetHeroIndex = overviewSource.indexOf("Planet hero");
+    const missionPanelIndex = overviewSource.indexOf("<MissionPanel");
+
+    expect(commanderIndex).toBeGreaterThanOrEqual(0);
+    expect(planetHeroIndex).toBeGreaterThanOrEqual(0);
+    expect(missionPanelIndex).toBeGreaterThanOrEqual(0);
+    expect(commanderIndex).toBeLessThan(planetHeroIndex);
+    expect(planetHeroIndex).toBeLessThan(missionPanelIndex);
+  });
+
   test("uses the disconnected default only for local preview state", () => {
     expect(overviewHeroImage(undefined, false, undefined, undefined)).toBe(DISCONNECTED_HERO_IMAGE);
     expect(overviewHeroImage(undefined, true, undefined, "1:42:7")).toBeUndefined();
@@ -74,6 +94,20 @@ describe("overview queue progress display", () => {
     expect(overviewQueueItemLabelClassName).not.toContain("truncate");
     expect(overviewQueueItemLabelClassName).toContain("break-words");
     expect(overviewQueueItemRemainingClassName).not.toContain("shrink-0");
+  });
+
+  test("uses the shared anchored action layout for production queue cards", () => {
+    for (const actionLabel of ["Build", "Defenses", "Research", "Shipyard"]) {
+      expect(overviewSource).toContain(`actionLabel="${actionLabel}"`);
+    }
+
+    expect(overviewSource.match(/<QueuePanelContent>/g)?.length).toBeGreaterThanOrEqual(8);
+    expect(overviewSource).toContain("function QueuePanelContent");
+    expect(overviewSource).toContain("flex min-h-0 flex-1 flex-col gap-2");
+    expect(overviewSource).toContain("mt-auto flex min-h-9 w-full min-w-0");
+    expect(overviewSource.match(/mt-auto flex h-9 w-full/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(overviewSource).toContain("<ArrowRight");
+    expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
   });
 
   test("renders ready queues as complete even when the source payload was indeterminate", () => {
@@ -201,6 +235,12 @@ describe("overview queue progress display", () => {
     });
   });
 
+  test("passes catalog thumbnails into active research queues", () => {
+    expect(overviewSource).toContain("researchCatalog");
+    expect(overviewSource).toContain("thumbnailSrc={onChainResearchAsset}");
+    expect(overviewSource).toContain("thumbnailSrc={settledResearchAsset}");
+  });
+
   test("shows the ready building finish action for infrastructure-backed queues", () => {
     const onFinishBuilding = () => undefined;
 
@@ -215,6 +255,197 @@ describe("overview queue progress display", () => {
     expect(shouldShowOverviewBuildingFinishAction({
       isBuildingReadyToFinish: true,
     })).toBe(false);
+  });
+
+  test("derives the ready building finish action from the overview queue when needed", () => {
+    const onFinishBuilding = () => undefined;
+
+    expect(shouldShowOverviewBuildingFinishAction({
+      now: 1_700_000_000_000,
+      onFinishBuilding,
+      queue: {
+        active: true,
+        readyAt: "1700000000",
+      },
+    })).toBe(true);
+    expect(shouldShowOverviewBuildingFinishAction({
+      now: 1_700_000_000_000,
+      onFinishBuilding,
+      queue: {
+        active: true,
+        readyAt: "1700000000000",
+      },
+    })).toBe(true);
+    expect(shouldShowOverviewBuildingFinishAction({
+      now: 1_699_999_999_000,
+      onFinishBuilding,
+      queue: {
+        active: true,
+        readyAt: "1700000000",
+      },
+    })).toBe(false);
+  });
+
+  test("hides not-ready building finish controls but keeps pending and ready states visible", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "solarPlant" as const,
+      label: "Solar Plant",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    };
+    let calls = 0;
+    const onFinishBuilding = () => {
+      calls += 1;
+    };
+
+    const notReady = overviewBuildingFinishAction({
+      isBuildingReadyToFinish: false,
+      onFinishBuilding,
+      queue,
+    });
+    expect(notReady).toEqual({
+      disabled: false,
+      label: "Complete building",
+      onFinish: undefined,
+      reason: undefined,
+      reasonTone: "error",
+      visible: false,
+    });
+
+    const pending = overviewBuildingFinishAction({
+      actionPending: true,
+      actionPendingLabel: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(pending).toEqual({
+      disabled: true,
+      label: "Completing building",
+      onFinish: undefined,
+      reason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      reasonTone: "pending",
+      visible: true,
+    });
+
+    const ready = overviewBuildingFinishAction({
+      isBuildingReadyToFinish: true,
+      onFinishBuilding,
+      queue,
+    });
+    expect(ready.disabled).toBe(false);
+    expect(ready.label).toBe("Complete building");
+    ready.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("disables ready building finish controls when the backend is unavailable", () => {
+    const queue = {
+      kind: "building" as const,
+      key: "crystalMine" as const,
+      label: "Crystal Mine",
+      readyAt: 1_700_000_000_000,
+      startedAt: 1_699_999_000_000,
+      targetLevel: 8,
+    };
+    const backendUnavailableReason =
+      "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
+    let calls = 0;
+    const action = overviewBuildingFinishAction({
+      actionUnavailableReason: backendUnavailableReason,
+      isBuildingReadyToFinish: true,
+      now: 1_700_000_000_000,
+      onFinishBuilding: () => {
+        calls += 1;
+      },
+      queue,
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+    expect(action.label).toBe("Complete building");
+    expect(action.reason).toContain("Infrastructure API is temporarily unavailable");
+    expect(action.reason).not.toContain("Syncing building queue");
+    expect(action.reason).not.toContain("backend state is restored");
+    expect(action.reason).not.toContain("game state sync recovers");
+    expect(action.reasonTone).toBe("error");
+    expect(calls).toBe(0);
+  });
+
+  test("keeps Overview building finish button copy compact", () => {
+    expect(overviewSource).toContain('label: actionPending ? "Completing building" : "Complete building"');
+    expect(overviewSource).toContain("w-full min-w-0 items-center justify-center overflow-hidden");
+    expect(overviewSource).toContain("max-w-full overflow-hidden text-ellipsis whitespace-nowrap");
+  });
+
+  test("shows building finish action notices for the active overview queue", () => {
+    const notice = {
+      buildingKey: "shipyard" as const,
+      label: "Can't check game state right now.",
+      tone: "error" as const,
+    };
+
+    expect(overviewBuildingActionNoticeFor(notice, "shipyard")).toBe(notice);
+    expect(overviewBuildingActionNoticeFor(notice, "metalMine")).toBeUndefined();
+    expect(overviewBuildingActionNoticeFor(notice, undefined)).toBe(notice);
+  });
+
+  test("deduplicates identical ready building completion prompts on Overview", () => {
+    const duplicatePrompt = "Building completion: unlock your wallet if needed, then confirm in your wallet.";
+    const notice = {
+      buildingKey: "metalMine" as const,
+      label: duplicatePrompt,
+      tone: "pending" as const,
+    };
+    const action = overviewBuildingFinishAction({
+      actionPending: true,
+      actionPendingLabel: duplicatePrompt,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding: () => undefined,
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 1_700_000_000_000,
+        startedAt: 1_699_999_000_000,
+        targetLevel: 9,
+      },
+    });
+
+    expect(action.reason).toBe(duplicatePrompt);
+    expect(overviewBuildingNoticeForFinishAction(notice, action)).toBe(notice);
+    expect(overviewBuildingNoticeForFinishAction({
+      ...notice,
+      label: "Infrastructure API is temporarily unavailable.",
+      tone: "error",
+    }, action)?.label).toBe("Infrastructure API is temporarily unavailable.");
+  });
+
+  test("moves long Overview building completion guidance into a wrapped notice", () => {
+    const longReason = "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.";
+    const action = overviewBuildingFinishAction({
+      actionUnavailableReason: longReason,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding: () => undefined,
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 1_700_000_000_000,
+        startedAt: 1_699_999_000_000,
+        targetLevel: 9,
+      },
+    });
+
+    expect(action.label).toBe("Complete building");
+    expect(action.reason).toBe(longReason);
+    expect(overviewBuildingNoticeForFinishAction(undefined, action)).toEqual({
+      label: longReason,
+      tone: "error",
+    });
   });
 
   test("shows and invokes the ready defense completion action on Overview", () => {
@@ -276,5 +507,93 @@ describe("overview queue progress display", () => {
     expect(action.visible).toBe(true);
     expect(action.disabled).toBe(true);
     expect(action.onFinish).toBeUndefined();
+  });
+
+  test("shows and invokes the ready research completion action on Overview", () => {
+    let calls = 0;
+    const queue = {
+      active: true,
+      cost: { metal: "800", crystal: "400", deuterium: "0" },
+      itemId: 0,
+      kind: "research",
+      readyAt: "1700000000",
+      targetLevel: 2,
+    };
+    const action = overviewResearchFinishAction({
+      now: 1_700_000_000_000,
+      onFinishResearch: () => {
+        calls += 1;
+      },
+      queue,
+    });
+
+    expect(isOverviewResearchReadyToFinish(queue, 1_700_000_000_000)).toBe(true);
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(false);
+    action.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("keeps not-ready research queues passive on Overview", () => {
+    const queue = {
+      active: true,
+      cost: { metal: "800", crystal: "400", deuterium: "0" },
+      itemId: 0,
+      kind: "research",
+      readyAt: "1700000000",
+      targetLevel: 2,
+    };
+    const action = overviewResearchFinishAction({
+      now: 1_699_999_000_000,
+      onFinishResearch: () => undefined,
+      queue,
+    });
+
+    expect(isOverviewResearchReadyToFinish(queue, 1_699_999_000_000)).toBe(false);
+    expect(action.visible).toBe(false);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("disables ready research completion while a research transaction is pending", () => {
+    const action = overviewResearchFinishAction({
+      actionPending: true,
+      now: 1_700_000_000_000,
+      onFinishResearch: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "800", crystal: "400", deuterium: "0" },
+        itemId: 0,
+        kind: "research",
+        readyAt: "1700000000",
+        targetLevel: 2,
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("keeps research completion success copy out of the compact Overview card", () => {
+    expect(overviewResearchActionNoticeFor({
+      status: "success",
+      label: "Research completion confirmed.",
+    })).toBeUndefined();
+
+    expect(overviewResearchActionNoticeFor({
+      status: "pending",
+      label: "Research completion: awaiting wallet",
+    })).toEqual({
+      label: "Research completion: awaiting wallet",
+      tone: "pending",
+    });
+
+    expect(overviewResearchActionNoticeFor({
+      status: "error",
+      label: "Research completion failed.",
+    })).toEqual({
+      label: "Research completion failed.",
+      tone: "error",
+    });
   });
 });

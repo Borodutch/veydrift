@@ -17,6 +17,7 @@ import type {
   PlayerQueuesResponse,
   QueueStateResponse,
 } from "./walletFlow";
+import { timestampToMs } from "./timestampFormat";
 
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
 
@@ -114,6 +115,14 @@ export function energyBalanceFromChain(
     produced: Number(value.produced),
     required: Number(value.required),
     scaleBps: Number(value.scaleBps),
+    ...(value.sources ? { sources: {
+      solarPlant: Number(value.sources.solarPlant),
+      fusionReactor: Number(value.sources.fusionReactor),
+      fusionReactorDeuteriumConsumed: Number(value.sources.fusionReactorDeuteriumConsumed),
+      solarSatellites: Number(value.sources.solarSatellites),
+      solarSatelliteCount: value.sources.solarSatelliteCount,
+      solarSatelliteEnergy: Number(value.sources.solarSatelliteEnergy),
+    } } : {}),
   };
 }
 
@@ -128,8 +137,8 @@ export function activeBuildingQueueResponse(
   queues: PlayerQueuesResponse | undefined,
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
-  if (queues?.building?.active) return queues.building;
   if (infrastructureState?.queue?.active) return infrastructureState.queue;
+  if (queues?.building?.active) return queues.building;
   return null;
 }
 
@@ -137,8 +146,8 @@ export function isBuildingQueueReadyToFinish(
   queue: QueueStateResponse | null | undefined,
   now = Date.now(),
 ): boolean {
-  if (!queue?.active || !queue.readyAt) return false;
-  return Number(queue.readyAt) * 1_000 <= now;
+  const readyAt = queueTimestampMs(queue?.readyAt);
+  return Boolean(queue?.active && readyAt !== undefined && readyAt <= now);
 }
 
 export function buildingQueueItemForDisplay(
@@ -228,10 +237,7 @@ function zeroResearchLevels(): PlayableState["research"] {
 }
 
 function queueTimestampMs(value: string | null | undefined): number | undefined {
-  if (!value) return undefined;
-  const timestamp = Number(value);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return undefined;
-  return timestamp * 1_000;
+  return timestampToMs(value);
 }
 
 function toResources(resources: ChainInfrastructureState["resources"] | ChainInfrastructureState["buildings"][number]["cost"] | null | undefined): Resources | undefined {

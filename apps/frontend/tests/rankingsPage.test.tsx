@@ -5,6 +5,7 @@ import {
   primaryRankingEntries,
   rankingsColumnLabels,
   RankingsTable,
+  shouldShowRankingsInitialLoader,
 } from "../src/components/RankingsPage";
 import type { HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
@@ -37,6 +38,69 @@ describe("RankingsPage", () => {
     expect(text).toContain("1,500");
   });
 
+  test("highlights the current wallet row with a non-color-only marker", () => {
+    const table = RankingsTable({
+      currentWallet: "0x1111111111111111111111111111111111111111".toUpperCase(),
+      entries: [rankingEntry({ displayName: "Renamed Commander" })],
+      loading: false,
+    });
+    const row = rowWithWallet(table, "0x1111111111111111111111111111111111111111");
+
+    expect(row?.props?.["aria-current"]).toBe("true");
+    expect(row?.props?.className).toContain("bg-cyan-300");
+    expect(visibleText(row)).toContain("You");
+  });
+
+  test("renders canonical alliance tags before commander names and opens alliance details", () => {
+    const selectedAlliances: string[] = [];
+    const table = RankingsTable({
+      entries: [rankingEntry({
+        alliance: {
+          allianceId: "3",
+          name: "Veydrift Union",
+          tag: "VDFT",
+        },
+        displayName: "Nova Prime",
+      })],
+      loading: false,
+      onSelectAlliance: (allianceId) => selectedAlliances.push(allianceId),
+    });
+    const text = visibleText(table);
+    const allianceButton = buttonWithTitle(table, "Open alliance VDFT");
+
+    expect(text).toContain("[VDFT] Nova Prime");
+    expect(allianceButton).toBeTruthy();
+    allianceButton?.props?.onClick?.();
+    expect(selectedAlliances).toEqual(["3"]);
+  });
+
+  test("uses a softer same-alliance treatment without overriding the current player highlight", () => {
+    const self = rankingEntry({
+      alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
+      wallet: "0x1111111111111111111111111111111111111111",
+    });
+    const ally = rankingEntry({
+      alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
+      rank: 2,
+      wallet: "0x2222222222222222222222222222222222222222",
+    });
+    const other = rankingEntry({
+      alliance: { allianceId: "4", name: "Other Union", tag: "OTHR" },
+      rank: 3,
+      wallet: "0x3333333333333333333333333333333333333333",
+    });
+    const table = RankingsTable({
+      currentAllianceId: "3",
+      currentWallet: self.wallet,
+      entries: [self, ally, other],
+      loading: false,
+    });
+
+    expect(rowWithWallet(table, self.wallet)?.props?.className).toContain("bg-cyan-300");
+    expect(rowWithWallet(table, ally.wallet)?.props?.className).toContain("bg-emerald-300");
+    expect(rowWithWallet(table, other.wallet)?.props?.className).toContain("border-white/5");
+  });
+
   test("opens the ranked commander's public home planet when available", () => {
     const selected: Coordinates[] = [];
     const table = RankingsTable({
@@ -50,6 +114,16 @@ describe("RankingsPage", () => {
     homeButton?.props?.onClick?.();
 
     expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
+  });
+
+  test("serves ranked home planet thumbnails through responsive variants", () => {
+    const table = RankingsTable({ entries: [rankingEntry()], loading: false });
+    const image = elementNodes(table).find((item) => item.type === "img" && item.props?.alt === "");
+
+    expect(image?.props?.src).toBe("/assets/game/style-pass/generated/planets/temperate-ocean.webp");
+    expect(image?.props?.sizes).toBe("40px");
+    expect(image?.props?.srcSet).toContain("/assets/game/sizes/64/style-pass/generated/planets/temperate-ocean.webp 64w");
+    expect(image?.props?.srcSet).toContain("/assets/game/style-pass/generated/planets/temperate-ocean.webp 1024w");
   });
 
   test("reads the canonical total ranking from the existing highscore payload", () => {
@@ -75,10 +149,32 @@ describe("RankingsPage", () => {
     expect(primaryRankingEntries(data)).toEqual([entry]);
     expect(primaryRankingEntries(null)).toEqual([]);
   });
+
+  test("keeps an empty loaded ranking category visible during background refresh", () => {
+    expect(shouldShowRankingsInitialLoader({
+      hasLoadedData: false,
+      loading: true,
+    })).toBe(true);
+    expect(shouldShowRankingsInitialLoader({
+      hasLoadedData: true,
+      loading: true,
+    })).toBe(false);
+
+    const table = RankingsTable({
+      entries: [],
+      hasLoadedData: true,
+      loading: true,
+    });
+    const text = visibleText(table);
+
+    expect(text).toContain("No settled commanders indexed yet");
+    expect(text).not.toContain("Loading rankings");
+  });
 });
 
-function rankingEntry(): HighscoreEntry {
+function rankingEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
   return {
+    alliance: null,
     homePlanet: {
       archetype: "temperate-ocean",
       coordinates: {
@@ -103,6 +199,7 @@ function rankingEntry(): HighscoreEntry {
       total: "1500",
     },
     wallet: "0x1111111111111111111111111111111111111111",
+    ...overrides,
   };
 }
 
@@ -135,6 +232,10 @@ function textParts(node: ComponentChildren): string[] {
 
 function buttonWithTitle(node: ComponentChildren, title: string): VNode | undefined {
   return elementNodes(node).find((item) => item.type === "button" && item.props?.title === title);
+}
+
+function rowWithWallet(node: ComponentChildren, wallet: string): VNode | undefined {
+  return elementNodes(node).find((item) => item.props?.["data-ranking-wallet"] === wallet.toLowerCase());
 }
 
 function elementNodes(node: ComponentChildren): VNode[] {

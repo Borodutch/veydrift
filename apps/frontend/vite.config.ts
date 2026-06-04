@@ -1,32 +1,22 @@
 import preact from "@preact/preset-vite";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
-
-type HtmlEnv = Record<string, string>;
-
-const baseHtmlEnv = {
-  PUBLIC_SITE_URL: "https://veydrift.com",
-  ROBOTS: "index,follow",
-  SITE_TITLE: "Veydrift",
-  SITE_DESCRIPTION: "Veydrift is a new onchain space project. More details are coming soon.",
-  SOCIAL_IMAGE: "https://veydrift.com/assets/og-image.jpg",
-  MINIAPP_IMAGE: "https://veydrift.com/assets/miniapp/embed.png",
-  MINIAPP_SPLASH: "https://veydrift.com/assets/miniapp/splash.png",
-} satisfies HtmlEnv;
-
-const playableHtmlEnv = {
-  PUBLIC_SITE_URL: "https://test.veydrift.com",
-  ROBOTS: "noindex,nofollow",
-  SITE_TITLE: "Veydrift First Planet Test",
-  SITE_DESCRIPTION:
-    "Veydrift Base Sepolia test app for MetaMask first-planet settlement.",
-  SOCIAL_IMAGE: "https://test.veydrift.com/assets/miniapp/og-image.jpg",
-  MINIAPP_IMAGE: "https://test.veydrift.com/assets/miniapp/embed.png",
-  MINIAPP_SPLASH: "https://test.veydrift.com/assets/miniapp/splash.png",
-} satisfies HtmlEnv;
+import {
+  assertAccountAssociationDomain,
+  buildMiniAppEmbed,
+  buildMiniAppManifest,
+  miniAppSurfaceForMode,
+  productionAccountAssociation,
+  testAccountAssociation,
+  type AccountAssociation,
+  type HtmlEnv,
+  type MiniAppSurface,
+} from "./miniAppMetadata";
 
 export default defineConfig(({ mode }) => {
   const isTestSurface = mode === "playable" || mode === "settlement";
-  const htmlEnv = isTestSurface ? playableHtmlEnv : baseHtmlEnv;
+  const htmlEnv = miniAppSurfaceForMode(mode);
   const surface = mode === "playable" || mode === "settlement" ? mode : "";
 
   return {
@@ -45,18 +35,75 @@ export default defineConfig(({ mode }) => {
     plugins: [
       preact(),
       htmlEnvDefaults(htmlEnv),
+      farcasterManifest(mode, htmlEnv),
     ],
   };
 });
 
-function htmlEnvDefaults(env: HtmlEnv): Plugin {
+function htmlEnvDefaults(env: MiniAppSurface): Plugin {
+  const miniAppEmbed = JSON.stringify(buildMiniAppEmbed(env, "launch_miniapp"));
+  const frameEmbed = JSON.stringify(buildMiniAppEmbed(env, "launch_frame"));
+  const replacements: HtmlEnv & {
+    MINIAPP_EMBED: string;
+    FRAME_EMBED: string;
+  } = {
+    PUBLIC_SITE_URL: env.PUBLIC_SITE_URL,
+    ROBOTS: env.ROBOTS,
+    SITE_TITLE: env.SITE_TITLE,
+    SITE_DESCRIPTION: env.SITE_DESCRIPTION,
+    SOCIAL_IMAGE: env.SOCIAL_IMAGE,
+    MINIAPP_IMAGE: env.MINIAPP_IMAGE,
+    MINIAPP_SPLASH: env.MINIAPP_SPLASH,
+    MINIAPP_LAUNCH_URL: env.MINIAPP_LAUNCH_URL,
+    MINIAPP_EMBED: miniAppEmbed,
+    FRAME_EMBED: frameEmbed,
+  };
+
   return {
     name: "veydrift-html-env-defaults",
     transformIndexHtml(html) {
-      return Object.entries(env).reduce(
+      return Object.entries(replacements).reduce(
         (nextHtml, [key, value]) => nextHtml.replaceAll(`__${key}__`, value),
         html,
       );
     },
   };
+}
+
+function farcasterManifest(mode: string, surface: MiniAppSurface): Plugin {
+  return {
+    name: "veydrift-farcaster-manifest",
+    closeBundle() {
+      const accountAssociation = accountAssociationForMode(mode);
+      assertAccountAssociationDomain(accountAssociation, surface.domain);
+
+      const wellKnownDir = join("dist", ".well-known");
+      mkdirSync(wellKnownDir, { recursive: true });
+      writeFileSync(
+        join(wellKnownDir, "farcaster.json"),
+        `${JSON.stringify(buildMiniAppManifest(surface, accountAssociation), null, 2)}\n`,
+      );
+    },
+  };
+}
+
+function accountAssociationForMode(mode: string): AccountAssociation {
+  if (mode !== "playable" && mode !== "settlement") {
+    return productionAccountAssociation;
+  }
+
+  const fromJson = process.env.VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION;
+  if (fromJson) {
+    return JSON.parse(fromJson) as AccountAssociation;
+  }
+
+  const header = process.env.VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_HEADER;
+  const payload = process.env.VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_PAYLOAD;
+  const signature = process.env.VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_SIGNATURE;
+
+  if (header && payload && signature) {
+    return { header, payload, signature };
+  }
+
+  return testAccountAssociation;
 }

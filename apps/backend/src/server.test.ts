@@ -132,6 +132,15 @@ class MockChainReader implements ChainReader {
     };
   }
 
+  async getSettlementFunding() {
+    return {
+      affordable: true,
+      balanceWei: "100000000000000000",
+      contractKind: "game" as const,
+      startPriceWei: "50000000000000000"
+    };
+  }
+
   async getWalletPlanets(wallet: Address): Promise<WalletPlanets> {
     const managedPlanet: ManagedPlanet = {
       ...planet,
@@ -681,6 +690,15 @@ describe("Veydrift backend", () => {
         gameContractConfigured: false
       },
       configured: false,
+      readiness: {
+        ready: false,
+        configurationReady: false,
+        chainSyncConnected: null,
+        subscribedToHeads: null,
+        subscribedToLogs: null,
+        indexedState: null,
+        safeToServeIndexedState: null
+      },
       chainSync: null,
       indexer: null,
       missionResolution: null,
@@ -689,6 +707,34 @@ describe("Veydrift backend", () => {
       service: "veydrift-backend"
     });
     expect(response.status).toBe(200);
+  });
+
+  test("requires websocket head and log subscriptions for ready chain sync health", async () => {
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return {
+          connected: true,
+          subscribedToHeads: false,
+          subscribedToLogs: true
+        };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(body.readiness).toMatchObject({
+      ready: false,
+      chainSyncConnected: true,
+      subscribedToHeads: false,
+      subscribedToLogs: true
+    });
   });
 
   test("returns public runtime config", async () => {
@@ -936,6 +982,7 @@ describe("Veydrift backend", () => {
       transactionHash: "0xabc",
       blockNumber: "123"
     });
+    indexer.upsertPlayerDisplayName(player, "borodutch");
 
     const response = await createRequestHandler({
       config: {
@@ -955,6 +1002,7 @@ describe("Veydrift backend", () => {
         tag: "VDFT"
       },
       owner: player,
+      ownerDisplayName: "borodutch",
       planetId: "7"
     });
   });
@@ -1071,7 +1119,7 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(503);
   });
 
-  test("returns stale indexed shipyard context for transient RPC rate limits", async () => {
+  test("returns indexed shipyard context before transient RPC rate limit fallbacks", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
       indexer: testIndexer(),
@@ -1088,10 +1136,9 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({
       wallet: player,
       homePlanetId: "7",
-      degraded: true,
       stale: true,
       source: "contract-state-indexer",
-      detail: "RPC HTTP 429",
+      detail: "shipyard loaded from DB-indexed contract state before live RPC.",
       resources: {
         metal: "5000",
         crystal: "4900",
@@ -1208,6 +1255,7 @@ describe("Veydrift backend", () => {
         }
         if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;
         if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0x4f5ed437") return abiWords(32n, 0n) as T;
         if (selector === "0xe512884c") return abiWords(0n) as T;
 
         throw new Error(`Unexpected individual call ${selector}`);
@@ -1504,6 +1552,7 @@ describe("Veydrift backend", () => {
         if (selector === "0x0adbf924") return abiWords(5_000n, 4_900n, 4_800n) as T;
         if (selector === "0xd9b24865") return abiWords(1n) as T;
         if (selector === "0xb6f4b7b7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0x4f5ed437") return abiWords(32n, 0n) as T;
         if (selector === "0xe512884c") return abiWords(0n) as T;
         if (selector === "0x423f9f10") throw new Error("RPC 3: execution reverted");
         if (selector === "0x57686701" || selector === "0xc4222030") {
@@ -1576,6 +1625,7 @@ describe("Veydrift backend", () => {
           call.to === configuredTestConfig.gameContractAddress
           && (
             call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x2b98afc7")
           )
@@ -1654,6 +1704,9 @@ describe("Veydrift backend", () => {
         if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x5758361d")) {
           return abiWords(1n, 0n, 2n, readyAt, 4000n, 0n, 0n) as T;
         }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x4f5ed437")) {
+          return abiWords(32n, 1n, 1n, 1n, 3n, readyAt + 600n, 4500n, 1500n, 0n) as T;
+        }
         if (
           call.to === configuredTestConfig.gameContractAddress
           && (
@@ -1679,6 +1732,20 @@ describe("Veydrift backend", () => {
         quantity: 2,
         readyAt: readyAt.toString(),
         startedAt: startedAt.toString(),
+        backlog: [
+          {
+            active: true,
+            kind: "defense",
+            itemId: 1,
+            quantity: 3,
+            readyAt: (readyAt + 600n).toString(),
+            cost: {
+              metal: "4500",
+              crystal: "1500",
+              deuterium: "0"
+            }
+          }
+        ],
         cost: {
           metal: "4000",
           crystal: "0",
@@ -1736,6 +1803,7 @@ describe("Veydrift backend", () => {
           call.to === configuredTestConfig.gameContractAddress
           && (
             call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x2b98afc7")
           )
@@ -1816,6 +1884,7 @@ describe("Veydrift backend", () => {
           && (
             call.data.startsWith("0xb8e835ab")
             || call.data.startsWith("0x5758361d")
+            || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
           )
         ) {
@@ -1849,6 +1918,16 @@ describe("Veydrift backend", () => {
 
   test("rebuilds the cache and marks occupied system coordinates", async () => {
     const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => {
+      chainReader.rebuildCalls += 1;
+      return [{
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123",
+        lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+      }];
+    };
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     const handler = createRequestHandler({
       config: configuredTestConfig,
@@ -1867,10 +1946,55 @@ describe("Veydrift backend", () => {
       indexedPlanets: 1,
       fromBlock: "100"
     });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xshipdone",
+      logIndex: "0x0",
+      topics: [
+        shipCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xsatdone",
+      logIndex: "0x0",
+      topics: [
+        shipCompletedTopic,
+        topic(7n),
+        topic(9n)
+      ],
+      data: abiWords(5n, 5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x85",
+      transactionHash: "0xdefensedone",
+      logIndex: "0x0",
+      topics: [
+        defenseCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(3n, 3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x86",
+      transactionHash: "0xresearchdone",
+      logIndex: "0x0",
+      topics: [
+        researchCompletedTopic,
+        addressTopic(player),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
 
     const system = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
     const body = await system.json();
-    expect(body.planets.find((item: { position: number }) => item.position === 9)).toMatchObject({
+    const occupiedPlanet = body.planets.find((item: { position: number }) => item.position === 9);
+    expect(occupiedPlanet).toMatchObject({
       position: 9,
       fields: planet.fields,
       temperature: planet.temperature,
@@ -1889,6 +2013,34 @@ describe("Veydrift backend", () => {
         targetPlanetId: "7"
       }
     });
+    expect(occupiedPlanet.publicState).toMatchObject({
+      resources: {
+        metal: "5064",
+        crystal: "4900",
+        deuterium: "4800"
+      },
+      queues: {
+        building: {
+          active: true,
+          kind: "building",
+          targetLevel: 2,
+          readyAt: "1770000060"
+        }
+      }
+    });
+    expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 0, level: 1 })
+    ]));
+    expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 0, count: 2 }),
+      expect.objectContaining({ id: 9, count: 5 })
+    ]));
+    expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 0, count: 3 })
+    ]));
+    expect(occupiedPlanet.publicState.research).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 0, level: 1 })
+    ]));
     expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
     expect(chainReader.rebuildCalls).toBe(1);
   });
@@ -2008,6 +2160,72 @@ describe("Veydrift backend", () => {
       }
     });
     expect(response.status).toBe(200);
+  });
+
+  test("serves accrued indexed wallet resources for settlement, planets, and infrastructure", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getWalletSettlement = async () => {
+      throw new Error("settlement should not call live RPC");
+    };
+    chainReader.getWalletPlanets = async () => {
+      throw new Error("planets should not call live RPC");
+    };
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("infrastructure should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm accrued index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(3n)
+      ],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const settlementResponse = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+    const settlementBody = await settlementResponse.json();
+    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
+    const planetsBody = await planetsResponse.json();
+    const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const infrastructureBody = await infrastructureResponse.json();
+
+    expect(settlementResponse.status).toBe(200);
+    expect(planetsResponse.status).toBe(200);
+    expect(infrastructureResponse.status).toBe(200);
+    expect(settlementBody.planet.resources.metal).toBe("5064");
+    expect(planetsBody.planets[0].resources.metal).toBe("5064");
+    expect(infrastructureBody.resources.metal).toBe("5064");
+    expect(infrastructureBody.raidableResources.metal).toBe("5064");
   });
 
   test("does not rebuild a cold planet index during wallet settlement requests", async () => {
@@ -2250,7 +2468,15 @@ describe("Veydrift backend", () => {
     expect(poweredBody.energyBalance).toEqual({
       produced: "110",
       required: "11",
-      scaleBps: "10000"
+      scaleBps: "10000",
+      sources: {
+        solarPlant: "0",
+        fusionReactor: "0",
+        fusionReactorDeuteriumConsumed: "0",
+        solarSatellites: "110",
+        solarSatelliteCount: 5,
+        solarSatelliteEnergy: "22"
+      }
     });
 
     indexer.applyLog({
@@ -2269,7 +2495,15 @@ describe("Veydrift backend", () => {
     expect(damagedBody.energyBalance).toEqual({
       produced: "44",
       required: "11",
-      scaleBps: "10000"
+      scaleBps: "10000",
+      sources: {
+        solarPlant: "0",
+        fusionReactor: "0",
+        fusionReactorDeuteriumConsumed: "0",
+        solarSatellites: "44",
+        solarSatelliteCount: 2,
+        solarSatelliteEnergy: "22"
+      }
     });
   });
 
@@ -2363,7 +2597,8 @@ describe("Veydrift backend", () => {
     expect(shipyard).toMatchObject({
       source: "contract-state-indexer",
       ships: expect.arrayContaining([
-        expect.objectContaining({ id: 3, count: 7 })
+        expect.objectContaining({ id: 3, count: 7 }),
+        expect.objectContaining({ id: 9, energyPerUnit: "22" })
       ])
     });
     expect(research).toMatchObject({
@@ -2628,53 +2863,37 @@ describe("Veydrift backend", () => {
     }));
   });
 
-  test("allows explicit live wallet reads to bypass indexed warm state", async () => {
-    const baseReader = new MockChainReader();
+  test("ignores client live-read requests for canonical warm indexed wallet state", async () => {
     const chainReader = new MockChainReader();
-    let queuesLiveReadCalled = false;
-    let infrastructureLiveReadCalled = false;
-    let shipyardLiveReadCalled = false;
-    let defenseLiveReadCalled = false;
-    let researchLiveReadCalled = false;
-    let moonLiveReadCalled = false;
-    let riftLiveReadCalled = false;
-    chainReader.getPlayerQueues = async (wallet: Address, planetId?: bigint) => {
-      queuesLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getPlayerQueues(wallet);
+    chainReader.getWalletSettlement = async () => {
+      throw new Error("client source=live must not bypass indexed settlement");
     };
-    chainReader.getInfrastructureState = async (wallet: Address, planetId?: bigint) => {
-      infrastructureLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getInfrastructureState(wallet);
+    chainReader.getWalletPlanets = async () => {
+      throw new Error("client source=live must not bypass indexed planets");
     };
-    chainReader.getShipyardState = async (wallet: Address, planetId?: bigint) => {
-      shipyardLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getShipyardState(wallet);
+    chainReader.getPlayerQueues = async () => {
+      throw new Error("client source=live must not bypass indexed queues");
     };
-    chainReader.getDefenseState = async (wallet: Address, planetId?: bigint) => {
-      defenseLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getDefenseState(wallet);
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("client source=live must not bypass indexed infrastructure");
     };
-    chainReader.getResearchState = async (wallet: Address, planetId?: bigint) => {
-      researchLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getResearchState(wallet);
+    chainReader.getShipyardState = async () => {
+      throw new Error("client source=live must not bypass indexed shipyard");
     };
-    chainReader.getMoonState = async (wallet: Address, planetId?: bigint) => {
-      moonLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getMoonState(wallet);
+    chainReader.getDefenseState = async () => {
+      throw new Error("client source=live must not bypass indexed defenses");
     };
-    chainReader.getRiftState = async (wallet: Address, planetId?: bigint) => {
-      riftLiveReadCalled = true;
-      expect(planetId).toBeUndefined();
-      return baseReader.getRiftState(wallet);
+    chainReader.getResearchState = async () => {
+      throw new Error("client source=live must not bypass indexed research");
+    };
+    chainReader.getMoonState = async () => {
+      throw new Error("client source=live must not bypass indexed moon");
+    };
+    chainReader.getRiftState = async () => {
+      throw new Error("client source=live must not bypass indexed rift");
     };
     chainReader.listSettledPlanetEvents = async () => {
-      throw new Error("explicit live reads should not rebuild the warm index");
+      throw new Error("client source=live should not rebuild the warm index");
     };
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     indexer.applyEvent({
@@ -2689,6 +2908,10 @@ describe("Veydrift backend", () => {
       indexer
     });
 
+    const settlementResponse = await handler(new Request(`http://localhost/wallet/${player}/settlement?source=live`));
+    const settlementBody = await settlementResponse.json();
+    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets?source=live`));
+    const planetsBody = await planetsResponse.json();
     const queuesResponse = await handler(new Request(`http://localhost/wallet/${player}/queues?source=live`));
     const queuesBody = await queuesResponse.json();
     const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure?source=live`));
@@ -2704,42 +2927,37 @@ describe("Veydrift backend", () => {
     const riftResponse = await handler(new Request(`http://localhost/wallet/${player}/rift?source=live`));
     const riftBody = await riftResponse.json();
 
+    expect(settlementResponse.status).toBe(200);
+    expect(settlementBody.homePlanetId).toBe(planet.planetId);
+    expect(planetsResponse.status).toBe(200);
+    expect(planetsBody.planets).toHaveLength(1);
     expect(queuesResponse.status).toBe(200);
-    expect(queuesResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(queuesLiveReadCalled).toBe(true);
-    expect(queuesBody.building).toMatchObject({
-      active: true,
-      kind: "building"
-    });
+    expect(queuesResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(queuesBody).toMatchObject({ source: "contract-state-indexer", building: null });
     expect(infrastructureResponse.status).toBe(200);
-    expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(infrastructureLiveReadCalled).toBe(true);
+    expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(infrastructureBody).toMatchObject({
+      source: "contract-state-indexer",
       infrastructureAvailable: true,
       resources: {
         metal: "5000"
       }
     });
     expect(shipyardResponse.status).toBe(200);
-    expect(shipyardResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(shipyardLiveReadCalled).toBe(true);
-    expect(shipyardBody.shipyardLevel).toBe(1);
+    expect(shipyardResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(shipyardBody).toMatchObject({ source: "contract-state-indexer", shipyardLevel: 0 });
     expect(defensesResponse.status).toBe(200);
-    expect(defensesResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(defenseLiveReadCalled).toBe(true);
-    expect(defensesBody.missileSiloLevel).toBe(2);
+    expect(defensesResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(defensesBody).toMatchObject({ source: "contract-state-indexer", missileSiloLevel: 0 });
     expect(researchResponse.status).toBe(200);
-    expect(researchResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(researchLiveReadCalled).toBe(true);
-    expect(researchBody.researchLabLevel).toBe(1);
+    expect(researchResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(researchBody).toMatchObject({ source: "contract-state-indexer", researchLabLevel: 0 });
     expect(moonResponse.status).toBe(200);
-    expect(moonResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(moonLiveReadCalled).toBe(true);
-    expect(moonBody.moon?.exists).toBe(true);
+    expect(moonResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(moonBody).toMatchObject({ source: "contract-state-indexer", moon: null });
     expect(riftResponse.status).toBe(200);
-    expect(riftResponse.headers.get("x-veydrift-index-state")).toBeNull();
-    expect(riftLiveReadCalled).toBe(true);
-    expect(riftBody.riftAvailable).toBe(true);
+    expect(riftResponse.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(riftBody).toMatchObject({ source: "contract-state-indexer", riftAvailable: true, unlocked: false });
   });
 
   test("serves indexed planet detail without live chain reads when warm", async () => {
@@ -2910,6 +3128,41 @@ describe("Veydrift backend", () => {
     });
     expect(body.source).toBe("contract-state-indexer");
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+  });
+
+  test("adds canonical alliance identity to highscore rows when available", async () => {
+    const chainReader = new class extends MockChainReader {
+      async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+        expect(wallets).toContain(player);
+        return new Map([
+          [player, {
+            allianceId: "3",
+            name: "Veydrift Union",
+            tag: "VDFT"
+          }]
+        ]);
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: {
+        ...configuredTestConfig,
+        allianceContractAddress: "0x4444444444444444444444444444444444444444"
+      },
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total[0].alliance).toMatchObject({
+      allianceId: "3",
+      name: "Veydrift Union",
+      tag: "VDFT"
+    });
   });
 
   test("serves empty highscore rankings as a successful payload", async () => {

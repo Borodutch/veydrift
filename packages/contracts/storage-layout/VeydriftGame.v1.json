@@ -251,6 +251,12 @@
       "offset": 0,
       "slot": "43",
       "type": "mapping(bytes32 => mapping(uint256 => uint256))"
+    },
+    {
+      "label": "_defenseQueueBacklogs",
+      "offset": 0,
+      "slot": "44",
+      "type": "mapping(uint256 => struct DefenseQueue[])"
     }
   ],
   "structs": {

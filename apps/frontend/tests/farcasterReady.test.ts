@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
+  detectFarcasterMiniApp,
+  hasMiniAppUrlHint,
   resetFarcasterReadyForTests,
   scheduleFarcasterReady,
   signalFarcasterReadyOnce,
@@ -57,5 +59,38 @@ describe("Farcaster Mini App ready lifecycle", () => {
     await Promise.resolve();
 
     expect(calls).toBe(1);
+  });
+
+  test("detects Mini App URL launch hints before probing the SDK", async () => {
+    expect(hasMiniAppUrlHint({ pathname: "/", search: "?miniApp=true" })).toBe(true);
+    expect(hasMiniAppUrlHint({ pathname: "/miniapp", search: "" })).toBe(true);
+    expect(hasMiniAppUrlHint({ pathname: "/", search: "" })).toBe(false);
+
+    await expect(detectFarcasterMiniApp({
+      isInMiniApp: () => {
+        throw new Error("should not probe when URL has the launch hint");
+      },
+      actions: {
+        ready: () => undefined,
+      },
+    }, { pathname: "/", search: "?miniApp=true" })).resolves.toBe(true);
+  });
+
+  test("falls back to bounded SDK Mini App detection", async () => {
+    await expect(detectFarcasterMiniApp({
+      isInMiniApp: async () => true,
+      actions: {
+        ready: () => undefined,
+      },
+    }, { pathname: "/", search: "" })).resolves.toBe(true);
+
+    await expect(detectFarcasterMiniApp({
+      isInMiniApp: async () => {
+        throw new Error("host unavailable");
+      },
+      actions: {
+        ready: () => undefined,
+      },
+    }, { pathname: "/", search: "" })).resolves.toBe(false);
   });
 });

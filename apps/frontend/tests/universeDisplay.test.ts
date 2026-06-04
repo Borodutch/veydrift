@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -7,13 +8,15 @@ import {
   planetImageForType,
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
-import { buildingCatalog, shipCatalog } from "../src/playableMvp";
+import { buildingCatalog, defenseCatalog, shipCatalog } from "../src/playableMvp";
 import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
   estimateGalaxyMissionPreview,
   PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
   formatAllianceLabel,
+  formatAttackBlockReason,
+  formatAttackRuleLabels,
   formatGalaxyAllianceIdentityLabel,
   formatGalaxyCommanderLabel,
   formatMoonChanceLabel,
@@ -22,11 +25,18 @@ import {
   formatGalaxyOccupancySummary,
   galaxyMissionFuelCost,
   galaxyMissionTravelSeconds,
-  planetsForFailedGalaxyLoad
+  planetsForFailedGalaxyLoad,
+  shouldShowGalaxyInitialLoader,
+  shouldShowGalaxyRows
 } from "../src/components/GalaxyView";
 import {
   planetRecordStatusLabel,
   publicCommanderRows,
+  publicQueueRows,
+  publicPlanetDataRows,
+  publicProductionRows,
+  publicResourceRows,
+  publicStateRows,
   publicSignalRows
 } from "../src/components/PlanetDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
@@ -46,6 +56,37 @@ const PLANET_TYPES = [
   "metal-planetoid",
   "crystal-violet",
   "deuterium-blue",
+] as const;
+
+const APPROVED_BUILDING_ASSETS = [
+  {
+    key: "fusionReactor",
+    label: "Fusion Reactor",
+    sha256: "e95cada20cecb0e8d08b2684cc4cb3e5e6174a9c6a181e197dc7671fd47ebf02",
+  },
+  {
+    key: "missileSilo",
+    label: "Missile Silo",
+    sha256: "59599920da43538da6aac9dd758e58ec70ab340e4a111dcfd991297517c8b770",
+  },
+  {
+    key: "interdimensionalRiftStabilizer",
+    label: "Interdimensional Rift Stabilizer",
+    sha256: "ba1c702dc91797791f810c0dc1a7b6db2b5ad8a5034ede515a1dad16805582b9",
+  },
+] as const;
+
+const APPROVED_MISSILE_DEFENSE_ASSETS = [
+  {
+    key: "antiBallisticMissile",
+    label: "Anti-Ballistic Missile",
+    sha256: "30038cef31c6f50390af3303bd6d7f59005cde9100fe4e0d7e2bbbbe393c1d89",
+  },
+  {
+    key: "interplanetaryMissile",
+    label: "Interplanetary Missile",
+    sha256: "7f507427bb6f232147e06346db6ab155c1d6629666561f977c4f762f7128ccd4",
+  },
 ] as const;
 
 describe("tester universe display data", () => {
@@ -91,7 +132,7 @@ describe("tester universe display data", () => {
     expect(withHome.length).toBe(planets.length + 1);
   });
 
-  test("real indexed occupancy is preserved as an owner address only", () => {
+  test("public occupancy is preserved as an owner address only", () => {
     const planets = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
@@ -126,7 +167,83 @@ describe("tester universe display data", () => {
     });
   });
 
-  test("real indexed occupancy preserves owner alliance intel when the API provides it", () => {
+  test("public planet detail preserves public state rows and queue labels", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          fields: 211,
+          galaxy: 2,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          occupiedBy: {
+            owner: "0x2222222222222222222222222222222222222222",
+            planetId: "7",
+          },
+          publicState: {
+            resources: {
+              metal: "5000",
+              crystal: "4900",
+              deuterium: "4800",
+            },
+            buildings: [{ id: 0, level: 12 }],
+            fleet: [
+              { id: 0, count: 3 },
+              { id: 9, count: 5 },
+            ],
+            defenses: [{ id: 0, count: 7 }],
+            research: [{ id: 0, level: 4 }],
+            queues: {
+              building: {
+                active: true,
+                itemId: 0,
+                kind: "building",
+                targetLevel: 13,
+                readyAt: "1770000060",
+              },
+            },
+          },
+          position: 8,
+          system: 44,
+          temperature: -8,
+        },
+      ],
+    });
+
+    expect(planet.publicState?.resources).toEqual({
+      metal: "5000",
+      crystal: "4900",
+      deuterium: "4800",
+    });
+    expect(publicResourceRows(planet.publicState?.resources)?.map((row) => `${row.label}: ${row.value}`)).toEqual([
+      "Metal: 5,000",
+      "Crystal: 4,900",
+      "Deuterium: 4,800",
+    ]);
+    expect(publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")).toContainEqual({
+      label: "Metal Mine",
+      value: "Level 12",
+    });
+    expect(publicStateRows(planet.publicState?.fleet, shipCatalog, "count")).toContainEqual({
+      label: "Small Cargo",
+      value: "3",
+    });
+    expect(publicStateRows(planet.publicState?.fleet, shipCatalog, "count")).toContainEqual({
+      label: "Solar Satellite",
+      value: "5",
+    });
+    expect(publicQueueRows(planet)).toContainEqual({
+      label: "Building",
+      value: "Metal Mine Level 13",
+      tone: "accent",
+    });
+
+    expect(publicResourceRows(undefined)).toBeNull();
+  });
+
+  test("public occupancy preserves owner alliance intel when the API provides it", () => {
     const [planet] = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
@@ -223,6 +340,29 @@ describe("tester universe display data", () => {
     expect(formatGalaxyAllianceIdentityLabel(planet?.alliance ?? null)).toBe("No alliance");
   });
 
+  test("galaxy attack intel uses clear target and loot copy", () => {
+    const sameAllianceStatus = {
+      allowed: false,
+      blockedReason: "same_alliance" as const,
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+      defenderHonorStatus: "honorable" as const,
+      plunderBps: 7500,
+      relation: "weaker" as const,
+    };
+
+    expect(formatAttackBlockReason(sameAllianceStatus)).toBe("Attack blocked: target belongs to your alliance.");
+    expect(formatAttackRuleLabels(sameAllianceStatus)).toEqual([
+      "Weaker target",
+      "Honor target",
+      "Loot: 75%",
+    ]);
+    expect(formatAttackRuleLabels(sameAllianceStatus).join(" ")).not.toMatch(/\bHonorable\b|plunder/i);
+    expect(formatAttackBlockReason({
+      allowed: false,
+      blockedReason: "same_alliance",
+    })).toBe("Attack blocked: target belongs to your alliance.");
+  });
+
   test("galaxy occupancy summary avoids implementation wording", () => {
     const labels = [
       formatGalaxyOccupancySummary(0),
@@ -239,7 +379,27 @@ describe("tester universe display data", () => {
     expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
   });
 
-  test("planet detail public records replace indexed-universe jargon", () => {
+  test("keeps current galaxy system rows visible during background refreshes", () => {
+    expect(shouldShowGalaxyInitialLoader({
+      hasCurrentSystemData: true,
+      loading: true,
+    })).toBe(false);
+    expect(shouldShowGalaxyRows({
+      hasCurrentSystemData: true,
+    })).toBe(true);
+  });
+
+  test("uses the full galaxy loader only before current-system rows exist", () => {
+    expect(shouldShowGalaxyInitialLoader({
+      hasCurrentSystemData: false,
+      loading: true,
+    })).toBe(true);
+    expect(shouldShowGalaxyRows({
+      hasCurrentSystemData: false,
+    })).toBe(false);
+  });
+
+  test("planet detail public records show useful public planet data", () => {
     const [planet] = planetsFromSystemResponse({
       galaxy: 2,
       system: 44,
@@ -279,13 +439,28 @@ describe("tester universe display data", () => {
       "Player: 0x2222...2222",
       "Planet ID: #7",
     ]);
-    expect(publicSignalRows(planet).map((row) => `${row.label}: ${row.value}`)).toContain("Debris: 40,000 metal / 15,000 crystal");
-    expect(publicSignalRows(planet).map((row) => `${row.label}: ${row.value}`)).toContain("Moon signal: Moon chance 15% pending");
+    expect(publicPlanetDataRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual([
+      "Coordinates: [2:44:8]",
+      "Type: Cold Tundra",
+      "Fields: 211",
+      "Diameter: 15,192 km",
+      "Temperature: -28°C to 12°C",
+      "Debris: 40,000 metal / 15,000 crystal",
+      "Moon signal: Moon chance 15% pending",
+    ]);
+    expect(publicSignalRows(planet)).toEqual(publicPlanetDataRows(planet));
+    expect(publicProductionRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual([
+      "Metal: 100%",
+      "Crystal: 100%",
+      "Deuterium: 100%",
+      "Solar satellite: 25 energy",
+    ]);
 
     const copy = [
       planetRecordStatusLabel(planet, "api", false),
       ...publicCommanderRows(planet, false).map((row) => row.value),
-      ...publicSignalRows(planet).map((row) => row.value),
+      ...publicPlanetDataRows(planet).map((row) => row.value),
+      ...publicProductionRows(planet).map((row) => row.value),
     ].join(" ");
     expect(copy).not.toMatch(/\b(indexed|indexer|backend|universe data|OGame|ogame)\b/i);
   });
@@ -589,6 +764,49 @@ describe("tester universe display data", () => {
     );
   });
 
+  test("approved building assets exist with responsive variants", async () => {
+    for (const approvedAsset of APPROVED_BUILDING_ASSETS) {
+      const buildingAsset = buildingCatalog.find((building) => building.key === approvedAsset.key)?.asset;
+
+      expect(buildingAsset, approvedAsset.label).toBeDefined();
+      expect(buildingAsset, approvedAsset.label).toContain("/assets/game/style-pass/generated/buildings/");
+      expect(existsSync(join(PUBLIC_DIR, buildingAsset!.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
+      expect(await assetHash(buildingAsset!), approvedAsset.label).toBe(approvedAsset.sha256);
+
+      for (const width of VARIANT_WIDTHS) {
+        const variant = buildingAsset!.replace("/assets/game/", `/assets/game/sizes/${width}/`);
+        expect(getSrcSet(buildingAsset!), approvedAsset.label).toContain(`${variant} ${width}w`);
+        expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
+      }
+    }
+  });
+
+  test("approved missile defense assets exist with responsive variants", async () => {
+    for (const approvedAsset of APPROVED_MISSILE_DEFENSE_ASSETS) {
+      const defenseAsset = defenseCatalog.find((defense) => defense.key === approvedAsset.key)?.asset;
+
+      expect(defenseAsset, approvedAsset.label).toBeDefined();
+      expect(defenseAsset, approvedAsset.label).toContain("/assets/game/style-pass/generated/defenses/");
+      expect(existsSync(join(PUBLIC_DIR, defenseAsset!.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
+      expect(await assetHash(defenseAsset!), approvedAsset.label).toBe(approvedAsset.sha256);
+
+      for (const width of VARIANT_WIDTHS) {
+        const variant = defenseAsset!.replace("/assets/game/", `/assets/game/sizes/${width}/`);
+        expect(getSrcSet(defenseAsset!), approvedAsset.label).toContain(`${variant} ${width}w`);
+        expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/"))), approvedAsset.label).toBe(true);
+      }
+    }
+  });
+
+  test("Fusion Reactor does not reuse Solar Plant artwork", async () => {
+    const solarPlantAsset = buildingCatalog.find((building) => building.key === "solarPlant")?.asset;
+    const fusionReactorAsset = buildingCatalog.find((building) => building.key === "fusionReactor")?.asset;
+
+    expect(solarPlantAsset).toBeDefined();
+    expect(fusionReactorAsset).toBeDefined();
+    expect(await assetHash(solarPlantAsset!)).not.toBe(await assetHash(fusionReactorAsset!));
+  });
+
   test("galaxy planet thumbnails use bundled style-pass assets and responsive variants", () => {
     for (const type of PLANET_TYPES) {
       const image = planetImageForType(type);
@@ -611,3 +829,8 @@ describe("tester universe display data", () => {
     expect(isImageReady(null)).toBe(false);
   });
 });
+
+async function assetHash(asset: string): Promise<string> {
+  const bytes = await Bun.file(join(PUBLIC_DIR, asset.replace("/assets/", "assets/"))).arrayBuffer();
+  return createHash("sha256").update(Buffer.from(bytes)).digest("hex");
+}

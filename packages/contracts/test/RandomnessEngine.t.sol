@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 
 contract RandomnessConsumer {
@@ -229,6 +230,32 @@ contract RandomnessEngineTest is Test {
 
         consumer.resolve(purpose);
         assertEq(consumer.resolvedWord(), 987);
+    }
+
+    function testProxyInitializationAndOwnerUpgradeGate() public {
+        RandomnessEngine proxied = RandomnessEngine(
+            address(
+                new ERC1967Proxy(
+                    address(new RandomnessEngine(owner, fulfiller)),
+                    abi.encodeCall(RandomnessEngine.initialize, (owner, fulfiller))
+                )
+            )
+        );
+
+        assertEq(proxied.owner(), owner);
+        assertEq(proxied.fulfiller(), fulfiller);
+        assertEq(proxied.nextRequestId(), 1);
+        assertTrue(proxied.precommitRequired());
+
+        RandomnessEngine nextImplementation = new RandomnessEngine(owner, fulfiller);
+        vm.prank(attacker);
+        vm.expectRevert();
+        proxied.upgradeToAndCall(address(nextImplementation), "");
+
+        vm.prank(owner);
+        proxied.upgradeToAndCall(address(nextImplementation), "");
+        assertEq(proxied.owner(), owner);
+        assertEq(proxied.fulfiller(), fulfiller);
     }
 
     function _commitNextWord(uint256 randomWord) internal returns (bytes32 commitment) {

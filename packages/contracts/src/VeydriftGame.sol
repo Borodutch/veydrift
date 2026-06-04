@@ -377,6 +377,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         return defenseQueues[planetId];
     }
 
+    function defenseQueueBacklog(uint256 planetId) external view returns (DefenseQueue[] memory) {
+        return _defenseQueueBacklogs[planetId];
+    }
+
     function shipQueue(uint256 planetId) external view returns (ShipQueue memory) {
         return shipQueues[planetId];
     }
@@ -767,6 +771,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _spend(uint256 planetId, Resources memory cost) private {
+        _settleResources(planetId);
         Resources storage available = _planets[planetId].resources;
         if (
             available.metal < cost.metal || available.crystal < cost.crystal

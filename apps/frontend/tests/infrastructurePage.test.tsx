@@ -6,7 +6,9 @@ import {
   BuildingLevelInfoButton,
   BuildingLevelInfoModal,
   InfrastructureLoadErrorPanel,
+  InfrastructureRefreshErrorPanel,
   detailEffectRows,
+  shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
 import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
 import { buildingEffectMetrics, createInitialPlayableState } from "../src/playableMvp";
@@ -22,6 +24,29 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Infrastructure request failed with 503");
     expect(text).toContain("Levels, costs, production effects, storage caps, and upgrade values are unavailable");
     expect(text).not.toMatch(/\bLevel 0\b|Upgrade cost|Production capacity|Ready for Level/);
+  });
+
+  test("keeps loaded infrastructure values visible when a background refresh fails", () => {
+    expect(shouldShowInfrastructureInitialLoadError({
+      hasLoadedInfrastructureState: true,
+      loadError: "Infrastructure request failed with 503",
+    })).toBe(false);
+
+    const panel = InfrastructureRefreshErrorPanel({
+      reason: "Infrastructure request failed with 503",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("Infrastructure refresh failed");
+    expect(text).toContain("Showing the last loaded building data");
+    expect(text).toContain("Infrastructure request failed with 503");
+  });
+
+  test("keeps initial infrastructure load failures in the full load-error state", () => {
+    expect(shouldShowInfrastructureInitialLoadError({
+      hasLoadedInfrastructureState: false,
+      loadError: "Infrastructure request failed with 503",
+    })).toBe(true);
   });
 
   test("renders a compact level info button with the building label", () => {
@@ -61,6 +86,33 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("2m 41s");
     expect(text).toContain("72 Metal/h");
     expect(text).toContain("24 required");
+  });
+
+  test("keeps double-digit level labels separate from current and next badges", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 10,
+      },
+    };
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Metal Mine",
+      currentLevel: 10,
+      rows: buildingLevelInfoRows(state.buildings, "metalMine", undefined, 12),
+      onClose: () => undefined,
+    });
+    const cells = elementNodes(modal).filter((node) => node.type === "td");
+    const level10Cell = cells.find((cell) => visibleText(cell) === "Level 10");
+    const level11Cell = cells.find((cell) => visibleText(cell) === "Level 11");
+    const currentPill = elementNodes(modal).find((node) => node.type === "span" && visibleText(node) === "Current");
+    const nextPill = elementNodes(modal).find((node) => node.type === "span" && visibleText(node) === "Next");
+
+    expect(visibleText(modal)).toContain("Status");
+    expect(level10Cell?.props.className).toContain("whitespace-nowrap");
+    expect(level11Cell?.props.className).toContain("whitespace-nowrap");
+    expect(currentPill?.props.className).toContain("whitespace-nowrap");
+    expect(nextPill?.props.className).toContain("whitespace-nowrap");
   });
 
   test("renders Solar Plant modal rows with energy output", () => {
@@ -388,4 +440,22 @@ function textParts(node: ComponentChildren): string[] {
   }
 
   return textParts(vnode.props?.children);
+}
+
+function elementNodes(node: ComponentChildren): VNode[] {
+  if (node === null || node === undefined || typeof node === "boolean" || typeof node === "string" || typeof node === "number") {
+    return [];
+  }
+
+  if (Array.isArray(node)) {
+    return node.flatMap(elementNodes);
+  }
+
+  const vnode = node as VNode;
+  if (typeof vnode.type === "function" && ["LevelInfoCell", "LevelPill"].includes(vnode.type.name)) {
+    const Component = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
+    return [vnode, ...elementNodes(Component(vnode.props ?? {}))];
+  }
+
+  return [vnode, ...elementNodes(vnode.props?.children)];
 }

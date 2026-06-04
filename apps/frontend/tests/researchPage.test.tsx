@@ -6,10 +6,14 @@ import {
   formatResearchRequirements,
   getResearchRequirementStates,
   ResearchLoadErrorPanel,
+  researchRefreshErrorLabel,
+  researchActionStatus,
+  researchCompletionButtonState,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
 import { RequirementFlairs } from "../src/components/RequirementFlairs";
 import { createInitialPlayableState } from "../src/playableMvp";
+import type { ChainResearchState } from "../src/walletFlow";
 
 describe("Research page load-error display", () => {
   test("formats cumulative costs and requirements with commas", () => {
@@ -43,6 +47,17 @@ describe("Research page load-error display", () => {
       researchState: researchState(),
       useLocalStateFallback: false,
     })).toBe(false);
+  });
+
+  test("labels refresh errors as stale-data notices when research state remains loaded", () => {
+    expect(researchRefreshErrorLabel({
+      error: "Research request failed with 503",
+      researchState: researchState(),
+    })).toBe("Refreshing research state: Research request failed with 503");
+    expect(researchRefreshErrorLabel({
+      error: "Research request failed with 503",
+      researchState: null,
+    })).toBeUndefined();
   });
 
   test("keeps disconnected local research fallback explicit", () => {
@@ -124,6 +139,249 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Time remaining");
     expect(text).toContain("Ready at");
   });
+
+  test("enables research completion from the app clock once the queue is ready", () => {
+    const queue = {
+      kind: "research",
+      key: "energy",
+      label: "Energy Technology",
+      readyAt: 1_700_000_120_000,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 1,
+    } as const;
+
+    expect(researchCompletionButtonState({
+      actionPending: false,
+      canTransact: true,
+      now: 1_700_000_119_000,
+      queue,
+    })).toMatchObject({
+      disabled: true,
+      label: expect.stringContaining("Ready in 1s"),
+    });
+
+    expect(researchCompletionButtonState({
+      actionPending: false,
+      canTransact: true,
+      now: 1_700_000_120_000,
+      queue,
+    })).toEqual({
+      disabled: false,
+      label: "Complete research",
+    });
+  });
+
+  test("keeps selected queued research disabled before the authoritative ready time", () => {
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_119_000,
+      researchState: researchState({
+        technologyLevels: { "0": 1 },
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000120",
+          startedAt: "1700000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+      state: researchViewState({
+        readyAt: 1_700_000_120_000,
+      }),
+    });
+
+    expect(status).toMatchObject({
+      actionLabel: "In progress",
+      badge: "In progress",
+      completionReady: false,
+      disabled: true,
+      reason: "Research to Level 2 in progress",
+      tileStatus: "Active",
+    });
+  });
+
+  test("lets selected queued research complete once authoritative ready time has passed", () => {
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_120_000,
+      researchState: researchState({
+        technologyLevels: { "0": 1 },
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000120",
+          startedAt: "1700000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+      state: researchViewState({
+        readyAt: 1_700_000_120_000,
+      }),
+    });
+
+    expect(status).toMatchObject({
+      actionLabel: "Complete research",
+      badge: "Ready",
+      completionReady: true,
+      disabled: false,
+      reason: "Ready to complete Level 2",
+      targetLevel: 2,
+      tileStatus: "Ready",
+    });
+  });
+
+  test("reports the exact single resource missing for research actions", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 707, crystal: 2_169, deuterium: 1_139 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "707", crystal: "2169", deuterium: "1139" },
+      }),
+      state,
+    });
+
+    expect(status).toMatchObject({
+      disabled: true,
+      reason: "Requires 893 more Metal",
+    });
+  });
+
+  test("shows time to afford for research actions when production rates are available", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 700, crystal: 2_000, deuterium: 1_000 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 2_300, deuterium: 1_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      productionRates: { metal: 300, crystal: 600, deuterium: 0 },
+      researchState: researchState({
+        resources: { metal: "700", crystal: "2000", deuterium: "1000" },
+      }),
+      state,
+    });
+
+    expect(status).toMatchObject({
+      disabled: true,
+      reason: "Requires 900 more Metal, 300 more Crystal (affordable in 3h)",
+    });
+  });
+
+  test("uses spendable accrued resources for research affordability and ETA", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 700, crystal: 2_000, deuterium: 1_000 },
+    };
+
+    expect(researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 900, crystal: 2_100, deuterium: 1_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "700", crystal: "2000", deuterium: "1000" },
+      }),
+      spendableResources: { metal: 900, crystal: 2_100, deuterium: 1_000 },
+      state,
+    })).toMatchObject({
+      disabled: false,
+      reason: "Ready for Level 1",
+    });
+
+    expect(researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 2_300, deuterium: 1_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      productionRates: { metal: 300, crystal: 600, deuterium: 0 },
+      researchState: researchState({
+        resources: { metal: "700", crystal: "2000", deuterium: "1000" },
+      }),
+      spendableResources: { metal: 1_000, crystal: 2_250, deuterium: 1_000 },
+      state,
+    })).toMatchObject({
+      disabled: true,
+      reason: "Requires 600 more Metal, 50 more Crystal (affordable in 2h)",
+    });
+  });
+
+  test("reports every missing resource for research actions", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 707, crystal: 2_169, deuterium: 1_139 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 3_000, deuterium: 2_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "707", crystal: "2169", deuterium: "1139" },
+      }),
+      state,
+    });
+
+    expect(status).toMatchObject({
+      disabled: true,
+      reason: "Requires 893 more Metal, 831 more Crystal, 861 more Deuterium",
+    });
+  });
 });
 
 function visibleText(node: ComponentChildren): string {
@@ -144,10 +402,16 @@ function textParts(node: ComponentChildren): string[] {
   }
 
   const vnode = node as VNode;
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
+      return [];
+    }
+    return textParts(vnode.type(vnode.props));
+  }
   return textParts(vnode.props?.children);
 }
 
-function researchState() {
+function researchState(overrides: Partial<ChainResearchState> = {}): ChainResearchState {
   return {
     wallet: "0x1111111111111111111111111111111111111111",
     homePlanetId: "7",
@@ -157,5 +421,33 @@ function researchState() {
     technologyLevels: {},
     technologies: [],
     queue: null,
+    ...overrides,
+  };
+}
+
+function researchViewState({
+  readyAt,
+}: {
+  readyAt: number;
+}) {
+  const state = createInitialPlayableState(10_000);
+  return {
+    ...state,
+    buildings: {
+      ...state.buildings,
+      researchLab: 1,
+    },
+    research: {
+      ...state.research,
+      energy: 1,
+    },
+    researchQueue: {
+      kind: "research",
+      key: "energy",
+      label: "Energy Technology",
+      readyAt,
+      startedAt: 1_700_000_000_000,
+      targetLevel: 2,
+    },
   };
 }

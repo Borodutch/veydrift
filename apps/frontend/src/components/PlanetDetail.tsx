@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Planet, Coordinates } from "../types";
+import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
+import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
@@ -16,7 +17,7 @@ interface Props {
   onNavigateSystem: (galaxy: number, system: number) => void;
 }
 
-type PlanetRecordRow = {
+export type PlanetRecordRow = {
   label: string;
   value: string;
   tone?: "default" | "accent" | "muted";
@@ -200,45 +201,55 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               </div>
             </div>
 
-            {/* Public signals */}
+            {/* Public planet data */}
             <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Public Signals
+                Public Planet Data
               </h3>
-              <PublicRecordRows rows={publicSignalRows(planet)} columns />
+              <PublicRecordRows rows={publicPlanetDataRows(planet)} columns />
             </div>
 
-            {/* Resources */}
+            {/* Production modifiers */}
             <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Base Resources
+                Production Modifiers
               </h3>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <ResourceBar
-                  label="Metal"
-                  value={planet.resources.metal}
-                  max={300}
-                  color="bg-slate-400"
-                />
-                <ResourceBar
-                  label="Crystal"
-                  value={planet.resources.crystal}
-                  max={300}
-                  color="bg-signal"
-                />
-                <ResourceBar
-                  label="Deuterium"
-                  value={planet.resources.deuterium}
-                  max={250}
-                  color="bg-blue-400"
-                />
-                <ResourceBar
-                  label="Energy"
-                  value={planet.resources.energy}
-                  max={100}
-                  color="bg-ember"
-                />
+                {publicProductionRows(planet).map((row) => (
+                  <ProductionMetric key={row.label} {...row} />
+                ))}
               </div>
+            </div>
+
+            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Public Resources
+              </h3>
+              <ResourceBars resources={planet.publicState?.resources} />
+            </div>
+
+            <PublicStatePanel
+              title="Buildings"
+              rows={publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")}
+            />
+            <PublicStatePanel
+              title="Fleet"
+              rows={publicStateRows(planet.publicState?.fleet, shipCatalog, "count")}
+            />
+            <PublicStatePanel
+              title="Defenses"
+              rows={publicStateRows(planet.publicState?.defenses, defenseCatalog, "count")}
+            />
+            <PublicStatePanel
+              title="Research"
+              rows={publicStateRows(planet.publicState?.research, researchCatalog, "level")}
+            />
+
+            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Active Public Queues
+              </h3>
+              <PublicRecordRows rows={publicQueueRows(planet)} columns />
             </div>
           </div>
 
@@ -292,14 +303,111 @@ export function publicCommanderRows(planet: Planet, isHome: boolean): PlanetReco
   ];
 }
 
-export function publicSignalRows(planet: Planet): PlanetRecordRow[] {
+export function publicPlanetDataRows(planet: Planet): PlanetRecordRow[] {
   return [
     { label: "Coordinates", value: `[${planet.galaxy}:${planet.system}:${planet.position}]` },
     { label: "Type", value: formatPlanetType(planet.type) },
     { label: "Fields", value: planet.fields.toLocaleString() },
+    { label: "Diameter", value: `${planet.diameter.toLocaleString()} km` },
+    { label: "Temperature", value: `${planet.temperature.min}°C to ${planet.temperature.max}°C` },
     { label: "Debris", value: debrisFieldLabel(planet), tone: planet.debrisField ? "accent" : "muted" },
     { label: "Moon signal", value: moonSignalLabel(planet), tone: planet.moonChance || planet.hasMoon ? "accent" : "muted" },
   ];
+}
+
+export const publicSignalRows = publicPlanetDataRows;
+
+type ProductionMetricRow = {
+  label: string;
+  value: string;
+  fillPercent: number;
+  color: string;
+};
+
+export function publicProductionRows(planet: Planet): ProductionMetricRow[] {
+  return [
+    {
+      label: "Metal",
+      value: formatProductionMultiplier(planet.resources.metal),
+      fillPercent: productionFillPercent(planet.resources.metal),
+      color: "bg-slate-400",
+    },
+    {
+      label: "Crystal",
+      value: formatProductionMultiplier(planet.resources.crystal),
+      fillPercent: productionFillPercent(planet.resources.crystal),
+      color: "bg-signal",
+    },
+    {
+      label: "Deuterium",
+      value: formatProductionMultiplier(planet.resources.deuterium),
+      fillPercent: productionFillPercent(planet.resources.deuterium),
+      color: "bg-blue-400",
+    },
+    {
+      label: "Solar satellite",
+      value: formatSolarSatelliteEnergy(planet.temperature.max),
+      fillPercent: solarSatelliteFillPercent(planet.temperature.max),
+      color: "bg-ember",
+    },
+  ];
+}
+
+export function publicResourceRows(resources: PublicPlanetState["resources"] | undefined): ProductionMetricRow[] | null {
+  if (!resources) return null;
+
+  const values = {
+    metal: publicResourceValue(resources.metal),
+    crystal: publicResourceValue(resources.crystal),
+    deuterium: publicResourceValue(resources.deuterium),
+  };
+  const max = Math.max(1, values.metal, values.crystal, values.deuterium);
+
+  return [
+    {
+      label: "Metal",
+      value: values.metal.toLocaleString(),
+      fillPercent: values.metal / max * 100,
+      color: "bg-slate-400",
+    },
+    {
+      label: "Crystal",
+      value: values.crystal.toLocaleString(),
+      fillPercent: values.crystal / max * 100,
+      color: "bg-signal",
+    },
+    {
+      label: "Deuterium",
+      value: values.deuterium.toLocaleString(),
+      fillPercent: values.deuterium / max * 100,
+      color: "bg-blue-400",
+    },
+  ];
+}
+
+function publicResourceValue(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function formatProductionMultiplier(resourceIndex: number): string {
+  return `${(resourceIndex / 2).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+}
+
+function productionFillPercent(resourceIndex: number): number {
+  return Math.min(100, Math.max(0, resourceIndex / 2));
+}
+
+function formatSolarSatelliteEnergy(maxTemperature: number): string {
+  return `${solarSatelliteEnergy(maxTemperature).toLocaleString()} energy`;
+}
+
+function solarSatelliteEnergy(maxTemperature: number): number {
+  return Math.max(0, Math.floor((maxTemperature + 140) / 6));
+}
+
+function solarSatelliteFillPercent(maxTemperature: number): number {
+  return Math.min(100, Math.max(0, solarSatelliteEnergy(maxTemperature) / 50 * 100));
 }
 
 function debrisFieldLabel(planet: Planet): string {
@@ -351,6 +459,95 @@ function PublicRecordRows({
   );
 }
 
+function ResourceBars({
+  resources,
+}: {
+  resources: PublicPlanetState["resources"] | undefined;
+}) {
+  const rows = publicResourceRows(resources);
+  if (!rows) {
+    return (
+      <PublicRecordRows rows={[{ label: "Resources", value: "Public resource state unavailable", tone: "muted" }]} />
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {rows.map((row) => (
+        <ProductionMetric key={row.label} {...row} />
+      ))}
+    </div>
+  );
+}
+
+function PublicStatePanel({ rows, title }: { rows: PlanetRecordRow[]; title: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        {title}
+      </h3>
+      <PublicRecordRows rows={rows.length > 0 ? rows : [{ label: "Public records", value: "No public entries", tone: "muted" }]} />
+    </div>
+  );
+}
+
+export function publicStateRows(
+  rows: Array<{ id: number; level?: number; count?: number }> | null | undefined,
+  catalog: readonly { id?: number; label: string }[],
+  valueKind: "level" | "count"
+): PlanetRecordRow[] {
+  return (rows ?? [])
+    .map((row) => {
+      const value = valueKind === "level" ? row.level ?? 0 : row.count ?? 0;
+      const catalogItem = catalog.find((item, index) => (item.id ?? index) === row.id);
+      return {
+        label: catalogItem?.label ?? `ID ${row.id}`,
+        value,
+      };
+    })
+    .filter((row) => row.value > 0)
+    .map((row) => ({
+      label: row.label,
+      value: valueKind === "level" ? `Level ${row.value}` : row.value.toLocaleString(),
+    }));
+}
+
+export function publicQueueRows(planet: Planet): PlanetRecordRow[] {
+  const queues = planet.publicState?.queues;
+  if (!queues) return [{ label: "Queues", value: "Public queue data unavailable", tone: "muted" }];
+
+  const rows: PlanetRecordRow[] = [
+    queueRow("Building", queues.building, buildingCatalog, "Level"),
+    queueRow("Defense", queues.defense, defenseCatalog, "x"),
+    queueRow("Shipyard", queues.ship, shipCatalog, "x"),
+    queueRow("Research", queues.research, researchCatalog, "Level"),
+  ];
+
+  return rows.some((row) => row.tone === "accent")
+    ? rows
+    : [{ label: "Queues", value: "No active public queues", tone: "muted" }];
+}
+
+function queueRow(
+  label: string,
+  queue: PublicQueueState | null | undefined,
+  catalog: readonly { id?: number; label: string }[],
+  suffix: "Level" | "x"
+): PlanetRecordRow {
+  if (!queue?.active) return { label, value: "Idle", tone: "muted" };
+  const item = queue.itemId === undefined
+    ? undefined
+    : catalog.find((candidate, index) => (candidate.id ?? index) === queue.itemId);
+  const quantity = suffix === "Level"
+    ? queue.targetLevel ? ` ${suffix} ${queue.targetLevel}` : ""
+    : queue.quantity ? ` ${suffix}${queue.quantity}` : "";
+  return {
+    label,
+    value: `${item?.label ?? queue.kind ?? "Queue"}${quantity}`,
+    tone: "accent",
+  };
+}
+
 function recordToneClass(tone: PlanetRecordRow["tone"]): string {
   if (tone === "accent") return "text-cyan-100";
   if (tone === "muted") return "text-slate-500";
@@ -366,18 +563,17 @@ function sameCoordinates(homeCoords: Coordinates | undefined, planet: Coordinate
   );
 }
 
-function ResourceBar({
+function ProductionMetric({
   label,
   value,
-  max,
+  fillPercent,
   color,
 }: {
   label: string;
-  value: number;
-  max: number;
+  value: string;
+  fillPercent: number;
   color: string;
 }) {
-  const pct = Math.min(100, Math.max(0, (value / max) * 100));
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
@@ -387,7 +583,7 @@ function ResourceBar({
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
         <div
           className={`h-full rounded-full ${color}`}
-          style={{ width: `${pct}%` }}
+          style={{ width: `${fillPercent}%` }}
         />
       </div>
     </div>
