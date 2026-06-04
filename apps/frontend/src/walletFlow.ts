@@ -1716,30 +1716,6 @@ export async function sendCreateColonyTransaction(
   });
 }
 
-export async function waitForReceipt(
-  provider: Eip1193Provider,
-  txHash: string,
-  maxAttempts = 40,
-  intervalMs = 3_000
-): Promise<unknown> {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const receipt = await provider.request<unknown>({
-      method: "eth_getTransactionReceipt",
-      params: [
-        txHash
-      ]
-    });
-
-    if (receipt) {
-      return receipt;
-    }
-
-    await delay(intervalMs);
-  }
-
-  throw new Error("Timed out waiting for settlement transaction confirmation.");
-}
-
 export function planetFromTransaction(account: string, txHash: string): PlanetSummary {
   return {
     label: `Settled by ${shortAddress(account)}`,
