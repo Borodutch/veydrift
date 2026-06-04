@@ -771,7 +771,7 @@ describe("Playable MVP app display helpers", () => {
       isBuildingReadyToFinish: true,
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
-    })).toBeUndefined();
+    })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
   test("keeps ready indexed infrastructure paused during backend reconciliation", () => {
