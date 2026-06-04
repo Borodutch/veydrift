@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {
+    OwnableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
@@ -30,7 +34,7 @@ interface IVeydriftRandomnessEngine {
 }
 
 /// @notice Moon state and moon-only Veydrift structures kept outside VeydriftGame's size-bound core.
-contract VeydriftMoonSystem {
+contract VeydriftMoonSystem is OwnableUpgradeable, UUPSUpgradeable {
     using SafeCast for uint256;
 
     uint16 public constant MAX_LEVEL = 50;
@@ -98,12 +102,11 @@ contract VeydriftMoonSystem {
         uint64 finalizedAt;
     }
 
-    IVeydriftMoonGame public immutable game;
-    IVeydriftRandomnessEngine public immutable randomness;
-    address public owner;
+    IVeydriftMoonGame public game;
+    IVeydriftRandomnessEngine public randomness;
     address public moonChanceReporter;
-    uint256 public nextMoonChanceId = 1;
-    uint256 public nextMoonDestructionId = 1;
+    uint256 public nextMoonChanceId;
+    uint256 public nextMoonDestructionId;
     mapping(uint256 planetId => Moon moon) internal _moons;
     mapping(uint256 planetId => mapping(MoonBuilding building => uint16 level)) internal
         _moonBuildingLevels;
@@ -216,17 +219,31 @@ contract VeydriftMoonSystem {
         uint256 randomWord
     );
 
-    constructor(address gameAddress, address randomnessAddress) {
-        if (gameAddress == address(0) || randomnessAddress == address(0)) revert ZeroAddress();
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address gameAddress, address randomnessAddress, address initialOwner)
+        public
+        initializer
+    {
+        if (
+            gameAddress == address(0) || randomnessAddress == address(0)
+                || initialOwner == address(0)
+        ) {
+            revert ZeroAddress();
+        }
+        __Ownable_init(initialOwner);
         game = IVeydriftMoonGame(gameAddress);
         randomness = IVeydriftRandomnessEngine(randomnessAddress);
-        owner = msg.sender;
         moonChanceReporter = gameAddress;
+        nextMoonChanceId = 1;
+        nextMoonDestructionId = 1;
         emit MoonChanceReporterUpdated(address(0), gameAddress);
     }
 
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner(msg.sender);
+    modifier onlySystemOwner() {
+        if (msg.sender != owner()) revert NotOwner(msg.sender);
         _;
     }
 
@@ -235,14 +252,18 @@ contract VeydriftMoonSystem {
         _;
     }
 
-    function setMoonChanceReporter(address nextReporter) external onlyOwner {
+    function setMoonChanceReporter(address nextReporter) external onlySystemOwner {
         if (nextReporter == address(0)) revert ZeroAddress();
         address oldReporter = moonChanceReporter;
         moonChanceReporter = nextReporter;
         emit MoonChanceReporterUpdated(oldReporter, nextReporter);
     }
 
-    function createMoon(uint256 planetId) external onlyOwner returns (Moon memory createdMoon) {
+    function createMoon(uint256 planetId)
+        external
+        onlySystemOwner
+        returns (Moon memory createdMoon)
+    {
         VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
         if (planetRef.owner == address(0)) revert NoPlanet();
         if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
@@ -906,4 +927,6 @@ contract VeydriftMoonSystem {
     function _currentTimestamp() private view returns (uint64) {
         return uint64(block.timestamp);
     }
+
+    function _authorizeUpgrade(address) internal override onlySystemOwner {}
 }

@@ -13,6 +13,7 @@ import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {MoonBuilding, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {UpgradeableDeployments} from "./support/UpgradeableDeployments.sol";
 
 contract MoonMockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -32,7 +33,7 @@ contract MoonMockResourceToken {
     }
 }
 
-contract VeydriftMoonSystemTest is Test {
+contract VeydriftMoonSystemTest is Test, UpgradeableDeployments {
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
 
     address internal admin = address(0xA11CE);
@@ -88,7 +89,7 @@ contract VeydriftMoonSystemTest is Test {
     );
 
     function setUp() public {
-        randomness = new RandomnessEngine(admin, fulfiller);
+        randomness = _deployRandomnessEngine(admin, fulfiller);
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
         VeydriftCombatModule combatModule =
@@ -104,7 +105,7 @@ contract VeydriftMoonSystemTest is Test {
             address(attackProtectionModule),
             address(colonizationModule)
         );
-        moons = new VeydriftMoonSystem(address(game), address(randomness));
+        moons = _deployMoonSystem(address(game), address(randomness), address(this));
         metalToken = new MoonMockResourceToken();
         crystalToken = new MoonMockResourceToken();
         deuteriumToken = new MoonMockResourceToken();

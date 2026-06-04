@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {
+    OwnableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {Building} from "./libraries/VeydriftTypes.sol";
@@ -28,7 +32,7 @@ interface IVeydriftAllianceGame {
 }
 
 /// @notice Canonical on-chain alliance roster and public profile authority.
-contract VeydriftAllianceSystem {
+contract VeydriftAllianceSystem is OwnableUpgradeable, UUPSUpgradeable {
     uint128 private constant ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL = 20_000;
 
     enum AllianceRole {
@@ -85,9 +89,9 @@ contract VeydriftAllianceSystem {
         uint64 joinCutoffAt;
     }
 
-    IVeydriftAllianceGame public immutable game;
-    uint256 public nextAllianceId = 1;
-    uint256 public nextDefenseIntentId = 1;
+    IVeydriftAllianceGame public game;
+    uint256 public nextAllianceId;
+    uint256 public nextDefenseIntentId;
 
     mapping(uint256 allianceId => Alliance alliance) internal _alliances;
     mapping(address player => Membership membership) internal _memberships;
@@ -117,6 +121,7 @@ contract VeydriftAllianceSystem {
     error NotAuthorized(address player, uint256 allianceId);
     error NotPlanetOwner(uint256 planetId, address player);
     error SelfDiplomacy(uint256 allianceId);
+    error ZeroAddress();
 
     event AllianceCreated(
         uint256 indexed allianceId, address indexed owner, string tag, string name
@@ -155,8 +160,21 @@ contract VeydriftAllianceSystem {
         uint64 joinCutoffAt
     );
 
-    constructor(IVeydriftAllianceGame gameContract) {
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(IVeydriftAllianceGame gameContract, address initialOwner)
+        public
+        initializer
+    {
+        if (address(gameContract) == address(0) || initialOwner == address(0)) {
+            revert ZeroAddress();
+        }
+        __Ownable_init(initialOwner);
         game = gameContract;
+        nextAllianceId = 1;
+        nextDefenseIntentId = 1;
     }
 
     function createAlliance(string calldata tag, string calldata name, string calldata description)
@@ -666,4 +684,6 @@ contract VeydriftAllianceSystem {
     function _now() private view returns (uint64) {
         return uint64(block.timestamp);
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 }

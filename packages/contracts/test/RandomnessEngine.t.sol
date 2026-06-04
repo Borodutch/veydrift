@@ -2,6 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {
+    OwnableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 
 contract RandomnessConsumer {
@@ -33,7 +37,7 @@ contract RandomnessEngineTest is Test {
     bytes32 private purpose = keccak256("battle:planet:7:mission:3");
 
     function setUp() public {
-        engine = new RandomnessEngine(owner, fulfiller);
+        engine = _deployRandomnessEngine(owner, fulfiller);
         consumer = new RandomnessConsumer(engine);
         vm.prank(owner);
         engine.setRequesterAuthorization(address(consumer), true);
@@ -57,6 +61,34 @@ contract RandomnessEngineTest is Test {
 
         consumer.resolve(purpose);
         assertEq(consumer.resolvedWord(), 123456789);
+    }
+
+    function testInitializerCannotBeReused() public {
+        vm.expectRevert();
+        engine.initialize(owner, fulfiller);
+    }
+
+    function testImplementationCannotBeInitializedDirectly() public {
+        RandomnessEngine implementation = new RandomnessEngine();
+
+        vm.expectRevert();
+        implementation.initialize(owner, fulfiller);
+    }
+
+    function testOnlyOwnerCanAuthorizeUpgrade() public {
+        RandomnessEngine nextImplementation = new RandomnessEngine();
+
+        vm.prank(attacker);
+        vm.expectRevert(
+            abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, attacker)
+        );
+        engine.upgradeToAndCall(address(nextImplementation), "");
+
+        vm.prank(owner);
+        engine.upgradeToAndCall(address(nextImplementation), "");
+        assertEq(engine.owner(), owner);
+        assertEq(engine.fulfiller(), fulfiller);
+        assertEq(engine.nextRequestId(), 1);
     }
 
     function testUnauthorizedRequesterCannotRequest() public {
@@ -236,5 +268,19 @@ contract RandomnessEngineTest is Test {
         vm.prank(fulfiller);
         engine.commitRandomness(commitment);
         vm.roll(block.number + 1);
+    }
+
+    function _deployRandomnessEngine(address initialOwner, address initialFulfiller)
+        private
+        returns (RandomnessEngine)
+    {
+        return RandomnessEngine(
+            address(
+                new ERC1967Proxy(
+                    address(new RandomnessEngine()),
+                    abi.encodeCall(RandomnessEngine.initialize, (initialOwner, initialFulfiller))
+                )
+            )
+        );
     }
 }

@@ -19,6 +19,7 @@ import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {Building, Defense, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {UpgradeableDeployments} from "./support/UpgradeableDeployments.sol";
 
 contract MockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -75,7 +76,7 @@ contract ShortTransferResourceToken is MockResourceToken {
     }
 }
 
-contract VeydriftGameTest is Test {
+contract VeydriftGameTest is Test, UpgradeableDeployments {
     event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
 
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
@@ -201,11 +202,11 @@ contract VeydriftGameTest is Test {
 
     function setUp() public {
         game = _newGame(admin);
-        allianceSystem = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
-        randomness = new RandomnessEngine(admin, fulfiller);
+        allianceSystem = _deployAllianceSystem(IVeydriftAllianceGame(address(game)), admin);
+        randomness = _deployRandomnessEngine(admin, fulfiller);
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
-        moons = new VeydriftMoonSystem(address(game), address(randomness));
+        moons = _deployMoonSystem(address(game), address(randomness), address(this));
         metalToken = new MockResourceToken();
         crystalToken = new MockResourceToken();
         deuteriumToken = new MockResourceToken();

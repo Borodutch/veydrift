@@ -12,6 +12,7 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
+import {UpgradeableDeployments} from "./support/UpgradeableDeployments.sol";
 
 contract AllianceMockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -44,7 +45,7 @@ contract AllianceMockResourceToken {
     }
 }
 
-contract VeydriftAllianceSystemTest is Test {
+contract VeydriftAllianceSystemTest is Test, UpgradeableDeployments {
     address internal admin = address(0xA11CE);
     address internal leader = address(0xB0B);
     address internal member = address(0xCAFE);
@@ -72,10 +73,10 @@ contract VeydriftAllianceSystemTest is Test {
             address(attackProtectionModule),
             address(colonizationModule)
         );
-        RandomnessEngine randomness = new RandomnessEngine(admin, fulfiller);
+        RandomnessEngine randomness = _deployRandomnessEngine(admin, fulfiller);
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
-        alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        alliances = _deployAllianceSystem(IVeydriftAllianceGame(address(game)), admin);
         metalToken = new AllianceMockResourceToken();
         crystalToken = new AllianceMockResourceToken();
         deuteriumToken = new AllianceMockResourceToken();

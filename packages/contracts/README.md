@@ -286,7 +286,8 @@ forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
 ```
 
-`Deploy.s.sol` deploys the game, `RandomnessEngine`, the Moon System module, and
+`Deploy.s.sol` deploys the game, UUPS/ERC1967 proxy contracts for
+`VeydriftAllianceSystem`, `RandomnessEngine`, and the Moon System module, plus
 the Metal, Crystal, and Deuterium ERC-20 proxy contracts. It authorizes the game
 and moon module as randomness requesters, wires the randomness and moon modules
 into the game, wires the resource tokens into the game as reserve tokens, and

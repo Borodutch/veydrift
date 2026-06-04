@@ -14,6 +14,7 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {UpgradeableDeployments} from "./support/UpgradeableDeployments.sol";
 import {VeydriftCombatReferenceSimulator} from "./support/VeydriftCombatReferenceSimulator.sol";
 
 contract CombatReferenceResourceToken {
@@ -47,7 +48,7 @@ contract CombatReferenceResourceToken {
     }
 }
 
-contract VeydriftCombatReferenceParityTest is Test {
+contract VeydriftCombatReferenceParityTest is Test, UpgradeableDeployments {
     uint256 private constant RESERVE_FUNDING = 1_000_000_000_000;
     bytes32 private constant ATTACK_BATTLE_RESOLVED_TOPIC = keccak256(
         "AttackBattleResolved(uint256,address,uint256,uint8,uint8,uint256,uint128,uint128,uint128)"
@@ -92,9 +93,9 @@ contract VeydriftCombatReferenceParityTest is Test {
 
     function setUp() public {
         game = _newGame(admin);
-        allianceSystem = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
-        randomness = new RandomnessEngine(admin, fulfiller);
-        VeydriftMoonSystem moons = new VeydriftMoonSystem(address(game), address(randomness));
+        allianceSystem = _deployAllianceSystem(IVeydriftAllianceGame(address(game)), admin);
+        randomness = _deployRandomnessEngine(admin, fulfiller);
+        VeydriftMoonSystem moons = _deployMoonSystem(address(game), address(randomness), admin);
         metalToken = new CombatReferenceResourceToken();
         crystalToken = new CombatReferenceResourceToken();
         deuteriumToken = new CombatReferenceResourceToken();
