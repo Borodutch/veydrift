@@ -32,6 +32,7 @@ import {
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
   topBarEnergyFor,
+  walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
 import {
@@ -365,6 +366,20 @@ describe("Playable MVP app display helpers", () => {
       ],
       queue: null,
     })).toBe("Energy Technology level 2 research");
+  });
+
+  test("uses backend-accrued wallet resources without adding local pending deltas", () => {
+    const resources = { metal: 1_240, crystal: 930, deuterium: 410 };
+
+    expect(walletSpendableResourcesFor({
+      isWalletConnected: true,
+      onChainResources: resources,
+    })).toBe(resources);
+
+    expect(walletSpendableResourcesFor({
+      isWalletConnected: false,
+      onChainResources: resources,
+    })).toBeUndefined();
   });
 
   test("blocks research completion transactions until the active queue is ready", () => {
