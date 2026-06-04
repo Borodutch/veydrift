@@ -145,6 +145,7 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
+  isUserRejected,
   updatePlayerDisplayName,
   type ChainDefenseState,
   type ChainAllianceState,
@@ -194,6 +195,8 @@ const buildingFinishLiveStateRequiredLabel =
   "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
 const buildingFinishSubmittedSyncLabel =
   "Building completion submitted. Waiting for backend state to clear this completed queue before another finish attempt.";
+const buildingFinishFailedSyncLabel =
+  "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.";
 export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 const buildingWalletConfirmationLabel = (label: string) =>
@@ -292,6 +295,20 @@ export function completedBuildingFinishSyncReasonFor({
   return buildingFinishSubmittedSyncLabel;
 }
 
+export function failedBuildingFinishSyncReasonFor({
+  activeBuildingQueue,
+  expectation,
+}: {
+  activeBuildingQueue: QueueStateResponse | null | undefined;
+  expectation?: FinishedBuildingExpectation | undefined;
+}): string | undefined {
+  if (!expectation || !activeBuildingQueue?.active) return undefined;
+  if (expectation.itemId === undefined && expectation.targetLevel === undefined) return undefined;
+  if (expectation.itemId !== undefined && activeBuildingQueue.itemId !== expectation.itemId) return undefined;
+  if (expectation.targetLevel !== undefined && activeBuildingQueue.targetLevel !== expectation.targetLevel) return undefined;
+  return buildingFinishFailedSyncLabel;
+}
+
 export function canonicalInfrastructureBuildingCompletionQueue(
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
@@ -369,6 +386,7 @@ export function buildingFinishUnavailableReasonForDisplay({
   backendSyncPausedReason,
   canTransact,
   completedBuildingFinishExpectation,
+  failedBuildingFinishExpectation,
   infrastructureState,
   isBuildingReadyToFinish,
   isDisplayedBuildingQueueReady,
@@ -378,6 +396,7 @@ export function buildingFinishUnavailableReasonForDisplay({
   backendSyncPausedReason?: string | undefined;
   canTransact: boolean;
   completedBuildingFinishExpectation?: FinishedBuildingExpectation | undefined;
+  failedBuildingFinishExpectation?: FinishedBuildingExpectation | undefined;
   infrastructureState: ChainInfrastructureState | null;
   isBuildingReadyToFinish: boolean;
   isDisplayedBuildingQueueReady: boolean;
@@ -397,6 +416,14 @@ export function buildingFinishUnavailableReasonForDisplay({
   });
   if (completedQueueSyncReason) {
     return completedQueueSyncReason;
+  }
+
+  const failedQueueSyncReason = failedBuildingFinishSyncReasonFor({
+    activeBuildingQueue,
+    expectation: failedBuildingFinishExpectation,
+  });
+  if (failedQueueSyncReason) {
+    return failedQueueSyncReason;
   }
 
   if (backendSyncPausedReason) {
@@ -1233,6 +1260,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
   const [completedBuildingFinishExpectation, setCompletedBuildingFinishExpectation] =
     useState<FinishedBuildingExpectation | undefined>();
+  const [failedBuildingFinishExpectation, setFailedBuildingFinishExpectation] =
+    useState<FinishedBuildingExpectation | undefined>();
   const [planetManagementAction, setPlanetManagementAction] = useState<PlanetManagementActionState>({ status: "idle" });
   const [planetRenameAction, setPlanetRenameAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [playerProfileAction, setPlayerProfileAction] = useState<PlanetRenameActionState>({ status: "idle" });
@@ -1995,6 +2024,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       backendSyncPausedReason: infrastructureBackendSyncPausedReason,
       canTransact: Boolean(provider && account && gameContract),
       completedBuildingFinishExpectation,
+      failedBuildingFinishExpectation,
       infrastructureState: infrastructureChainState,
       isBuildingReadyToFinish,
       isDisplayedBuildingQueueReady,
@@ -2004,6 +2034,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     account,
     activeBuildingQueue,
     completedBuildingFinishExpectation,
+    failedBuildingFinishExpectation,
     gameContract,
     infrastructureBackendSyncPausedReason,
     infrastructureChainState,
@@ -2049,6 +2080,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
     setCompletedBuildingFinishExpectation(undefined);
   }, [activeBuildingQueue, completedBuildingFinishExpectation]);
+
+  useEffect(() => {
+    if (!failedBuildingFinishExpectation) return;
+    if (failedBuildingFinishSyncReasonFor({
+      activeBuildingQueue,
+      expectation: failedBuildingFinishExpectation,
+    })) {
+      return;
+    }
+    setFailedBuildingFinishExpectation(undefined);
+  }, [activeBuildingQueue, failedBuildingFinishExpectation]);
 
   const chainBuildingCosts = useMemo(() => buildingCosts(infrastructureChainState), [infrastructureChainState]);
   const infrastructureUnavailableReason = useMemo(() => {
@@ -2258,6 +2300,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
       const label = "Building completion";
       let completionBuildingKey = buildingKey;
+      let finishExpectation: FinishedBuildingExpectation | undefined;
       setBuildingAction({ status: "pending", buildingKey, label: "Refreshing infrastructure state" });
 
       try {
@@ -2280,9 +2323,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           itemId: latestQueue?.itemId ?? activeBuildingQueue?.itemId,
           targetLevel: latestQueue?.targetLevel ?? activeBuildingQueue?.targetLevel,
         };
+        finishExpectation = expectation;
         const duplicateFinishReason = completedBuildingFinishSyncReasonFor({
           activeBuildingQueue,
           expectation: completedBuildingFinishExpectation,
+        }) ?? failedBuildingFinishSyncReasonFor({
+          activeBuildingQueue,
+          expectation: failedBuildingFinishExpectation,
         });
         if (duplicateFinishReason) {
           setBuildingAction({ status: "error", buildingKey: completionBuildingKey, label: duplicateFinishReason });
@@ -2316,10 +2363,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         }
       } catch (error) {
         console.error(error);
+        const label = buildingFinishActionErrorLabel(error);
+        const failedSyncReason = failedBuildingFinishSyncReasonFor({
+          activeBuildingQueue,
+          expectation: finishExpectation,
+        });
+        if (!isUserRejected(error) && failedSyncReason) {
+          setFailedBuildingFinishExpectation(finishExpectation);
+        }
         setBuildingAction({
           status: "error",
           buildingKey: completionBuildingKey,
-          label: buildingFinishActionErrorLabel(error),
+          label: !isUserRejected(error) && failedSyncReason ? failedSyncReason : label,
         });
       }
     });
@@ -2329,6 +2384,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     activePlanetId,
     apiBaseUrl,
     completedBuildingFinishExpectation,
+    failedBuildingFinishExpectation,
     gameContract,
     infrastructureChainState,
     buildingQueue?.key,

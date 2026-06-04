@@ -8,6 +8,7 @@ import {
   canLoadIndexedPageState,
   canonicalInfrastructureBuildingCompletionQueue,
   completedBuildingFinishSyncReasonFor,
+  failedBuildingFinishSyncReasonFor,
   hasInfrastructureDisplayState,
   infrastructureBackendSyncPausedLabel,
   infrastructureBackendSyncPausedReasonFor,
@@ -930,6 +931,57 @@ describe("Playable MVP app display helpers", () => {
       },
     })).toBeUndefined();
     expect(completedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: null,
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toBeUndefined();
+  });
+
+  test("blocks failed finish attempts while the same stale building queue is still visible", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(failedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: readyQueue,
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toContain("Building completion failed for this ready queue");
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      failedBuildingFinishExpectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toContain("Building completion failed for this ready queue");
+  });
+
+  test("clears failed finish blocking when the active building queue changes", () => {
+    const readyQueue = readyBuildingQueue();
+
+    expect(failedBuildingFinishSyncReasonFor({
+      activeBuildingQueue: {
+        ...readyQueue,
+        targetLevel: 3,
+      },
+      expectation: {
+        itemId: readyQueue.itemId,
+        targetLevel: readyQueue.targetLevel,
+      },
+    })).toBeUndefined();
+    expect(failedBuildingFinishSyncReasonFor({
       activeBuildingQueue: null,
       expectation: {
         itemId: readyQueue.itemId,
