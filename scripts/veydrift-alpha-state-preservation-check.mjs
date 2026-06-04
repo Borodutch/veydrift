@@ -49,6 +49,7 @@ requireIncludes("docs/open-alpha-state-preservation.md", [
 
 requireIncludes("scripts/veydrift-redeploy-preflight.mjs", [
   "ERC1967_IMPLEMENTATION_SLOT",
+  "backendSnapshots",
   "migration-plan-approved",
   "no-alpha-state",
   "Full redeploy is blocked"

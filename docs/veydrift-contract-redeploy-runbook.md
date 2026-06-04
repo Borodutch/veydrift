@@ -27,7 +27,10 @@ node scripts/veydrift-redeploy-preflight.mjs \
 The preflight fails closed when backend health/runtime/indexer evidence is
 unavailable, the current game is a direct non-proxy deployment, current alpha
 state is present or unknown, or the current game holds nonzero resource-token
-reserves without an approved migration plan. Passing
+reserves without an approved migration plan. Its JSON output includes raw
+public backend snapshots for `/health`, `/runtime-config`, and `/debug/indexer`
+alongside the derived blockers so the state evidence remains reviewable after
+the live backend moves on. Passing
 `--migration-plan-approved` or `--no-alpha-state` is an explicit declaration,
 not a substitute for recording the evidence described below.
 

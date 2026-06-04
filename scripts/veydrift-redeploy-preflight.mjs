@@ -81,6 +81,11 @@ const stateEvidence = summarizeStateEvidence({ health: health.body, indexer: ind
 const hasKnownAlphaState = stateEvidence.signals.some((signal) => signal.value > 0);
 const stateEvidenceComplete = health.ok && indexer.ok && stateEvidence.signals.length > 0;
 const nonzeroReserves = Object.values(reserveEvidence).some((entry) => BigInt(entry.balance ?? "0") > 0n);
+const backendSnapshots = {
+  health: snapshotOf(health),
+  runtimeConfig: snapshotOf(runtime),
+  indexer: snapshotOf(indexer)
+};
 
 if (!gameAddress) {
   blockers.push("Missing game contract address. Provide --game or fix /runtime-config.");
@@ -127,6 +132,7 @@ const result = {
   proxyUpgradeable,
   resourceTokens,
   reserves: reserveEvidence,
+  backendSnapshots,
   stateEvidence,
   declarations: {
     noAlphaState: Boolean(options["no-alpha-state"]),
@@ -161,6 +167,14 @@ async function fetchJsonEvidence(name, url) {
     evidence.push({ name, ok: false, error: errorMessage(error) });
     return { ok: false, status: 0, body: null };
   }
+}
+
+function snapshotOf(fetchResult) {
+  return {
+    ok: fetchResult.ok,
+    status: fetchResult.status,
+    body: fetchResult.body
+  };
 }
 
 async function ethCallRaw(to, data) {
