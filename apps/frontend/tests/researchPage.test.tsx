@@ -9,6 +9,7 @@ import {
   researchRefreshErrorLabel,
   researchActionStatus,
   researchCompletionButtonState,
+  researchImpactRows,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
 import { RequirementFlairs } from "../src/components/RequirementFlairs";
@@ -23,6 +24,77 @@ describe("Research page load-error display", () => {
       { type: "research", key: "laser", level: 10 },
       { type: "research", key: "energy", level: 5 },
     ])).toBe("Research Lab 4, Laser Technology 10, Energy Technology 5");
+  });
+
+  test("shows concrete current and next-level research impact rows", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        fusionReactor: 2,
+      },
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        computer: 3,
+        energy: 3,
+        weapons: 2,
+      },
+    };
+
+    expect(researchImpactRows(state, "energy")).toContainEqual({
+      delta: "+2 energy",
+      label: "Fusion Reactor output",
+      next: "71 energy",
+      tone: "positive",
+      value: "69 energy",
+    });
+    expect(researchImpactRows(state, "computer")).toContainEqual({
+      delta: "+1 fleet slot",
+      label: "Fleet slots",
+      next: "5 simultaneous missions",
+      value: "4 simultaneous missions",
+    });
+    expect(researchImpactRows(state, "weapons")).toContainEqual({
+      delta: "+10% battle stat",
+      label: "Attack multiplier",
+      next: "x1.3",
+      value: "x1.2",
+    });
+  });
+
+  test("shows next-level unlock impact from existing catalog requirements", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        laser: 2,
+      },
+    };
+
+    expect(researchImpactRows(state, "laser")).toContainEqual({
+      delta: "Adds Light Laser",
+      label: "Unlock impact",
+      next: "Light Laser",
+      tone: "positive",
+      value: "No catalog unlocks yet",
+    });
+  });
+
+  test("shows research-network next-level lab link details when backend levels are available", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        intergalacticResearchNetwork: 1,
+      },
+    };
+
+    expect(researchImpactRows(state, "intergalacticResearchNetwork", [8, 5, 3])).toContainEqual({
+      delta: "+1 eligible lab counted for future research durations.",
+      label: "Known lab network",
+      next: "Lab 8, Lab 5",
+      value: "Lab 8",
+    });
   });
 
   test("hides live research values after backend load errors", () => {

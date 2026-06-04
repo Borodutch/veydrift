@@ -3,12 +3,16 @@ import type { ComponentChildren } from "preact";
 import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from "../playableMvp";
 import {
   buildingCatalog,
+  buildingRequirementsFor,
   canAfford,
+  defenseCatalog,
   energyBalance,
+  fusionReactorEnergyProduction,
   researchCatalog,
   researchDurationEstimate,
   researchLabRequirementFor,
   researchRequirementsFor,
+  shipCatalog,
   unmetResearchRequirement,
 } from "../playableMvp";
 import type { ChainResearchState } from "../walletFlow";
@@ -441,6 +445,7 @@ function ResearchDetailPanel({
     state,
   });
   const requirementStates = getResearchRequirementStates(state, research.key);
+  const impactRows = researchImpactRows(state, research.key, researchState?.researchNetworkLabLevels);
   const isSelectedResearchQueued = queue?.key === research.key;
 
   return (
@@ -470,6 +475,19 @@ function ResearchDetailPanel({
           {researchDescriptions[research.key] ?? "Expands the empire research model for future technologies and unlock paths."}
         </p>
       </InspectDetailHero>
+
+      <dl className="mt-4 grid gap-2">
+        {impactRows.map((row) => (
+          <ResearchImpactMetric
+            delta={row.delta}
+            key={row.label}
+            label={row.label}
+            next={row.next}
+            tone={row.tone}
+            value={row.value}
+          />
+        ))}
+      </dl>
 
       <dl className="mt-4 grid gap-2">
         <InspectInfoRow label="Category" value={research.lane} />
@@ -514,6 +532,163 @@ function ResearchDetailPanel({
       </button>
     </InspectDetailShell>
   );
+}
+
+type ResearchImpactRow = {
+  delta?: string | undefined;
+  label: string;
+  next: string;
+  tone?: "neutral" | "positive" | "warning" | undefined;
+  value: string;
+};
+
+function ResearchImpactMetric({
+  delta,
+  label,
+  next,
+  tone = "positive",
+  value,
+}: ResearchImpactRow) {
+  const deltaClass = tone === "warning"
+    ? "text-amber-200"
+    : tone === "neutral"
+      ? "text-slate-300"
+      : "text-signal";
+
+  return (
+    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
+      <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
+      <dd className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-baseline gap-2 text-sm font-semibold">
+        <span className="min-w-0 break-words text-slate-200">{value}</span>
+        <span aria-hidden="true" className="text-slate-500">-&gt;</span>
+        <span className="min-w-0 break-words text-signal">{next}</span>
+      </dd>
+      {delta && <dd className={`mt-1 text-xs font-medium ${deltaClass}`}>{delta}</dd>}
+    </div>
+  );
+}
+
+export function researchImpactRows(
+  state: Pick<PlayableState, "buildings" | "research">,
+  key: ResearchKey,
+  researchNetworkLabLevels: readonly number[] = [],
+): ResearchImpactRow[] {
+  const currentLevel = state.research[key];
+  const nextLevel = currentLevel + 1;
+  const rows: ResearchImpactRow[] = [];
+
+  if (key === "energy") {
+    const currentOutput = fusionReactorEnergyProduction(state.buildings.fusionReactor, currentLevel);
+    const nextOutput = fusionReactorEnergyProduction(state.buildings.fusionReactor, nextLevel);
+    rows.push({
+      delta: state.buildings.fusionReactor > 0
+        ? `${formatSigned(nextOutput - currentOutput)} energy`
+        : "Build Fusion Reactor to turn this into power output.",
+      label: "Fusion Reactor output",
+      next: state.buildings.fusionReactor > 0 ? `${format(nextOutput)} energy` : "No Fusion Reactor built",
+      tone: state.buildings.fusionReactor > 0 ? "positive" : "neutral",
+      value: state.buildings.fusionReactor > 0 ? `${format(currentOutput)} energy` : "No Fusion Reactor built",
+    });
+  }
+
+  if (key === "combustionDrive" || key === "impulseDrive" || key === "hyperspaceDrive") {
+    const percentPerLevel = key === "combustionDrive" ? 10 : key === "impulseDrive" ? 20 : 30;
+    rows.push({
+      delta: `+${format(percentPerLevel)}% speed`,
+      label: "Drive speed bonus",
+      next: `+${format(nextLevel * percentPerLevel)}%`,
+      value: `+${format(currentLevel * percentPerLevel)}%`,
+    });
+
+    if (key === "impulseDrive" && nextLevel === 5) {
+      rows.push({
+        delta: "Small Cargo switches to faster Impulse Drive movement.",
+        label: "Drive class upgrade",
+        next: "Small Cargo uses Impulse Drive",
+        value: "Small Cargo uses Combustion Drive",
+      });
+    }
+
+    if (key === "hyperspaceDrive" && nextLevel === 8) {
+      rows.push({
+        delta: "Bomber switches to faster Hyperspace Drive movement.",
+        label: "Drive class upgrade",
+        next: "Bomber uses Hyperspace Drive",
+        value: "Bomber uses Impulse Drive",
+      });
+    }
+  }
+
+  if (key === "computer") {
+    rows.push({
+      delta: "+1 fleet slot",
+      label: "Fleet slots",
+      next: `${format(fleetSlots(nextLevel))} simultaneous missions`,
+      value: `${format(fleetSlots(currentLevel))} simultaneous missions`,
+    });
+  }
+
+  if (key === "astrophysics") {
+    rows.push({
+      delta: "+1 planet slot",
+      label: "Planet slots",
+      next: `${format(planetSlots(nextLevel))} owned planets`,
+      value: `${format(planetSlots(currentLevel))} owned planets`,
+    });
+  }
+
+  if (key === "intergalacticResearchNetwork") {
+    rows.push({
+      delta: "+1 remote lab can contribute when eligible.",
+      label: "Remote lab links",
+      next: `${format(nextLevel)} linked labs`,
+      value: `${format(currentLevel)} linked labs`,
+    });
+
+    if (researchNetworkLabLevels.length > 0) {
+      rows.push({
+        delta: "+1 eligible lab counted for future research durations.",
+        label: "Known lab network",
+        next: formatLinkedLabs(researchNetworkLabLevels, nextLevel),
+        value: formatLinkedLabs(researchNetworkLabLevels, currentLevel),
+      });
+    }
+  }
+
+  if (key === "weapons" || key === "shielding" || key === "armor") {
+    rows.push({
+      delta: "+10% battle stat",
+      label: combatImpactLabel(key),
+      next: `x${formatMultiplier(combatMultiplier(nextLevel))}`,
+      value: `x${formatMultiplier(combatMultiplier(currentLevel))}`,
+    });
+  }
+
+  const currentUnlocks = researchUnlockLabelsThroughLevel(key, currentLevel);
+  const nextUnlocks = researchUnlockLabelsThroughLevel(key, nextLevel);
+  const newlyUnlocked = researchUnlockLabelsAtLevel(key, nextLevel);
+  if (nextUnlocks.length > 0) {
+    rows.push({
+      delta: newlyUnlocked.length > 0
+        ? `Adds ${formatUnlockList(newlyUnlocked)}`
+        : "No new catalog unlock at the next level.",
+      label: "Unlock impact",
+      next: formatUnlockList(nextUnlocks),
+      tone: newlyUnlocked.length > 0 ? "positive" : "neutral",
+      value: currentUnlocks.length > 0 ? formatUnlockList(currentUnlocks) : "No catalog unlocks yet",
+    });
+  }
+
+  if (rows.length === 0) {
+    rows.push({
+      delta: "Advances future catalog prerequisites.",
+      label: "Research level",
+      next: `Level ${format(nextLevel)}`,
+      value: `Level ${format(currentLevel)}`,
+    });
+  }
+
+  return rows;
 }
 
 export function ActiveResearchQueueDetail({
@@ -730,6 +905,10 @@ function format(value: number): string {
   return formatter.format(Math.floor(value));
 }
 
+function formatSigned(value: number): string {
+  return `${value >= 0 ? "+" : ""}${format(value)}`;
+}
+
 function formatReady(readyAt: number, now: number): string {
   const remaining = formatDurationUntil(readyAt, now);
   const timestamp = formatUserTimestamp(readyAt);
@@ -767,4 +946,88 @@ function researchRequirementMet(
   }
 
   return state.research[requirement.key] >= requirement.level;
+}
+
+function fleetSlots(computerLevel: number): number {
+  return 1 + Math.max(0, Math.floor(computerLevel));
+}
+
+function planetSlots(astrophysicsLevel: number): number {
+  return 1 + Math.max(0, Math.floor(astrophysicsLevel));
+}
+
+function combatMultiplier(level: number): number {
+  return 1 + Math.max(0, Math.floor(level)) * 0.1;
+}
+
+function combatImpactLabel(key: ResearchKey): string {
+  if (key === "weapons") return "Attack multiplier";
+  if (key === "shielding") return "Shield multiplier";
+  return "Hull multiplier";
+}
+
+function formatMultiplier(value: number): string {
+  return value.toLocaleString("en-US", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
+  });
+}
+
+function formatLinkedLabs(levels: readonly number[], linkCount: number): string {
+  const linked = levels
+    .filter((level) => level > 0)
+    .sort((a, b) => b - a)
+    .slice(0, Math.max(0, Math.floor(linkCount)));
+  return linked.length > 0 ? linked.map((level) => `Lab ${format(level)}`).join(", ") : "No remote labs linked";
+}
+
+function researchUnlockLabelsThroughLevel(key: ResearchKey, level: number): string[] {
+  return uniqueStrings(
+    Array.from({ length: Math.max(0, Math.floor(level)) }, (_, index) => (
+      researchUnlockLabelsAtLevel(key, index + 1)
+    )).flat(),
+  );
+}
+
+function researchUnlockLabelsAtLevel(key: ResearchKey, level: number): string[] {
+  const buildingLabels = buildingCatalog.flatMap((building) => (
+    buildingRequirementsFor(building.key).some((requirement) => (
+      requirement.type === "research" && requirement.key === key && requirement.level === level
+    ))
+      ? [building.label]
+      : []
+  ));
+  const researchLabels = researchCatalog.flatMap((research) => (
+    research.key !== key && researchRequirementsFor(research.key).some((requirement) => (
+      requirement.type === "research" && requirement.key === key && requirement.level === level
+    ))
+      ? [`${research.label} research`]
+      : []
+  ));
+  const shipLabels = shipCatalog.flatMap((ship) => (
+    ship.requirements.some((requirement) => (
+      requirement.kind === "technology" && requirement.key === key && requirement.level === level
+    ))
+      ? [ship.label]
+      : []
+  ));
+  const defenseLabels = defenseCatalog.flatMap((defense) => (
+    defense.requirements.some((requirement) => (
+      requirement.kind === "technology" && requirement.key === key && requirement.level === level
+    ))
+      ? [defense.label]
+      : []
+  ));
+
+  return uniqueStrings([...buildingLabels, ...researchLabels, ...shipLabels, ...defenseLabels]);
+}
+
+function formatUnlockList(labels: readonly string[]): string {
+  const visible = labels.slice(0, 3);
+  const suffix = labels.length > visible.length ? ` +${labels.length - visible.length} more` : "";
+  return `${visible.join(", ")}${suffix}`;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
