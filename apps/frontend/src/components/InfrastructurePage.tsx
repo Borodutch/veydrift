@@ -451,7 +451,7 @@ function BuildingDetailPanel({
       )}
 
       {actionNotice && (
-        <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold ${noticeClass}`}>
+        <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold break-words ${noticeClass}`}>
           {actionNotice.label}
         </div>
       )}
