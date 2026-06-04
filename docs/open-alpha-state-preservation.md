@@ -40,6 +40,12 @@ State includes, at minimum:
 
 Before merging or broadcasting a contract-affecting task, the handoff must state:
 
+Run `node scripts/veydrift-redeploy-preflight.mjs` against the target API/RPC
+and attach or paste the JSON result in the Kaneo workpad before any full deploy
+or upgrade broadcast. The script is a fail-closed evidence collector; a failing
+result blocks broadcast unless the blocker is explicitly resolved by the
+approved migration/no-state evidence below.
+
 1. Current network and contract addresses: game, implementation when applicable,
    resource tokens, alliance system, randomness engine, moon system, and any
    auxiliary module contracts.

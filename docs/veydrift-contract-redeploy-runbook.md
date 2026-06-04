@@ -14,6 +14,23 @@ repeatable path.
 
 Before broadcasting a full deploy:
 
+Run the executable preflight first and keep its JSON output with the Kaneo
+workpad evidence:
+
+```sh
+node scripts/veydrift-redeploy-preflight.mjs \
+  --api-url https://api-test.veydrift.com \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --out /tmp/veydrift-redeploy-preflight.json
+```
+
+The preflight fails closed when backend health/runtime/indexer evidence is
+unavailable, the current game is a direct non-proxy deployment, current alpha
+state is present or unknown, or the current game holds nonzero resource-token
+reserves without an approved migration plan. Passing
+`--migration-plan-approved` or `--no-alpha-state` is an explicit declaration,
+not a substitute for recording the evidence described below.
+
 1. Decide whether the change can be handled as a proxy upgrade instead. If yes,
    use the proxy upgrade path and record old/new implementation addresses,
    storage-layout evidence, upgrade tx, and post-upgrade state checks.

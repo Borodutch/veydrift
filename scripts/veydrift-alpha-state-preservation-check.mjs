@@ -6,7 +6,8 @@ const requiredFiles = [
   "docs/veydrift-contract-redeploy-runbook.md",
   "README.md",
   "packages/contracts/README.md",
-  "packages/contracts/script/Deploy.s.sol"
+  "packages/contracts/script/Deploy.s.sol",
+  "scripts/veydrift-redeploy-preflight.mjs"
 ];
 
 const read = (path) => readFileSync(path, "utf8");
@@ -34,10 +35,23 @@ requireIncludes("docs/open-alpha-state-preservation.md", [
 
 requireIncludes("docs/veydrift-contract-redeploy-runbook.md", [
   "Migration Verification Gate",
+  "veydrift-redeploy-preflight.mjs",
   "No alpha player state exists",
   "Migration plan approved",
   "VEYDRIFT_ALPHA_REDEPLOY_ACK",
   "proxy upgrade, no-state redeploy, or migrated redeploy"
+]);
+
+requireIncludes("docs/open-alpha-state-preservation.md", [
+  "veydrift-redeploy-preflight.mjs",
+  "fail-closed evidence collector"
+]);
+
+requireIncludes("scripts/veydrift-redeploy-preflight.mjs", [
+  "ERC1967_IMPLEMENTATION_SLOT",
+  "migration-plan-approved",
+  "no-alpha-state",
+  "Full redeploy is blocked"
 ]);
 
 requireIncludes("packages/contracts/script/Deploy.s.sol", [
