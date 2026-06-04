@@ -1628,6 +1628,62 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
   });
+
+  test("rebuild does not resurrect event-derived building queues that canonical infrastructure verified empty", async () => {
+    const currentPlanet: SettledPlanetEvent = {
+      ...planet,
+      resources: {
+        metal: "9900",
+        crystal: "8800",
+        deuterium: "7700"
+      }
+    };
+    const liveInfrastructure: InfrastructureState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: true,
+      resources: currentPlanet.resources,
+      productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
+      energyBalance: { produced: "20", required: "10", scaleBps: "10000" },
+      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
+      protectedResources: { metal: "1000", crystal: "1000", deuterium: "1000" },
+      raidableResources: { metal: "8900", crystal: "7800", deuterium: "6700" },
+      technologyLevels: {},
+      buildings: [
+        { id: 0, level: 5, cost: { metal: "960", crystal: "240", deuterium: "0" } },
+        { id: 3, level: 6, cost: { metal: "150", crystal: "60", deuterium: "0" } }
+      ],
+      queue: null
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [currentPlanet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getInfrastructureState() { return liveInfrastructure; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x3a0",
+      transactionHash: "0xstale-solar",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(3n)],
+      data: abiWords(6n, 1770002000n, 100n, 50n, 0n)
+    });
+
+    await indexer.rebuild();
+
+    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 3)).toMatchObject({
+      id: 3,
+      level: 6
+    });
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      safeToServeIndexedState: true,
+      staleReason: null
+    });
+  });
 });
 
 function abiWords(...values: bigint[]): string {
