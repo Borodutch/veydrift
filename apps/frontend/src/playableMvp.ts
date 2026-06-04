@@ -108,6 +108,13 @@ export type ResearchRequirement =
       produced: number;
     };
 
+export type ResearchEffectRow = {
+  current: string;
+  delta?: string;
+  next: string;
+  target: string;
+};
+
 export type BuildingRequirement =
   | {
       type: "building";
@@ -859,6 +866,136 @@ const fleetMissionShipKeys = new Set<ShipKey>([
   "pathfinder",
 ]);
 
+const combustionDriveShipKeys: ShipKey[] = ["smallCargo", "lightFighter", "recycler", "largeCargo"];
+const impulseDriveShipKeys: ShipKey[] = ["smallCargo", "colonyShip", "heavyFighter", "cruiser", "bomber"];
+const hyperspaceDriveShipKeys: ShipKey[] = [
+  "battleship",
+  "bomber",
+  "destroyer",
+  "deathstar",
+  "battlecruiser",
+  "reaper",
+  "pathfinder",
+];
+
+function driveEffectRows(
+  currentResearch: Record<ResearchKey, number>,
+  nextResearch: Record<ResearchKey, number>,
+  key: "combustionDrive" | "impulseDrive" | "hyperspaceDrive",
+): ResearchEffectRow[] {
+  const shipKeys = key === "combustionDrive"
+    ? combustionDriveShipKeys
+    : key === "impulseDrive"
+      ? impulseDriveShipKeys
+      : hyperspaceDriveShipKeys;
+
+  return shipKeys.flatMap((shipKey) => {
+    const ship = shipCatalog.find((item) => item.key === shipKey);
+    if (!ship) return [];
+
+    const currentSpeed = shipSpeed(shipKey, currentResearch);
+    const nextSpeed = shipSpeed(shipKey, nextResearch);
+    const rows = currentSpeed !== nextSpeed
+      ? [numberEffectRow(`${ship.label} speed`, currentSpeed, nextSpeed)]
+      : [];
+
+    if (shipKey === "smallCargo" && key === "impulseDrive") {
+      const currentFuel = shipFuelConsumption(shipKey, currentResearch);
+      const nextFuel = shipFuelConsumption(shipKey, nextResearch);
+      if (currentFuel !== nextFuel) {
+        rows.push(numberEffectRow("Small Cargo fuel use", currentFuel, nextFuel));
+      }
+    }
+
+    return rows;
+  });
+}
+
+function shipFuelConsumption(ship: ShipKey, research: Record<ResearchKey, number>): number {
+  if (ship === "smallCargo" && research.impulseDrive >= 5) return 20;
+  return shipFuelConsumptionByKey[ship];
+}
+
+function shipSpeed(ship: ShipKey, research: Record<ResearchKey, number>): number {
+  if (ship === "smallCargo" && research.impulseDrive >= 5) {
+    return driveSpeed(10_000, research.impulseDrive, 20);
+  }
+
+  if (ship === "bomber" && research.hyperspaceDrive >= 8) {
+    return driveSpeed(5_000, research.hyperspaceDrive, 30);
+  }
+
+  if (combustionDriveShipKeys.includes(ship)) {
+    return driveSpeed(shipBaseSpeedByKey[ship], research.combustionDrive, 10);
+  }
+
+  if (impulseDriveShipKeys.includes(ship)) {
+    return driveSpeed(shipBaseSpeedByKey[ship], research.impulseDrive, 20);
+  }
+
+  if (hyperspaceDriveShipKeys.includes(ship)) {
+    return driveSpeed(shipBaseSpeedByKey[ship], research.hyperspaceDrive, 30);
+  }
+
+  return shipBaseSpeedByKey[ship];
+}
+
+function driveSpeed(baseSpeed: number, driveLevel: number, percentPerLevel: number): number {
+  return Math.floor((baseSpeed * (100 + driveLevel * percentPerLevel)) / 100);
+}
+
+function fleetSlotLimit(computerLevel: number): number {
+  return 1 + computerLevel;
+}
+
+function planetLimit(astrophysicsLevel: number): number {
+  return 1 + astrophysicsLevel;
+}
+
+function linkedResearchLabSlotSummary(networkLevel: number, researchNetworkLabLevels: readonly number[]) {
+  const linkedCount = Math.max(0, Math.floor(networkLevel));
+  const linkedLevels = [...researchNetworkLabLevels]
+    .sort((left, right) => right - left)
+    .slice(0, linkedCount);
+  const linkedLevelTotal = linkedLevels.reduce((total, level) => total + level, 0);
+
+  return {
+    label: linkedLevels.length > 0
+      ? `${linkedLevels.length} labs / +${formatPlainNumber(linkedLevelTotal)} levels`
+      : "No linked labs",
+    linkedCount: linkedLevels.length,
+    linkedLevelTotal,
+  };
+}
+
+function percentMultiplierRow(target: string, currentLevel: number, nextLevel: number): ResearchEffectRow {
+  return {
+    current: `+${formatPlainNumber(currentLevel * 10)}%`,
+    delta: "+10%",
+    next: `+${formatPlainNumber(nextLevel * 10)}%`,
+    target,
+  };
+}
+
+function numberEffectRow(target: string, current: number, next: number, suffix = ""): ResearchEffectRow {
+  const delta = next !== current ? formatSignedPlain(next - current) : undefined;
+  return {
+    current: `${formatPlainNumber(current)}${suffix}`,
+    ...(delta ? { delta } : {}),
+    next: `${formatPlainNumber(next)}${suffix}`,
+    target,
+  };
+}
+
+function formatPlainNumber(value: number): string {
+  return Math.floor(value).toLocaleString("en-US");
+}
+
+function formatSignedPlain(value: number): string {
+  const rounded = Math.floor(value);
+  return `${rounded > 0 ? "+" : ""}${rounded.toLocaleString("en-US")}`;
+}
+
 export function shipSpecRows(ship: (typeof shipCatalog)[number]): ShipSpecRow[] {
   const stats = shipBattleStatsByKey[ship.key];
 
@@ -1183,6 +1320,104 @@ const BUILDING_REQUIREMENTS: Partial<Record<BuildingKey, BuildingRequirement[]>>
     { type: "research", key: "hyperspace", level: 1 },
   ],
 };
+
+export function researchEffectRows(
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  key: ResearchKey,
+  options: {
+    researchNetworkLabLevels?: readonly number[] | undefined;
+  } = {},
+): ResearchEffectRow[] {
+  const currentLevel = state.research[key];
+  const nextResearch = {
+    ...state.research,
+    [key]: currentLevel + 1,
+  };
+
+  if (key === "energy") {
+    const current = energyBalance(state.buildings, state.research.energy, state.ships.solarSatellite).sources?.fusionReactor ?? 0;
+    const next = energyBalance(state.buildings, nextResearch.energy, state.ships.solarSatellite).sources?.fusionReactor ?? 0;
+    return [numberEffectRow("Fusion Reactor output", current, next, " produced")];
+  }
+
+  if (key === "combustionDrive" || key === "impulseDrive" || key === "hyperspaceDrive") {
+    return driveEffectRows(state.research, nextResearch, key);
+  }
+
+  if (key === "computer") {
+    return [numberEffectRow("Fleet mission slots", fleetSlotLimit(currentLevel), fleetSlotLimit(currentLevel + 1))];
+  }
+
+  if (key === "astrophysics") {
+    return [numberEffectRow("Owned planet limit", planetLimit(currentLevel), planetLimit(currentLevel + 1))];
+  }
+
+  if (key === "intergalacticResearchNetwork") {
+    const current = linkedResearchLabSlotSummary(currentLevel, options.researchNetworkLabLevels ?? []);
+    const next = linkedResearchLabSlotSummary(currentLevel + 1, options.researchNetworkLabLevels ?? []);
+    const delta = next.linkedCount > current.linkedCount || next.linkedLevelTotal > current.linkedLevelTotal
+      ? `+${next.linkedCount - current.linkedCount} linked`
+      : undefined;
+    return [{
+      current: current.label,
+      ...(delta ? { delta } : {}),
+      next: next.label,
+      target: "Linked research labs",
+    }];
+  }
+
+  if (key === "weapons") {
+    return [percentMultiplierRow("Ship and defense attack", currentLevel, currentLevel + 1)];
+  }
+
+  if (key === "shielding") {
+    return [percentMultiplierRow("Ship and defense shields", currentLevel, currentLevel + 1)];
+  }
+
+  if (key === "armor") {
+    return [percentMultiplierRow("Ship and defense hull", currentLevel, currentLevel + 1)];
+  }
+
+  return [];
+}
+
+export function researchUnlockRows(key: ResearchKey): string[] {
+  const rows: string[] = [];
+
+  for (const building of buildingCatalog) {
+    for (const requirement of buildingRequirementsFor(building.key)) {
+      if (requirement.type === "research" && requirement.key === key) {
+        rows.push(`${building.label} at Level ${requirement.level}`);
+      }
+    }
+  }
+
+  for (const ship of shipCatalog) {
+    for (const requirement of ship.requirements) {
+      if (requirement.kind === "technology" && requirement.key === key) {
+        rows.push(`${ship.label} at Level ${requirement.level}`);
+      }
+    }
+  }
+
+  for (const defense of defenseCatalog) {
+    for (const requirement of defense.requirements) {
+      if (requirement.kind === "technology" && requirement.key === key) {
+        rows.push(`${defense.label} at Level ${requirement.level}`);
+      }
+    }
+  }
+
+  for (const research of researchCatalog) {
+    for (const requirement of researchRequirementsFor(research.key)) {
+      if (requirement.type === "research" && requirement.key === key) {
+        rows.push(`${research.label} at Level ${requirement.level}`);
+      }
+    }
+  }
+
+  return uniqueBy(rows, (row) => row);
+}
 
 const BPS = 10_000;
 export const QUEUE_UNIVERSE_SPEED = 1;
