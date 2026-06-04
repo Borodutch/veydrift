@@ -733,7 +733,7 @@ export class SettlementIndexer {
         this.upsertPlanet(event);
       }
       this.applyCanonicalState(canonicalState);
-      this.replayEventDerivedQueueStateFromEventLogs();
+      this.replayEventDerivedQueueStateFromEventLogs(canonicalState);
       for (const event of debrisEvents) {
         this.upsertDebris(event);
       }
@@ -1198,7 +1198,7 @@ export class SettlementIndexer {
     }
   }
 
-  private replayEventDerivedQueueStateFromEventLogs(): void {
+  private replayEventDerivedQueueStateFromEventLogs(canonicalState?: CanonicalReconciliationState): void {
     const activeEventQueues = new Set<string>();
     const rows = this.db.query(`
       SELECT event_json
@@ -1211,7 +1211,7 @@ export class SettlementIndexer {
       const log = parseEvent<IndexedRpcLog>(row.event_json);
       if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
-        if (this.queueStartProvenCompleted(event)) {
+        if (this.queueStartProvenCompleted(event) || canonicalState?.verifiedEmptyQueues.has(queueKey(event))) {
           activeEventQueues.delete(queueKey(event));
           continue;
         }
@@ -1256,7 +1256,8 @@ export class SettlementIndexer {
       defenses: new Map(),
       ships: new Map(),
       research: new Map(),
-      researchQueues: new Map()
+      researchQueues: new Map(),
+      verifiedEmptyQueues: new Set()
     };
     const owners = new Set(planets.map((planet) => planet.owner.toLowerCase() as `0x${string}`));
 
@@ -1279,18 +1280,27 @@ export class SettlementIndexer {
         state.buildings.set(planetId, infrastructure.buildings);
         if (infrastructure.queue?.active) {
           state.planetQueues.set(`building:${planetId}`, infrastructure.queue);
+          state.verifiedEmptyQueues.delete(`building:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`building:${planetId}`);
         }
       }
       if (defenses) {
         state.defenses.set(planetId, defenses.defenses);
         if (defenses.queue?.active) {
           state.planetQueues.set(`defense:${planetId}`, defenses.queue);
+          state.verifiedEmptyQueues.delete(`defense:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`defense:${planetId}`);
         }
       }
       if (shipyard) {
         state.ships.set(planetId, shipyard.ships);
         if (shipyard.queue?.active) {
           state.planetQueues.set(`ship:${planetId}`, shipyard.queue);
+          state.verifiedEmptyQueues.delete(`ship:${planetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`ship:${planetId}`);
         }
       }
       if (queues) {
@@ -1298,6 +1308,10 @@ export class SettlementIndexer {
         this.addActiveQueue(state.planetQueues, `defense:${planetId}`, queues.defense);
         this.addActiveQueue(state.planetQueues, `ship:${planetId}`, queues.ship);
         this.addActiveResearchQueue(state.researchQueues, owner, queues.research);
+        if (queues.building?.active) state.verifiedEmptyQueues.delete(`building:${planetId}`);
+        if (queues.defense?.active) state.verifiedEmptyQueues.delete(`defense:${planetId}`);
+        if (queues.ship?.active) state.verifiedEmptyQueues.delete(`ship:${planetId}`);
+        if (queues.research?.active) state.verifiedEmptyQueues.delete(`research:${owner.toLowerCase()}`);
       }
     }));
 
@@ -1305,7 +1319,12 @@ export class SettlementIndexer {
       const research = await this.chainReader.getResearchState?.(owner);
       if (!research) return;
       state.research.set(owner, research.technologies);
-      this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
+      if (research.queue?.active) {
+        this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
+        state.verifiedEmptyQueues.delete(`research:${owner.toLowerCase()}`);
+      } else {
+        state.verifiedEmptyQueues.add(`research:${owner.toLowerCase()}`);
+      }
     }));
 
     return state;
@@ -2170,6 +2189,7 @@ type CanonicalReconciliationState = {
   ships: Map<string, ShipyardState["ships"]>;
   research: Map<`0x${string}`, ResearchState["technologies"]>;
   researchQueues: Map<`0x${string}`, QueueState>;
+  verifiedEmptyQueues: Set<string>;
 };
 
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
