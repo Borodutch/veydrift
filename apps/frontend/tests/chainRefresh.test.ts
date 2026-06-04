@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import {
+  beginRefreshRequest,
+  canApplyRefreshRequest,
+  markFreshStateWrite,
+} from "../src/PlayableMvpApp";
 
 describe("playable chain refresh", () => {
   test("uses backend chain events instead of the old fast unconditional polling loops", async () => {
@@ -10,6 +15,35 @@ describe("playable chain refresh", () => {
     expect(source).toContain("120_000");
     expect(source).not.toContain("30_000");
     expect(source).not.toContain("2_500");
+  });
+
+  test("polls the canonical wallet resource snapshot for the hydrated top bar", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000");
+    expect(source).toContain("refreshTopBarResources");
+    expect(source).toContain("document.visibilityState === \"hidden\"");
+    expect(source).toContain("refreshOnChainState()");
+    expect(source).toContain("refreshInfrastructureState()");
+    expect(source).toContain("onChainRefreshGate");
+    expect(source).toContain("infrastructureRefreshGate");
+    expect(source).toContain("canApplyRefreshRequest");
+    expect(source).toContain("markFreshStateWrite");
+  });
+
+  test("blocks older top-bar poll refreshes after newer transaction state writes", () => {
+    const gate = { current: 0 };
+    const olderPollRequest = beginRefreshRequest(gate);
+
+    expect(canApplyRefreshRequest(gate, olderPollRequest)).toBe(true);
+
+    markFreshStateWrite(gate);
+
+    expect(canApplyRefreshRequest(gate, olderPollRequest)).toBe(false);
+
+    const newerPollRequest = beginRefreshRequest(gate);
+
+    expect(canApplyRefreshRequest(gate, newerPollRequest)).toBe(true);
   });
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {

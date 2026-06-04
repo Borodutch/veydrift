@@ -209,6 +209,23 @@ export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 const buildingWalletConfirmationLabel = (label: string) =>
   `${label}: unlock your wallet if needed, then confirm in your wallet.`;
+const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
+
+type RefreshFreshnessGate = { current: number };
+
+export function beginRefreshRequest(gate: RefreshFreshnessGate): number {
+  gate.current += 1;
+  return gate.current;
+}
+
+export function markFreshStateWrite(gate: RefreshFreshnessGate): number {
+  gate.current += 1;
+  return gate.current;
+}
+
+export function canApplyRefreshRequest(gate: RefreshFreshnessGate, requestId: number): boolean {
+  return requestId === gate.current;
+}
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -1323,6 +1340,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
+  const onChainRefreshGate = useRef(0);
+  const infrastructureRefreshGate = useRef(0);
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -1444,9 +1463,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [runtimeConfig]);
 
   const refreshInfrastructureState = useCallback(async () => {
+    const requestId = beginRefreshRequest(infrastructureRefreshGate);
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
       setMoonState(null);
+      setInfrastructureLoading(false);
+      setMoonLoading(false);
       return;
     }
 
@@ -1459,6 +1481,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         settlePromise(fetchInfrastructureState(apiBaseUrl, account, activePlanetId)),
         settlePromise(fetchMoonState(apiBaseUrl, account, activePlanetId)),
       ]);
+      if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return;
       if (infrastructureResult.status === "fulfilled") {
         setInfrastructureChainState(infrastructureResult.value);
       } else {
@@ -1472,12 +1495,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setMoonError(moonResult.reason instanceof Error ? moonResult.reason.message : "Moon state could not be loaded.");
       }
     } finally {
-      setInfrastructureLoading(false);
-      setMoonLoading(false);
+      if (canApplyRefreshRequest(infrastructureRefreshGate, requestId)) {
+        setInfrastructureLoading(false);
+        setMoonLoading(false);
+      }
     }
   }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshLiveInfrastructureState = useCallback(async () => {
+    const requestId = beginRefreshRequest(infrastructureRefreshGate);
     if (!apiBaseUrl || !account) {
       setInfrastructureChainState(null);
       return null;
@@ -1487,14 +1513,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setInfrastructureError(undefined);
     try {
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
+      if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return nextInfrastructure;
       setInfrastructureChainState(nextInfrastructure);
       return nextInfrastructure;
     } catch (error) {
       console.error(error);
+      if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) throw error;
       setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
       throw error;
     } finally {
-      setInfrastructureLoading(false);
+      if (canApplyRefreshRequest(infrastructureRefreshGate, requestId)) {
+        setInfrastructureLoading(false);
+      }
     }
   }, [account, activePlanetId, apiBaseUrl]);
 
@@ -1609,6 +1639,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
   const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }) => {
+    const requestId = beginRefreshRequest(onChainRefreshGate);
     if (!apiBaseUrl || !account) {
       setOnChainSettlement(undefined);
       setWalletPlanets([]);
@@ -1635,6 +1666,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             planet: selectedPlanet,
           }
         : settlement;
+      if (!canApplyRefreshRequest(onChainRefreshGate, requestId)) {
+        return;
+      }
       setWalletPlanets(planets);
       if (!selectedPlanetId && selectedPlanet?.planetId) {
         setSelectedPlanetId(selectedPlanet.planetId);
@@ -1647,6 +1681,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setOnChainStatus("ready");
       setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
     } catch (error) {
+      if (!canApplyRefreshRequest(onChainRefreshGate, requestId)) {
+        return;
+      }
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainStatus("error");
     }
@@ -1677,6 +1714,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         expectation,
       );
 
+      markFreshStateWrite(onChainRefreshGate);
+      markFreshStateWrite(infrastructureRefreshGate);
       setOnChainSettlement(snapshot.settlement);
       setOnChainQueues(snapshot.queues);
       setOnChainError(undefined);
@@ -1996,6 +2035,40 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }, 120_000);
     return () => window.clearInterval(interval);
   }, [chainSyncHealthy, refreshInfrastructureState, refreshOnChainState]);
+
+  useEffect(() => {
+    if (!apiBaseUrl || !account || !pageStateHydrationReady || !onChainSettlement?.planet) {
+      return;
+    }
+
+    let refreshInFlight = false;
+    const refreshTopBarResources = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      if (refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+      Promise.allSettled([
+        refreshOnChainState(),
+        refreshInfrastructureState(),
+      ]).finally(() => {
+        refreshInFlight = false;
+      });
+    };
+
+    const interval = window.setInterval(refreshTopBarResources, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [
+    account,
+    apiBaseUrl,
+    onChainSettlement?.planet?.planetId,
+    pageStateHydrationReady,
+    refreshInfrastructureState,
+    refreshOnChainState,
+  ]);
 
   const state = useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState, now), [infrastructureChainState, now]);
   const settledState = state;
@@ -3298,10 +3371,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     void updatePlayerDisplayName(apiBaseUrl, provider, account, displayName)
       .then(async (profile) => {
         setPlayerProfile((current) => mergePlayerProfile(current, profile));
+        markFreshStateWrite(onChainRefreshGate);
         setOnChainSettlement((current) => current ? { ...current, player: profile } : current);
         try {
           const refreshedProfile = await fetchPlayerProfile(apiBaseUrl, account);
           setPlayerProfile((current) => mergePlayerProfile(current, refreshedProfile));
+          markFreshStateWrite(onChainRefreshGate);
           setOnChainSettlement((current) => current ? { ...current, player: refreshedProfile } : current);
         } catch (error) {
           console.error(error);
