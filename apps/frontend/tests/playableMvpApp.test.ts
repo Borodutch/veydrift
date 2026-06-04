@@ -8,6 +8,7 @@ import {
   canLoadIndexedPageState,
   canonicalInfrastructureBuildingCompletionQueue,
   completedBuildingFinishSyncReasonFor,
+  defenseCompletionPlanetIdFor,
   failedBuildingFinishSyncReasonFor,
   hasInfrastructureDisplayState,
   infrastructureBackendSyncPausedLabel,
@@ -42,7 +43,7 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainInfrastructureState, ChainResearchState, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
+import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
@@ -582,6 +583,40 @@ describe("Playable MVP app display helpers", () => {
       overviewQueue: readyOverviewQueue,
       researchState: null,
     })).toBe("No active research queue is available to complete.");
+  });
+
+  test("lets Overview defense completion use the selected wallet queue planet before Defenses state is loaded", () => {
+    expect(defenseCompletionPlanetIdFor({
+      activePlanetId: "9",
+      defenseState: null,
+      walletQueues: playerQueues({
+        defense: {
+          active: true,
+          cost: { metal: "2000", crystal: "0", deuterium: "0" },
+          itemId: 0,
+          kind: "defense",
+          quantity: 1,
+          readyAt: "1700000000",
+        },
+        homePlanetId: "7",
+      }),
+    })).toBe("9");
+  });
+
+  test("falls back to wallet queue home planet for Overview defense completion when page state is absent", () => {
+    expect(defenseCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      defenseState: null,
+      walletQueues: playerQueues({ homePlanetId: "7" }),
+    })).toBe("7");
+  });
+
+  test("keeps loaded defense state as a defense completion fallback", () => {
+    expect(defenseCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      defenseState: defenseState({ homePlanetId: "11" }),
+      walletQueues: undefined,
+    })).toBe("11");
   });
 
   test("preserves active research queues when a background wallet poll returns an empty research queue", () => {
@@ -1732,15 +1767,33 @@ function activeResearchQueue({
 }
 
 function playerQueues({
+  defense,
+  homePlanetId,
   research,
-}: Partial<Pick<PlayerQueuesResponse, "research">> = {}): PlayerQueuesResponse {
+}: Partial<Pick<PlayerQueuesResponse, "defense" | "homePlanetId" | "research">> = {}): PlayerQueuesResponse {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
-    homePlanetId: "7",
+    homePlanetId: homePlanetId ?? "7",
     building: null,
-    defense: null,
+    defense: defense ?? null,
     ship: null,
     research: research ?? null,
+  };
+}
+
+function defenseState({
+  homePlanetId,
+}: Partial<Pick<ChainDefenseState, "homePlanetId">> = {}): ChainDefenseState {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: homePlanetId ?? "7",
+    productionAvailable: true,
+    resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+    shipyardLevel: 1,
+    missileSiloLevel: 0,
+    technologyLevels: {},
+    defenses: [],
+    queue: null,
   };
 }
 
