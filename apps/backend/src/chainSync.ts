@@ -90,7 +90,7 @@ export class ChainSyncService {
 
   constructor(
     private readonly config: BackendConfig,
-    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog" | "markStale" | "rebuild" | "rebuildPlanets" | "reconcile">> | undefined,
+    private readonly indexer: Pick<SettlementIndexer, "applyDebrisEvent" | "applyEvent" | "applyMoonChanceEvent"> & Partial<Pick<SettlementIndexer, "applyLog" | "markStale" | "rebuild" | "reconcile">> | undefined,
     private readonly options: {
       reconnectBaseMs?: number;
       WebSocketCtor?: WebSocketConstructor;
