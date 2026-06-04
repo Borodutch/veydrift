@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import {
+  beginRefreshRequest,
+  canApplyRefreshRequest,
+  markFreshStateWrite,
+} from "../src/PlayableMvpApp";
 
 describe("playable chain refresh", () => {
   test("uses backend chain events instead of the old fast unconditional polling loops", async () => {
@@ -20,8 +25,25 @@ describe("playable chain refresh", () => {
     expect(source).toContain("document.visibilityState === \"hidden\"");
     expect(source).toContain("refreshOnChainState()");
     expect(source).toContain("refreshInfrastructureState()");
-    expect(source).toContain("onChainRefreshRequestId");
-    expect(source).toContain("requestId !== onChainRefreshRequestId.current");
+    expect(source).toContain("onChainRefreshGate");
+    expect(source).toContain("infrastructureRefreshGate");
+    expect(source).toContain("canApplyRefreshRequest");
+    expect(source).toContain("markFreshStateWrite");
+  });
+
+  test("blocks older top-bar poll refreshes after newer transaction state writes", () => {
+    const gate = { current: 0 };
+    const olderPollRequest = beginRefreshRequest(gate);
+
+    expect(canApplyRefreshRequest(gate, olderPollRequest)).toBe(true);
+
+    markFreshStateWrite(gate);
+
+    expect(canApplyRefreshRequest(gate, olderPollRequest)).toBe(false);
+
+    const newerPollRequest = beginRefreshRequest(gate);
+
+    expect(canApplyRefreshRequest(gate, newerPollRequest)).toBe(true);
   });
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
