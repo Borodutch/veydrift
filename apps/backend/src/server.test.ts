@@ -694,6 +694,7 @@ describe("Veydrift backend", () => {
         ready: false,
         configurationReady: false,
         chainSyncConnected: null,
+        subscribedToHeads: null,
         subscribedToLogs: null,
         indexedState: null,
         safeToServeIndexedState: null
@@ -706,6 +707,34 @@ describe("Veydrift backend", () => {
       service: "veydrift-backend"
     });
     expect(response.status).toBe(200);
+  });
+
+  test("requires websocket head and log subscriptions for ready chain sync health", async () => {
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return {
+          connected: true,
+          subscribedToHeads: false,
+          subscribedToLogs: true
+        };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(body.readiness).toMatchObject({
+      ready: false,
+      chainSyncConnected: true,
+      subscribedToHeads: false,
+      subscribedToLogs: true
+    });
   });
 
   test("returns public runtime config", async () => {

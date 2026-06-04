@@ -1919,8 +1919,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     };
     const updateSyncStatus = (event: MessageEvent) => {
       try {
-        const snapshot = JSON.parse(event.data) as { connected?: boolean; subscribedToLogs?: boolean };
-        setChainSyncHealthy(Boolean(snapshot.connected && snapshot.subscribedToLogs));
+        const snapshot = JSON.parse(event.data) as {
+          connected?: boolean;
+          subscribedToHeads?: boolean;
+          subscribedToLogs?: boolean;
+        };
+        setChainSyncHealthy(Boolean(snapshot.connected && snapshot.subscribedToHeads && snapshot.subscribedToLogs));
       } catch {
         setChainSyncHealthy(false);
       }

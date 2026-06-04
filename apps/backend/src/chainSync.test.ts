@@ -231,6 +231,54 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
+  test("applies websocket logs incrementally without rebuilding all planets", async () => {
+    MockWebSocket.instances = [];
+    let appliedLogs = 0;
+    let planetRebuilds = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        appliedLogs += 1;
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: false,
+          snapshot: {}
+        };
+      },
+      async rebuildPlanets() {
+        planetRebuilds += 1;
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x7c",
+          transactionHash: "0xabc",
+          topics: [planetStartedTopic],
+          data: "0x"
+        }
+      }
+    });
+    await Promise.resolve();
+
+    expect(appliedLogs).toBe(1);
+    expect(planetRebuilds).toBe(0);
+    service.stop();
+  });
+
   test("marks websocket head gaps stale and triggers reconciliation", async () => {
     MockWebSocket.instances = [];
     const staleReasons: string[] = [];
