@@ -320,7 +320,7 @@ export function failedBuildingFinishSyncReasonFor({
 export function canonicalInfrastructureBuildingCompletionQueue(
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
-  if (!infrastructureState) {
+  if (!infrastructureState || backendCanonicalStatePaused(infrastructureState)) {
     return null;
   }
 
@@ -357,11 +357,18 @@ export function buildingCompletionUnavailableReasonFor({
     return "Wallet or game contract is unavailable.";
   }
 
-  const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
-  if (!queue?.active && !infrastructureState) {
+  if (!infrastructureState) {
     return buildingFinishLiveStateRequiredLabel;
   }
 
+  const backendPausedReason = infrastructureBackendSyncPausedReasonFor({
+    infrastructureChainState: infrastructureState,
+  });
+  if (backendPausedReason) {
+    return backendPausedReason;
+  }
+
+  const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
   if (!queue?.active) {
     return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
   }
@@ -380,13 +387,9 @@ export function buildingCompletionUnavailableReasonFor({
 
 function buildingCompletionQueueForVerification(
   infrastructureState: ChainInfrastructureState | null,
-  fallbackBuildingQueue?: QueueStateResponse | null | undefined,
+  _fallbackBuildingQueue?: QueueStateResponse | null | undefined,
 ): QueueStateResponse | null {
-  const infrastructureQueue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
-  if (infrastructureQueue?.active) return infrastructureQueue;
-  return fallbackBuildingQueue?.active && fallbackBuildingQueue.kind === "building"
-    ? fallbackBuildingQueue
-    : null;
+  return canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
 }
 
 export function buildingFinishUnavailableReasonForDisplay({
@@ -753,10 +756,14 @@ export function infrastructureBackendSyncPausedReasonFor({
   infrastructureChainState: ChainInfrastructureState | null;
   infrastructureError?: string | undefined;
 }): string | undefined {
-  if (infrastructureError || infrastructureChainState?.degraded === true) {
+  if (infrastructureError || backendCanonicalStatePaused(infrastructureChainState)) {
     return infrastructureBackendSyncPausedLabel;
   }
   return undefined;
+}
+
+function backendCanonicalStatePaused(state: ChainInfrastructureState | null): boolean {
+  return state?.degraded === true || state?.stale === true;
 }
 
 export function infrastructureLoadErrorFor({
@@ -2005,6 +2012,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
   );
+  const overviewOnChainQueues = useMemo<PlayerQueuesResponse | undefined>(() => {
+    if (!onChainQueues) return undefined;
+    return onChainQueues.building === activeBuildingQueue
+      ? onChainQueues
+      : { ...onChainQueues, building: activeBuildingQueue };
+  }, [activeBuildingQueue, onChainQueues]);
   const isDisplayedBuildingQueueReady = useMemo(() => {
     return isBuildingQueueReadyToFinish(activeBuildingQueue, now);
   }, [activeBuildingQueue, now]);
@@ -2371,13 +2384,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           activeBuildingQueue,
           expectation: finishExpectation,
         });
-        if (!isUserRejected(error) && failedSyncReason) {
+        const isRejectedByUser = isUserRejected(error);
+        if (finishExpectation) {
+          try {
+            await Promise.all([
+              refreshOnChainState(),
+              refreshInfrastructureState(),
+            ]);
+          } catch (refreshError) {
+            console.error(refreshError);
+          }
+        }
+        if (!isRejectedByUser && failedSyncReason) {
           setFailedBuildingFinishExpectation(finishExpectation);
         }
         setBuildingAction({
           status: "error",
           buildingKey: completionBuildingKey,
-          label: !isUserRejected(error) && failedSyncReason ? failedSyncReason : label,
+          label: failedSyncReason ?? label,
         });
       }
     });
@@ -2394,6 +2418,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainSettlement?.homePlanetId,
     provider,
     refreshFinishedBuildingState,
+    refreshInfrastructureState,
+    refreshOnChainState,
     transactionActionGate,
   ]);
 
@@ -3837,7 +3863,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         now={now}
         onChainError={onChainError}
         fleetVisibility={fleetVisibility}
-        onChainQueues={onChainQueues}
+        onChainQueues={overviewOnChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onCounterplay={handleCounterplay}

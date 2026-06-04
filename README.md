@@ -188,6 +188,9 @@ The initial production target is the existing Hetzner Easypanel instance. The
 contract deployment path is state-preserving by policy: do not redeploy alpha
 contracts as a reset, and do not update backend runtime addresses without a
 proxy-upgrade, no-state, or migrated-redeploy note in the Kaneo/PR handoff.
+For the approved Base Sepolia `VeydriftGame` replacement path, follow
+`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before any broadcast or
+runtime address change.
 `veydrift/frontend` service is sourced from this GitHub repository on `main`.
 Use the repository root as the EasyPanel source/build path and configure
 Nixpacks with frontend-scoped commands so Bun can install the whole monorepo

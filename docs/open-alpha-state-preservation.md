@@ -130,6 +130,12 @@ state, the plan must name the source of truth for each class and include a
 pre/post parity check. If any class is intentionally dropped, record the product
 decision and compensation/rollback plan before broadcast.
 
+The approved VEY-313 Base Sepolia `VeydriftGame` replacement path is a migrated
+redeploy because the live game is a direct non-proxy deployment with existing
+alpha state and nonzero game-held resource reserves. Follow
+`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before any replacement
+broadcast.
+
 ## Done Gate
 
 Do not mark a redeploy or upgrade task done unless the Kaneo workpad and PR

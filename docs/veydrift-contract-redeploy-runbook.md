@@ -52,6 +52,11 @@ not a substitute for recording the evidence described below.
 5. Define rollback and verification. The Kaneo handoff must include the
    migration verification note before the task can move to done.
 
+For the VEY-313 Base Sepolia `VeydriftGame` replacement, the approved path is
+migrated redeploy. The live game is not proxy-upgradeable and no-state redeploy
+is invalid. Complete
+`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before broadcasting.
+
 Full deploys through `Deploy.s.sol` also require:
 
 ```sh

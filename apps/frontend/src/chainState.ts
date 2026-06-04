@@ -137,8 +137,8 @@ export function activeBuildingQueueResponse(
   queues: PlayerQueuesResponse | undefined,
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
-  if (queues?.building?.active) return queues.building;
   if (infrastructureState?.queue?.active) return infrastructureState.queue;
+  if (queues?.building?.active) return queues.building;
   return null;
 }
 
