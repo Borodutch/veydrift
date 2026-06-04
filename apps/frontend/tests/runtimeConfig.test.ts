@@ -1,10 +1,28 @@
 import { describe, expect, test } from "bun:test";
-import { gameContractAddress, runtimeConfigUrl, type RuntimeConfig } from "../src/runtimeConfig";
+import {
+  defaultPlayableApiUrl,
+  gameContractAddress,
+  resolvePlayableApiUrl,
+  runtimeConfigUrl,
+  type RuntimeConfig,
+} from "../src/runtimeConfig";
 
 describe("runtime config URL", () => {
   test("targets the API runtime-config endpoint", () => {
     expect(runtimeConfigUrl("https://api-test.veydrift.com/")).toBe(
       "https://api-test.veydrift.com/runtime-config",
+    );
+  });
+
+  test("falls back to the test API when deployment env is missing or blank", () => {
+    expect(resolvePlayableApiUrl(undefined)).toBe(defaultPlayableApiUrl);
+    expect(resolvePlayableApiUrl("")).toBe(defaultPlayableApiUrl);
+    expect(resolvePlayableApiUrl("   ")).toBe(defaultPlayableApiUrl);
+  });
+
+  test("normalizes explicit deployment API URLs", () => {
+    expect(resolvePlayableApiUrl("https://custom-api.veydrift.test///")).toBe(
+      "https://custom-api.veydrift.test",
     );
   });
 
