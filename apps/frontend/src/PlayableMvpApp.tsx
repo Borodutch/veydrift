@@ -361,15 +361,15 @@ export function buildingCompletionUnavailableReasonFor({
     return buildingFinishLiveStateRequiredLabel;
   }
 
-  const backendPausedReason = infrastructureBackendSyncPausedReasonFor({
-    infrastructureChainState: infrastructureState,
-  });
-  if (backendPausedReason) {
-    return backendPausedReason;
-  }
-
   const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
   if (!queue?.active) {
+    const backendPausedReason = infrastructureBackendSyncPausedReasonFor({
+      infrastructureChainState: infrastructureState,
+    });
+    if (backendPausedReason) {
+      return backendPausedReason;
+    }
+
     return "No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.";
   }
 
@@ -387,9 +387,25 @@ export function buildingCompletionUnavailableReasonFor({
 
 function buildingCompletionQueueForVerification(
   infrastructureState: ChainInfrastructureState | null,
-  _fallbackBuildingQueue?: QueueStateResponse | null | undefined,
+  fallbackBuildingQueue?: QueueStateResponse | null | undefined,
 ): QueueStateResponse | null {
-  return canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
+  const canonicalQueue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
+  if (canonicalQueue?.active) return canonicalQueue;
+  if (canUseFallbackBuildingCompletionQueue(infrastructureState, fallbackBuildingQueue)) {
+    return fallbackBuildingQueue;
+  }
+  return canonicalQueue;
+}
+
+function canUseFallbackBuildingCompletionQueue(
+  infrastructureState: ChainInfrastructureState | null,
+  fallbackBuildingQueue?: QueueStateResponse | null | undefined,
+): fallbackBuildingQueue is QueueStateResponse {
+  return Boolean(
+    fallbackBuildingQueue?.active
+    && infrastructureState?.stale === true
+    && infrastructureState.degraded !== true
+  );
 }
 
 export function buildingFinishUnavailableReasonForDisplay({
@@ -437,7 +453,10 @@ export function buildingFinishUnavailableReasonForDisplay({
     return failedQueueSyncReason;
   }
 
-  if (backendSyncPausedReason) {
+  const canRecoverFromStaleBackendQueue = isBuildingReadyToFinish
+    && infrastructureState?.stale === true
+    && infrastructureState.degraded !== true;
+  if (backendSyncPausedReason && !canRecoverFromStaleBackendQueue) {
     return backendSyncPausedReason;
   }
 
