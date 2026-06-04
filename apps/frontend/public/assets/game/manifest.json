@@ -246,12 +246,12 @@
     "anti-ballistic-missile": {
       "name": "Anti-Ballistic Missile",
       "image": "/assets/game/style-pass/generated/defenses/anti-ballistic-missile.webp",
-      "status": "generated-preview"
+      "status": "production"
     },
     "interplanetary-missile": {
       "name": "Interplanetary Missile",
       "image": "/assets/game/style-pass/generated/defenses/interplanetary-missile.webp",
-      "status": "generated-preview"
+      "status": "production"
     }
   },
   "planets": {
