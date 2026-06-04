@@ -6,6 +6,7 @@ import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222";
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
+const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 
 const config: BackendConfig = {
@@ -334,6 +335,72 @@ describe("ChainSyncService", () => {
     expect(staleReasons).toEqual(["websocket head gap 124-127"]);
     expect(reconcileReasons).toEqual(["websocket head gap 124-127"]);
     expect(syncStatusBlocks).toEqual(expect.arrayContaining(["123", "127"]));
+    service.stop();
+  });
+
+  test("applies queue logs incrementally without rebuilding canonical state", async () => {
+    MockWebSocket.instances = [];
+    const appliedTransactions: string[] = [];
+    const staleReasons: string[] = [];
+    const rebuildReasons: string[] = [];
+    const reconcileReasons: string[] = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog(log: { transactionHash: string; removed?: boolean }) {
+        appliedTransactions.push(log.transactionHash);
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: log.removed === true,
+          snapshot: {}
+        };
+      },
+      markStale(reason: string) {
+        staleReasons.push(reason);
+      },
+      async rebuildPlanets() {
+        rebuildReasons.push("rebuildPlanets");
+      },
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, { WebSocketCtor: MockWebSocket });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: {
+          blockNumber: "0x90",
+          transactionHash: "0xqueue-start",
+          topics: [
+            buildingStartedTopic,
+            `0x${(7n).toString(16).padStart(64, "0")}`,
+            `0x${(6n).toString(16).padStart(64, "0")}`
+          ],
+          data: abiWords(2n, 1770002000n, 100n, 50n, 0n)
+        }
+      }
+    });
+    await Promise.resolve();
+
+    expect(appliedTransactions).toEqual(["0xqueue-start"]);
+    expect(rebuildReasons).toEqual([]);
+    expect(reconcileReasons).toEqual([]);
+    expect(staleReasons).toEqual([]);
+    expect(service.snapshot()).toMatchObject({
+      eventsReceived: 1,
+      latestSyncedBlock: "144"
+    });
     service.stop();
   });
 
