@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {
+    OwnableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {
+    PausableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @notice Veydrift randomness oracle for MVP/testnet game flows.
 /// @dev The default mode requires the configured Veydrift oracle account to commit to a
 ///      random word before a request exists, then reveal that exact word during fulfillment.
 ///      This does not remove oracle liveness/censorship trust, but it prevents arbitrary
 ///      post-request word selection when precommit enforcement is enabled.
-contract RandomnessEngine is Ownable, Pausable {
+contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgradeable {
     bytes32 private constant RANDOMNESS_COMMITMENT_DOMAIN =
         keccak256("veydrift.randomness-commitment.v1");
 
@@ -66,8 +71,17 @@ contract RandomnessEngine is Ownable, Pausable {
         uint256 randomWord
     );
 
-    constructor(address initialOwner, address initialFulfiller) Ownable(initialOwner) {
+    constructor(address initialOwner, address initialFulfiller) {
+        initialize(initialOwner, initialFulfiller);
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner, address initialFulfiller) public initializer {
         if (initialOwner == address(0) || initialFulfiller == address(0)) revert ZeroAddress();
+        __Ownable_init(initialOwner);
+        __Pausable_init();
+        nextRequestId = 1;
+        precommitRequired = true;
         fulfiller = initialFulfiller;
         emit FulfillerUpdated(address(0), initialFulfiller);
     }
@@ -198,6 +212,8 @@ contract RandomnessEngine is Ownable, Pausable {
 
         return stored.randomWord;
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     function _consumeRandomnessCommitment() private returns (bytes32 commitment) {
         if (!precommitRequired) return bytes32(0);
