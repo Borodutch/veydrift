@@ -307,9 +307,10 @@ describe("overview queue progress display", () => {
     });
     expect(notReady).toEqual({
       disabled: false,
-      label: "Finish upgrade",
+      label: "Complete building",
       onFinish: undefined,
       reason: undefined,
+      reasonTone: "error",
       visible: false,
     });
 
@@ -322,9 +323,10 @@ describe("overview queue progress display", () => {
     });
     expect(pending).toEqual({
       disabled: true,
-      label: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      label: "Completing building",
       onFinish: undefined,
       reason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      reasonTone: "pending",
       visible: true,
     });
 
@@ -334,7 +336,7 @@ describe("overview queue progress display", () => {
       queue,
     });
     expect(ready.disabled).toBe(false);
-    expect(ready.label).toBe("Finish upgrade");
+    expect(ready.label).toBe("Complete building");
     ready.onFinish?.();
     expect(calls).toBe(1);
   });
@@ -364,14 +366,17 @@ describe("overview queue progress display", () => {
     expect(action.visible).toBe(true);
     expect(action.disabled).toBe(true);
     expect(action.onFinish).toBeUndefined();
-    expect(action.label).toContain("Infrastructure API is temporarily unavailable");
-    expect(action.label).not.toContain("Syncing building queue");
-    expect(action.label).not.toContain("backend state is restored");
-    expect(action.label).not.toContain("game state sync recovers");
+    expect(action.label).toBe("Complete building");
+    expect(action.reason).toContain("Infrastructure API is temporarily unavailable");
+    expect(action.reason).not.toContain("Syncing building queue");
+    expect(action.reason).not.toContain("backend state is restored");
+    expect(action.reason).not.toContain("game state sync recovers");
+    expect(action.reasonTone).toBe("error");
     expect(calls).toBe(0);
   });
 
-  test("constrains long building finish labels inside the Overview queue card button", () => {
+  test("keeps Overview building finish button copy compact", () => {
+    expect(overviewSource).toContain('label: actionPending ? "Completing building" : "Complete building"');
     expect(overviewSource).toContain("w-full min-w-0 items-center justify-center overflow-hidden");
     expect(overviewSource).toContain("max-w-full overflow-hidden text-ellipsis whitespace-nowrap");
   });
@@ -411,12 +416,36 @@ describe("overview queue progress display", () => {
     });
 
     expect(action.reason).toBe(duplicatePrompt);
-    expect(overviewBuildingNoticeForFinishAction(notice, action)).toBeUndefined();
+    expect(overviewBuildingNoticeForFinishAction(notice, action)).toBe(notice);
     expect(overviewBuildingNoticeForFinishAction({
       ...notice,
       label: "Infrastructure API is temporarily unavailable.",
       tone: "error",
     }, action)?.label).toBe("Infrastructure API is temporarily unavailable.");
+  });
+
+  test("moves long Overview building completion guidance into a wrapped notice", () => {
+    const longReason = "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.";
+    const action = overviewBuildingFinishAction({
+      actionUnavailableReason: longReason,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding: () => undefined,
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 1_700_000_000_000,
+        startedAt: 1_699_999_000_000,
+        targetLevel: 9,
+      },
+    });
+
+    expect(action.label).toBe("Complete building");
+    expect(action.reason).toBe(longReason);
+    expect(overviewBuildingNoticeForFinishAction(undefined, action)).toEqual({
+      label: longReason,
+      tone: "error",
+    });
   });
 
   test("shows and invokes the ready defense completion action on Overview", () => {
