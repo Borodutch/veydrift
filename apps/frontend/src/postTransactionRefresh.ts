@@ -528,7 +528,7 @@ function finishedBuildingTimeoutMessage(
 function transientGameStateReadFailureMessage(error: unknown): string | undefined {
   if (!isTransientGameStateReadFailure(error)) return undefined;
 
-  return "The game API or RPC is temporarily unavailable while the confirmed transaction state is being checked. Keeping the last known game state and retrying from live sync; this is not a wallet network mismatch.";
+  return "The game API or RPC is temporarily unavailable while the confirmed transaction state is being checked. Keeping the last known game state and retrying from backend state; this is not a wallet network mismatch.";
 }
 
 export function isTransientGameStateReadFailure(error: unknown): boolean {
@@ -641,7 +641,7 @@ function walletPlanetHydrationTimeoutMessage(
       ? `home planet ${homePlanetId} is visible, but complete resources are not hydrated yet`
       : "home planet id is not visible from the game API yet";
 
-  return `Settlement transaction is confirmed, but the game API did not hydrate a complete planet after ${waitedSeconds}s. Last status: ${reason}. Indexed planets: ${planetCount}. Retry sync in a few seconds; if it repeats, share this status with the transaction hash.`;
+  return `Settlement transaction is confirmed, but the game API did not hydrate a complete planet after ${waitedSeconds}s. Last status: ${reason}. Indexed planets: ${planetCount}. Retry in a few seconds; if it repeats, share this status with the transaction hash.`;
 }
 
 function renamedPlanetTimeoutMessage(
@@ -655,7 +655,7 @@ function renamedPlanetTimeoutMessage(
   const latestName = hydrated?.selectedPlanet.name ?? "unavailable";
   const reason = lastError instanceof Error ? lastError.message : `latest name: ${latestName}`;
 
-  return `Rename transaction is confirmed, but indexed planet ${expectation.planetId} did not show "${expectation.name}" after ${waitedSeconds}s. Last status: ${reason}. Retry sync in a few seconds; if it repeats, share this status with the transaction hash.`;
+  return `Rename transaction is confirmed, but indexed planet ${expectation.planetId} did not show "${expectation.name}" after ${waitedSeconds}s. Last status: ${reason}. Retry in a few seconds; if it repeats, share this status with the transaction hash.`;
 }
 
 function defaultDelay(ms: number): Promise<void> {

@@ -349,7 +349,7 @@ describe("overview queue progress display", () => {
       targetLevel: 8,
     };
     const backendUnavailableReason =
-      "Infrastructure API is temporarily unavailable while backend state is restored. The app will retry when game state sync recovers.";
+      "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
     let calls = 0;
     const action = overviewBuildingFinishAction({
       actionUnavailableReason: backendUnavailableReason,
@@ -366,6 +366,8 @@ describe("overview queue progress display", () => {
     expect(action.onFinish).toBeUndefined();
     expect(action.label).toContain("Infrastructure API is temporarily unavailable");
     expect(action.label).not.toContain("Syncing building queue");
+    expect(action.label).not.toContain("backend state is restored");
+    expect(action.label).not.toContain("game state sync recovers");
     expect(calls).toBe(0);
   });
 
