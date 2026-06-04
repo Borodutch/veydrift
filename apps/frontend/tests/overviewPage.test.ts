@@ -371,6 +371,11 @@ describe("overview queue progress display", () => {
     expect(calls).toBe(0);
   });
 
+  test("constrains long building finish labels inside the Overview queue card button", () => {
+    expect(overviewSource).toContain("w-full min-w-0 items-center justify-center overflow-hidden");
+    expect(overviewSource).toContain("max-w-full overflow-hidden text-ellipsis whitespace-nowrap");
+  });
+
   test("shows building finish action notices for the active overview queue", () => {
     const notice = {
       buildingKey: "shipyard" as const,
