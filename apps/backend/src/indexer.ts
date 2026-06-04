@@ -231,23 +231,33 @@ export class SettlementIndexer {
 
   snapshot(): IndexerSnapshot {
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
-    const staleReason = this.staleReason(reconciliationInProgress);
-    const safeToServeIndexedState = !reconciliationInProgress && staleReason === null;
+    const indexedPlanets = this.count("indexed_planets");
+    const lastReconciledAt = this.metadata("lastReconciledAt");
+    const lastReconciledBlock = this.metadata("lastReconciledBlock");
+    const lastReconciliationError = this.metadata("lastReconciliationError");
+    const pendingReconciliationReason = this.metadata("pendingReconciliationReason");
+    const blockingStaleReason = this.blockingStaleReason({
+      lastReconciledAt,
+      lastReconciliationError,
+      pendingReconciliationReason
+    });
+    const staleReason = reconciliationInProgress ? "reconciliation_in_progress" : blockingStaleReason;
+    const safeToServeIndexedState = blockingStaleReason === null && (!reconciliationInProgress || Boolean(lastReconciledAt));
     return {
       indexedDebrisFields: this.count("indexed_debris_fields"),
       indexedEventLogs: this.count("indexed_event_logs"),
       indexedMoonChanceReports: this.count("indexed_moon_chance_reports"),
       indexedMoons: this.count("indexed_moons"),
-      indexedPlanets: this.count("indexed_planets"),
+      indexedPlanets,
       indexedState: safeToServeIndexedState ? "healthy" : reconciliationInProgress ? "reconciling" : "stale",
       indexedRiftBalances: this.count("indexed_rift_balances"),
       fromBlock: this.fromBlock.toString(),
       lastRebuiltAt: this.metadata("lastRebuiltAt"),
-      lastReconciledAt: this.metadata("lastReconciledAt"),
-      lastReconciledBlock: this.metadata("lastReconciledBlock"),
-      lastReconciliationError: this.metadata("lastReconciliationError"),
+      lastReconciledAt,
+      lastReconciledBlock,
+      lastReconciliationError,
       latestIndexedBlock: this.metadata("latestIndexedBlock"),
-      pendingReconciliationReason: this.metadata("pendingReconciliationReason"),
+      pendingReconciliationReason,
       reconciliationInProgress,
       reorgDetectedAt: this.metadata("reorgDetectedAt"),
       safeToServeIndexedState,
@@ -2222,13 +2232,18 @@ export class SettlementIndexer {
     return this.rows<SettledPlanetEvent>(sql, ...params).map((planet) => this.withResourceSnapshot(planet));
   }
 
-  private staleReason(reconciliationInProgress: boolean): string | null {
-    if (reconciliationInProgress) return "reconciliation_in_progress";
-    const error = this.metadata("lastReconciliationError");
-    if (error) return `reconciliation_failed: ${error}`;
-    const pending = this.metadata("pendingReconciliationReason");
-    if (pending) return pending;
-    if (!this.metadata("lastReconciledAt")) return "never_reconciled";
+  private blockingStaleReason({
+    lastReconciledAt,
+    lastReconciliationError,
+    pendingReconciliationReason
+  }: {
+    lastReconciledAt: string | null;
+    lastReconciliationError: string | null;
+    pendingReconciliationReason: string | null;
+  }): string | null {
+    if (lastReconciliationError) return `reconciliation_failed: ${lastReconciliationError}`;
+    if (pendingReconciliationReason) return pendingReconciliationReason;
+    if (!lastReconciledAt) return "never_reconciled";
     return null;
   }
 }
@@ -2263,7 +2278,12 @@ function openIndexerDatabase(databasePath: string): Database {
   if (databasePath !== ":memory:") {
     mkdirSync(dirname(databasePath), { recursive: true });
   }
-  return new Database(databasePath);
+  const database = new Database(databasePath);
+  database.exec("PRAGMA busy_timeout = 10000;");
+  if (databasePath !== ":memory:") {
+    database.exec("PRAGMA journal_mode = WAL;");
+  }
+  return database;
 }
 
 function parseEvent<T>(value: string): T {
