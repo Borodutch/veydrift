@@ -98,13 +98,11 @@ describe("Defense page display helpers", () => {
       countLabel: "Deployed",
       countValue: 12,
       description: expect.stringContaining("kinetic"),
-      detailStats: expect.arrayContaining([
-        expect.objectContaining({ label: "Attack", value: "80" }),
-        expect.objectContaining({ label: "Shield", value: "20" }),
-        expect.objectContaining({ label: "Hull", value: "200" }),
-      ]),
+      detailNote: "Attack 80 · Shield 20 · Hull 200",
+      durationSeconds: 960,
       status: "ready",
     });
+    expect(items.find((item) => item.key === "rocketLauncher")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
       countValue: 3,
       quantity: 4,
@@ -304,6 +302,7 @@ function defenseState(overrides: Partial<ChainDefenseState> = {}): ChainDefenseS
       deuterium: "10000",
     },
     shipyardLevel: 0,
+    naniteLevel: 0,
     missileSiloLevel: 0,
     technologyLevels: {},
     defenses: [],

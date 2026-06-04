@@ -1288,6 +1288,7 @@ function indexedDefenseState(
     unavailableReason,
     resources: planet?.resources ?? null,
     shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
+    naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0,
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
     technologyLevels: indexer.technologyLevels(wallet),
     defenses: planet ? indexer.defenseRows(planet.planetId) : [],

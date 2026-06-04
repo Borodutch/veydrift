@@ -13,12 +13,6 @@ const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 export type ProductionRequirementState = RequirementFlair;
 
-export type ProductionDetailStat = {
-  label: string;
-  value: string;
-  hint?: string | undefined;
-};
-
 export type ProductionCatalogItem<Key extends string = string> = {
   key: Key;
   id: number;
@@ -42,7 +36,6 @@ export type ProductionCatalogItem<Key extends string = string> = {
   detailNote: string;
   description?: string | undefined;
   notes?: string[] | undefined;
-  detailStats?: ProductionDetailStat[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
 
@@ -310,25 +303,14 @@ function SelectedProductionPanel<Key extends string>({
         </p>
       ) : null}
 
-      {item.detailStats?.length ? (
-        <div className="grid gap-2">
-          <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Specs</h4>
-          <dl className="grid grid-cols-2 gap-2 text-xs">
-            {item.detailStats.map((stat) => (
-              <Stat hint={stat.hint} label={stat.label} value={stat.value} key={stat.label} />
-            ))}
-          </dl>
-        </div>
-      ) : null}
-
-      <dl className="grid grid-cols-2 gap-2 text-xs">
-        <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
-        <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
-        <Stat label="Metal" value={item.cost ? format(item.cost.metal) : "-"} />
-        <Stat label="Crystal" value={item.cost ? format(item.cost.crystal) : "-"} />
-        <Stat label="Deut" value={item.cost ? format(item.cost.deuterium) : "-"} />
-        <Stat label="Status" value={item.statusLabel} />
-      </dl>
+      <div className="grid gap-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Details</h4>
+        <dl className="grid grid-cols-2 gap-2 text-xs">
+          <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
+          <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
+          <Stat className="col-span-2" label="Price" value={item.cost ? formatPrice(item.cost) : "-"} />
+        </dl>
+      </div>
 
       {item.notes?.length ? (
         <ul className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs leading-5 text-slate-400">
@@ -400,11 +382,21 @@ function ProductionRequirementFlairs({
   );
 }
 
-function Stat({ hint, label, value }: { hint?: string | undefined; label: string; value: string }) {
+function Stat({
+  className = "",
+  hint,
+  label,
+  value,
+}: {
+  className?: string | undefined;
+  hint?: string | undefined;
+  label: string;
+  value: string;
+}) {
   return (
-    <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+    <div className={`rounded border border-white/10 bg-black/20 px-2 py-1.5 ${className}`}>
       <dt className="text-[10px] uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="truncate text-slate-200">{value}</dd>
+      <dd className="break-words text-slate-200">{value}</dd>
       {hint ? <dd className="mt-1 line-clamp-2 text-[10px] leading-3 text-slate-500">{hint}</dd> : null}
     </div>
   );
@@ -424,6 +416,10 @@ function formatQueueReadyAt(readyAt: string | null): string {
 
 function format(value: number): string {
   return formatter.format(Math.floor(value));
+}
+
+function formatPrice(cost: Resources): string {
+  return `M ${format(cost.metal)} · C ${format(cost.crystal)} · D ${format(cost.deuterium)}`;
 }
 
 function formatDuration(seconds: number): string {

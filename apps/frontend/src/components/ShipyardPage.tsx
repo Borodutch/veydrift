@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
-import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
-import { formatMissingResources, formatNumber } from "../buildingDetails";
+import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate } from "../playableMvp";
+import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
 import {
@@ -248,11 +248,7 @@ export function shipProductionItems({
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const combatStats = shipCombatStats(ship);
-    const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
-    const detailStats = shipSpecRows(ship);
-    if (ship.key === "solarSatellite" && chainShip?.energyPerUnit) {
-      detailStats.push({ label: "E/unit", value: formatNumber(Number(chainShip.energyPerUnit)) });
-    }
+    const stats = combatStats.rows.map((row) => `${row.label} ${formatStatValue(row.value)}`).join(" · ");
 
     return {
       actionLabel: "Build",
@@ -263,7 +259,6 @@ export function shipProductionItems({
       countValue: owned,
       detailNote: stats || "Production unit",
       description: ship.description,
-      detailStats,
       disabled,
       durationSeconds,
       group: ship.group,
@@ -275,11 +270,14 @@ export function shipProductionItems({
       quantity,
       queued,
       requirements,
-      notes: combatStats.notes,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
     };
   });
+}
+
+function formatStatValue(value: number | string): string {
+  return typeof value === "number" ? value.toLocaleString("en-US") : value;
 }
 
 export function getMissingRequirements(

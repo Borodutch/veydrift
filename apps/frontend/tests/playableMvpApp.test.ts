@@ -1887,6 +1887,7 @@ function defenseState({
     productionAvailable: true,
     resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
     shipyardLevel: 1,
+    naniteLevel: 0,
     missileSiloLevel: 0,
     technologyLevels: {},
     defenses: [],
