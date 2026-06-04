@@ -669,7 +669,7 @@ export function BuildingLevelInfoModal({
                   key={row.level}
                 >
                   <LevelInfoCell>
-                    <span className="inline-flex items-center gap-2">
+                    <span className="inline-flex min-w-max items-center gap-2 whitespace-nowrap">
                       <span className="font-semibold text-white">Level {row.level}</span>
                       {row.current && <LevelPill tone="current">Current</LevelPill>}
                       {row.next && <LevelPill tone="next">Next</LevelPill>}
@@ -747,7 +747,7 @@ function LevelPill({ children, tone }: { children: string; tone: "current" | "ne
     : "border-signal/30 bg-signal/10 text-signal";
 
   return (
-    <span className={`rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
+    <span className={`inline-flex items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
       {children}
     </span>
   );

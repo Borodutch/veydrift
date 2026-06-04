@@ -86,6 +86,9 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("2m 41s");
     expect(text).toContain("72 Metal/h");
     expect(text).toContain("24 required");
+
+    expect(classNamesForText(modal, "Level 1 Current")).toContain("whitespace-nowrap");
+    expect(classNamesForText(modal, "Level 2 Next")).toContain("whitespace-nowrap");
   });
 
   test("renders Solar Plant modal rows with energy output", () => {
@@ -413,4 +416,32 @@ function textParts(node: ComponentChildren): string[] {
   }
 
   return textParts(vnode.props?.children);
+}
+
+function classNamesForText(node: ComponentChildren, text: string): string[] {
+  const matches: string[] = [];
+
+  collectClassNamesForText(node, text, matches);
+
+  return matches.join(" ").split(/\s+/).filter(Boolean);
+}
+
+function collectClassNamesForText(node: ComponentChildren, text: string, matches: string[]) {
+  if (node === null || node === undefined || typeof node === "boolean" || typeof node === "string" || typeof node === "number") {
+    return;
+  }
+
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      collectClassNamesForText(child, text, matches);
+    }
+    return;
+  }
+
+  const vnode = node as VNode;
+  if (visibleText(vnode).includes(text) && typeof vnode.props?.className === "string") {
+    matches.push(vnode.props.className);
+  }
+
+  collectClassNamesForText(vnode.props?.children, text, matches);
 }
