@@ -5,10 +5,12 @@ import {
   buildingCatalog,
   canAfford,
   energyBalance,
+  researchEffectRows,
   researchCatalog,
   researchDurationEstimate,
   researchLabRequirementFor,
   researchRequirementsFor,
+  researchUnlockRows,
   unmetResearchRequirement,
 } from "../playableMvp";
 import type { ChainResearchState } from "../walletFlow";
@@ -441,6 +443,10 @@ function ResearchDetailPanel({
     state,
   });
   const requirementStates = getResearchRequirementStates(state, research.key);
+  const effectRows = researchEffectRows(state, research.key, {
+    researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
+  });
+  const unlockRows = researchUnlockRows(research.key);
   const isSelectedResearchQueued = queue?.key === research.key;
 
   return (
@@ -489,6 +495,8 @@ function ResearchDetailPanel({
         />
       </dl>
 
+      <ResearchEffectsSection effectRows={effectRows} unlockRows={unlockRows} />
+
       <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
         <p className={`text-sm font-semibold ${status.disabled ? "text-slate-400" : "text-emerald-200"}`}>
           {status.reason}
@@ -513,6 +521,71 @@ function ResearchDetailPanel({
         {status.actionLabel}
       </button>
     </InspectDetailShell>
+  );
+}
+
+export function ResearchEffectsSection({
+  effectRows,
+  unlockRows,
+}: {
+  effectRows: ReturnType<typeof researchEffectRows>;
+  unlockRows: string[];
+}) {
+  return (
+    <section className="mt-4 rounded border border-white/10 bg-white/[0.03] p-3">
+      <h4 className="text-xs font-semibold uppercase tracking-normal text-slate-400">Effects</h4>
+      {effectRows.length > 0 ? (
+        <>
+          <div className="mt-2 overflow-hidden rounded border border-white/10">
+            <table className="w-full table-fixed text-left text-xs">
+              <thead className="bg-white/[0.04] text-slate-400">
+                <tr>
+                  <th className="w-2/5 px-2 py-1.5 font-semibold">Target</th>
+                  <th className="px-2 py-1.5 font-semibold">Current</th>
+                  <th className="px-2 py-1.5 font-semibold">Next</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/10">
+                {effectRows.map((row) => (
+                  <tr key={row.target}>
+                    <td className="px-2 py-1.5 text-slate-200">{row.target}</td>
+                    <td className="px-2 py-1.5 text-slate-300">{row.current}</td>
+                    <td className="px-2 py-1.5 text-emerald-200">
+                      {row.next}
+                      {row.delta ? <span className="ml-1 text-emerald-300/80">({row.delta})</span> : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {unlockRows.length > 0 ? <ResearchUnlockList title="Also unlocks" unlockRows={unlockRows} /> : null}
+        </>
+      ) : unlockRows.length > 0 ? (
+        <ResearchUnlockList unlockRows={unlockRows} />
+      ) : (
+        <p className="mt-2 text-xs text-slate-400">No direct numeric effect in current Veydrift rules; this technology is used as an unlock or prerequisite.</p>
+      )}
+    </section>
+  );
+}
+
+function ResearchUnlockList({
+  title,
+  unlockRows,
+}: {
+  title?: string | undefined;
+  unlockRows: string[];
+}) {
+  return (
+    <div className="mt-2">
+      {title ? <p className="text-xs font-semibold text-slate-400">{title}</p> : null}
+      <ul className="mt-1 grid gap-1 text-xs text-slate-300">
+        {unlockRows.slice(0, 8).map((row) => (
+          <li className="rounded border border-white/10 bg-white/[0.03] px-2 py-1" key={row}>{row}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
