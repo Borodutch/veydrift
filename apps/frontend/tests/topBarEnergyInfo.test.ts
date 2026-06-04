@@ -31,6 +31,6 @@ describe("top bar energy info", () => {
         solarSatelliteCount: 3,
         solarSatelliteEnergy: 12,
       },
-    })).toContain("Production in total: 96. By Solar Plant: 44. By Fusion Generator: 16 from 11 DEUT/h. By Solar Satellites: 36 from 3 satellites (12 E/Sat).");
+    })).toContain("Production in total: 96. Solar Plant: 44. Fusion Generator: 16 from 11 DEUT/h. Solar Satellites: 36 from 3 satellites (12 E/Sat).");
   });
 });
