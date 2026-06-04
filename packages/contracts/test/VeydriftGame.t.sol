@@ -1093,18 +1093,55 @@ contract VeydriftGameTest is Test {
         assertEq(appendedQueue.cost.deuterium, deuteriumCost * 5);
     }
 
-    function testDefenseProductionRejectsDifferentActiveQueue() public {
+    function testDefenseProductionQueuesDifferentDefenseBehindActiveQueue() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         _seedDefensePrerequisites(planetId);
         _setResources(planetId, 5_000_000, 5_000_000, 5_000_000);
 
         vm.prank(player);
-        game.startDefenseProduction(planetId, Defense.RocketLauncher, 2);
+        game.startDefenseProduction(planetId, Defense.LightLaser, 2);
+        VeydriftGameStorage.DefenseQueue memory activeQueue = game.defenseQueue(planetId);
+        (uint128 metalCost, uint128 crystalCost, uint128 deuteriumCost) =
+            VeydriftCatalog.defenseCost(Defense.RocketLauncher);
+        uint256 backlogDuration =
+            VeydriftFormulas.unitDuration(8, 0, metalCost, crystalCost, deuteriumCost, 3, 1, 1);
 
         vm.prank(player);
-        vm.expectRevert(VeydriftGameStorage.QueueActive.selector);
-        game.startDefenseProduction(planetId, Defense.LightLaser, 1);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
+
+        VeydriftGameStorage.DefenseQueue memory stillActive = game.defenseQueue(planetId);
+        assertTrue(stillActive.active);
+        assertEq(uint8(stillActive.defense), uint8(Defense.LightLaser));
+        assertEq(stillActive.quantity, 2);
+
+        VeydriftGameStorage.DefenseQueue[] memory backlog = game.defenseQueueBacklog(planetId);
+        assertEq(backlog.length, 1);
+        assertTrue(backlog[0].active);
+        assertEq(uint8(backlog[0].defense), uint8(Defense.RocketLauncher));
+        assertEq(backlog[0].quantity, 3);
+        assertEq(backlog[0].readyAt, activeQueue.readyAt + backlogDuration);
+        assertEq(backlog[0].cost.metal, metalCost * 3);
+        assertEq(backlog[0].cost.crystal, crystalCost * 3);
+        assertEq(backlog[0].cost.deuterium, deuteriumCost * 3);
+
+        vm.warp(activeQueue.readyAt);
+        vm.prank(player);
+        game.finishDefenseProduction(planetId);
+
+        VeydriftGameStorage.DefenseQueue memory promoted = game.defenseQueue(planetId);
+        assertTrue(promoted.active);
+        assertEq(uint8(promoted.defense), uint8(Defense.RocketLauncher));
+        assertEq(promoted.quantity, 3);
+        assertEq(promoted.readyAt, backlog[0].readyAt);
+        assertEq(game.defenseQueueBacklog(planetId).length, 0);
+        assertEq(game.defenseCount(planetId, Defense.LightLaser), 2);
+
+        vm.warp(promoted.readyAt);
+        vm.prank(player);
+        game.finishDefenseProduction(planetId);
+        assertFalse(game.defenseQueue(planetId).active);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 3);
     }
 
     function testInterplanetaryMissileAttackConsumesSilosInterceptionAndDestroysDefense() public {

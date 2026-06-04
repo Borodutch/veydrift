@@ -185,11 +185,18 @@ function defenseQueueMatches(
   queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
   expectation: StartedDefenseProductionExpectation,
 ): boolean {
-  return Boolean(
-    queue?.active
-    && queue.itemId === expectation.itemId
-    && (queue.quantity ?? 0) >= expectation.quantity,
+  return defenseQueueEntries(queue).some((entry) =>
+    entry.active
+      && entry.itemId === expectation.itemId
+      && (entry.quantity ?? 0) >= expectation.quantity
   );
+}
+
+function defenseQueueEntries(
+  queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
+): NonNullable<ChainDefenseState["queue"]>[] {
+  if (!queue) return [];
+  return [queue, ...(queue.backlog ?? [])];
 }
 
 function shipQueueMatches(
@@ -470,14 +477,19 @@ function startedDefenseProductionTimeoutMessage(
 ): string {
   const defenseQueue = snapshot?.defense.queue;
   const overviewQueue = snapshot?.queues.defense;
-  const defenseQuantity = defenseQueue?.active && defenseQueue.itemId === expectation.itemId
-    ? defenseQueue.quantity ?? 0
-    : 0;
-  const overviewQuantity = overviewQueue?.active && overviewQueue.itemId === expectation.itemId
-    ? overviewQueue.quantity ?? 0
-    : 0;
+  const defenseQuantity = matchingDefenseQueueQuantity(defenseQueue, expectation.itemId);
+  const overviewQuantity = matchingDefenseQueueQuantity(overviewQueue, expectation.itemId);
 
   return `Defense production transaction confirmed, but indexed defense queue state is still syncing. Expected item ${expectation.itemId} x${expectation.quantity}; Defenses page queue x${defenseQuantity}; Overview queue x${overviewQuantity}. Try refreshing in a few seconds.`;
+}
+
+function matchingDefenseQueueQuantity(
+  queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"] | undefined,
+  itemId: number,
+): number {
+  return defenseQueueEntries(queue ?? null)
+    .filter((entry) => entry.active && entry.itemId === itemId)
+    .reduce((total, entry) => total + (entry.quantity ?? 0), 0);
 }
 
 function startedShipProductionTimeoutMessage(

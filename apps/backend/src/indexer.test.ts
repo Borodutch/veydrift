@@ -1383,7 +1383,25 @@ describe("SettlementIndexer", () => {
       wallet: player,
       homePlanetId: planet.planetId,
       building: liveInfrastructure.queue,
-      defense: null,
+      defense: {
+        active: true,
+        kind: "defense",
+        itemId: 1,
+        quantity: 2,
+        readyAt: "1770001000",
+        startedAt: "1770000400",
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        backlog: [
+          {
+            active: true,
+            kind: "defense",
+            itemId: 0,
+            quantity: 3,
+            readyAt: "1770001600",
+            cost: { metal: "6000", crystal: "0", deuterium: "0" }
+          }
+        ]
+      },
       ship: null,
       research: {
         active: true,
@@ -1446,6 +1464,20 @@ describe("SettlementIndexer", () => {
       itemId: 3,
       targetLevel: 3,
       readyAt: "1770000900"
+    });
+    expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
+      kind: "defense",
+      itemId: 1,
+      quantity: 2,
+      readyAt: "1770001000",
+      backlog: [
+        {
+          kind: "defense",
+          itemId: 0,
+          quantity: 3,
+          readyAt: "1770001600"
+        }
+      ]
     });
     expect(indexer.playerQueues(player, planet.planetId).research).toMatchObject({
       kind: "research",
