@@ -2,11 +2,11 @@ import { calculateHighscore, type HighscoreEntry, type HighscoreInput } from "./
 import type {
   DefenseState,
   InfrastructureState,
+  PlanetState,
   ResearchState,
   Resources,
   RiftRequirement,
   RiftResourceState,
-  SettledPlanetEvent,
   ShipyardState
 } from "./evm";
 
@@ -189,7 +189,7 @@ export function deriveTechnologyRows(levelFor: (id: number) => number): Research
 }
 
 export function deriveInfrastructureFields(
-  planet: SettledPlanetEvent,
+  planet: PlanetState,
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
   technologyLevels: Record<string, number>
@@ -313,7 +313,7 @@ function researchCost(id: number, currentLevel: number): NumericResources {
 
 function productionPerHour(
   buildings: Record<BuildingKey, number>,
-  planet: SettledPlanetEvent,
+  planet: PlanetState,
   energy: { deuteriumConsumed: number; scaleBps: number }
 ): Resources {
   const metal = scaleByBps(scaledLevelValue(30, buildings.metalMine), planet.metalMultiplierBps);
