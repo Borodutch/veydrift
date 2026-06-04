@@ -1186,7 +1186,10 @@ export class SettlementIndexer {
     for (const row of rows) {
       const log = parseEvent<IndexedRpcLog>(row.event_json);
       if (isIndexedQueueStartedLog(log)) {
-        this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
+        const event = decodeIndexedQueueStartedLog(log);
+        if (!this.queueStartProvenCompleted(event)) {
+          this.applyQueueStartedEvent(event, { settleResources: false });
+        }
       } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
@@ -1208,6 +1211,10 @@ export class SettlementIndexer {
       const log = parseEvent<IndexedRpcLog>(row.event_json);
       if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
+        if (this.queueStartProvenCompleted(event)) {
+          activeEventQueues.delete(queueKey(event));
+          continue;
+        }
         this.applyQueueStartedEvent(event, { settleResources: false });
         activeEventQueues.add(queueKey(event));
       } else if (isIndexedQueueCompletedLog(log)) {
@@ -1221,6 +1228,25 @@ export class SettlementIndexer {
         }
       }
     }
+  }
+
+  private queueStartProvenCompleted(event: IndexedQueueStartedEvent): boolean {
+    if (event.queueKind === "building" && event.planetId && event.targetLevel !== undefined) {
+      return this.indexedLevel("contract_building_levels", "building_id", event.planetId, event.itemId) >= event.targetLevel;
+    }
+    if (event.queueKind === "moon-building" && event.planetId && event.targetLevel !== undefined) {
+      return this.indexedLevel("contract_moon_building_levels", "moon_building_id", event.planetId, event.itemId) >= event.targetLevel;
+    }
+    if (event.queueKind === "research" && event.owner && event.targetLevel !== undefined) {
+      const row = this.db.query(`
+        SELECT level
+        FROM contract_technology_levels
+        WHERE owner = lower(?) AND technology_id = ?
+      `).get(event.owner, event.itemId) as { level: number } | null;
+      return (row?.level ?? 0) >= event.targetLevel;
+    }
+
+    return false;
   }
 
   private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
