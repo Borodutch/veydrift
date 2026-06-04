@@ -107,6 +107,12 @@ The migration plan must cover:
 7. Run post-migration verification against representative wallets and compare
    pre/post state exports.
 
+The approved VEY-313 Base Sepolia `VeydriftGame` replacement path is a migrated
+redeploy because the live game is a direct non-proxy deployment with existing
+alpha state and nonzero game-held resource reserves. Follow
+`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before any replacement
+broadcast.
+
 ## Done Gate
 
 Do not mark a redeploy or upgrade task done unless the Kaneo workpad and PR
