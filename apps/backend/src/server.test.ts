@@ -2162,6 +2162,72 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("serves accrued indexed wallet resources for settlement, planets, and infrastructure", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getWalletSettlement = async () => {
+      throw new Error("settlement should not call live RPC");
+    };
+    chainReader.getWalletPlanets = async () => {
+      throw new Error("planets should not call live RPC");
+    };
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("infrastructure should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm accrued index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(3n)
+      ],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const settlementResponse = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+    const settlementBody = await settlementResponse.json();
+    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
+    const planetsBody = await planetsResponse.json();
+    const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const infrastructureBody = await infrastructureResponse.json();
+
+    expect(settlementResponse.status).toBe(200);
+    expect(planetsResponse.status).toBe(200);
+    expect(infrastructureResponse.status).toBe(200);
+    expect(settlementBody.planet.resources.metal).toBe("5064");
+    expect(planetsBody.planets[0].resources.metal).toBe("5064");
+    expect(infrastructureBody.resources.metal).toBe("5064");
+    expect(infrastructureBody.raidableResources.metal).toBe("5064");
+  });
+
   test("does not rebuild a cold planet index during wallet settlement requests", async () => {
     const chainReader = new MockChainReader();
     let liveReadCalled = false;

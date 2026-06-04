@@ -777,7 +777,13 @@ function isAccountProbeWallet(provider: Eip1193Provider): boolean {
 
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
   if (typeof chainId === "string") {
-    return chainId.toLowerCase() === BASE_SEPOLIA.chainIdHex;
+    const normalized = chainId.trim().toLowerCase();
+    if (normalized === BASE_SEPOLIA.chainIdHex) {
+      return true;
+    }
+
+    const decimalChainId = Number(normalized);
+    return Number.isFinite(decimalChainId) && decimalChainId === BASE_SEPOLIA.chainId;
   }
 
   return Number(chainId) === BASE_SEPOLIA.chainId;
@@ -1091,12 +1097,18 @@ export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promi
       throw error;
     }
 
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [
-        BASE_SEPOLIA
-      ]
-    });
+    try {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          BASE_SEPOLIA
+        ]
+      });
+    } catch (addError) {
+      if (!isAlreadyAddedChainError(addError)) {
+        throw addError;
+      }
+    }
     await switchToBaseSepolia(provider);
   }
 }
@@ -1124,6 +1136,16 @@ function isUnknownChainError(error: unknown): boolean {
 
   return typeof candidate.message === "string"
     && /unknown chain|unrecognized chain|chain .*not (?:been )?added|wallet_addEthereumChain/i.test(candidate.message);
+}
+
+function isAlreadyAddedChainError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { message?: unknown };
+  return typeof candidate.message === "string"
+    && /already (?:been )?(?:added|exists)|chain .*already/i.test(candidate.message);
 }
 
 export async function sendSettlementTransaction(

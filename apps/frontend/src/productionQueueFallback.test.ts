@@ -18,9 +18,27 @@ describe("production queue fallback", () => {
     expect(activeProductionQueue(queueState("defense", 1, 1), queue, "defense")?.itemId).toBe(1);
     expect(activeProductionQueue(null, queueState("ship", 0, 2), "defense")).toBeUndefined();
   });
+
+  test("preserves overview defense startedAt when detailed defense queue lacks it", () => {
+    const detailedQueue = queueState("defense", 1, 1, { readyAt: "1700000600" });
+    const overviewQueue = queueState("defense", 1, 1, {
+      readyAt: "1700000600",
+      startedAt: "1700000000",
+    });
+
+    expect(activeProductionQueue(detailedQueue, overviewQueue, "defense")).toEqual({
+      ...detailedQueue,
+      startedAt: "1700000000",
+    });
+  });
 });
 
-function queueState(kind: "defense" | "ship", itemId: number, quantity: number): QueueStateResponse {
+function queueState(
+  kind: "defense" | "ship",
+  itemId: number,
+  quantity: number,
+  overrides: Partial<QueueStateResponse> = {},
+): QueueStateResponse {
   return {
     active: true,
     kind,
@@ -32,5 +50,6 @@ function queueState(kind: "defense" | "ship", itemId: number, quantity: number):
       crystal: "0",
       deuterium: "0",
     },
+    ...overrides,
   };
 }
