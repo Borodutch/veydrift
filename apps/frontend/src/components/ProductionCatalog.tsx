@@ -15,6 +15,18 @@ const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 export type ProductionRequirementState = RequirementFlair;
 export type ProductionQuantityInput = number | string;
 
+export type ProductionDetailStat = {
+  label: string;
+  value: string;
+  hint?: string | undefined;
+  wide?: boolean | undefined;
+};
+
+export type ProductionDetailSection = {
+  title: string;
+  stats: ProductionDetailStat[];
+};
+
 export type ProductionCatalogItem<Key extends string = string> = {
   key: Key;
   id: number;
@@ -38,6 +50,8 @@ export type ProductionCatalogItem<Key extends string = string> = {
   disabled: boolean;
   actionLabel: string;
   detailNote: string;
+  detailSections?: ProductionDetailSection[] | undefined;
+  notes?: string[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
 
@@ -302,14 +316,41 @@ function SelectedProductionPanel<Key extends string>({
         </div>
       </div>
 
-      <div className="grid gap-2">
-        <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Details</h4>
-        <dl className="grid grid-cols-2 gap-2 text-xs">
-          <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
-          <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
-          <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
-        </dl>
-      </div>
+      {item.notes?.length ? (
+        <div className="grid gap-2 text-xs leading-5 text-slate-300">
+          {item.notes.map((note) => <p key={note}>{note}</p>)}
+        </div>
+      ) : null}
+
+      {item.detailSections?.length ? (
+        <div className="grid gap-3">
+          {item.detailSections.map((section) => (
+            <div className="grid gap-2" key={section.title}>
+              <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{section.title}</h4>
+              <dl className="grid grid-cols-2 gap-2 text-xs">
+                {section.stats.map((stat) => (
+                  <Stat
+                    className={stat.wide ? "col-span-2" : ""}
+                    hint={stat.hint}
+                    key={`${section.title}-${stat.label}`}
+                    label={stat.label}
+                    value={stat.value}
+                  />
+                ))}
+              </dl>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Details</h4>
+          <dl className="grid grid-cols-2 gap-2 text-xs">
+            <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
+            <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
+            <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
+          </dl>
+        </div>
+      )}
 
       <ProductionRequirementFlairs
         missing={item.missing}

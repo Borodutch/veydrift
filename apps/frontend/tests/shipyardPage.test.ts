@@ -103,12 +103,47 @@ describe("Shipyard page display helpers", () => {
       countLabel: "Owned",
       countValue: 4,
       detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
+      detailSections: [
+        {
+          title: "Combat",
+          stats: [
+            { label: "Structure", value: "400" },
+            { label: "Shield", value: "10" },
+            { label: "Attack", value: "5" },
+          ],
+        },
+        {
+          title: "Logistics",
+          stats: [
+            { label: "Cargo", value: "5,000" },
+            { label: "Base speed", value: "5,000" },
+            { label: "Fuel use", value: "10" },
+          ],
+        },
+        {
+          title: "Build",
+          stats: [
+            { label: "Owned", value: "4" },
+            { label: "Build time", value: "48m" },
+            { label: "Price", value: "Metal 6,000, Crystal 6,000", wide: true },
+          ],
+        },
+        {
+          title: "Requirements",
+          stats: [
+            { label: "Status", value: "Ready" },
+            { label: "Unlocks", value: "2/2 met" },
+            { label: "Missing", value: "None", wide: true },
+          ],
+        },
+      ],
+      notes: [
+        "A nimble freighter for early raids and supply runs. Its hold is modest, but it is cheap enough to mass-produce while a young colony is still finding its footing.",
+      ],
       quantity: 3,
       status: "ready",
     });
     expect(items.find((item) => item.key === "smallCargo")).not.toHaveProperty("description");
-    expect(items.find((item) => item.key === "smallCargo")?.detailSections).toBeUndefined();
-    expect(items.find((item) => item.key === "smallCargo")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
       status: "locked",
       statusLabel: "Locked",
@@ -186,7 +221,7 @@ describe("Shipyard page display helpers", () => {
     });
   });
 
-  test("keeps Solar Satellite compact ship stats in selected-panel subtext", () => {
+  test("shows Solar Satellite special behavior without flight-style zero logistics", () => {
     const baseState = shipyardState();
     const items = shipProductionItems({
       actionPending: false,
@@ -217,11 +252,30 @@ describe("Shipyard page display helpers", () => {
       }),
     });
 
-    expect(items.find((item) => item.key === "solarSatellite")).toMatchObject({
-      detailNote: "Attack 1 · Shield 1 · Hull 200 · Cargo 0",
+    const solarSatellite = items.find((item) => item.key === "solarSatellite");
+    expect(solarSatellite).toMatchObject({
+      detailNote: "Attack 1 · Shield 1 · Hull 200 · No cargo",
+      notes: [
+        "An orbital energy platform with almost no combat role. Solar Satellites are efficient power sources, but their fragile frames remain exposed during attacks.",
+        "Special: generates energy in orbit and cannot move, haul cargo, or spend fuel.",
+      ],
     });
-    expect(items.find((item) => item.key === "solarSatellite")?.detailSections).toBeUndefined();
-    expect(items.find((item) => item.key === "solarSatellite")?.notes).toBeUndefined();
+    expect(solarSatellite?.detailSections?.find((section) => section.title === "Combat")).toEqual({
+      title: "Combat",
+      stats: [
+        { label: "Structure", value: "200" },
+        { label: "Shield", value: "1" },
+        { label: "Attack", value: "1" },
+      ],
+    });
+    expect(solarSatellite?.detailSections?.find((section) => section.title === "Logistics")).toEqual({
+      title: "Logistics",
+      stats: [
+        { label: "Cargo", value: "No cargo" },
+        { label: "Base speed", value: "Stationary energy platform" },
+        { label: "Fuel use", value: "No fuel" },
+      ],
+    });
   });
 
   test("keeps catalog context while selected item drives the build panel model", () => {
