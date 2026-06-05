@@ -305,6 +305,7 @@ function RankingRow({
   const normalizedWallet = entry.wallet.toLowerCase();
   const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
   const alliance = entry.alliance ?? null;
+  const isScoreProtected = entry.attackProtection?.blockedReason === "score_protection";
   const isSameAlliance = Boolean(
     !isCurrentPlayer
       && alliance
@@ -316,7 +317,9 @@ function RankingRow({
     ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
     : isSameAlliance
       ? "border-emerald-300/20 bg-emerald-300/[0.055] shadow-[inset_3px_0_0_rgba(110,231,183,0.55)]"
-      : "border-white/5";
+      : isScoreProtected
+        ? "border-red-300/20 bg-red-300/[0.06] shadow-[inset_3px_0_0_rgba(248,113,113,0.5)]"
+        : "border-white/5";
 
   const openHomePlanet = () => {
     if (!homePlanet || !onSelectPlanet) return;
@@ -342,10 +345,10 @@ function RankingRow({
       <span className="flex min-w-0 items-center gap-2">
         {homePlanet ? (
           <button
-            aria-label={`Open home planet at ${homePlanetLabel(homePlanet)}`}
+            aria-label={`Open home planet at ${homePlanetCoordinatesLabel(homePlanet)}`}
             className="relative h-9 w-9 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 transition hover:border-cyan-200/50 focus:outline-none focus:ring-2 focus:ring-cyan-300/40"
             onClick={openHomePlanet}
-            title={`Open ${homePlanetLabel(homePlanet)}`}
+            title={`Open ${homePlanetHoverLabel(homePlanet)}`}
             type="button"
           >
             <OptimizedImage
@@ -386,9 +389,24 @@ function RankingRow({
                 You
               </span>
             ) : null}
+            {isScoreProtected ? (
+              <span
+                className="shrink-0 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-red-100"
+                title={entry.attackProtection?.blockedReasonLabel ?? "Protected by newbie or score-ratio protection"}
+              >
+                Protected
+              </span>
+            ) : null}
           </span>
           {homePlanet ? (
-            <span className="block truncate text-xs text-slate-500">{homePlanetLabel(homePlanet)}</span>
+            <span className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500" title={homePlanetHoverLabel(homePlanet)}>
+              <span className="truncate">{homePlanetLabel(homePlanet)}</span>
+              {homePlanet.name?.trim() ? (
+                <span className="shrink-0 font-mono text-slate-400" aria-label={`Home planet coordinates ${homePlanetCoordinatesLabel(homePlanet)}`}>
+                  {homePlanetCoordinatesLabel(homePlanet)}
+                </span>
+              ) : null}
+            </span>
           ) : null}
         </span>
       </span>
@@ -416,6 +434,16 @@ function formatScore(value: string): string {
 }
 
 function homePlanetLabel(planet: HighscorePlanet): string {
+  return planet.name?.trim() || homePlanetCoordinatesLabel(planet);
+}
+
+function homePlanetCoordinatesLabel(planet: HighscorePlanet): string {
   const coordinates = planet.coordinates;
-  return planet.name?.trim() || `[${coordinates.galaxy}:${coordinates.system}:${coordinates.position}]`;
+  return `[${coordinates.galaxy}:${coordinates.system}:${coordinates.position}]`;
+}
+
+function homePlanetHoverLabel(planet: HighscorePlanet): string {
+  const coordinates = homePlanetCoordinatesLabel(planet);
+  const name = planet.name?.trim();
+  return name ? `${name} ${coordinates}` : coordinates;
 }

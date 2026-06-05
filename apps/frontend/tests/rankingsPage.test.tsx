@@ -119,6 +119,41 @@ describe("RankingsPage", () => {
     expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
   });
 
+  test("shows ranked home coordinates on hover even for named planets", () => {
+    const table = RankingsTable({
+      entries: [rankingEntry({
+        homePlanet: {
+          ...rankingEntry().homePlanet!,
+          name: "Eos",
+        },
+      })],
+      loading: false,
+    });
+    const homeButton = buttonWithTitle(table, "Open Eos [2:44:9]");
+
+    expect(homeButton).toBeTruthy();
+    expect(visibleText(table)).toContain("Eos");
+    expect(visibleText(table)).toContain("[2:44:9]");
+  });
+
+  test("tints score-protected ranking rows", () => {
+    const protectedEntry = rankingEntry({
+      attackProtection: {
+        allowed: false,
+        blockedReason: "score_protection",
+        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      },
+    });
+    const table = RankingsTable({
+      entries: [protectedEntry],
+      loading: false,
+    });
+    const row = rowWithWallet(table, protectedEntry.wallet);
+
+    expect(row?.props?.className).toContain("bg-red-300");
+    expect(visibleText(row)).toContain("Protected");
+  });
+
   test("opens the ranked commander inspect page from the commander label", () => {
     const selectedPlayers: string[] = [];
     const table = RankingsTable({

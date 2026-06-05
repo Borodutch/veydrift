@@ -3248,7 +3248,25 @@ describe("Veydrift backend", () => {
       "0x4444444444444444444444444444444444444444",
       "0x5555555555555555555555555555555555555555"
     ] as Address[];
-    const chainReader = new MockChainReader();
+    const currentWallet = owners[2]!;
+    const requestedTargets: string[] = [];
+    const chainReader = new class extends MockChainReader {
+      override async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+        expect(wallet).toBe(currentWallet);
+        requestedTargets.push(targetPlanetId.toString());
+        return {
+          wallet,
+          targetPlanetId: targetPlanetId.toString(),
+          allowed: true,
+          blockedReason: "none",
+          blockedReasonLabel: null,
+          relation: "peer",
+          defenderHonorStatus: "neutral",
+          plunderBps: 5000,
+          defenderInactive: false
+        };
+      }
+    }();
     chainReader.listSettledPlanetEvents = async () => owners.map((owner, index) => ({
       ...planet,
       eventName: "PlanetStarted",
@@ -3265,7 +3283,7 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const response = await handler(new Request(`http://localhost/highscores?page=2&pageSize=1&currentWallet=${owners[2]}`));
+    const response = await handler(new Request(`http://localhost/highscores?page=2&pageSize=1&currentWallet=${currentWallet}`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -3282,6 +3300,7 @@ describe("Veydrift backend", () => {
       rank: 2,
       wallet: owners[1]
     });
+    expect(requestedTargets).toEqual(["11"]);
     expect(body.currentPlayer).toMatchObject({
       wallet: owners[2],
       rankings: {
@@ -3325,6 +3344,46 @@ describe("Veydrift backend", () => {
       allianceId: "3",
       name: "Veydrift Union",
       tag: "VDFT"
+    });
+  });
+
+  test("adds current wallet attack protection to highscore rows", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const requestedTargets: string[] = [];
+    const chainReader = new class extends MockChainReader {
+      override async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+        expect(wallet).toBe(attacker);
+        requestedTargets.push(targetPlanetId.toString());
+        return {
+          wallet,
+          targetPlanetId: targetPlanetId.toString(),
+          allowed: false,
+          blockedReason: "score_protection",
+          blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+          relation: "weaker",
+          defenderHonorStatus: "neutral",
+          plunderBps: 0,
+          defenderInactive: false
+        };
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(requestedTargets).toContain(planet.planetId);
+    expect(body.rankings.total[0].attackProtection).toEqual({
+      allowed: false,
+      blockedReason: "score_protection",
+      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
     });
   });
 

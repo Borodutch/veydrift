@@ -505,6 +505,11 @@ export type HighscoreEntry = {
     tag: string;
     name: string;
   } | null;
+  attackProtection?: {
+    allowed: boolean;
+    blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
+    blockedReasonLabel: string | null;
+  } | null;
   displayName?: string | null;
   homePlanetId: string | null;
   homePlanet: HighscorePlanet | null;

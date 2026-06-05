@@ -8,6 +8,7 @@ import {
   type Address,
   type AllianceIdentity,
   type AllianceState,
+  type AttackProtectionStatus,
   type ChainReader,
   type DefenseState,
   type FleetMissionVisibility,
@@ -656,7 +657,24 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
         const page = Math.min(pagination.page, totalPages);
         const offset = (page - 1) * pagination.pageSize;
-        const rankings = highscoreRankings(entries, pagination.pageSize, offset, planetsByOwner, profiles, allianceIntel);
+        const rankedRows = highscoreRows(
+          entries,
+          planetsByOwner,
+          profiles,
+          allianceIntel
+        );
+        const rankings = highscoreRankings(
+          entries,
+          pagination.pageSize,
+          offset,
+          rankedRows
+        );
+        const protection = await rankedHighscoreProtectionLookup(
+          highscoreRankingRows(rankings),
+          chainReader,
+          url.searchParams.get("currentWallet")
+        );
+        const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
         const currentPlayer = highscoreCurrentPlayerPages(entries, pagination.pageSize, url.searchParams.get("currentWallet"));
 
         return Response.json(
@@ -673,7 +691,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               hasNextPage: page < totalPages
             },
             currentPlayer,
-            rankings,
+            rankings: protectedRankings,
             source
           },
           {
@@ -1747,10 +1765,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 type RankedHighscoreEntry = HighscoreEntry & {
   alliance: AllianceIdentity | null;
+  attackProtection: RankedHighscoreAttackProtection | null;
   displayName: string | null;
   homePlanet: RankedHighscorePlanet | null;
   rank: number;
 };
+
+type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel">;
 
 type RankedHighscorePlanet = {
   planetId: string;
@@ -1816,13 +1837,57 @@ function highscoreRankings(
   entries: HighscoreEntry[],
   limit: number,
   offset: number,
+  rows: Map<string, RankedHighscoreEntry>
+): Record<HighscoreCategory, RankedHighscoreEntry[]> {
+  return Object.fromEntries(
+    highscoreCategories.map((category) => [
+      category,
+      rankHighscores(entries, category, limit, offset, rows)
+    ])
+  ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
+}
+
+function highscoreRankingRows(rankings: Record<HighscoreCategory, RankedHighscoreEntry[]>): RankedHighscoreEntry[] {
+  return Object.values(rankings).flat();
+}
+
+function highscoreRankingsWithProtection(
+  rankings: Record<HighscoreCategory, RankedHighscoreEntry[]>,
+  protection: ReadonlyMap<string, RankedHighscoreAttackProtection | null>
+): Record<HighscoreCategory, RankedHighscoreEntry[]> {
+  return Object.fromEntries(
+    highscoreCategories.map((category) => [
+      category,
+      rankings[category].map((row) => ({
+        ...row,
+        attackProtection: row.homePlanet ? protection.get(row.homePlanet.planetId) ?? null : null
+      }))
+    ])
+  ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
+}
+
+function highscoreRows(
+  entries: HighscoreEntry[],
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
   profiles: ReadonlyMap<string, PlayerProfile> = new Map(),
   allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map()
-): Record<HighscoreCategory, RankedHighscoreEntry[]> {
-  return Object.fromEntries(
-    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, offset, planetsByOwner, profiles, allianceIntel)])
-  ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
+): Map<string, RankedHighscoreEntry> {
+  return new Map(
+    entries.map((entry) => {
+      const homePlanet = rankedHighscoreHomePlanet(entry, planetsByOwner);
+      return [
+        entry.wallet.toLowerCase(),
+        {
+          ...entry,
+          alliance: allianceIntel.get(entry.wallet.toLowerCase()) ?? null,
+          attackProtection: null,
+          displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
+          homePlanet,
+          rank: 0
+        }
+      ];
+    })
+  );
 }
 
 function rankHighscores(
@@ -1830,19 +1895,56 @@ function rankHighscores(
   category: HighscoreCategory,
   limit: number,
   offset: number,
-  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-  profiles: ReadonlyMap<string, PlayerProfile>,
-  allianceIntel: ReadonlyMap<string, AllianceIdentity>
+  rows: ReadonlyMap<string, RankedHighscoreEntry>
 ): RankedHighscoreEntry[] {
   return sortedHighscores(entries, category)
     .slice(offset, offset + limit)
-    .map((entry, index) => ({
-      ...entry,
-      alliance: allianceIntel.get(entry.wallet.toLowerCase()) ?? null,
-      displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
-      homePlanet: rankedHighscoreHomePlanet(entry, planetsByOwner),
-      rank: offset + index + 1
-    }));
+    .map((entry, index) => {
+      const row = rows.get(entry.wallet.toLowerCase())!;
+      return {
+        ...row,
+        rank: offset + index + 1
+      };
+    });
+}
+
+async function rankedHighscoreProtectionLookup(
+  rows: Iterable<RankedHighscoreEntry>,
+  chainReader: ChainReader | undefined,
+  currentWallet: string | null | undefined
+): Promise<Map<string, RankedHighscoreAttackProtection | null>> {
+  const uniquePlanets = new Map<string, RankedHighscorePlanet>();
+  for (const row of rows) {
+    if (row.homePlanet) uniquePlanets.set(row.homePlanet.planetId, row.homePlanet);
+  }
+
+  const statuses = await Promise.all(
+    [...uniquePlanets.values()].map(async (planet) => [
+      planet.planetId,
+      await rankedHighscoreAttackProtection(chainReader, currentWallet, planet)
+    ] as const)
+  );
+
+  return new Map(statuses);
+}
+
+async function rankedHighscoreAttackProtection(
+  chainReader: ChainReader | undefined,
+  currentWallet: string | null | undefined,
+  planet: RankedHighscorePlanet | null
+): Promise<RankedHighscoreAttackProtection | null> {
+  if (!chainReader || !planet || !currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return null;
+
+  try {
+    const status = await chainReader.getAttackProtectionStatus(currentWallet as Address, BigInt(planet.planetId));
+    return {
+      allowed: status.allowed,
+      blockedReason: status.blockedReason,
+      blockedReasonLabel: status.blockedReasonLabel
+    };
+  } catch {
+    return null;
+  }
 }
 
 function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory): HighscoreEntry[] {
