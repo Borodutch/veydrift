@@ -162,12 +162,12 @@ describe("RankingsPage", () => {
     expect(selected).toEqual([{ galaxy: 3, system: 12, position: 4 }]);
   });
 
-  test("tints unattackable ranking rows", () => {
+  test("tints score-protected ranking rows", () => {
     const protectedEntry = rankingEntry({
       attackProtection: {
         allowed: false,
-        blockedReason: "same_alliance",
-        blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+        blockedReason: "score_protection",
+        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
       },
     });
     const table = RankingsTable({
@@ -178,6 +178,28 @@ describe("RankingsPage", () => {
 
     expect(row?.props?.className).toContain("bg-red-300");
     expect(visibleText(row)).toContain("Protected");
+  });
+
+  test("does not use the noob-protection tint for same-alliance rows", () => {
+    const alliance = { allianceId: "3", name: "Veydrift Union", tag: "VDFT" };
+    const sameAllianceEntry = rankingEntry({
+      alliance,
+      attackProtection: {
+        allowed: false,
+        blockedReason: "same_alliance",
+        blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+      },
+    });
+    const table = RankingsTable({
+      currentAllianceId: alliance.allianceId,
+      entries: [sameAllianceEntry],
+      loading: false,
+    });
+    const row = rowWithWallet(table, sameAllianceEntry.wallet);
+
+    expect(row?.props?.className).toContain("bg-emerald-300");
+    expect(row?.props?.className).not.toContain("bg-red-300");
+    expect(visibleText(row)).not.toContain("Protected");
   });
 
   test("opens the ranked commander inspect page from the commander label", () => {

@@ -305,7 +305,7 @@ function RankingRow({
   const normalizedWallet = entry.wallet.toLowerCase();
   const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
   const alliance = entry.alliance ?? null;
-  const isUnattackable = Boolean(entry.attackProtection && !entry.attackProtection.allowed && entry.attackProtection.blockedReason !== "none");
+  const isScoreProtected = entry.attackProtection?.blockedReason === "score_protection";
   const isSameAlliance = Boolean(
     !isCurrentPlayer
       && alliance
@@ -317,7 +317,7 @@ function RankingRow({
     ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
     : isSameAlliance
       ? "border-emerald-300/20 bg-emerald-300/[0.055] shadow-[inset_3px_0_0_rgba(110,231,183,0.55)]"
-      : isUnattackable
+      : isScoreProtected
         ? "border-red-300/20 bg-red-300/[0.06] shadow-[inset_3px_0_0_rgba(248,113,113,0.5)]"
         : "border-white/5";
 
@@ -390,10 +390,10 @@ function RankingRow({
                 You
               </span>
             ) : null}
-            {isUnattackable ? (
+            {isScoreProtected ? (
               <span
                 className="shrink-0 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-red-100"
-                title={entry.attackProtection?.blockedReasonLabel ?? "Attack blocked by protection rules"}
+                title={entry.attackProtection?.blockedReasonLabel ?? "Protected by newbie or score-ratio protection"}
               >
                 Protected
               </span>

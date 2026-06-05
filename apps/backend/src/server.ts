@@ -682,10 +682,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           rankedRows
         );
         const protection = await rankedHighscoreProtectionLookup(
+          entries,
           highscoreRankingRows(rankings),
-          chainReader,
           url.searchParams.get("currentWallet"),
-          highscoreAttackProtectionRequested(url)
+          highscoreAttackProtectionRequested(url),
+          allianceIntel
         );
         const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
         const currentPlayer = highscoreCurrentPlayerPages(entries, pagination.pageSize, url.searchParams.get("currentWallet"));
@@ -1889,14 +1890,7 @@ function rankedHighscoreRowProtection(
   row: RankedHighscoreEntry,
   protection: ReadonlyMap<string, RankedHighscoreAttackProtection | null>
 ): RankedHighscoreAttackProtection | null {
-  const statuses = row.planets
-    .map((planet) => protection.get(planet.planetId) ?? null)
-    .filter((status): status is RankedHighscoreAttackProtection => Boolean(status));
-
-  return statuses.find((status) => status.blockedReason === "score_protection")
-    ?? statuses.find((status) => !status.allowed)
-    ?? statuses[0]
-    ?? null;
+  return protection.get(row.wallet.toLowerCase()) ?? null;
 }
 
 function highscoreRows(
@@ -1944,44 +1938,90 @@ function rankHighscores(
 }
 
 async function rankedHighscoreProtectionLookup(
+  entries: readonly HighscoreEntry[],
   rows: Iterable<RankedHighscoreEntry>,
-  chainReader: ChainReader | undefined,
   currentWallet: string | null | undefined,
-  includeAttackProtection: boolean
+  includeAttackProtection: boolean,
+  allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map()
 ): Promise<Map<string, RankedHighscoreAttackProtection | null>> {
   if (!includeAttackProtection) return new Map();
+  if (!currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return new Map();
 
-  const uniquePlanets = new Map<string, RankedHighscorePlanet>();
+  const currentEntry = highscoreEntryForWallet(entries, currentWallet);
+  if (!currentEntry) return new Map();
+
+  const protection = new Map<string, RankedHighscoreAttackProtection | null>();
   for (const row of rows) {
-    for (const planet of row.planets) {
-      uniquePlanets.set(planet.planetId, planet);
-    }
+    protection.set(
+      row.wallet.toLowerCase(),
+      rankedHighscoreScoreProtection(currentEntry, row, allianceIntel)
+    );
   }
 
-  const statuses = await Promise.all(
-    [...uniquePlanets.values()].map(async (planet) => [
-      planet.planetId,
-      await rankedHighscoreAttackProtection(chainReader, currentWallet, planet)
-    ] as const)
-  );
-
-  return new Map(statuses);
+  return protection;
 }
 
-async function rankedHighscoreAttackProtection(
-  chainReader: ChainReader | undefined,
-  currentWallet: string | null | undefined,
-  planet: RankedHighscorePlanet | null
-): Promise<RankedHighscoreAttackProtection | null> {
-  if (!chainReader || !planet || !currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return null;
+function highscoreEntryForWallet(entries: readonly HighscoreEntry[], wallet: string): HighscoreEntry | null {
+  const normalizedWallet = wallet.toLowerCase();
+  return entries.find((entry) => entry.wallet.toLowerCase() === normalizedWallet) ?? null;
+}
 
-  try {
-    const status = await chainReader.getAttackProtectionStatus(currentWallet as Address, BigInt(planet.planetId));
+function rankedHighscoreScoreProtection(
+  currentEntry: HighscoreEntry,
+  row: RankedHighscoreEntry,
+  allianceIntel: ReadonlyMap<string, AllianceIdentity>
+): RankedHighscoreAttackProtection | null {
+  const currentWallet = currentEntry.wallet.toLowerCase();
+  const targetWallet = row.wallet.toLowerCase();
+  if (currentWallet === targetWallet) return null;
+
+  const currentAlliance = allianceIntel.get(currentWallet);
+  const targetAlliance = allianceIntel.get(targetWallet);
+  if (currentAlliance && targetAlliance && currentAlliance.allianceId !== "0" && currentAlliance.allianceId === targetAlliance.allianceId) {
     return {
-      allowed: status.allowed,
-      blockedReason: status.blockedReason,
-      blockedReasonLabel: status.blockedReasonLabel
+      allowed: false,
+      blockedReason: "same_alliance",
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance."
     };
+  }
+
+  return highscoreScoreProtected(currentEntry.score.total, row.score.total)
+    ? {
+        allowed: false,
+        blockedReason: "score_protection",
+        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
+      }
+    : null;
+}
+
+const highscoreProtectionBps = 10_000n;
+const newbieProtectionLowScore = 50_000n;
+const newbieProtectionHighScore = 500_000n;
+const newbieProtectionLowRatioBps = 50_000n;
+const newbieProtectionHighRatioBps = 100_000n;
+
+function highscoreScoreProtected(attackerScoreValue: string, defenderScoreValue: string): boolean {
+  const attackerScore = parseHighscoreValue(attackerScoreValue);
+  const defenderScore = parseHighscoreValue(defenderScoreValue);
+  if (attackerScore === null || defenderScore === null) return false;
+
+  const attackerRatio = highscoreProtectionRatioBps(attackerScore);
+  const defenderRatio = highscoreProtectionRatioBps(defenderScore);
+  if (attackerRatio === 0n && defenderRatio === 0n) return false;
+  if (defenderRatio !== 0n && attackerScore * highscoreProtectionBps > defenderScore * defenderRatio) return true;
+  if (attackerRatio !== 0n && defenderScore * highscoreProtectionBps > attackerScore * attackerRatio) return true;
+  return false;
+}
+
+function highscoreProtectionRatioBps(score: bigint): bigint {
+  if (score < newbieProtectionLowScore) return newbieProtectionLowRatioBps;
+  if (score < newbieProtectionHighScore) return newbieProtectionHighRatioBps;
+  return 0n;
+}
+
+function parseHighscoreValue(value: string): bigint | null {
+  try {
+    return BigInt(value);
   } catch {
     return null;
   }
