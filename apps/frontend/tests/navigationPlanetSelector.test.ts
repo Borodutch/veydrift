@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 const playableSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 const navSource = await Bun.file(new URL("../src/components/NavBar.tsx", import.meta.url)).text();
 const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
+const planetDetailSource = await Bun.file(new URL("../src/components/PlanetDetail.tsx", import.meta.url)).text();
 const topBarSource = await Bun.file(new URL("../src/components/TopBar.tsx", import.meta.url)).text();
 
 describe("navigation and planet selector UI source contracts", () => {
@@ -54,5 +55,11 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(overviewSource).toContain('<Pencil aria-hidden="true" size={11} strokeWidth={2} />');
     expect(overviewSource).toContain('title="Rename planet"');
     expect(overviewSource).not.toContain("Rename planet\n                  </button>");
+  });
+
+  test("keeps planet detail to one system navigation action", () => {
+    expect(planetDetailSource).toContain("onClick={onBack}");
+    expect(planetDetailSource).not.toContain("View System");
+    expect(planetDetailSource).not.toContain("onNavigateSystem");
   });
 });
