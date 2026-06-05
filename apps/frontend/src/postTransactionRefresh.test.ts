@@ -884,5 +884,6 @@ function emptyFleetVisibility() {
     outgoing: [],
     returning: [],
     joinableAttacks: [],
+    battleReports: [],
   };
 }

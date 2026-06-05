@@ -1,8 +1,8 @@
-import { EyeOff, RefreshCw, Route, ShieldAlert, TimerReset } from "lucide-preact";
+import { RefreshCw, Route, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import type { FleetMissionSummary, FleetMissionVisibilityResponse } from "../walletFlow";
+import type { BattleReport, FleetMissionSummary, FleetMissionVisibilityResponse } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type MissionControlActionState =
@@ -29,6 +29,7 @@ interface MissionControlPageProps {
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
   onNavigateGalaxy: () => void;
+  onOpenBattleReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
   onResolve: (missionId: string) => void;
@@ -43,6 +44,7 @@ export function MissionControlPage({
   onCompleteReturn,
   onCounterplay,
   onNavigateGalaxy,
+  onOpenBattleReport,
   onRecall,
   onRefresh,
   onResolve,
@@ -50,6 +52,7 @@ export function MissionControlPage({
   const incoming = fleetVisibility?.incoming ?? [];
   const outgoing = fleetVisibility?.outgoing ?? [];
   const returning = fleetVisibility?.returning ?? [];
+  const battleReports = fleetVisibility?.battleReports ?? [];
   const due = [...incoming, ...outgoing].filter((mission) => isMissionDue(mission, now));
   const activeCount = incoming.length + outgoing.length + returning.length;
   const initialLoading = loading && !fleetVisibility;
@@ -61,9 +64,9 @@ export function MissionControlPage({
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300/80">
             Mission Control
           </p>
-          <h2 className="mt-1 text-lg font-semibold text-white">Fleet Operations</h2>
+          <h2 className="mt-1 text-lg font-semibold text-white">Fleet Dashboard</h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-            Contract-indexed missions, public resolvers, returns, and counterplay from the game contract event stream.
+            Track launches, inbound attacks, returning fleets, combat outcomes, and counterplay from one command view.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -99,14 +102,14 @@ export function MissionControlPage({
         <>
           <div className="grid gap-3 md:grid-cols-4">
             <Metric label="Active missions" value={activeCount.toString()} />
-            <Metric label="Due resolvers" value={due.length.toString()} />
+            <Metric label="Arrived" value={due.length.toString()} />
             <Metric label="Hostile inbound" value={incoming.length.toString()} />
-            <Metric label="Returns" value={returning.length.toString()} />
+            <Metric label="Battle reports" value={battleReports.length.toString()} />
           </div>
 
           {activeCount === 0 ? (
             <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
-              No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy when the target action is contract-supported.
+              No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy.
             </div>
           ) : null}
 
@@ -120,7 +123,7 @@ export function MissionControlPage({
               onCounterplay={onCounterplay}
               onRecall={onRecall}
               onResolve={onResolve}
-              title="Due Public Resolution"
+              title="Arrived Missions"
               tone="danger"
             />
           ) : null}
@@ -136,7 +139,7 @@ export function MissionControlPage({
               onCounterplay={onCounterplay}
               onRecall={onRecall}
               onResolve={onResolve}
-              title="Incoming Hostile"
+              title="Incoming Attacks"
               tone="danger"
             />
             <MissionSection
@@ -167,28 +170,10 @@ export function MissionControlPage({
             />
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-4">
-            <CapabilityPanel
-              icon={<ShieldAlert aria-hidden="true" size={18} />}
-              title="ACS and Intercept"
-              body="Inbound attacks expose ACS defend and intercept launches when the wallet has an available combat ship."
-            />
-            <CapabilityPanel
-              icon={<Route aria-hidden="true" size={18} />}
-              title="Harvests and Saves"
-              body="Recycler harvests, transport, deploy, and resource-save launches remain Galaxy actions because they need a target coordinate."
-            />
-            <CapabilityPanel
-              icon={<TimerReset aria-hidden="true" size={18} />}
-              title="Missiles and Moons"
-              body="Missile and moon-chance entries appear here only after the indexed contract stream exposes them as mission records."
-            />
-            <CapabilityPanel
-              icon={<EyeOff aria-hidden="true" size={18} />}
-              title="No Spy Reports"
-              body="Target intel is public contract state; Veydrift does not support espionage probes, scan missions, or hidden reveal reports."
-            />
-          </div>
+          <BattleReportSection
+            reports={battleReports}
+            onOpenBattleReport={onOpenBattleReport}
+          />
         </>
       )}
     </section>
@@ -356,7 +341,7 @@ function MissionCard({
           {actions.map((action) => action.kind === "counterplay" ? (
             <span className="contents" key={action.kind}>
               <ActionButton
-                action={{ ...action, label: "ACS defend" }}
+                action={{ ...action, label: "Group defend" }}
                 onClick={() => onCounterplay(mission.missionId, "acsDefend")}
               />
               <ActionButton
@@ -378,6 +363,61 @@ function MissionCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function BattleReportSection({
+  onOpenBattleReport,
+  reports,
+}: {
+  onOpenBattleReport: (missionId: string) => void;
+  reports: BattleReport[];
+}) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
+            <Swords aria-hidden="true" size={17} />
+          </span>
+          <h3 className="text-sm font-semibold text-white">Battle Reports</h3>
+        </div>
+        <span className="text-xs tabular-nums text-slate-400">{reports.length}</span>
+      </div>
+      {reports.length === 0 ? (
+        <p className="text-xs text-slate-500">No resolved attack reports for this wallet yet.</p>
+      ) : (
+        <div className="grid gap-2 lg:grid-cols-2">
+          {reports.slice(0, 6).map((report) => (
+            <article className="min-w-0 rounded-md border border-white/10 bg-black/20 p-3" key={report.missionId}>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h4 className="truncate text-sm font-semibold text-white">
+                    Mission #{report.missionId} / {battleOutcomeLabel(report.outcome)}
+                  </h4>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
+                  </p>
+                </div>
+                <button
+                  className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+                  onClick={() => onOpenBattleReport(report.missionId)}
+                  type="button"
+                >
+                  Open report
+                </button>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <MissionDatum label="Rounds" value={report.rounds.toString()} />
+                <MissionDatum label="Loot" value={formatCargo(report.loot)} />
+                <MissionDatum label="Attacker losses" value={formatCargo(report.attackerLosses)} />
+                <MissionDatum label="Defender losses" value={formatCargo(report.defenderLosses)} />
+              </dl>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -423,28 +463,6 @@ export function formatMissionTime(value: string, now: number): string {
   return `${formatDurationUntil(timestamp, now)}\n${formatUserTimestamp(timestamp)}`;
 }
 
-function CapabilityPanel({
-  body,
-  icon,
-  title,
-}: {
-  body: string;
-  icon: preact.ComponentChildren;
-  title: string;
-}) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-[#101624] p-4">
-      <div className="flex items-center gap-2 text-slate-200">
-        <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
-          {icon}
-        </span>
-        <h3 className="text-sm font-semibold text-white">{title}</h3>
-      </div>
-      <p className="mt-3 text-sm leading-6 text-slate-400">{body}</p>
-    </div>
-  );
-}
-
 function Notice({ children, tone }: { children: preact.ComponentChildren; tone: "danger" | "info" | "success" }) {
   const className = tone === "danger"
     ? "border-red-300/25 bg-red-400/10 text-red-100"
@@ -487,4 +505,14 @@ function formatResource(value: string): string {
 
 function shipLabel(key: string): string {
   return key.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
+}
+
+function battleOutcomeLabel(outcome: BattleReport["outcome"]): string {
+  if (outcome === "AttackerWin") return "Attacker win";
+  if (outcome === "DefenderWin") return "Defender win";
+  return "Draw";
+}
+
+function shortHash(value: string): string {
+  return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
 }

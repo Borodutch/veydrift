@@ -395,6 +395,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/battle-report\/[^/]+$/)) {
+      const missionId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
+        if (ready instanceof Response) return ready;
+        const report = await liveWalletRead(ready.getBattleReport(parseMissionId(missionId)), "battle report");
+        if (!report) {
+          return Response.json(
+            { error: "Battle report not found." },
+            { headers: corsHeaders, status: 404 }
+          );
+        }
+        return Response.json(report, {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
@@ -1963,6 +1983,17 @@ function selectedPlanetId(url: URL): bigint | undefined {
     throw new Error("planetId must be a positive integer.");
   }
   return planetId;
+}
+
+function parseMissionId(value: string): bigint {
+  if (!/^[0-9]+$/.test(value)) {
+    throw new Error("Mission id must be a positive integer.");
+  }
+  const missionId = BigInt(value);
+  if (missionId === 0n) {
+    throw new Error("Mission id must be a positive integer.");
+  }
+  return missionId;
 }
 
 function positiveBigIntQuery(url: URL, name: string): bigint {
