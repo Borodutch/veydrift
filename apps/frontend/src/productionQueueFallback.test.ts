@@ -31,6 +31,29 @@ describe("production queue fallback", () => {
       startedAt: "1700000000",
     });
   });
+
+  test("preserves overview startedAt when the same active defense queue has a newer quantity and ready time", () => {
+    const detailedQueue = queueState("defense", 1, 3, { readyAt: "1700000900" });
+    const overviewQueue = queueState("defense", 1, 1, {
+      readyAt: "1700000600",
+      startedAt: "1700000000",
+    });
+
+    expect(activeProductionQueue(detailedQueue, overviewQueue, "defense")).toEqual({
+      ...detailedQueue,
+      startedAt: "1700000000",
+    });
+  });
+
+  test("does not borrow an unusable overview startedAt for a new active queue timeline", () => {
+    const detailedQueue = queueState("defense", 1, 1, { readyAt: "1700000600" });
+    const overviewQueue = queueState("defense", 1, 1, {
+      readyAt: "1700000500",
+      startedAt: "1700000600",
+    });
+
+    expect(activeProductionQueue(detailedQueue, overviewQueue, "defense")).toEqual(detailedQueue);
+  });
 });
 
 function queueState(
