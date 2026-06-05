@@ -815,6 +815,19 @@ export function infrastructureBackendSyncPausedReasonFor({
   return undefined;
 }
 
+export function buildingUpgradeActionErrorLabel(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (
+    /Infrastructure API/i.test(message)
+    || /reading infrastructure from the game API/i.test(message)
+    || /backend connection recovers/i.test(message)
+  ) {
+    return infrastructureBackendSyncPausedLabel;
+  }
+
+  return walletRequestErrorMessage(error);
+}
+
 function backendCanonicalStatePaused(state: ChainInfrastructureState | null): boolean {
   return state?.degraded === true || state?.stale === true;
 }
@@ -2357,6 +2370,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
       const building = buildingContractIds[key];
       const label = "Building upgrade";
+      let backendStateReady = false;
       setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
 
       try {
@@ -2375,6 +2389,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           return;
         }
 
+        backendStateReady = true;
         setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
@@ -2397,7 +2412,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: walletRequestErrorMessage(error),
+          label: backendStateReady ? walletRequestErrorMessage(error) : buildingUpgradeActionErrorLabel(error),
         });
       }
     });

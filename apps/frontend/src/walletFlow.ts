@@ -1463,7 +1463,7 @@ export async function sendStartBuildingUpgradeTransaction(
   buildingId: number
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
-  const transaction = {
+  const transaction: TransactionRequest = {
     from: account,
     to: contractAddress,
     data
@@ -1471,6 +1471,7 @@ export async function sendStartBuildingUpgradeTransaction(
 
   const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
   if (!accountProbeReadyChecked) await assertWalletUnlocked(provider);
+  await assertWalletTransactionEstimated(provider, transaction, "Building upgrade");
 
   return sendWalletTransaction(provider, account, transaction, {
     accountProbeReadyChecked
