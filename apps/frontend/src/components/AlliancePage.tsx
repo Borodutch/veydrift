@@ -7,6 +7,8 @@ import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsRes
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
+export const allianceRosterPageSize = 50;
+
 type AllianceActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
@@ -202,6 +204,7 @@ export function AlliancePage({
                 onCreate={onCreate}
                 onInvite={onInvite}
                 onKick={onKick}
+                onOpenAlliance={onOpenAlliance}
                 onOpenPlayer={openPlayer}
                 onSetDescription={setDescription}
                 onSetInviteAddress={setInviteAddress}
@@ -252,10 +255,12 @@ export function AlliancePage({
                   onOpenPlayer={openPlayer}
                 />
               ) : null}
-              <PlayerProfilePanel
-                profile={playerProfile}
-                onClose={() => setSelectedPlayer(null)}
-              />
+              {!onOpenPlayer ? (
+                <PlayerProfilePanel
+                  profile={playerProfile}
+                  onClose={() => setSelectedPlayer(null)}
+                />
+              ) : null}
             </aside>
           </div>
         )}
@@ -386,6 +391,7 @@ function MyAllianceSection({
   onCreate,
   onInvite,
   onKick,
+  onOpenAlliance,
   onOpenPlayer,
   onSetDescription,
   onSetInviteAddress,
@@ -417,6 +423,7 @@ function MyAllianceSection({
   onCreate: (tag: string, name: string, description: string) => void;
   onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
+  onOpenAlliance?: ((allianceId: string) => void) | undefined;
   onOpenPlayer: (playerAddress: string) => void;
   onSetDescription: (value: string) => void;
   onSetInviteAddress: (value: string) => void;
@@ -479,12 +486,18 @@ function MyAllianceSection({
       <div className="grid gap-4">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="flex min-w-0 flex-wrap items-center gap-2 text-left disabled:cursor-default"
+              disabled={!onOpenAlliance}
+              onClick={() => onOpenAlliance?.(currentAlliance.allianceId)}
+              title="Open dedicated alliance page"
+              type="button"
+            >
               <span className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold text-cyan-100">
                 {currentAlliance.tag}
               </span>
               <h3 className="min-w-0 text-base font-semibold text-white">{currentAlliance.name}</h3>
-            </div>
+            </button>
             <p className="mt-2 max-w-3xl text-sm text-slate-400">
               {currentAlliance.description || "No public alliance description."}
             </p>
@@ -875,6 +888,15 @@ function RosterList({
   onOpenPlayer: (playerAddress: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
 }) {
+  const [page, setPage] = useState(1);
+  const pageCount = rosterPageCount(rows.length);
+  const clampedPage = Math.min(page, pageCount);
+  const visibleRows = rosterPageRows(rows, clampedPage);
+
+  useEffect(() => {
+    setPage(1);
+  }, [rows]);
+
   return (
     <div className="rounded border border-white/10 bg-black/20 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -883,7 +905,7 @@ function RosterList({
       </div>
       {rows.length ? (
         <div className="mt-2 grid gap-1.5">
-          {rows.map((member) => (
+          {visibleRows.map((member) => (
             <MemberRow
               canManageMembers={canManageMembers}
               disabled={disabled}
@@ -896,10 +918,71 @@ function RosterList({
               onSetRole={onSetRole}
             />
           ))}
+          {pageCount > 1 ? (
+            <RosterPagination
+              page={clampedPage}
+              pageCount={pageCount}
+              total={rows.length}
+              onNext={() => setPage((current) => Math.min(pageCount, current + 1))}
+              onPrevious={() => setPage((current) => Math.max(1, current - 1))}
+            />
+          ) : null}
         </div>
       ) : (
         <p className="mt-2 text-sm text-slate-400">No {title.toLowerCase()} found.</p>
       )}
+    </div>
+  );
+}
+
+export function rosterPageCount(total: number): number {
+  return Math.max(1, Math.ceil(total / allianceRosterPageSize));
+}
+
+export function rosterPageRows<T>(rows: T[], page: number): T[] {
+  const clampedPage = Math.min(Math.max(1, page), rosterPageCount(rows.length));
+  const start = (clampedPage - 1) * allianceRosterPageSize;
+  return rows.slice(start, start + allianceRosterPageSize);
+}
+
+function RosterPagination({
+  onNext,
+  onPrevious,
+  page,
+  pageCount,
+  total,
+}: {
+  onNext: () => void;
+  onPrevious: () => void;
+  page: number;
+  pageCount: number;
+  total: number;
+}) {
+  const first = (page - 1) * allianceRosterPageSize + 1;
+  const last = Math.min(page * allianceRosterPageSize, total);
+
+  return (
+    <div className="mt-2 flex flex-col gap-2 border-t border-white/10 pt-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+      <span>{first}-{last} of {total}</span>
+      <div className="flex items-center gap-2">
+        <button
+          className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={page <= 1}
+          onClick={onPrevious}
+          type="button"
+        >
+          Previous
+        </button>
+        <span>Page {page} of {pageCount}</span>
+        <button
+          className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={page >= pageCount}
+          onClick={onNext}
+          type="button"
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }

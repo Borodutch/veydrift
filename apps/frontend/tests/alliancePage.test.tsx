@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allianceRosterPageSize,
   allianceInviteAcceptanceState,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
   hasAllianceMembership,
+  rosterPageCount,
+  rosterPageRows,
   shouldShowAllianceInitialLoader,
   shouldShowAllianceRefreshIndicator,
 } from "../src/components/AlliancePage";
@@ -181,6 +184,17 @@ describe("AlliancePage loading display", () => {
       canAccept: false,
       reason: "You are already in an alliance.",
     });
+  });
+
+  test("paginates long alliance rosters at 50 members per page", () => {
+    const rows = Array.from({ length: 121 }, (_, index) => `member-${index + 1}`);
+
+    expect(allianceRosterPageSize).toBe(50);
+    expect(rosterPageCount(rows.length)).toBe(3);
+    expect(rosterPageRows(rows, 1)).toEqual(rows.slice(0, 50));
+    expect(rosterPageRows(rows, 2)).toEqual(rows.slice(50, 100));
+    expect(rosterPageRows(rows, 3)).toEqual(rows.slice(100, 121));
+    expect(rosterPageRows(rows, 99)).toEqual(rows.slice(100, 121));
   });
 });
 

@@ -3,6 +3,7 @@ import type { ComponentChildren, VNode } from "preact";
 import type { Coordinates } from "../src/types";
 import {
   primaryRankingEntries,
+  rankingsPageSize,
   rankingsColumnLabels,
   rankingsPaginationLabel,
   RankingsPagination,
@@ -191,8 +192,8 @@ describe("RankingsPage", () => {
     const visited: string[] = [];
     const pagination = {
       page: 2,
-      pageSize: 25,
-      totalEntries: 60,
+      pageSize: rankingsPageSize,
+      totalEntries: 120,
       totalPages: 3,
       hasPreviousPage: true,
       hasNextPage: true,
@@ -211,7 +212,8 @@ describe("RankingsPage", () => {
     const next = buttonWithTitle(controls, "Next page");
 
     expect(rankingsPaginationLabel(pagination)).toBe("Page 2 of 3");
-    expect(text).toContain("Page 2 of 3 26 - 50 of 60 # 42");
+    expect(rankingsPageSize).toBe(50);
+    expect(text).toContain("Page 2 of 3 51 - 100 of 120 # 42");
     expect(current?.props?.disabled).toBe(true);
     expect(previous?.props?.disabled).toBe(false);
     expect(next?.props?.disabled).toBe(false);
@@ -230,8 +232,8 @@ describe("RankingsPage", () => {
       onPrevious: () => undefined,
       pagination: {
         page: 1,
-        pageSize: 25,
-        totalEntries: 100,
+        pageSize: rankingsPageSize,
+        totalEntries: 200,
         totalPages: 4,
         hasPreviousPage: false,
         hasNextPage: true,
@@ -252,7 +254,7 @@ describe("RankingsPage", () => {
       onPrevious: () => undefined,
       pagination: {
         page: 1,
-        pageSize: 25,
+        pageSize: rankingsPageSize,
         totalEntries: 0,
         totalPages: 1,
         hasPreviousPage: false,
