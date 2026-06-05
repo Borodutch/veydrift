@@ -2007,6 +2007,7 @@ export async function confirmTransactionReceipt(
 
 export type FetchHighscoreOptions = {
   currentWallet?: string;
+  includeAttackProtection?: boolean;
   limit?: number;
   page?: number;
   pageSize?: number;
@@ -2022,6 +2023,7 @@ export async function fetchHighscores(
   } else {
     params.set("limit", String(options.limit ?? options.pageSize ?? 100));
     if (options.currentWallet !== undefined) params.set("currentWallet", options.currentWallet);
+    if (options.includeAttackProtection ?? Boolean(options.currentWallet)) params.set("includeAttackProtection", "true");
     if (options.page !== undefined) params.set("page", String(options.page));
     if (options.pageSize !== undefined) params.set("pageSize", String(options.pageSize));
   }

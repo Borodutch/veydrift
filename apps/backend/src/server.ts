@@ -1879,10 +1879,24 @@ function highscoreRankingsWithProtection(
       category,
       rankings[category].map((row) => ({
         ...row,
-        attackProtection: row.homePlanet ? protection.get(row.homePlanet.planetId) ?? null : null
+        attackProtection: rankedHighscoreRowProtection(row, protection)
       }))
     ])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
+}
+
+function rankedHighscoreRowProtection(
+  row: RankedHighscoreEntry,
+  protection: ReadonlyMap<string, RankedHighscoreAttackProtection | null>
+): RankedHighscoreAttackProtection | null {
+  const statuses = row.planets
+    .map((planet) => protection.get(planet.planetId) ?? null)
+    .filter((status): status is RankedHighscoreAttackProtection => Boolean(status));
+
+  return statuses.find((status) => status.blockedReason === "score_protection")
+    ?? statuses.find((status) => !status.allowed)
+    ?? statuses[0]
+    ?? null;
 }
 
 function highscoreRows(
