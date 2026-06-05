@@ -12,11 +12,14 @@ import {
   type WalletPlanetsResponse,
 } from "../walletFlow";
 import {
+  allianceRosterPageSize,
   allianceDisplayName,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
   buildAllianceRoster,
   findAllianceEntry,
+  rosterPageCount,
+  rosterPageRows,
 } from "./AlliancePage";
 import { VeydriftLoader } from "./VeydriftLoader";
 
@@ -352,6 +355,15 @@ function RosterGroup({ disabled, isOwner, members, onKick, onOpenPlayer, onSetRo
   title: string;
   viewer?: string | undefined;
 }) {
+  const [page, setPage] = useState(1);
+  const pageCount = rosterPageCount(members.length);
+  const clampedPage = Math.min(page, pageCount);
+  const visibleMembers = rosterPageRows(members, clampedPage);
+
+  useEffect(() => {
+    setPage(1);
+  }, [members]);
+
   return (
     <div className="mb-3 last:mb-0">
       <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -360,7 +372,7 @@ function RosterGroup({ disabled, isOwner, members, onKick, onOpenPlayer, onSetRo
       </div>
       {members.length ? (
         <div className="grid gap-1.5">
-          {members.map((member) => {
+          {visibleMembers.map((member) => {
             const isViewer = viewer?.toLowerCase() === member.address.toLowerCase();
             const ownerCanChangeRole = isOwner && member.role !== "owner";
             return (
@@ -384,6 +396,18 @@ function RosterGroup({ disabled, isOwner, members, onKick, onOpenPlayer, onSetRo
               </div>
             );
           })}
+          {pageCount > 1 ? (
+            <div className="mt-2 flex flex-col gap-2 border-t border-white/10 pt-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                {(clampedPage - 1) * allianceRosterPageSize + 1}-{Math.min(clampedPage * allianceRosterPageSize, members.length)} of {members.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:opacity-50" disabled={clampedPage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">Previous</button>
+                <span>Page {clampedPage} of {pageCount}</span>
+                <button className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:opacity-50" disabled={clampedPage >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))} type="button">Next</button>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : (
         <p className="text-sm text-slate-400">No {title.toLowerCase()} found.</p>
