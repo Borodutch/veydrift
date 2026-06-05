@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { selectedProductionItem } from "../src/components/ProductionCatalog";
+import { formatProductionPrice, selectedProductionItem } from "../src/components/ProductionCatalog";
 import { defenseProductionItems, getDefenseRequirementStates, getQueueBlocker } from "../src/components/DefensePage";
 import { defenseCatalog } from "../src/playableMvp";
 import type { ChainDefenseState } from "../src/walletFlow";
 
 describe("Defense page display helpers", () => {
+  test("formats defense prices like building cost rows", () => {
+    expect(formatProductionPrice({ metal: 2_000, crystal: 6_000, deuterium: 0 })).toBe("Metal 2,000, Crystal 6,000");
+  });
+
   test("allows additions to the matching active defense queue", () => {
     expect(getQueueBlocker(0, {
       active: true,
@@ -97,11 +101,11 @@ describe("Defense page display helpers", () => {
     expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
       countLabel: "Deployed",
       countValue: 12,
-      description: expect.stringContaining("kinetic"),
       detailNote: "Attack 80 · Shield 20 · Hull 200",
       durationSeconds: 960,
       status: "ready",
     });
+    expect(items.find((item) => item.key === "rocketLauncher")).not.toHaveProperty("description");
     expect(items.find((item) => item.key === "rocketLauncher")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
       countValue: 3,

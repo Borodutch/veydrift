@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
+import { formatProductionPrice, productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
 import { getBlockedReason, getShipRequirementStates, shipProductionItems, shipyardRefreshErrorLabel } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
 import { shipCatalog } from "../src/playableMvp";
 
 describe("Shipyard page display helpers", () => {
+  test("formats shipyard prices like building cost rows", () => {
+    expect(formatProductionPrice({ metal: 2_000, crystal: 2_000, deuterium: 0 })).toBe("Metal 2,000, Crystal 2,000");
+  });
+
   test("reports a per-ship deployment mismatch without treating the whole page as unloaded", () => {
     expect(getBlockedReason({
       affordable: false,
@@ -100,11 +104,11 @@ describe("Shipyard page display helpers", () => {
       actionLabel: "Build",
       countLabel: "Owned",
       countValue: 4,
-      description: expect.stringContaining("freighter"),
       detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
       quantity: 3,
       status: "ready",
     });
+    expect(items.find((item) => item.key === "smallCargo")).not.toHaveProperty("description");
     expect(items.find((item) => item.key === "smallCargo")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
       status: "locked",
