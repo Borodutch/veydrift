@@ -681,7 +681,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/execution reverted/i.test(message)) {
-    return "The game contract rejected a wallet read. Retry after the latest deployment finishes, or reconnect your wallet on Base Sepolia.";
+    return "The game contract rejected this transaction. Refresh the latest backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.";
   }
 
   return message;
