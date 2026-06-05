@@ -71,6 +71,7 @@ export class ChainSyncService {
   private connected = false;
   private detectedGaps = 0;
   private eventsReceived = 0;
+  private blockTimestamps = new Map<string, string>();
   private lastGap: { fromBlock: string; toBlock: string } | null = null;
   private lastGapDetectedAt: string | null = null;
   private lastConnectedAt: string | null = null;
@@ -295,6 +296,10 @@ export class ChainSyncService {
       return;
     }
     const block = BigInt(result.number);
+    if (typeof result.timestamp === "string") {
+      this.blockTimestamps.set(block.toString(), BigInt(result.timestamp).toString());
+      this.pruneBlockTimestamps(block);
+    }
     const previous = this.latestWebsocketBlock ? BigInt(this.latestWebsocketBlock) : null;
     this.latestWebsocketBlock = block.toString();
     this.latestSyncedBlock = block.toString();
@@ -323,7 +328,8 @@ export class ChainSyncService {
 
     if (this.indexer?.applyLog) {
       try {
-        const applied = this.indexer.applyLog(result);
+        const blockTimestamp = this.logBlockTimestamp(result, block);
+        const applied = this.indexer.applyLog(blockTimestamp ? { ...result, blockTimestamp } : result);
         if (applied.removed) {
           this.requestReconciliation("removed log/reorg");
         }
@@ -357,6 +363,28 @@ export class ChainSyncService {
       blockNumber: this.latestSyncedBlock,
       transactionHash: result.transactionHash
     });
+  }
+
+  private logBlockTimestamp(result: RpcLog & { blockTimestamp?: unknown }, block: bigint): string | undefined {
+    const directTimestamp = isRecord(result) && typeof result.blockTimestamp === "string"
+      ? result.blockTimestamp
+      : undefined;
+    if (directTimestamp) {
+      try {
+        return BigInt(directTimestamp).toString();
+      } catch {
+        return undefined;
+      }
+    }
+
+    return this.blockTimestamps.get(block.toString());
+  }
+
+  private pruneBlockTimestamps(latestBlock: bigint): void {
+    const minBlock = latestBlock > 256n ? latestBlock - 256n : 0n;
+    for (const block of this.blockTimestamps.keys()) {
+      if (BigInt(block) < minBlock) this.blockTimestamps.delete(block);
+    }
   }
 
   private notify(event: ChainSyncEvent): void {

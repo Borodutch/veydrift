@@ -60,6 +60,16 @@ type TransactionRequest = {
 
 type GasEstimateResult = string | number | bigint;
 
+type TransactionReceipt = {
+  status?: string | number | bigint | null;
+  transactionHash?: string;
+};
+
+export const TRANSACTION_REVERTED_MESSAGE = "Transaction reverted on-chain. No game state was changed.";
+export const TRANSACTION_RECEIPT_TIMEOUT_MESSAGE = "Transaction submitted, but the chain did not confirm it yet. Check the transaction status before retrying.";
+const TRANSACTION_RECEIPT_TIMEOUT_MS = 120_000;
+const TRANSACTION_RECEIPT_POLL_MS = 1_500;
+
 export type OnChainResources = {
   metal: string;
   crystal: string;
@@ -1922,6 +1932,36 @@ export async function updatePlayerDisplayName(
   return response.json() as Promise<PlayerProfile>;
 }
 
+export async function confirmTransactionReceipt(
+  provider: Eip1193Provider,
+  transactionHash: string,
+  {
+    pollMs = TRANSACTION_RECEIPT_POLL_MS,
+    timeoutMs = TRANSACTION_RECEIPT_TIMEOUT_MS,
+  }: {
+    pollMs?: number;
+    timeoutMs?: number;
+  } = {},
+): Promise<TransactionReceipt> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const receipt = await provider.request<TransactionReceipt | null>({
+      method: "eth_getTransactionReceipt",
+      params: [transactionHash],
+    });
+    if (receipt) {
+      if (isRevertedReceiptStatus(receipt.status)) {
+        throw new Error(TRANSACTION_REVERTED_MESSAGE);
+      }
+      return receipt;
+    }
+    await delay(pollMs);
+  }
+
+  throw new Error(TRANSACTION_RECEIPT_TIMEOUT_MESSAGE);
+}
+
 export type FetchHighscoreOptions = {
   currentWallet?: string;
   limit?: number;
@@ -2093,6 +2133,15 @@ async function apiErrorMessage(response: Response, label: string): Promise<strin
 
     return fallback;
   }
+}
+
+function isRevertedReceiptStatus(status: TransactionReceipt["status"]): boolean {
+  if (typeof status === "bigint") return status === 0n;
+  if (typeof status === "number") return status === 0;
+  if (typeof status !== "string") return false;
+
+  const normalized = status.trim().toLowerCase();
+  return normalized === "0" || normalized === "0x0";
 }
 
 function walletApiNetworkFailureMessage(label: string, error: unknown): string {
