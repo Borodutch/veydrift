@@ -1,4 +1,4 @@
-import { EyeOff, RefreshCw, Route, ShieldAlert, Swords, TimerReset } from "lucide-preact";
+import { RefreshCw, Route, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -102,14 +102,14 @@ export function MissionControlPage({
         <>
           <div className="grid gap-3 md:grid-cols-4">
             <Metric label="Active missions" value={activeCount.toString()} />
-            <Metric label="Due resolvers" value={due.length.toString()} />
+            <Metric label="Arrived" value={due.length.toString()} />
             <Metric label="Hostile inbound" value={incoming.length.toString()} />
             <Metric label="Battle reports" value={battleReports.length.toString()} />
           </div>
 
           {activeCount === 0 ? (
             <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
-              No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy when the target action is contract-supported.
+              No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy.
             </div>
           ) : null}
 
@@ -174,29 +174,6 @@ export function MissionControlPage({
             reports={battleReports}
             onOpenBattleReport={onOpenBattleReport}
           />
-
-          <div className="grid gap-3 lg:grid-cols-4">
-            <CapabilityPanel
-              icon={<ShieldAlert aria-hidden="true" size={18} />}
-              title="ACS and Intercept"
-              body="Inbound attacks expose ACS defend and intercept launches when the commander has an available combat ship."
-            />
-            <CapabilityPanel
-              icon={<Route aria-hidden="true" size={18} />}
-              title="Harvests and Saves"
-              body="Recycler harvests, transport, deploy, and resource-save launches remain Galaxy actions because they need a target coordinate."
-            />
-            <CapabilityPanel
-              icon={<TimerReset aria-hidden="true" size={18} />}
-              title="Missiles and Moons"
-              body="Missile and moon-chance entries appear here when they produce mission or battle records."
-            />
-            <CapabilityPanel
-              icon={<EyeOff aria-hidden="true" size={18} />}
-              title="No Spy Reports"
-              body="Veydrift target intel is public game state; espionage probes, scan missions, and hidden reveal reports are not supported."
-            />
-          </div>
         </>
       )}
     </section>
@@ -364,7 +341,7 @@ function MissionCard({
           {actions.map((action) => action.kind === "counterplay" ? (
             <span className="contents" key={action.kind}>
               <ActionButton
-                action={{ ...action, label: "ACS defend" }}
+                action={{ ...action, label: "Group defend" }}
                 onClick={() => onCounterplay(mission.missionId, "acsDefend")}
               />
               <ActionButton
@@ -484,28 +461,6 @@ export function formatMissionTime(value: string, now: number): string {
   const timestamp = timestampToMs(value);
   if (timestamp === undefined) return "Unknown";
   return `${formatDurationUntil(timestamp, now)}\n${formatUserTimestamp(timestamp)}`;
-}
-
-function CapabilityPanel({
-  body,
-  icon,
-  title,
-}: {
-  body: string;
-  icon: preact.ComponentChildren;
-  title: string;
-}) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-[#101624] p-4">
-      <div className="flex items-center gap-2 text-slate-200">
-        <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
-          {icon}
-        </span>
-        <h3 className="text-sm font-semibold text-white">{title}</h3>
-      </div>
-      <p className="mt-3 text-sm leading-6 text-slate-400">{body}</p>
-    </div>
-  );
 }
 
 function Notice({ children, tone }: { children: preact.ComponentChildren; tone: "danger" | "info" | "success" }) {

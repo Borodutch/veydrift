@@ -3777,7 +3777,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    void runGalaxyTransaction(mode === "acsDefend" ? "ACS defend mission" : "Intercept mission", () => sendLaunchFleetMissionTransaction(
+    void runGalaxyTransaction(mode === "acsDefend" ? "Group defend mission" : "Intercept mission", () => sendLaunchFleetMissionTransaction(
       provider,
       account,
       gameContract,
@@ -3911,7 +3911,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    runMissionTransaction(mode === "acsDefend" ? `ACS defend #${missionId}` : `Intercept #${missionId}`, () =>
+    runMissionTransaction(mode === "acsDefend" ? `Group defend #${missionId}` : `Intercept #${missionId}`, () =>
       sendLaunchFleetMissionTransaction(
         provider,
         account,

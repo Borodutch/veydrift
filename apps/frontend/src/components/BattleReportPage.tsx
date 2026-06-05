@@ -45,7 +45,7 @@ export function BattleReportPage({
             {missionId ? `Mission #${missionId}` : "Shared combat result"}
           </h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-            Public combat outcome, losses, debris, and round snapshots from the contract event stream.
+            Public combat outcome, losses, debris, and round snapshots from the game battle log.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
