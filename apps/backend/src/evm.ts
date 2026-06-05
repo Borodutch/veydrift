@@ -249,6 +249,8 @@ export type DefenseState = {
 export type InfrastructureState = {
   wallet: Address;
   homePlanetId: string | null;
+  planetId?: string | null;
+  planetLastSettledAt?: string | null;
   infrastructureAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;

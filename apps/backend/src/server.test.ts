@@ -2242,6 +2242,8 @@ describe("Veydrift backend", () => {
     expect(infrastructureResponse.status).toBe(200);
     expect(settlementBody.planet.resources.metal).toBe("5064");
     expect(planetsBody.planets[0].resources.metal).toBe("5064");
+    expect(infrastructureBody.planetId).toBe("7");
+    expect(infrastructureBody.planetLastSettledAt).toBe(settlementBody.planet.lastSettledAt);
     expect(infrastructureBody.resources.metal).toBe("5064");
     expect(infrastructureBody.raidableResources.metal).toBe("5064");
   });
