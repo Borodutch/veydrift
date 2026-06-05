@@ -3309,22 +3309,9 @@ describe("Veydrift backend", () => {
       "0x5555555555555555555555555555555555555555"
     ] as Address[];
     const currentWallet = owners[2]!;
-    const requestedTargets: string[] = [];
     const chainReader = new class extends MockChainReader {
-      override async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
-        expect(wallet).toBe(currentWallet);
-        requestedTargets.push(targetPlanetId.toString());
-        return {
-          wallet,
-          targetPlanetId: targetPlanetId.toString(),
-          allowed: true,
-          blockedReason: "none",
-          blockedReasonLabel: null,
-          relation: "peer",
-          defenderHonorStatus: "neutral",
-          plunderBps: 5000,
-          defenderInactive: false
-        };
+      override async getAttackProtectionStatus(): Promise<AttackProtectionStatus> {
+        throw new Error("rankings should not fetch live attack protection");
       }
     }();
     chainReader.listSettledPlanetEvents = async () => owners.map((owner, index) => ({
@@ -3358,9 +3345,13 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total).toHaveLength(1);
     expect(body.rankings.total[0]).toMatchObject({
       rank: 2,
-      wallet: owners[1]
+      wallet: owners[1],
+      attackProtection: {
+        allowed: true,
+        blockedReason: "none",
+        blockedReasonLabel: null
+      }
     });
-    expect(requestedTargets).toEqual(["11"]);
     expect(body.currentPlayer).toMatchObject({
       wallet: owners[2],
       rankings: {
@@ -3497,28 +3488,39 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("adds current wallet attack protection to highscore rows", async () => {
+  test("adds indexed current wallet score protection to highscore rows without live protection reads", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
-    const requestedTargets: string[] = [];
+    const defender = "0x1111111111111111111111111111111111111111" as Address;
     const chainReader = new class extends MockChainReader {
-      override async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
-        expect(wallet).toBe(attacker);
-        requestedTargets.push(targetPlanetId.toString());
-        return {
-          wallet,
-          targetPlanetId: targetPlanetId.toString(),
-          allowed: false,
-          blockedReason: "score_protection",
-          blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
-          relation: "weaker",
-          defenderHonorStatus: "neutral",
-          plunderBps: 0,
-          defenderInactive: false
-        };
+      override async getAttackProtectionStatus(): Promise<AttackProtectionStatus> {
+        throw new Error("rankings should derive score protection from indexed highscores");
       }
     }();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
+    const planetsByOwner = new Map<string, SettledPlanetEvent[]>([
+      [attacker.toLowerCase(), [{
+        ...planet,
+        eventName: "PlanetStarted",
+        owner: attacker,
+        planetId: "7",
+        transactionHash: "0xattacker",
+        blockNumber: "123"
+      }]],
+      [defender.toLowerCase(), [{
+        ...planet,
+        eventName: "PlanetStarted",
+        owner: defender,
+        planetId: "8",
+        transactionHash: "0xdefender",
+        blockNumber: "124"
+      }]]
+    ]);
+    indexer.settledPlanetsByOwner = () => planetsByOwner;
+    indexer.highscoreEntriesForOwners = () => [
+      highscoreEntry(attacker, "98", "7"),
+      highscoreEntry(defender, "0", "8")
+    ];
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -3529,8 +3531,8 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(requestedTargets).toContain(planet.planetId);
-    expect(body.rankings.total[0].attackProtection).toEqual({
+    expect(body.rankings.total[1].wallet).toBe(defender);
+    expect(body.rankings.total[1].attackProtection).toEqual({
       allowed: false,
       blockedReason: "score_protection",
       blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
@@ -3792,6 +3794,24 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(400);
   });
 });
+
+function highscoreEntry(wallet: Address, total: string, homePlanetId: string): HighscoreEntry {
+  return {
+    wallet,
+    homePlanetId,
+    planetCount: 1,
+    score: {
+      total,
+      economy: "0",
+      research: "0",
+      researchLevels: "0",
+      military: "0",
+      fleet: "0",
+      fleetCount: "0",
+      defense: "0"
+    }
+  };
+}
 
 function abiWords(...values: bigint[]): string {
   return `0x${values.map((value) => value.toString(16).padStart(64, "0")).join("")}`;

@@ -8,7 +8,9 @@ import {
   type Address,
   type AllianceIdentity,
   type AllianceState,
+  type AttackBlockReason,
   type AttackProtectionStatus,
+  attackBlockReasonLabel,
   type ChainReader,
   type DefenseState,
   type FleetMissionVisibility,
@@ -681,9 +683,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           offset,
           rankedRows
         );
-        const protection = await rankedHighscoreProtectionLookup(
+        const protection = rankedHighscoreProtectionLookup(
           highscoreRankingRows(rankings),
-          chainReader,
+          entries,
+          allianceIntel,
           url.searchParams.get("currentWallet"),
           highscoreAttackProtectionRequested(url)
         );
@@ -1943,48 +1946,99 @@ function rankHighscores(
     });
 }
 
-async function rankedHighscoreProtectionLookup(
+function rankedHighscoreProtectionLookup(
   rows: Iterable<RankedHighscoreEntry>,
-  chainReader: ChainReader | undefined,
+  entries: readonly HighscoreEntry[],
+  allianceIntel: ReadonlyMap<string, AllianceIdentity>,
   currentWallet: string | null | undefined,
   includeAttackProtection: boolean
-): Promise<Map<string, RankedHighscoreAttackProtection | null>> {
+): Map<string, RankedHighscoreAttackProtection | null> {
   if (!includeAttackProtection) return new Map();
+  if (!currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return new Map();
 
-  const uniquePlanets = new Map<string, RankedHighscorePlanet>();
+  const normalizedCurrentWallet = currentWallet.toLowerCase();
+  const attacker = entries.find((entry) => entry.wallet.toLowerCase() === normalizedCurrentWallet);
+  if (!attacker) return new Map();
+
+  const attackerScore = BigInt(attacker.score.total);
+  const attackerAlliance = allianceIntel.get(normalizedCurrentWallet) ?? null;
+  const protection = new Map<string, RankedHighscoreAttackProtection | null>();
+
   for (const row of rows) {
+    const rowProtection = rankedHighscoreIndexedProtection(
+      attackerScore,
+      attackerAlliance,
+      normalizedCurrentWallet,
+      row
+    );
     for (const planet of row.planets) {
-      uniquePlanets.set(planet.planetId, planet);
+      protection.set(planet.planetId, rowProtection);
     }
   }
 
-  const statuses = await Promise.all(
-    [...uniquePlanets.values()].map(async (planet) => [
-      planet.planetId,
-      await rankedHighscoreAttackProtection(chainReader, currentWallet, planet)
-    ] as const)
-  );
-
-  return new Map(statuses);
+  return protection;
 }
 
-async function rankedHighscoreAttackProtection(
-  chainReader: ChainReader | undefined,
-  currentWallet: string | null | undefined,
-  planet: RankedHighscorePlanet | null
-): Promise<RankedHighscoreAttackProtection | null> {
-  if (!chainReader || !planet || !currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return null;
+function rankedHighscoreIndexedProtection(
+  attackerScore: bigint,
+  attackerAlliance: AllianceIdentity | null,
+  currentWallet: string,
+  row: RankedHighscoreEntry
+): RankedHighscoreAttackProtection | null {
+  if (row.wallet.toLowerCase() === currentWallet) return allowedHighscoreAttackProtection();
 
-  try {
-    const status = await chainReader.getAttackProtectionStatus(currentWallet as Address, BigInt(planet.planetId));
-    return {
-      allowed: status.allowed,
-      blockedReason: status.blockedReason,
-      blockedReasonLabel: status.blockedReasonLabel
-    };
-  } catch {
-    return null;
+  const defenderAlliance = row.alliance ?? null;
+  if (
+    attackerAlliance
+      && defenderAlliance
+      && attackerAlliance.allianceId !== "0"
+      && attackerAlliance.allianceId === defenderAlliance.allianceId
+  ) {
+    return blockedHighscoreAttackProtection("same_alliance");
   }
+
+  if (isIndexedScoreProtected(attackerScore, BigInt(row.score.total))) {
+    return blockedHighscoreAttackProtection("score_protection");
+  }
+
+  return allowedHighscoreAttackProtection();
+}
+
+function allowedHighscoreAttackProtection(): RankedHighscoreAttackProtection {
+  return {
+    allowed: true,
+    blockedReason: "none",
+    blockedReasonLabel: null
+  };
+}
+
+function blockedHighscoreAttackProtection(blockedReason: AttackBlockReason): RankedHighscoreAttackProtection {
+  return {
+    allowed: false,
+    blockedReason,
+    blockedReasonLabel: attackBlockReasonLabel(blockedReason)
+  };
+}
+
+const scoreProtectionLowScore = 50_000n;
+const scoreProtectionHighScore = 500_000n;
+const scoreProtectionLowRatioBps = 50_000n;
+const scoreProtectionHighRatioBps = 100_000n;
+const basisPoints = 10_000n;
+
+function isIndexedScoreProtected(attackerScore: bigint, defenderScore: bigint): boolean {
+  const attackerRatio = newbieProtectionRatioBps(attackerScore);
+  const defenderRatio = newbieProtectionRatioBps(defenderScore);
+  if (attackerRatio === 0n && defenderRatio === 0n) return false;
+  if (defenderRatio !== 0n && attackerScore * basisPoints > defenderScore * defenderRatio) return true;
+  if (attackerRatio !== 0n && defenderScore * basisPoints > attackerScore * attackerRatio) return true;
+  return false;
+}
+
+function newbieProtectionRatioBps(score: bigint): bigint {
+  if (score < scoreProtectionLowScore) return scoreProtectionLowRatioBps;
+  if (score < scoreProtectionHighScore) return scoreProtectionHighRatioBps;
+  return 0n;
 }
 
 function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory): HighscoreEntry[] {

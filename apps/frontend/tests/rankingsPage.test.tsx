@@ -166,8 +166,8 @@ describe("RankingsPage", () => {
     const protectedEntry = rankingEntry({
       attackProtection: {
         allowed: false,
-        blockedReason: "same_alliance",
-        blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+        blockedReason: "score_protection",
+        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
       },
     });
     const table = RankingsTable({
@@ -178,6 +178,30 @@ describe("RankingsPage", () => {
 
     expect(row?.props?.className).toContain("bg-red-300");
     expect(visibleText(row)).toContain("Protected");
+  });
+
+  test("keeps same-alliance protection out of the red protected treatment", () => {
+    const ally = rankingEntry({
+      alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
+      attackProtection: {
+        allowed: false,
+        blockedReason: "same_alliance",
+        blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+      },
+      wallet: "0x2222222222222222222222222222222222222222",
+    });
+    const table = RankingsTable({
+      currentAllianceId: "3",
+      currentWallet: "0x1111111111111111111111111111111111111111",
+      entries: [ally],
+      loading: false,
+    });
+    const row = rowWithWallet(table, ally.wallet);
+
+    expect(row?.props?.className).toContain("bg-emerald-300");
+    expect(row?.props?.className).not.toContain("bg-red-300");
+    expect(visibleText(row)).toContain("[VDFT]");
+    expect(visibleText(row)).not.toContain("Protected");
   });
 
   test("opens the ranked commander inspect page from the commander label", () => {

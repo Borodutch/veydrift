@@ -305,7 +305,12 @@ function RankingRow({
   const normalizedWallet = entry.wallet.toLowerCase();
   const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
   const alliance = entry.alliance ?? null;
-  const isUnattackable = Boolean(entry.attackProtection && !entry.attackProtection.allowed && entry.attackProtection.blockedReason !== "none");
+  const isUnattackable = Boolean(
+    entry.attackProtection
+      && !entry.attackProtection.allowed
+      && entry.attackProtection.blockedReason !== "none"
+      && entry.attackProtection.blockedReason !== "same_alliance"
+  );
   const isSameAlliance = Boolean(
     !isCurrentPlayer
       && alliance
