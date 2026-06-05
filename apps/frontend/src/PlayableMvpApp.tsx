@@ -4263,10 +4263,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (page === "planet" && selectedCoords) {
       return (
         <PlanetDetail
+          account={account}
+          actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
           coords={selectedCoords}
-          homeCoords={homeCoords}
+          defenseState={defenseState}
+          homeCoords={activePlanetCoords}
+          homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
+          shipyardState={shipyardState}
+          onAction={handleGalaxyAction}
           onBack={() => setPage("galaxy")}
         />
       );

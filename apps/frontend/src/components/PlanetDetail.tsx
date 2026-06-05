@@ -3,18 +3,33 @@ import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from ".
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
+import type { ChainDefenseState, ChainShipyardState } from "../walletFlow";
+import { DEFAULT_MISSION_SPEED_PERCENT, MISSION_SPEED_OPTIONS } from "../fleetMissionRules";
+import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { isImageReady } from "../imageLoadState";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 interface Props {
+  account?: string | undefined;
+  actionState?: PlanetDetailActionState | undefined;
   coords: Coordinates;
   apiBaseUrl?: string | undefined;
+  defenseState?: ChainDefenseState | null | undefined;
   homeCoords?: Coordinates | undefined;
+  homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
+  shipyardState?: ChainShipyardState | null | undefined;
+  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
   onBack: () => void;
 }
+
+export type PlanetDetailActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
 
 export type PlanetRecordRow = {
   label: string;
@@ -22,7 +37,19 @@ export type PlanetRecordRow = {
   tone?: "default" | "accent" | "muted";
 };
 
-export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack }: Props) {
+export function PlanetDetail({
+  account,
+  actionState = { status: "idle" },
+  coords,
+  apiBaseUrl = playableApiUrl,
+  defenseState = null,
+  homeCoords,
+  homePlanetId,
+  homePlanet,
+  shipyardState = null,
+  onAction,
+  onBack,
+}: Props) {
   const trustedHomePlanet = useMemo(
     () => sameCoordinates(homeCoords, coords) && homePlanet
       ? homePlanet
@@ -32,8 +59,18 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
   const [planet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [missionSpeedPercent, setMissionSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const imageRef = useRef<HTMLImageElement>(null);
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
+  const actions = planetDetailGalaxyActions({
+    account,
+    coords,
+    defenseState,
+    homeCoords,
+    homePlanetId,
+    planet: planet ?? undefined,
+    shipyardState,
+  });
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -97,11 +134,27 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       );
     }
 
+    const showActions = source === "api";
+
     return (
       <div className="flex flex-col items-center gap-4 p-8">
         <p className="text-slate-400">
           {source === "error" ? "Planet data could not be loaded." : "No planet at this position."}
         </p>
+        {showActions ? (
+          <div className="w-full max-w-xl">
+            <PlanetMissionActions
+              actionState={actionState}
+              actions={actions}
+              busy={actionState.status === "pending"}
+              coords={coords}
+              missionSpeedPercent={missionSpeedPercent}
+              onAction={onAction}
+              onMissionSpeedChange={setMissionSpeedPercent}
+              planet={undefined}
+            />
+          </div>
+        ) : null}
         <button
           onClick={onBack}
           className="rounded border border-white/15 bg-white/8 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
@@ -179,6 +232,19 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               <PublicRecordRows rows={publicCommanderRows(planet, isHome)} />
             </div>
 
+            <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+              <PlanetMissionActions
+                actionState={actionState}
+                actions={actions}
+                busy={actionState.status === "pending"}
+                coords={coords}
+                missionSpeedPercent={missionSpeedPercent}
+                onAction={onAction}
+                onMissionSpeedChange={setMissionSpeedPercent}
+                planet={planet}
+              />
+            </div>
+
             {/* Temperature */}
             <div className="rounded-lg border border-white/10 bg-white/5 p-4">
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -253,6 +319,124 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+export function planetDetailGalaxyActions({
+  account,
+  coords,
+  defenseState,
+  homeCoords,
+  homePlanetId,
+  planet,
+  shipyardState,
+}: {
+  account: string | undefined;
+  coords: Coordinates;
+  defenseState: ChainDefenseState | null | undefined;
+  homeCoords: Coordinates | undefined;
+  homePlanetId: string | null | undefined;
+  planet: Planet | undefined;
+  shipyardState: ChainShipyardState | null;
+}): GalaxyAction[] {
+  return galaxyActionsForSlot({
+    account,
+    homePlanetId,
+    isOrigin: sameCoordinates(homeCoords, planet ?? coords),
+    planet,
+    defenseState,
+    shipyardState,
+  });
+}
+
+function PlanetMissionActions({
+  actionState,
+  actions,
+  busy,
+  coords,
+  missionSpeedPercent,
+  onAction,
+  onMissionSpeedChange,
+  planet,
+}: {
+  actionState: PlanetDetailActionState;
+  actions: GalaxyAction[];
+  busy: boolean;
+  coords: Coordinates;
+  missionSpeedPercent: number;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
+  onMissionSpeedChange: (speedPercent: number) => void;
+  planet: Planet | undefined;
+}) {
+  return (
+    <div className="grid gap-3">
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Mission Actions
+        </h3>
+        <p className="mt-1 text-xs text-slate-500">
+          Target [{coords.galaxy}:{coords.system}:{coords.position}]
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[11px] font-medium uppercase text-slate-500">Speed</span>
+        {MISSION_SPEED_OPTIONS.map((speed) => (
+          <button
+            aria-pressed={missionSpeedPercent === speed}
+            className={`h-8 rounded border px-2 text-xs font-semibold transition ${
+              missionSpeedPercent === speed
+                ? "border-signal/45 bg-signal/15 text-signal"
+                : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
+            }`}
+            key={speed}
+            onClick={() => onMissionSpeedChange(speed)}
+            type="button"
+          >
+            {speed}%
+          </button>
+        ))}
+      </div>
+
+      {actionState.status !== "idle" ? (
+        <div className={`rounded border px-3 py-2 text-xs ${
+          actionState.status === "error"
+            ? "border-red-300/30 bg-red-500/10 text-red-100"
+            : actionState.status === "success"
+              ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
+              : "border-signal/25 bg-signal/10 text-signal"
+        }`}>
+          {actionState.label}
+        </div>
+      ) : null}
+
+      {actions.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {actions.map((action) => (
+            <button
+              className={`rounded border px-2 py-1 text-xs font-medium transition ${
+                action.enabled
+                  ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
+                  : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
+              }`}
+              disabled={!action.enabled || busy || !onAction}
+              key={action.kind}
+              onClick={() => {
+                if (action.enabled) onAction?.(action, planet, coords, missionSpeedPercent);
+              }}
+              title={action.enabled ? action.label : action.reason}
+              type="button"
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
+          This is the active origin planet.
+        </div>
+      )}
     </div>
   );
 }
