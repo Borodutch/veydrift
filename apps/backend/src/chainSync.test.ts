@@ -340,7 +340,7 @@ describe("ChainSyncService", () => {
 
   test("applies queue logs incrementally without rebuilding canonical state", async () => {
     MockWebSocket.instances = [];
-    const appliedTransactions: string[] = [];
+    const appliedLogs: Array<{ blockTimestamp?: string; transactionHash: string }> = [];
     const staleReasons: string[] = [];
     const rebuildReasons: string[] = [];
     const reconcileReasons: string[] = [];
@@ -348,8 +348,8 @@ describe("ChainSyncService", () => {
       applyDebrisEvent() {},
       applyEvent() {},
       applyMoonChanceEvent() {},
-      applyLog(log: { transactionHash: string; removed?: boolean }) {
-        appliedTransactions.push(log.transactionHash);
+      applyLog(log: { blockTimestamp?: string; transactionHash: string; removed?: boolean }) {
+        appliedLogs.push(log);
         return {
           applied: true,
           duplicate: false,
@@ -378,6 +378,16 @@ describe("ChainSyncService", () => {
     socket?.message({
       method: "eth_subscription",
       params: {
+        subscription: "heads-sub",
+        result: {
+          number: "0x90",
+          timestamp: "0x69801c90"
+        }
+      }
+    });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
         subscription: "logs-sub",
         result: {
           blockNumber: "0x90",
@@ -393,7 +403,12 @@ describe("ChainSyncService", () => {
     });
     await Promise.resolve();
 
-    expect(appliedTransactions).toEqual(["0xqueue-start"]);
+    expect(appliedLogs).toEqual([
+      expect.objectContaining({
+        blockTimestamp: "1770003600",
+        transactionHash: "0xqueue-start"
+      })
+    ]);
     expect(rebuildReasons).toEqual([]);
     expect(reconcileReasons).toEqual([]);
     expect(staleReasons).toEqual([]);

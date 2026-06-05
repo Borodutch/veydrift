@@ -1406,6 +1406,7 @@ function isWebhookLog(value: Record<string, unknown>): value is IndexedRpcLog {
     && Array.isArray(value.topics)
     && value.topics.every((topic) => typeof topic === "string")
     && typeof value.data === "string"
+    && (value.blockTimestamp === undefined || typeof value.blockTimestamp === "string")
     && (value.logIndex === undefined || typeof value.logIndex === "string")
     && (value.removed === undefined || typeof value.removed === "boolean");
 }

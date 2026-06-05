@@ -60,6 +60,7 @@ import {
 } from "./evm";
 import {
   calculateIndexedHighscore,
+  deriveInfrastructureFields,
   deriveBuildingRows,
   deriveDefenseRows,
   deriveShipRows,
@@ -193,6 +194,7 @@ type QueueUpsertEvent = IndexedQueueStartedEvent & {
 };
 
 export type IndexedRpcLog = RpcLog & {
+  blockTimestamp?: string;
   logIndex?: string;
   removed?: boolean;
 };
@@ -660,7 +662,9 @@ export class SettlementIndexer {
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isIndexedQueueStartedLog(log)) {
-      this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log));
+      this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
+        settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
+      });
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isIndexedQueueCompletedLog(log)) {
@@ -1239,8 +1243,10 @@ export class SettlementIndexer {
           activeEventQueues.delete(queueKey(event));
           continue;
         }
+        const settledAt = blockTimestampSeconds(log);
         this.applyQueueStartedEvent(event, {
-          settleResources: !this.hasCanonicalResourcesForQueue(event, canonicalState)
+          settleResources: !this.hasCanonicalResourcesForQueue(event, canonicalState),
+          ...(settledAt ? { settledAt } : {})
         });
         activeEventQueues.add(queueKey(event));
       } else if (isIndexedQueueCompletedLog(log)) {
@@ -1756,16 +1762,16 @@ export class SettlementIndexer {
 
   private applyQueueStartedEvent(
     event: IndexedQueueStartedEvent,
-    options: { settleResources?: boolean } = {}
+    options: { settleResources?: boolean; settledAt?: string } = {}
   ): void {
     this.upsertQueue(event);
     if (options.settleResources !== false) {
       if (event.planetId) {
-        this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber);
+        this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber, options.settledAt);
       } else if (event.queueKind === "research" && event.owner) {
         const settlement = this.walletSettlement(event.owner);
         if (settlement.homePlanetId) {
-          this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber);
+          this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber, options.settledAt);
         }
       }
     }
@@ -1973,7 +1979,8 @@ export class SettlementIndexer {
     planetId: string,
     cost: IndexedQueueStartedEvent["cost"],
     transactionHash: string,
-    blockNumber: string
+    blockNumber: string,
+    settledAt?: string
   ): void {
     const planet = this.planet(planetId);
     if (!planet) return;
@@ -1987,8 +1994,32 @@ export class SettlementIndexer {
       ...planet,
       transactionHash,
       blockNumber,
-      resources: subtractResources(planet.resources, cost)
+      lastSettledAt: settledAt ?? planet.lastSettledAt,
+      resources: subtractResources(this.settlePlanetResourcesForSpend(planet, settledAt), cost)
     });
+  }
+
+  private settlePlanetResourcesForSpend(planet: SettledPlanetEvent, settledAt: string | undefined): Resources {
+    if (!settledAt) return planet.resources;
+
+    const previousSettledAt = Number(planet.lastSettledAt);
+    const nextSettledAt = Number(settledAt);
+    if (!Number.isFinite(previousSettledAt) || !Number.isFinite(nextSettledAt) || nextSettledAt <= previousSettledAt) {
+      return planet.resources;
+    }
+
+    const derived = deriveInfrastructureFields(
+      planet,
+      this.infrastructureRows(planet.planetId),
+      this.shipRows(planet.planetId),
+      this.technologyLevels(planet.owner)
+    );
+    return resourcesWithClaimableAccrual(
+      planet.resources,
+      derived.productionPerHour,
+      derived.storageCaps,
+      Math.floor(nextSettledAt - previousSettledAt)
+    );
   }
 
   private queueState(queueKeyValue: string): QueueState | null {
@@ -2409,6 +2440,37 @@ function subtractResources(left: QueueState["cost"], right: QueueState["cost"]):
   };
 }
 
+function resourcesWithClaimableAccrual(
+  current: Resources,
+  productionPerHour: Resources | null,
+  storageCaps: Resources | null,
+  elapsedSeconds: number
+): Resources {
+  if (!productionPerHour || !storageCaps || elapsedSeconds <= 0) return current;
+
+  return {
+    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
+    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
+    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
+  };
+}
+
+function resourceWithClaimableAccrual(
+  current: string,
+  productionPerHour: string,
+  storageCap: string,
+  elapsedSeconds: number
+): string {
+  const currentValue = Number(current);
+  const rate = Math.max(0, Number(productionPerHour));
+  const cap = Number(storageCap);
+  if (!Number.isFinite(currentValue) || !Number.isFinite(rate) || !Number.isFinite(cap)) return current;
+
+  const produced = Math.floor((rate * elapsedSeconds) / 3_600);
+  const remainingCapacity = Math.max(0, cap - currentValue);
+  return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
+}
+
 function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
   const queue: QueueState = {
     active: true,
@@ -2447,11 +2509,29 @@ function fallbackLogIndex(log: RpcLog): string {
   return `${log.blockNumber}:${log.topics.join(",")}:${log.data}`;
 }
 
+function blockTimestampSeconds(log: IndexedRpcLog): string | undefined {
+  if (!log.blockTimestamp) return undefined;
+
+  try {
+    return decodeIntegerString(log.blockTimestamp).toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function blockNumberToDecimal(blockNumber: string): string {
   try {
-    return BigInt(blockNumber).toString();
+    return decodeIntegerString(blockNumber).toString();
   } catch {
     return blockNumber;
+  }
+}
+
+function decodeIntegerString(value: string): bigint {
+  try {
+    return BigInt(value);
+  } catch {
+    return BigInt(Number(value));
   }
 }
 
