@@ -158,6 +158,7 @@ describe("Infrastructure page display helpers", () => {
 
     expect(rows).toEqual([
       {
+        delta: "+32",
         label: "Energy output",
         next: "32 produced",
         value: "0 produced",
@@ -219,7 +220,7 @@ describe("Infrastructure page display helpers", () => {
     expect(mineRows.some((row) => row.delta?.includes("required"))).toBe(false);
   });
 
-  test("keeps Solar Plant delta visible without inheriting Fusion Reactor deuterium use", () => {
+  test("keeps Solar Plant and Fusion Reactor energy output deltas visible without cross-labeling fuel use", () => {
     const state = createInitialPlayableState(1_000);
     const buildings = {
       ...state.buildings,
@@ -244,6 +245,12 @@ describe("Infrastructure page display helpers", () => {
       buildingEnergyDetail(buildings, "fusionReactor", 3),
     );
 
+    expect(fusionRows).toContainEqual({
+      delta: "+37",
+      label: "Energy output",
+      next: "696 produced",
+      value: "659 produced",
+    });
     expect(fusionRows).toContainEqual({
       delta: "(+14/h)",
       label: "Deuterium consumed",

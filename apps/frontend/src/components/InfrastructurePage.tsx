@@ -773,22 +773,36 @@ function ComparisonMetric({
   tone?: "neutral" | "positive" | "warning" | undefined;
   value: string;
 }) {
-  const deltaClass = tone === "warning"
-    ? "text-amber-200"
-    : tone === "neutral"
-      ? "text-slate-300"
-      : "text-signal";
-
   return (
     <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
       <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
-      <dd className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-baseline gap-2 text-sm font-semibold">
+      <dd className="mt-1 flex min-w-0 flex-wrap items-baseline gap-2 text-sm font-semibold">
         <span className="min-w-0 break-words text-slate-200">{value}</span>
+        {delta && <MetricDelta tone={tone}>{delta}</MetricDelta>}
         <span aria-hidden="true" className="text-slate-500">→</span>
         <span className="min-w-0 break-words text-signal">{next}</span>
       </dd>
-      {delta && <dd className={`mt-1 text-xs font-medium ${deltaClass}`}>{delta}</dd>}
     </div>
+  );
+}
+
+function MetricDelta({
+  children,
+  tone = "positive",
+}: {
+  children: string;
+  tone?: "neutral" | "positive" | "warning" | undefined;
+}) {
+  const deltaClass = tone === "warning"
+    ? "border-amber-300/30 bg-amber-300/10 text-amber-100"
+    : tone === "neutral"
+      ? "border-slate-300/20 bg-white/5 text-slate-200"
+      : "border-signal/30 bg-signal/10 text-signal";
+
+  return (
+    <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-xs font-semibold ${deltaClass}`}>
+      {children}
+    </span>
   );
 }
 
@@ -840,7 +854,7 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (effect.kind === "energy") {
     rows.push({
-      ...(effect.deltaProduced !== 0 && !effect.showsDeuteriumConsumption
+      ...(effect.deltaProduced !== 0
         ? { delta: formatSigned(effect.deltaProduced) }
         : {}),
       label: "Energy output",
