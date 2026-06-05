@@ -489,6 +489,18 @@ export type HighscoreResponse = {
     target?: string;
     excludedCategories?: string[];
   };
+  pagination?: {
+    page: number;
+    pageSize: number;
+    totalEntries: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+  currentPlayer?: {
+    wallet: string;
+    rankings: Record<HighscoreCategory, { rank: number; page: number } | null>;
+  };
   rankings: Record<HighscoreCategory, HighscoreEntry[]>;
 };
 
@@ -1904,11 +1916,30 @@ export async function updatePlayerDisplayName(
   return response.json() as Promise<PlayerProfile>;
 }
 
-export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {
+export type FetchHighscoreOptions = {
+  currentWallet?: string;
+  limit?: number;
+  page?: number;
+  pageSize?: number;
+};
+
+export async function fetchHighscores(
+  apiUrl: string,
+  options: FetchHighscoreOptions | number = 100
+): Promise<HighscoreResponse> {
+  const params = new URLSearchParams();
+  if (typeof options === "number") {
+    params.set("limit", String(options));
+  } else {
+    params.set("limit", String(options.limit ?? options.pageSize ?? 100));
+    if (options.currentWallet !== undefined) params.set("currentWallet", options.currentWallet);
+    if (options.page !== undefined) params.set("page", String(options.page));
+    if (options.pageSize !== undefined) params.set("pageSize", String(options.pageSize));
+  }
   let response: Response;
 
   try {
-    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?limit=${limit}`, {
+    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?${params.toString()}`, {
       headers: {
         accept: "application/json"
       }
