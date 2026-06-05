@@ -86,6 +86,15 @@ contract VeydriftGameTest is Test {
         uint128 crystal,
         uint128 deuterium
     );
+    event ShipQueued(
+        uint256 indexed planetId,
+        Ship indexed ship,
+        uint32 quantity,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
 
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
     bytes32 internal constant DEP_SHIPYARD_2 = "SHIPYARD_2";
@@ -1418,6 +1427,99 @@ contract VeydriftGameTest is Test {
 
         assertFalse(game.shipQueue(planetId).active);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+    }
+
+    function testShipProductionAppendsMatchingActiveQueue() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 50_000, 50_000, 50_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 2);
+        VeydriftGameStorage.ShipQueue memory firstQueue = game.shipQueue(planetId);
+        (uint128 metalCost, uint128 crystalCost, uint128 deuteriumCost) =
+            VeydriftCatalog.shipCost(Ship.SmallCargo);
+        uint256 appendedDuration =
+            VeydriftFormulas.unitDuration(2, 0, metalCost, crystalCost, deuteriumCost, 3, 1, 1);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 3);
+
+        VeydriftGameStorage.ShipQueue memory appendedQueue = game.shipQueue(planetId);
+        assertTrue(appendedQueue.active);
+        assertEq(uint8(appendedQueue.ship), uint8(Ship.SmallCargo));
+        assertEq(appendedQueue.quantity, 5);
+        assertEq(appendedQueue.readyAt, firstQueue.readyAt + appendedDuration);
+        assertEq(appendedQueue.cost.metal, metalCost * 5);
+        assertEq(appendedQueue.cost.crystal, crystalCost * 5);
+        assertEq(appendedQueue.cost.deuterium, deuteriumCost * 5);
+    }
+
+    function testShipProductionQueuesDifferentShipBehindActiveQueue() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 50_000, 50_000, 50_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 2);
+        VeydriftGameStorage.ShipQueue memory activeQueue = game.shipQueue(planetId);
+        (uint128 metalCost, uint128 crystalCost, uint128 deuteriumCost) =
+            VeydriftCatalog.shipCost(Ship.LightFighter);
+        uint256 backlogDuration =
+            VeydriftFormulas.unitDuration(2, 0, metalCost, crystalCost, deuteriumCost, 3, 1, 1);
+
+        vm.expectEmit(true, true, false, true, address(game));
+        emit ShipQueued(
+            planetId,
+            Ship.LightFighter,
+            3,
+            // The test inputs produce a readyAt value backed by the uint64 ship queue field.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint64(activeQueue.readyAt + backlogDuration),
+            metalCost * 3,
+            crystalCost * 3,
+            deuteriumCost * 3
+        );
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.LightFighter, 3);
+
+        VeydriftGameStorage.ShipQueue memory stillActive = game.shipQueue(planetId);
+        assertTrue(stillActive.active);
+        assertEq(uint8(stillActive.ship), uint8(Ship.SmallCargo));
+        assertEq(stillActive.quantity, 2);
+
+        VeydriftGameStorage.ShipQueue[] memory backlog = game.shipQueueBacklog(planetId);
+        assertEq(backlog.length, 1);
+        assertTrue(backlog[0].active);
+        assertEq(uint8(backlog[0].ship), uint8(Ship.LightFighter));
+        assertEq(backlog[0].quantity, 3);
+        assertEq(backlog[0].readyAt, activeQueue.readyAt + backlogDuration);
+        assertEq(backlog[0].cost.metal, metalCost * 3);
+        assertEq(backlog[0].cost.crystal, crystalCost * 3);
+        assertEq(backlog[0].cost.deuterium, deuteriumCost * 3);
+
+        vm.warp(activeQueue.readyAt);
+        vm.prank(player);
+        game.finishShipProduction(planetId);
+
+        VeydriftGameStorage.ShipQueue memory promoted = game.shipQueue(planetId);
+        assertTrue(promoted.active);
+        assertEq(uint8(promoted.ship), uint8(Ship.LightFighter));
+        assertEq(promoted.quantity, 3);
+        assertEq(promoted.readyAt, backlog[0].readyAt);
+        assertEq(game.shipQueueBacklog(planetId).length, 0);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+
+        vm.warp(promoted.readyAt);
+        vm.prank(player);
+        game.finishShipProduction(planetId);
+        assertFalse(game.shipQueue(planetId).active);
+        assertEq(game.shipCount(planetId, Ship.LightFighter), 3);
     }
 
     function testFreshlyCompletedShipCanImmediatelyLaunchAttack() public {
