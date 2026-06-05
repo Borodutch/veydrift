@@ -3557,6 +3557,73 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("keeps indexed same-alliance protection separate from score protection", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const chainReader = new class extends MockChainReader {
+      override async getAttackProtectionStatus(): Promise<AttackProtectionStatus> {
+        throw new Error("indexed rankings should not call live attack protection");
+      }
+
+      async getAllianceIntelForPlayers(): Promise<Map<Address, AllianceIdentity>> {
+        const alliance = {
+          allianceId: "3",
+          name: "Veydrift Union",
+          tag: "VDFT"
+        };
+        return new Map([
+          [player, alliance],
+          [attacker, alliance]
+        ]);
+      }
+    }();
+    chainReader.listSettledPlanetEvents = async () => [
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "7",
+        owner: player,
+        transactionHash: "0xabc1",
+        blockNumber: "123"
+      },
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "8",
+        owner: attacker,
+        transactionHash: "0xabc2",
+        blockNumber: "124"
+      }
+    ];
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xdefenseattacker",
+      logIndex: "0x0",
+      topics: [
+        defenseCompletedTopic,
+        topic(8n),
+        topic(0n)
+      ],
+      data: abiWords(9n, 1000n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
+      allowed: false,
+      blockedReason: "same_alliance",
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance."
+    });
+  });
+
   test("serves empty highscore rankings as a successful payload", async () => {
     const chainReader = new MockChainReader();
     chainReader.listSettledPlanetEvents = async () => [];

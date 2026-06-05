@@ -686,6 +686,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           ? rankedHighscoreIndexedProtectionLookup(
             highscoreRankingRows(rankings),
             entries,
+            allianceIntel,
             url.searchParams.get("currentWallet"),
             highscoreAttackProtectionRequested(url)
           )
@@ -1979,18 +1980,27 @@ async function rankedHighscoreProtectionLookup(
 function rankedHighscoreIndexedProtectionLookup(
   rows: Iterable<RankedHighscoreEntry>,
   entries: readonly HighscoreEntry[],
+  allianceIntel: ReadonlyMap<string, AllianceIdentity>,
   currentWallet: string | null | undefined,
   includeAttackProtection: boolean
 ): Map<string, RankedHighscoreAttackProtection | null> {
   if (!includeAttackProtection || !currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return new Map();
 
-  const attacker = entries.find((entry) => entry.wallet.toLowerCase() === currentWallet.toLowerCase());
+  const normalizedCurrentWallet = currentWallet.toLowerCase();
+  const attacker = entries.find((entry) => entry.wallet.toLowerCase() === normalizedCurrentWallet);
   if (!attacker) return new Map();
 
   const statuses = new Map<string, RankedHighscoreAttackProtection | null>();
   const attackerScore = BigInt(attacker.score.total);
+  const attackerAlliance = allianceIntel.get(normalizedCurrentWallet) ?? null;
   for (const row of rows) {
-    const status = indexedScoreProtectionStatus(attackerScore, BigInt(row.score.total));
+    const status = indexedScoreProtectionStatus(
+      attackerScore,
+      BigInt(row.score.total),
+      attackerAlliance,
+      normalizedCurrentWallet,
+      row
+    );
     for (const planet of row.planets) {
       statuses.set(planet.planetId, status);
     }
@@ -2001,8 +2011,33 @@ function rankedHighscoreIndexedProtectionLookup(
 
 function indexedScoreProtectionStatus(
   attackerScore: bigint,
-  defenderScore: bigint
+  defenderScore: bigint,
+  attackerAlliance: AllianceIdentity | null,
+  currentWallet: string,
+  row: RankedHighscoreEntry
 ): RankedHighscoreAttackProtection | null {
+  if (row.wallet.toLowerCase() === currentWallet) {
+    return {
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null
+    };
+  }
+
+  const defenderAlliance = row.alliance ?? null;
+  if (
+    attackerAlliance
+    && defenderAlliance
+    && attackerAlliance.allianceId !== "0"
+    && attackerAlliance.allianceId === defenderAlliance.allianceId
+  ) {
+    return {
+      allowed: false,
+      blockedReason: "same_alliance",
+      blockedReasonLabel: attackBlockReasonLabel("same_alliance")
+    };
+  }
+
   if (!isIndexedScoreProtected(attackerScore, defenderScore)) {
     return {
       allowed: true,
