@@ -421,6 +421,8 @@ describe("settlement screen mode", () => {
 
     expect(source).toContain("await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode })");
     expect(source).toContain("shouldRetryFarcasterWalletProviderProbe");
+    expect(source).toContain("{ preferFarcasterProvider: waitForFarcasterProvider }");
+    expect(source).toContain("walletProvider.source !== \"farcaster\"");
     expect(source).toContain("const accounts = await walletConnectionAccounts(activeProvider, providerContext)");
     expect(source).toContain("await refreshWallet(activeProvider, accounts[0], providerContext)");
   });

@@ -274,7 +274,7 @@ export function FirstPlanetSettlementApp() {
   }, []);
 
   useEffect(() => {
-    if (!miniAppMode || provider || wallet.kind !== "no-wallet") {
+    if (!miniAppMode || walletProviderSource === "farcaster") {
       return;
     }
 
@@ -282,7 +282,7 @@ export function FirstPlanetSettlementApp() {
 
     void (async () => {
       const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: true });
-      if (disposed || !walletProvider?.provider) return;
+      if (disposed || !walletProvider?.provider || walletProvider.source !== "farcaster") return;
 
       bindWalletProviderDetails(walletProvider);
       setWallet({ kind: "disconnected" });
@@ -320,7 +320,11 @@ export function FirstPlanetSettlementApp() {
   async function loadWalletProviderDetails({
     waitForFarcasterProvider = false,
   }: { waitForFarcasterProvider?: boolean } = {}): Promise<WalletProviderDetails> {
-    let walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+    let walletProvider = await getAvailableWalletProviderDetails(
+      window as typeof window & { ethereum?: Eip1193Provider },
+      undefined,
+      { preferFarcasterProvider: waitForFarcasterProvider },
+    );
 
     for (
       let attempt = 1;
@@ -332,7 +336,11 @@ export function FirstPlanetSettlementApp() {
       attempt += 1
     ) {
       await delay(FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS);
-      walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+      walletProvider = await getAvailableWalletProviderDetails(
+        window as typeof window & { ethereum?: Eip1193Provider },
+        undefined,
+        { preferFarcasterProvider: waitForFarcasterProvider },
+      );
     }
 
     return walletProvider;
