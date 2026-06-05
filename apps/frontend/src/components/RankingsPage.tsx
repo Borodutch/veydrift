@@ -13,6 +13,7 @@ type RankingsPageProps = {
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  originCoordinates?: Coordinates | null | undefined;
 };
 
 const categories: Array<{ key: HighscoreCategory; label: string }> = [
@@ -47,7 +48,7 @@ export function shouldShowRankingsInitialLoader({
   return loading && !hasLoadedData;
 }
 
-export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlayer, onSelectPlanet }: RankingsPageProps) {
+export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -140,6 +141,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         onSelectAlliance={onSelectAlliance}
         onSelectPlayer={onSelectPlayer}
         onSelectPlanet={onSelectPlanet}
+        originCoordinates={originCoordinates}
       />
 
       {pagination ? (
@@ -237,6 +239,7 @@ export function RankingsTable({
   onSelectAlliance,
   onSelectPlayer,
   onSelectPlanet,
+  originCoordinates,
 }: {
   active?: HighscoreCategory;
   currentAllianceId?: string | null | undefined;
@@ -247,6 +250,7 @@ export function RankingsTable({
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  originCoordinates?: Coordinates | null | undefined;
 }) {
   return (
     <div className="overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
@@ -274,6 +278,7 @@ export function RankingsTable({
             onSelectAlliance={onSelectAlliance}
             onSelectPlayer={onSelectPlayer}
             onSelectPlanet={onSelectPlanet}
+            originCoordinates={originCoordinates}
           />
         ))
       )}
@@ -289,6 +294,7 @@ function RankingRow({
   onSelectAlliance,
   onSelectPlayer,
   onSelectPlanet,
+  originCoordinates,
 }: {
   active: HighscoreCategory;
   currentAllianceId?: string | null | undefined;
@@ -297,6 +303,7 @@ function RankingRow({
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  originCoordinates?: Coordinates | null | undefined;
 }) {
   const homePlanet = entry.homePlanet ?? null;
   const rankedPlanets = rankingPlanets(entry);
@@ -421,6 +428,33 @@ function RankingRow({
         </span>
       </span>
       <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
+      {rankedPlanets.length > 0 ? (
+        <div className="col-start-2 col-end-4 mt-2 min-w-0 space-y-1 sm:col-start-2">
+          {rankedPlanets.map((planet) => (
+            <button
+              className="grid w-full grid-cols-[minmax(0,1fr)_46px_72px_68px] items-center gap-2 rounded border border-white/5 bg-black/20 px-2 py-1.5 text-left text-[11px] transition hover:border-cyan-200/30 hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-cyan-300/30 sm:grid-cols-[minmax(0,1fr)_56px_88px_82px]"
+              disabled={!onSelectPlanet}
+              key={`tactical-${planet.planetId}`}
+              onClick={() => onSelectPlanet?.(planet.coordinates)}
+              title={`Open ${homePlanetHoverLabel(planet)}`}
+              type="button"
+            >
+              <span className="min-w-0 truncate text-slate-200">
+                {homePlanetLabel(planet)}
+              </span>
+              <span className="font-mono text-slate-400" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
+                {planetDistanceLabel(originCoordinates, planet.coordinates)}
+              </span>
+              <span className="font-mono text-emerald-100" title={planetRaidableResourcesLabel(planet)}>
+                {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
+              </span>
+              <span className="font-mono text-rose-100" title={planetCombatLabel(planet)}>
+                {compactScore(planet.tactical?.combatPower ?? "0")}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -441,19 +475,58 @@ function formatScore(value: string): string {
   }
 }
 
+function compactScore(value: string): string {
+  const numericValue = Number.parseFloat(value);
+  if (!Number.isFinite(numericValue)) return value;
+  if (numericValue >= 1_000_000_000) return `${trimCompactNumber(numericValue / 1_000_000_000)}B`;
+  if (numericValue >= 1_000_000) return `${trimCompactNumber(numericValue / 1_000_000)}M`;
+  if (numericValue >= 1_000) return `${trimCompactNumber(numericValue / 1_000)}K`;
+  return Math.max(0, Math.floor(numericValue)).toLocaleString("en-US");
+}
+
+function trimCompactNumber(value: number): string {
+  return value >= 10 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, "");
+}
+
 function homePlanetLabel(planet: HighscorePlanet): string {
   return planet.name?.trim() || "Unnamed planet";
 }
 
 function homePlanetCoordinatesLabel(planet: HighscorePlanet): string {
-  const coordinates = planet.coordinates;
-  return `[${coordinates.galaxy}:${coordinates.system}:${coordinates.position}]`;
+  return coordinateLabel(planet.coordinates);
 }
 
 function homePlanetHoverLabel(planet: HighscorePlanet): string {
   const coordinates = homePlanetCoordinatesLabel(planet);
   const name = planet.name?.trim();
   return name ? `${name} ${coordinates}` : coordinates;
+}
+
+function coordinateLabel(coordinates: Coordinates): string {
+  return `[${coordinates.galaxy}:${coordinates.system}:${coordinates.position}]`;
+}
+
+function planetDistanceLabel(origin: Coordinates | null | undefined, target: Coordinates): string {
+  if (!origin) return "--";
+  return `${planetDistance(origin, target)}ss`;
+}
+
+function planetDistance(origin: Coordinates, target: Coordinates): number {
+  if (origin.galaxy !== target.galaxy) return Math.abs(origin.galaxy - target.galaxy) * 20_000;
+  if (origin.system !== target.system) return Math.abs(origin.system - target.system) * 95 + 2_700;
+  return Math.abs(origin.position - target.position) * 5 + 1_000;
+}
+
+function planetRaidableResourcesLabel(planet: HighscorePlanet): string {
+  const resources = planet.tactical?.raidableResources;
+  if (!resources) return "Raidable resources unavailable";
+  return `Raidable M ${formatScore(resources.metal)} / C ${formatScore(resources.crystal)} / D ${formatScore(resources.deuterium)}`;
+}
+
+function planetCombatLabel(planet: HighscorePlanet): string {
+  const tactical = planet.tactical;
+  if (!tactical) return "Combat signal unavailable";
+  return `Combat ${formatScore(tactical.combatPower)} from ${tactical.ships.count} ships and ${tactical.defenses.count} defenses`;
 }
 
 function rankingPlanets(entry: HighscoreEntry): HighscorePlanet[] {

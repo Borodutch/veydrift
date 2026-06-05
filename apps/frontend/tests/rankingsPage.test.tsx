@@ -170,6 +170,42 @@ describe("RankingsPage", () => {
     expect(selected).toEqual([{ galaxy: 3, system: 12, position: 4 }]);
   });
 
+  test("renders compact tactical planet sub-lists from indexed payload fields", () => {
+    const selected: Coordinates[] = [];
+    const tacticalPlanet = {
+      ...rankingEntry().homePlanet!,
+      tactical: {
+        raidableResources: {
+          metal: "1500",
+          crystal: "2500",
+          deuterium: "500",
+        },
+        raidableResourceTotal: "4500",
+        ships: {
+          count: 3,
+          power: "12000",
+        },
+        defenses: {
+          count: 2,
+          power: "8000",
+        },
+        combatPower: "20000",
+      },
+    };
+    const table = RankingsTable({
+      entries: [rankingEntry({ planets: [tacticalPlanet] })],
+      loading: false,
+      onSelectPlanet: (coords) => selected.push(coords),
+      originCoordinates: { galaxy: 2, system: 42, position: 9 },
+    });
+    const tacticalButton = buttonWithTitle(table, "Open [2:44:9]");
+
+    expect(visibleText(table)).toContain("Unnamed planet 2890ss 4.5K 20K");
+    expect(tacticalButton?.props?.title).toBe("Open [2:44:9]");
+    tacticalButton?.props?.onClick?.();
+    expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
+  });
+
   test("renders same-alliance blocking as ally styling instead of protected styling", () => {
     const allyEntry = rankingEntry({
       alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
