@@ -1240,6 +1240,8 @@ function indexedInfrastructureState(
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
+    planetId: planet?.planetId ?? settlement.homePlanetId,
+    planetLastSettledAt: planet?.lastSettledAt ?? null,
     infrastructureAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,

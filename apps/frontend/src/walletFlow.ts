@@ -258,6 +258,8 @@ export type ChainDefenseState = {
 export type ChainInfrastructureState = {
   wallet: string;
   homePlanetId: string | null;
+  planetId?: string | null;
+  planetLastSettledAt?: string | null;
   source?: "contract-state-indexer" | string;
   degraded?: boolean;
   stale?: boolean;
