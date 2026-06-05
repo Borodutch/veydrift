@@ -15,6 +15,7 @@ import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { MissionControlPage } from "./components/MissionControlPage";
 import { BattleReportPage } from "./components/BattleReportPage";
+import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
 import { buildInspectHash, parseInspectRoute, type InspectRoute } from "./inspectRoutes";
@@ -106,6 +107,7 @@ import {
   fetchWalletPlanets,
   fetchFleetMissionVisibility,
   fetchBattleReport,
+  fetchBattleReports,
   fetchAllianceState,
   fetchPlayerProfile,
   mergePlayerProfile,
@@ -1437,6 +1439,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
   const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
+  const [publicBattleReports, setPublicBattleReports] = useState<BattleReport[]>([]);
+  const [publicBattleReportsLoading, setPublicBattleReportsLoading] = useState(false);
+  const [publicBattleReportsError, setPublicBattleReportsError] = useState<string | undefined>();
   const [battleReport, setBattleReport] = useState<BattleReport | undefined>();
   const [battleReportLoading, setBattleReportLoading] = useState(false);
   const [battleReportError, setBattleReportError] = useState<string | undefined>();
@@ -1610,6 +1615,61 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setPlayerProfile(undefined);
     setPlayerProfileAction({ status: "idle" });
   }, [account]);
+
+  const loadPublicBattleReports = useCallback(() => {
+    if (!apiBaseUrl) {
+      setPublicBattleReports([]);
+      setPublicBattleReportsError("Game API is unavailable.");
+      setPublicBattleReportsLoading(false);
+      return;
+    }
+
+    setPublicBattleReportsLoading(true);
+    setPublicBattleReportsError(undefined);
+    fetchBattleReports(apiBaseUrl)
+      .then((reports) => {
+        setPublicBattleReports(reports);
+        setPublicBattleReportsError(undefined);
+      })
+      .catch((error) => {
+        setPublicBattleReports([]);
+        setPublicBattleReportsError(error instanceof Error ? error.message : "Battle reports could not be loaded.");
+      })
+      .finally(() => setPublicBattleReportsLoading(false));
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (page !== "battle-reports") return;
+    let cancelled = false;
+
+    if (!apiBaseUrl) {
+      setPublicBattleReports([]);
+      setPublicBattleReportsError("Game API is unavailable.");
+      setPublicBattleReportsLoading(false);
+      return;
+    }
+
+    setPublicBattleReportsLoading(true);
+    setPublicBattleReportsError(undefined);
+    fetchBattleReports(apiBaseUrl)
+      .then((reports) => {
+        if (cancelled) return;
+        setPublicBattleReports(reports);
+        setPublicBattleReportsError(undefined);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setPublicBattleReports([]);
+        setPublicBattleReportsError(error instanceof Error ? error.message : "Battle reports could not be loaded.");
+      })
+      .finally(() => {
+        if (!cancelled) setPublicBattleReportsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, page]);
 
   const loadBattleReport = useCallback(() => {
     if (!apiBaseUrl || !battleReportMissionId) {
@@ -3983,7 +4043,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    void runGalaxyTransaction("ACS attack join", () => sendJoinAttackMissionTransaction(
+    void runGalaxyTransaction("Group attack join", () => sendJoinAttackMissionTransaction(
       provider,
       account,
       gameContract,
@@ -4071,6 +4131,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     writeInspectHash({ kind: "battle-report", missionId });
   }, []);
 
+  const handleOpenBattleReports = useCallback(() => {
+    setBattleReportMissionId(null);
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
+    setMissionReportId(null);
+    setSelectedCoords(undefined);
+    setPage("battle-reports");
+    writeInspectHash({ kind: "page", page: "battle-reports" });
+  }, []);
+
   const handleOpenRequirement = useCallback((target: RequirementTarget) => {
     setSelectedCoords(undefined);
 
@@ -4124,8 +4194,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const battleReportShareUrl = typeof window === "undefined" || !battleReportMissionId
     ? ""
     : `${window.location.origin}${window.location.pathname}${buildInspectHash({ kind: "battle-report", missionId: battleReportMissionId })}`;
+  const battleReportsShareUrl = typeof window === "undefined"
+    ? ""
+    : `${window.location.origin}${window.location.pathname}${buildInspectHash({ kind: "page", page: "battle-reports" })}`;
 
   const content = (() => {
+    if (page === "battle-reports") {
+      return (
+        <BattleReportsPage
+          error={publicBattleReportsError}
+          loading={publicBattleReportsLoading}
+          onBack={() => handleNavigate("mission-control")}
+          onOpenBattleReport={handleOpenBattleReport}
+          onRetry={loadPublicBattleReports}
+          reports={publicBattleReports}
+          shareUrl={battleReportsShareUrl}
+        />
+      );
+    }
+
     if (page === "battle-report") {
       return (
         <BattleReportPage
@@ -4252,6 +4339,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenBattleReport={handleOpenBattleReport}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
+          onOpenBattleReports={handleOpenBattleReports}
           onRecall={handleRecallMission}
           onRefresh={() => void refreshOnChainState()}
           onResolve={handleResolveMission}

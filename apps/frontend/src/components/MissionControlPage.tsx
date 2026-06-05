@@ -32,6 +32,7 @@ interface MissionControlPageProps {
   onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
+  onOpenBattleReports: () => void;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
   onResolve: (missionId: string) => void;
@@ -52,6 +53,7 @@ export function MissionControlPage({
   onOpenBattleReport,
   onOpenReport,
   onOpenReportList,
+  onOpenBattleReports,
   onRecall,
   onRefresh,
   onResolve,
@@ -226,6 +228,7 @@ export function MissionControlPage({
           </div>
 
           <ResolvedBattleReportSection
+            onOpenBattleReports={onOpenBattleReports}
             onOpenBattleReport={onOpenBattleReport}
             reports={battleReports}
           />
@@ -396,6 +399,8 @@ function MissionCard({
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <MissionDatum label="Origin" value={`Planet #${mission.originPlanetId}`} />
+        <MissionDatum label="Target" value={`Planet #${mission.targetPlanetId}`} />
         <MissionDatum label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
         <MissionDatum label="Return" value={formatMissionTime(mission.returnAt, now)} />
         <MissionDatum label="Cargo" value={formatCargo(mission.cargo)} />
@@ -409,7 +414,7 @@ function MissionCard({
           {actions.map((action) => action.kind === "counterplay" ? (
             <span className="contents" key={action.kind}>
               <ActionButton
-                action={{ ...action, label: "Defend with Alliance Combat System (ACS)" }}
+                action={{ ...action, label: "Group defend" }}
                 onClick={() => onCounterplay(mission.missionId, "acsDefend")}
               />
               <ActionButton
@@ -593,7 +598,7 @@ function MissionReportDetail({
         <ReportPanel title="Commanders">
           <ReportLine label="Attacker" value={report.attacker} />
           <ReportLine label="Defender" value={report.defender} />
-          <ReportLine label="Alliance Combat System (ACS)" value={report.acs} />
+          <ReportLine label="Group combat" value={report.acs} />
         </ReportPanel>
         <ReportPanel title="Coordinates">
           <ReportLine label="Origin" value={report.origin} />
@@ -622,9 +627,11 @@ function MissionReportDetail({
 
 function ResolvedBattleReportSection({
   onOpenBattleReport,
+  onOpenBattleReports,
   reports,
 }: {
   onOpenBattleReport: (missionId: string) => void;
+  onOpenBattleReports: () => void;
   reports: BattleReport[];
 }) {
   return (
@@ -636,7 +643,16 @@ function ResolvedBattleReportSection({
           </span>
           <h3 className="text-sm font-semibold text-white">Resolved battle reports</h3>
         </div>
-        <span className="text-xs tabular-nums text-slate-400">{reports.length}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs tabular-nums text-slate-400">{reports.length}</span>
+          <button
+            className="rounded border border-white/10 bg-white/5 px-2 py-1 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+            onClick={onOpenBattleReports}
+            type="button"
+          >
+            Open list
+          </button>
+        </div>
       </div>
       {reports.length === 0 ? (
         <p className="text-xs text-slate-500">No resolved attack reports for this wallet yet.</p>
@@ -810,8 +826,8 @@ function identityFromMissionPlanet(planet: FleetMissionPlanetReference): Mission
 }
 
 function missionTypeLabel(missionType: string): string {
-  if (missionType === "AcsAttack") return "Alliance Combat System (ACS) attack";
-  if (missionType === "AcsDefend") return "Alliance Combat System (ACS) defense";
+  if (missionType === "AcsAttack") return "Group attack";
+  if (missionType === "AcsDefend") return "Group defense";
   return missionType.replace(/([A-Z])/g, " $1").trim();
 }
 
@@ -828,7 +844,7 @@ function commanderLabel(address: string, planet: MissionPlanetIdentity | undefin
 
 function missionReportLabel(mission: FleetMissionSummary): string {
   const joinedAttackMissionIds = mission.joinedAttackMissionIds ?? [];
-  if (mission.attackGroupId) return `Alliance Combat System (ACS) ${mission.attackGroupId}`;
+  if (mission.attackGroupId) return `Group ${mission.attackGroupId}`;
   if (joinedAttackMissionIds.length > 0) {
     return `Joined ${joinedAttackMissionIds.join(", ")}`;
   }
@@ -860,7 +876,7 @@ function missionReport(
       ? `Group ${mission.attackGroupId}`
       : joinedAttackMissionIds.length > 0
         ? `Joined attacks ${joinedAttackMissionIds.join(", ")}`
-        : "No Alliance Combat System (ACS) group recorded.",
+        : "No group recorded.",
     attacker: commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId)),
     battleTime: formatMissionTime(mission.arrivalAt, now),
     debris: "Not reported by the visible mission feed yet.",
@@ -896,7 +912,7 @@ function missionReportText(
     `Outcome: ${report.outcome}`,
     `Losses: ${report.losses}`,
     `Debris: ${report.debris}`,
-    mission.attackGroupId ? `Alliance Combat System (ACS) group: ${mission.attackGroupId}` : null,
+    mission.attackGroupId ? `Group: ${mission.attackGroupId}` : null,
     joinedAttackMissionIds.length > 0 ? `Joined attacks: ${joinedAttackMissionIds.join(", ")}` : null,
     mission.transactionHash ? `Tx: ${mission.transactionHash}` : null,
   ].filter(Boolean).join("\n");

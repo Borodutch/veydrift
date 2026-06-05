@@ -77,6 +77,7 @@ describe("MissionControlPage", () => {
       onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
+      onOpenBattleReports: () => undefined,
       onRecall: () => undefined,
       onRefresh: () => undefined,
       onResolve: () => undefined,
@@ -92,7 +93,10 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Outgoing fleets 1");
     expect(text).toContain("Returning fleets 1");
     expect(text).toContain("Battle reports");
+    expect(text).toContain("Resolved battle reports 0 Open list");
     expect(text).toContain("Attack # 8");
+    expect(text).toContain("Origin Planet #7");
+    expect(text).toContain("Target Planet #9");
     expect(text).toContain("Transport # 9");
     expect(text).toContain("Land fleet");
     expect(text).toContain("View report");
@@ -149,7 +153,7 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Shareable battle report");
-    expect(text).toContain("Alliance Combat System (ACS) attack # 12");
+    expect(text).toContain("Group attack # 12");
     expect(text).toContain("Battle time");
     expect(text).toContain("Commanders");
     expect(text).toContain("Coordinates");
@@ -161,7 +165,8 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Orion (0x9999...9999)");
     expect(text).toContain("Group 42");
     expect(text).toContain("https://test.veydrift.com/#/mission-control/report/12");
-    expect(text).not.toContain("ACS group");
+    expect(text).not.toContain("Alliance Combat System");
+    expect(text).not.toContain("ACS");
   });
 
   test("surfaces due missions as urgent playable orders", () => {
@@ -207,6 +212,7 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
     onOpenBattleReport: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
+    onOpenBattleReports: () => undefined,
     onRecall: () => undefined,
     onRefresh: () => undefined,
     onResolve: () => undefined,

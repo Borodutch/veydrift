@@ -416,6 +416,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname === "/battle-reports") {
+      try {
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
+        if (ready instanceof Response) return ready;
+        return Response.json(await liveWalletRead(ready.listBattleReports(), "battle reports"), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {

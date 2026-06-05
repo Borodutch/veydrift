@@ -554,6 +554,7 @@ export interface ChainReader {
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address, planetId?: bigint): Promise<PlayerQueues>;
   getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility>;
+  listBattleReports(): Promise<BattleReport[]>;
   getBattleReport(missionId: bigint): Promise<BattleReport | null>;
   getInfrastructureState(wallet: Address, planetId?: bigint): Promise<InfrastructureState>;
   getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState>;
@@ -1124,6 +1125,10 @@ export class VeydriftGameReader implements ChainReader {
     });
 
     return decodeBattleReportLogs(logs, missionId.toString());
+  }
+
+  async listBattleReports(): Promise<BattleReport[]> {
+    return this.readBattleReports();
   }
 
   async listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
@@ -2858,7 +2863,18 @@ export class VeydriftGameReader implements ChainReader {
         combatDebrisSignaledTopic
       ]]
     });
-    return decodeBattleReports(logs);
+    return decodeBattleReports(logs)
+      .sort((left, right) => {
+        const leftBlock = BigInt(left.blockNumber);
+        const rightBlock = BigInt(right.blockNumber);
+        if (leftBlock === rightBlock) {
+          const leftMission = BigInt(left.missionId);
+          const rightMission = BigInt(right.missionId);
+          if (leftMission === rightMission) return 0;
+          return rightMission > leftMission ? 1 : -1;
+        }
+        return rightBlock > leftBlock ? 1 : -1;
+      });
   }
 
   private async callContract(contractAddress: Address, selector: string, args: string[]): Promise<string> {

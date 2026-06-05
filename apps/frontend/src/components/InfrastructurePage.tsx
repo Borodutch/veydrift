@@ -69,7 +69,7 @@ const buildingDescriptions: Record<BuildingKey, string> = {
   fusionReactor: "Converts deuterium into supplemental power once the required energy research path is available.",
   naniteFactory: "Advanced automation for high-tier construction and later production-speed upgrades.",
   terraformer: "Expands usable planetary fields after nanite construction and high energy research are available.",
-  allianceDepot: "Supplies deuterium from the defended planet to cover friendly ACS defense holding fuel.",
+  allianceDepot: "Supplies deuterium from the defended planet to cover friendly group-defense holding fuel.",
   missileSilo: "Stores anti-ballistic and interplanetary missiles and gates missile production.",
   interdimensionalRiftStabilizer: "Custom Veydrift facility for later resource-token withdrawal and rift mechanics.",
 };
@@ -906,7 +906,7 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
   } else if (effect.kind === "allianceDepot") {
     rows.push({
       delta: `${formatSigned(effect.deltaSupport)} Deut.`,
-      label: "ACS support capacity",
+      label: "Group-defense support",
       next: `${formatNumber(effect.nextSupport)} Deut.`,
       value: `${formatNumber(effect.currentSupport)} Deut.`,
     });
