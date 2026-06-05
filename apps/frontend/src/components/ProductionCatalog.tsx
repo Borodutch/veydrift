@@ -35,7 +35,6 @@ export type ProductionCatalogItem<Key extends string = string> = {
   disabled: boolean;
   actionLabel: string;
   detailNote: string;
-  notes?: string[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
 
@@ -300,17 +299,11 @@ function SelectedProductionPanel<Key extends string>({
       <div className="grid gap-2">
         <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Details</h4>
         <dl className="grid grid-cols-2 gap-2 text-xs">
+          <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
           <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
           <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
-          <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
         </dl>
       </div>
-
-      {item.notes?.length ? (
-        <ul className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs leading-5 text-slate-400">
-          {item.notes.map((note) => <li key={note}>{note}</li>)}
-        </ul>
-      ) : null}
 
       <ProductionRequirementFlairs
         missing={item.missing}

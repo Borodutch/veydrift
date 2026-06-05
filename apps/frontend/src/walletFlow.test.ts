@@ -61,6 +61,7 @@ import {
   sendCreateAllianceTransaction,
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
+  requestAccounts,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
@@ -338,6 +339,39 @@ describe("walletFlow", () => {
     })).resolves.toBeUndefined();
   });
 
+  test("falls back to the legacy Farcaster ethProvider when getEthereumProvider is unavailable", async () => {
+    const miniAppProvider = mockProvider(async () => null);
+
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        ethProvider: miniAppProvider,
+        getEthereumProvider: () => undefined,
+      },
+    })).resolves.toEqual({
+      provider: miniAppProvider,
+      source: "farcaster",
+    });
+
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        ethProvider: miniAppProvider,
+        getEthereumProvider: () => {
+          throw new Error("capability probe failed");
+        },
+      },
+    })).resolves.toEqual({
+      provider: miniAppProvider,
+      source: "farcaster",
+    });
+
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        ethProvider: { notAProvider: true } as unknown as Eip1193Provider,
+        getEthereumProvider: () => undefined,
+      },
+    })).resolves.toBeUndefined();
+  });
+
   test("ignores unavailable Mini App wallet provider outside host sessions", async () => {
     await expect(getAvailableWalletProvider({}, {
       wallet: {
@@ -346,6 +380,23 @@ describe("walletFlow", () => {
         },
       },
     })).resolves.toBeUndefined();
+  });
+
+  test("reports an unavailable account when wallet authorization returns no account", async () => {
+    await expect(requestAccounts(mockProvider(async ({ method }) => {
+      if (method === "eth_requestAccounts") return [];
+      throw new Error(`Unexpected wallet method ${method}`);
+    }))).rejects.toThrow("Wallet account is unavailable. Reconnect your wallet, then retry.");
+  });
+
+  test("bounds Farcaster provider and account authorization requests", async () => {
+    const source = await Bun.file(new URL("./walletFlow.ts", import.meta.url)).text();
+
+    expect(source).toContain("FARCASTER_WALLET_PROVIDER_TIMEOUT_MS");
+    expect(source).toContain("\"Farcaster wallet provider\"");
+    expect(source).toContain("method: \"eth_requestAccounts\"");
+    expect(source).toContain("\"wallet account authorization\"");
+    expect(source).not.toContain("const accounts = await provider.request<string[]>({\n    method: \"eth_requestAccounts\"");
   });
 
   test("keeps a known commander name over fallback-only profile refreshes for the same wallet", () => {
