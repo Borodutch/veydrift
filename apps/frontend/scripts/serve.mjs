@@ -1,9 +1,12 @@
+import { miniAppIconAliasTarget } from "../iconAliases.mjs";
+
 const distRoot = new URL("../dist/", import.meta.url);
 const port = Number(process.env.PORT || 80);
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
+  ".ico": "image/png",
   ".jpg": "image/jpeg",
   ".json": "application/json; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -18,19 +21,21 @@ function contentType(pathname) {
 }
 
 export function cacheControl(pathname) {
-  if (pathname.startsWith("/assets/game/sizes/")) {
+  const assetPathname = miniAppIconAliasTarget(pathname) ?? pathname;
+
+  if (assetPathname.startsWith("/assets/game/sizes/")) {
     return "public, max-age=604800";
   }
 
-  if (pathname.startsWith("/assets/game/")) {
+  if (assetPathname.startsWith("/assets/game/")) {
     return "public, max-age=604800";
   }
 
-  if (pathname.startsWith("/assets/")) {
+  if (assetPathname.startsWith("/assets/")) {
     return "public, max-age=31536000, immutable";
   }
 
-  if (pathname === "/index.html") {
+  if (assetPathname === "/index.html") {
     return "no-cache";
   }
 
@@ -38,8 +43,9 @@ export function cacheControl(pathname) {
 }
 
 export function responseHeadersFor(pathname) {
+  const assetPathname = miniAppIconAliasTarget(pathname) ?? pathname;
   const headers = {};
-  const type = contentType(pathname);
+  const type = contentType(assetPathname);
   const cache = cacheControl(pathname);
 
   if (type) headers["content-type"] = type;
@@ -67,7 +73,8 @@ if (import.meta.main) {
       }
 
       const route = pathname === "/" ? "/index.html" : pathname;
-      const file = Bun.file(new URL(`.${route}`, distRoot));
+      const assetRoute = miniAppIconAliasTarget(route) ?? route;
+      const file = Bun.file(new URL(`.${assetRoute}`, distRoot));
 
       if (await file.exists()) {
         return responseFor(file, route);

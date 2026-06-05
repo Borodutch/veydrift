@@ -1,7 +1,8 @@
 import preact from "@preact/preset-vite";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
+import { MINIAPP_ICON_ALIAS_PATHS, MINIAPP_ICON_PATH } from "./iconAliases.mjs";
 import {
   assertAccountAssociationDomain,
   buildMiniAppEmbed,
@@ -36,6 +37,7 @@ export default defineConfig(({ mode }) => {
       preact(),
       htmlEnvDefaults(htmlEnv),
       farcasterManifest(mode, htmlEnv),
+      miniAppIconAliases(),
     ],
   };
 });
@@ -83,6 +85,21 @@ function farcasterManifest(mode: string, surface: MiniAppSurface): Plugin {
         join(wellKnownDir, "farcaster.json"),
         `${JSON.stringify(buildMiniAppManifest(surface, accountAssociation), null, 2)}\n`,
       );
+    },
+  };
+}
+
+function miniAppIconAliases(): Plugin {
+  return {
+    name: "veydrift-miniapp-icon-aliases",
+    closeBundle() {
+      const source = join("dist", MINIAPP_ICON_PATH.slice(1));
+
+      for (const alias of MINIAPP_ICON_ALIAS_PATHS) {
+        const destination = join("dist", alias.slice(1));
+        mkdirSync(dirname(destination), { recursive: true });
+        copyFileSync(source, destination);
+      }
     },
   };
 }
