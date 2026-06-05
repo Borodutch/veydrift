@@ -708,10 +708,11 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Research is not ready to complete yet.");
   });
 
-  test("lets Overview derive building readiness only when no canonical active building queue is available", () => {
+  test("lets Overview derive building readiness from the displayed active queue", () => {
     expect(overviewBuildingReadyToFinishFlag({
       activeBuildingQueue: null,
       isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
     })).toBeUndefined();
 
     expect(overviewBuildingReadyToFinishFlag({
@@ -719,17 +720,27 @@ describe("Playable MVP app display helpers", () => {
         readyAt: "1700000600",
       }),
       isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
     })).toBe(false);
 
     expect(overviewBuildingReadyToFinishFlag({
       activeBuildingQueue: buildingQueue({
         readyAt: "1700000000",
       }),
+      isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
+    })).toBe(true);
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000600",
+      }),
       isBuildingReadyToFinish: true,
+      now: 1_700_000_000_000,
     })).toBe(true);
   });
 
-  test("keeps Overview finish disabled when ready wallet queues lack canonical infrastructure verification", () => {
+  test("lets Overview expose ready building queues while wallet submission still requires canonical verification", () => {
     const readyWalletQueue = buildingQueue({
       readyAt: "1700000000",
     });
@@ -750,7 +761,14 @@ describe("Playable MVP app display helpers", () => {
         infrastructureState: unverifiedInfrastructure,
         now: 1_700_000_000_000,
       }),
-    })).toBe(false);
+      now: 1_700_000_000_000,
+    })).toBe(true);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyWalletQueue,
+      infrastructureState: unverifiedInfrastructure,
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
 
     const canonicalInfrastructure = infrastructureState({
       queue: readyWalletQueue,

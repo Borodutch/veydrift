@@ -369,11 +369,15 @@ export function overviewResearchCompletionUnavailableReasonFor({
 export function overviewBuildingReadyToFinishFlag({
   activeBuildingQueue,
   isBuildingReadyToFinish,
+  now = Date.now(),
 }: {
   activeBuildingQueue: QueueStateResponse | null | undefined;
   isBuildingReadyToFinish: boolean;
+  now?: number;
 }): boolean | undefined {
-  return activeBuildingQueue ? isBuildingReadyToFinish : undefined;
+  if (!activeBuildingQueue) return undefined;
+  if (isBuildingReadyToFinish) return true;
+  return isBuildingQueueReadyToFinish(activeBuildingQueue, now);
 }
 
 export function completedBuildingFinishSyncReasonFor({
@@ -4278,6 +4282,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         isBuildingReadyToFinish={overviewBuildingReadyToFinishFlag({
           activeBuildingQueue,
           isBuildingReadyToFinish,
+          now,
         })}
         planet={planet}
         queueProgress={queueProgress}
