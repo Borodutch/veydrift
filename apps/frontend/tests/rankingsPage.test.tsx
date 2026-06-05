@@ -204,6 +204,13 @@ describe("RankingsPage", () => {
     expect(tacticalButton?.props?.title).toBe("Open [2:44:9]");
     tacticalButton?.props?.onClick?.();
     expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
+
+    const sameOriginTable = RankingsTable({
+      entries: [rankingEntry({ planets: [tacticalPlanet] })],
+      loading: false,
+      originCoordinates: { galaxy: 2, system: 44, position: 9 },
+    });
+    expect(visibleText(sameOriginTable)).toContain("Unnamed planet 0ss 4.5K 20K");
   });
 
   test("renders same-alliance blocking as ally styling instead of protected styling", () => {

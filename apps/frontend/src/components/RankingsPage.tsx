@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { ChevronLeft, ChevronRight, RotateCw, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
+import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
@@ -508,13 +509,7 @@ function coordinateLabel(coordinates: Coordinates): string {
 
 function planetDistanceLabel(origin: Coordinates | null | undefined, target: Coordinates): string {
   if (!origin) return "--";
-  return `${planetDistance(origin, target)}ss`;
-}
-
-function planetDistance(origin: Coordinates, target: Coordinates): number {
-  if (origin.galaxy !== target.galaxy) return Math.abs(origin.galaxy - target.galaxy) * 20_000;
-  if (origin.system !== target.system) return Math.abs(origin.system - target.system) * 95 + 2_700;
-  return Math.abs(origin.position - target.position) * 5 + 1_000;
+  return `${fleetMissionDistance(origin, target)}ss`;
 }
 
 function planetRaidableResourcesLabel(planet: HighscorePlanet): string {
