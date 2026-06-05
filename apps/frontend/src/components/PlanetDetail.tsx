@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
-import { DEFAULT_MISSION_SPEED_PERCENT } from "../fleetMissionRules";
+import { DEFAULT_MISSION_SPEED_PERCENT, MISSION_SPEED_OPTIONS } from "../fleetMissionRules";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
@@ -54,6 +54,7 @@ export function PlanetDetail({
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [missionSpeedPercent, setMissionSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const imageRef = useRef<HTMLImageElement>(null);
   const loadedDetailKeyRef = useRef<string | undefined>();
   const detailKey = `${apiBaseUrl.replace(/\/+$/, "")}:${coords.galaxy}:${coords.system}:${coords.position}`;
@@ -165,11 +166,38 @@ export function PlanetDetail({
       );
     }
 
+    const emptyMissionActions = source === "api"
+      ? planetDetailGalaxyActions({
+        account,
+        attackProtection: null,
+        coords,
+        defenseState,
+        homeCoords,
+        homePlanetId,
+        planet: undefined,
+        shipyardState,
+      })
+      : [];
+
     return (
       <div className="flex flex-col items-center gap-4 p-8">
         <p className="text-slate-400">
           {source === "error" ? "Planet data could not be loaded." : "No planet at this position."}
         </p>
+        {emptyMissionActions.length > 0 ? (
+          <div className="flex w-full max-w-xl flex-col items-center gap-3">
+            <PlanetMissionControls
+              actions={emptyMissionActions}
+              busy={actionState.status === "pending"}
+              coords={coords}
+              missionSpeedPercent={missionSpeedPercent}
+              onAction={onAction}
+              onMissionSpeedChange={setMissionSpeedPercent}
+              planet={undefined}
+            />
+            <PlanetActionStatus actionState={actionState} />
+          </div>
+        ) : null}
         <button
           onClick={onBack}
           className="rounded border border-white/15 bg-white/8 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
@@ -180,12 +208,13 @@ export function PlanetDetail({
     );
   }
 
-  const missionActions = galaxyActionsForSlot({
+  const missionActions = planetDetailGalaxyActions({
     account,
     attackProtection,
+    coords,
     defenseState,
+    homeCoords,
     homePlanetId,
-    isOrigin: isHome,
     planet,
     shipyardState,
   });
@@ -256,26 +285,17 @@ export function PlanetDetail({
                   ) : null}
                 </div>
               </div>
-              <GalaxyActionButtons
+              <PlanetMissionControls
                 actions={missionActions}
                 busy={actionState.status === "pending"}
                 coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
-                missionSpeedPercent={DEFAULT_MISSION_SPEED_PERCENT}
+                missionSpeedPercent={missionSpeedPercent}
                 onAction={onAction}
+                onMissionSpeedChange={setMissionSpeedPercent}
                 planet={planet}
               />
             </div>
-            {actionState.status !== "idle" ? (
-              <div className={`mt-3 rounded border px-3 py-2 text-xs ${
-                actionState.status === "error"
-                  ? "border-red-300/30 bg-red-500/10 text-red-100"
-                  : actionState.status === "success"
-                    ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
-                    : "border-signal/25 bg-signal/10 text-signal"
-              }`}>
-                {actionState.label}
-              </div>
-            ) : null}
+            <PlanetActionStatus actionState={actionState} />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -361,6 +381,103 @@ export function PlanetDetail({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+export function planetDetailGalaxyActions({
+  account,
+  attackProtection,
+  coords,
+  defenseState,
+  homeCoords,
+  homePlanetId,
+  planet,
+  shipyardState,
+}: {
+  account: string | undefined;
+  attackProtection?: AttackProtectionStatus | null | undefined;
+  coords: Coordinates;
+  defenseState: ChainDefenseState | null | undefined;
+  homeCoords: Coordinates | undefined;
+  homePlanetId: string | null | undefined;
+  planet: Planet | undefined;
+  shipyardState: ChainShipyardState | null;
+}): GalaxyAction[] {
+  return galaxyActionsForSlot({
+    account,
+    attackProtection,
+    defenseState,
+    homePlanetId,
+    isOrigin: sameCoordinates(homeCoords, planet ?? coords),
+    planet,
+    shipyardState,
+  });
+}
+
+function PlanetMissionControls({
+  actions,
+  busy,
+  coords,
+  missionSpeedPercent,
+  onAction,
+  onMissionSpeedChange,
+  planet,
+}: {
+  actions: GalaxyAction[];
+  busy: boolean;
+  coords: Coordinates;
+  missionSpeedPercent: number;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
+  onMissionSpeedChange: (speedPercent: number) => void;
+  planet: Planet | undefined;
+}) {
+  if (actions.length === 0) return null;
+
+  return (
+    <div className="flex flex-col items-start gap-2 lg:items-end">
+      <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+        <span className="mr-1 text-[11px] font-medium uppercase text-slate-500">Speed</span>
+        {MISSION_SPEED_OPTIONS.map((speed) => (
+          <button
+            aria-pressed={missionSpeedPercent === speed}
+            className={`h-8 rounded border px-2 text-xs font-semibold transition ${
+              missionSpeedPercent === speed
+                ? "border-signal/45 bg-signal/15 text-signal"
+                : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
+            }`}
+            key={speed}
+            onClick={() => onMissionSpeedChange(speed)}
+            type="button"
+          >
+            {speed}%
+          </button>
+        ))}
+      </div>
+      <GalaxyActionButtons
+        actions={actions}
+        busy={busy}
+        coords={coords}
+        missionSpeedPercent={missionSpeedPercent}
+        onAction={onAction}
+        planet={planet}
+      />
+    </div>
+  );
+}
+
+function PlanetActionStatus({ actionState }: { actionState: GalaxyActionState }) {
+  if (actionState.status === "idle") return null;
+
+  return (
+    <div className={`mt-3 rounded border px-3 py-2 text-xs ${
+      actionState.status === "error"
+        ? "border-red-300/30 bg-red-500/10 text-red-100"
+        : actionState.status === "success"
+          ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
+          : "border-signal/25 bg-signal/10 text-signal"
+    }`}>
+      {actionState.label}
     </div>
   );
 }

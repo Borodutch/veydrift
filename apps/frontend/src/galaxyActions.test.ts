@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { galaxyActionsForSlot } from "./galaxyActions";
+import { planetDetailGalaxyActions } from "./components/PlanetDetail";
 import type { Planet } from "./types";
 
 const account = "0x1111111111111111111111111111111111111111";
@@ -98,6 +99,72 @@ describe("galaxyActions", () => {
       ["deploy", true],
     ]);
   });
+
+  test("planet detail reuses galaxy mission actions for occupied, owned, origin, and empty targets", () => {
+    const homeCoords = { galaxy: 2, system: 44, position: 7 };
+    const enemyActions = planetDetailGalaxyActions({
+      account,
+      attackProtection: null,
+      coords: { galaxy: 2, system: 44, position: 8 },
+      defenseState: defenseState([{ id: 9, count: 1 }]),
+      homeCoords,
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([
+        { id: 1, count: 1 },
+        { id: 2, count: 1 },
+      ]),
+    });
+    const ownActions = planetDetailGalaxyActions({
+      account,
+      attackProtection: null,
+      coords: { galaxy: 2, system: 44, position: 9 },
+      defenseState: null,
+      homeCoords,
+      homePlanetId: "7",
+      planet: planet({
+        position: 9,
+        ownerId: account,
+        occupiedBy: {
+          owner: account,
+          planetId: "9",
+        },
+      }),
+      shipyardState: shipyardState([{ id: 0, count: 1 }]),
+    });
+    const originActions = planetDetailGalaxyActions({
+      account,
+      attackProtection: null,
+      coords: homeCoords,
+      defenseState: null,
+      homeCoords,
+      homePlanetId: "7",
+      planet: planet({
+        position: 7,
+        ownerId: account,
+        occupiedBy: {
+          owner: account,
+          planetId: "7",
+        },
+      }),
+      shipyardState: shipyardState([{ id: 0, count: 1 }]),
+    });
+    const emptyActions = planetDetailGalaxyActions({
+      account,
+      attackProtection: null,
+      coords: { galaxy: 2, system: 44, position: 12 },
+      defenseState: null,
+      homeCoords,
+      homePlanetId: "7",
+      planet: undefined,
+      shipyardState: shipyardState([{ id: 3, count: 1 }]),
+    });
+
+    expect(enemyActions.map((action) => action.label)).toEqual(["Attack", "Harvest", "Missile"]);
+    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy"]);
+    expect(originActions).toEqual([]);
+    expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
+  });
 });
 
 function planet(overrides: Partial<Planet> = {}): Planet {
@@ -145,6 +212,28 @@ function shipyardState(ships: Array<{ id: number; count: number }>) {
     technologyLevels: {},
     ships: ships.map((ship) => ({
       ...ship,
+      cost: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0",
+      },
+    })),
+    queue: null,
+    wallet: account,
+  };
+}
+
+function defenseState(defenses: Array<{ id: number; count: number }>) {
+  return {
+    homePlanetId: "7",
+    productionAvailable: true,
+    resources: null,
+    shipyardLevel: 1,
+    naniteLevel: 0,
+    missileSiloLevel: 4,
+    technologyLevels: {},
+    defenses: defenses.map((defense) => ({
+      ...defense,
       cost: {
         metal: "0",
         crystal: "0",
