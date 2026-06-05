@@ -227,6 +227,10 @@ export function canApplyRefreshRequest(gate: RefreshFreshnessGate, requestId: nu
   return requestId === gate.current;
 }
 
+export function shouldRefreshAllianceStateForPage(page: Page): boolean {
+  return page === "alliance" || page === "rankings";
+}
+
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {
     return "Finish building upgrade transaction failed.";
@@ -1988,7 +1992,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       refreshInfrastructureState();
       if (page === "shipyard" || page === "galaxy") refreshShipyardState();
       if (page === "defenses" || page === "galaxy") refreshDefenseState();
-      if (page === "alliance") refreshAllianceState();
+      if (shouldRefreshAllianceStateForPage(page)) refreshAllianceState();
       if (page === "research") refreshResearchState();
       if (page === "rift") refreshRiftState();
       if (page === "moon") refreshInfrastructureState();
@@ -2289,7 +2293,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
-    if (page === "alliance") {
+    if (shouldRefreshAllianceStateForPage(page)) {
       refreshAllianceState();
     }
   }, [page, pageStateHydrationReady, refreshAllianceState]);
@@ -3382,7 +3386,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           console.error(error);
         }
         setPlayerProfileAction({ status: "success", label: "Display name saved." });
-        if (page === "alliance") refreshAllianceState();
+        if (shouldRefreshAllianceStateForPage(page)) refreshAllianceState();
       })
       .catch((error) => {
         console.error(error);
