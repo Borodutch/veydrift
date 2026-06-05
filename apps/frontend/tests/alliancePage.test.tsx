@@ -110,7 +110,7 @@ describe("AlliancePage loading display", () => {
     });
   });
 
-  test("blocks dismissals when the deployment lacks the dismiss selector", () => {
+  test("keeps stale applicants non-approvable while still allowing officers to dismiss the stale application", () => {
     const state = memberAllianceState();
     const staleRequest = joinRequest("0x4444444444444444444444444444444444444444", {
       allianceId: "8",
@@ -123,13 +123,13 @@ describe("AlliancePage loading display", () => {
       reason: "Applicant already joined another alliance.",
     });
     expect(allianceJoinRequestDismissalState(state, staleRequest)).toEqual({
-      canDismiss: false,
-      reason: "Application dismissal is unavailable on this alliance deployment.",
+      canDismiss: true,
+      reason: null,
     });
   });
 
-  test("allows officers to dismiss applications when the deployment supports it", () => {
-    const state = memberAllianceState({ dismissJoinRequestAvailable: true });
+  test("allows officers to dismiss applications by default", () => {
+    const state = memberAllianceState();
 
     expect(allianceJoinRequestDismissalState(state, joinRequest("0x3333333333333333333333333333333333333333"))).toEqual({
       canDismiss: true,
