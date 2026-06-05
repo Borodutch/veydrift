@@ -19,7 +19,7 @@ function contentType(pathname) {
 
 export function cacheControl(pathname) {
   if (pathname.startsWith("/assets/game/sizes/")) {
-    return "public, max-age=604800";
+    return "public, max-age=31536000, immutable";
   }
 
   if (pathname.startsWith("/assets/game/")) {
