@@ -203,11 +203,18 @@ function shipQueueMatches(
   queue: ChainShipyardState["queue"] | PlayerQueuesResponse["ship"],
   expectation: StartedShipProductionExpectation,
 ): boolean {
-  return Boolean(
-    queue?.active
-    && queue.itemId === expectation.itemId
-    && (queue.quantity ?? 0) >= expectation.quantity,
+  return shipQueueEntries(queue).some((entry) =>
+    entry.active
+      && entry.itemId === expectation.itemId
+      && (entry.quantity ?? 0) >= expectation.quantity
   );
+}
+
+function shipQueueEntries(
+  queue: ChainShipyardState["queue"] | PlayerQueuesResponse["ship"],
+): NonNullable<ChainShipyardState["queue"]>[] {
+  if (!queue) return [];
+  return [queue, ...(queue.backlog ?? [])];
 }
 
 function researchQueueMatches(

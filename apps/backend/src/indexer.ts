@@ -1798,7 +1798,7 @@ export class SettlementIndexer {
   }
 
   private upsertQueue(event: QueueUpsertEvent): void {
-    if (this.appendDefenseBacklogQueue(event)) {
+    if (this.appendProductionBacklogQueue(event)) {
       return;
     }
 
@@ -1896,8 +1896,8 @@ export class SettlementIndexer {
     }
   }
 
-  private appendDefenseBacklogQueue(event: QueueUpsertEvent): boolean {
-    if (event.queueKind !== "defense" || !event.planetId) {
+  private appendProductionBacklogQueue(event: QueueUpsertEvent): boolean {
+    if ((event.queueKind !== "defense" && event.queueKind !== "ship") || !event.planetId) {
       return false;
     }
 

@@ -1118,6 +1118,52 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("appends different ship queue events to the indexed backlog", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0xa0",
+      transactionHash: "0xqueue-small-cargo",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n, 1770001000n, 4000n, 4000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0xa1",
+      transactionHash: "0xqueue-light-fighter-backlog",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(3n, 1770001600n, 9000n, 3000n, 0n)
+    });
+
+    expect(indexer.playerQueues(player, planet.planetId).ship).toMatchObject({
+      kind: "ship",
+      itemId: 0,
+      quantity: 2,
+      readyAt: "1770001000",
+      cost: { metal: "4000", crystal: "4000", deuterium: "0" },
+      backlog: [
+        {
+          kind: "ship",
+          itemId: 1,
+          quantity: 3,
+          readyAt: "1770001600",
+          cost: { metal: "9000", crystal: "3000", deuterium: "0" }
+        }
+      ]
+    });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "0",
+      crystal: "0",
+      deuterium: "4800"
+    });
+  });
+
   test("indexes rift deposits and withdrawal lifecycle", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
