@@ -32,6 +32,7 @@ import {
   researchStateForCompletionRevalidation,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
+  shipyardTransactionErrorLabel,
   topBarEnergyFor,
   walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
@@ -236,6 +237,15 @@ describe("Playable MVP app display helpers", () => {
 
     expect(buildingFinishActionErrorLabel(new Error("Internal JSON-RPC error.")))
       .toBe(buildingFinishStateReadFailureLabel);
+  });
+
+  test("classifies Shipyard wallet read rejections as backend/RPC recovery copy", () => {
+    const label = shipyardTransactionErrorLabel("Ship production", new Error("execution reverted"));
+
+    expect(label).toContain("Ship production failed:");
+    expect(label).toContain("Retry in a moment");
+    expect(label).toContain("game API or RPC recovered");
+    expect(label).not.toContain("reconnect your wallet on Base Sepolia");
   });
 
   test("keeps actionable building finish preflight errors specific", () => {

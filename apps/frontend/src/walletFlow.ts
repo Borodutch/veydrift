@@ -669,7 +669,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/execution reverted/i.test(message)) {
-    return "The game contract rejected a wallet read. Retry after the latest deployment finishes, or reconnect your wallet on Base Sepolia.";
+    return "The game contract state could not be verified right now. Retry in a moment while the app checks whether the game API or RPC recovered.";
   }
 
   return message;

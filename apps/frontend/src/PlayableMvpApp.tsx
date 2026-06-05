@@ -252,6 +252,12 @@ export function buildingFinishActionErrorLabel(error: unknown): string {
   return message || "Finish building upgrade transaction failed.";
 }
 
+export function shipyardTransactionErrorLabel(label: string, error: unknown): string {
+  const fallback = `${label} failed.`;
+  const message = walletRequestErrorMessage(error).trim();
+  return `${label} failed: ${message || fallback}`;
+}
+
 export function researchCompletionUnavailableReasonFor({
   canTransact,
   now = Date.now(),
@@ -2571,10 +2577,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           : { status: "pending", label: `${label} confirmed. Rechecking game state after a temporary API/RPC outage.` });
       } catch (error) {
         console.error(error);
-        const message = error instanceof Error ? error.message : `${label} failed.`;
         setShipyardAction({
           status: "error",
-          label: `${label} failed: ${message}`,
+          label: shipyardTransactionErrorLabel(label, error),
         });
       }
     });

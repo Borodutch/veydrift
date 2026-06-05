@@ -909,7 +909,8 @@ describe("walletFlow", () => {
     expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
       "wallet could not read the current game contract state"
     );
-    expect(walletRequestErrorMessage(new Error("execution reverted"))).toContain("game contract rejected");
+    expect(walletRequestErrorMessage(new Error("execution reverted"))).toContain("game contract state could not be verified");
+    expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("reconnect your wallet");
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
       "Unlock or reconnect your wallet"
     );
