@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { RotateCw } from "lucide-preact";
+import { ChevronLeft, ChevronRight, RotateCw, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
@@ -11,6 +11,7 @@ type RankingsPageProps = {
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 };
 
@@ -26,9 +27,14 @@ const categories: Array<{ key: HighscoreCategory; label: string }> = [
 ];
 
 export const rankingsColumnLabels = ["Rank", "Commander", "Planets", "Score", "Total"] as const;
+export const rankingsPageSize = 25;
 
 export function primaryRankingEntries(data: HighscoreResponse | null): HighscoreEntry[] {
   return data?.rankings.total ?? [];
+}
+
+export function rankingsPaginationLabel(pagination: NonNullable<HighscoreResponse["pagination"]>): string {
+  return `Page ${pagination.page} of ${pagination.totalPages}`;
 }
 
 export function shouldShowRankingsInitialLoader({
@@ -41,13 +47,14 @@ export function shouldShowRankingsInitialLoader({
   return loading && !hasLoadedData;
 }
 
-export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlanet }: RankingsPageProps) {
+export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlayer, onSelectPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [page, setPage] = useState(1);
 
-  const load = () => {
+  const load = (targetPage = page) => {
     if (!apiBaseUrl) {
       setData(null);
       setError("Game API unavailable.");
@@ -56,7 +63,11 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
 
     setLoading(true);
     setError(undefined);
-    fetchHighscores(apiBaseUrl)
+    fetchHighscores(apiBaseUrl, {
+      ...(currentWallet ? { currentWallet } : {}),
+      page: targetPage,
+      pageSize: rankingsPageSize
+    })
       .then(setData)
       .catch((nextError) => {
         console.error(nextError);
@@ -66,10 +77,12 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
   };
 
   useEffect(() => {
-    load();
-  }, [apiBaseUrl]);
+    load(page);
+  }, [apiBaseUrl, currentWallet, page]);
 
   const entries = data?.rankings[active] ?? [];
+  const pagination = data?.pagination ?? null;
+  const currentPlayerPage = data?.currentPlayer?.rankings[active] ?? null;
 
   return (
     <section className="space-y-4">
@@ -83,7 +96,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         <button
           className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
           disabled={loading}
-          onClick={load}
+          onClick={() => load(page)}
           type="button"
         >
           <RotateCw aria-hidden="true" size={14} />
@@ -125,8 +138,20 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         hasLoadedData={Boolean(data)}
         loading={loading}
         onSelectAlliance={onSelectAlliance}
+        onSelectPlayer={onSelectPlayer}
         onSelectPlanet={onSelectPlanet}
       />
+
+      {pagination ? (
+        <RankingsPagination
+          loading={loading}
+          currentPlayerPage={currentPlayerPage}
+          onNext={() => setPage((currentPage) => currentPage + 1)}
+          onPrevious={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+          onCurrentPlayer={() => currentPlayerPage ? setPage(currentPlayerPage.page) : undefined}
+          pagination={pagination}
+        />
+      ) : null}
 
       {data ? (
         <p className="text-xs leading-5 text-slate-500">
@@ -134,6 +159,71 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         </p>
       ) : null}
     </section>
+  );
+}
+
+export function RankingsPagination({
+  currentPlayerPage,
+  loading,
+  onCurrentPlayer,
+  onNext,
+  onPrevious,
+  pagination,
+}: {
+  currentPlayerPage?: { rank: number; page: number } | null | undefined;
+  loading: boolean;
+  onCurrentPlayer?: (() => void) | undefined;
+  onNext: () => void;
+  onPrevious: () => void;
+  pagination: NonNullable<HighscoreResponse["pagination"]>;
+}) {
+  const firstEntry = pagination.totalEntries === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
+  const lastEntry = Math.min(pagination.page * pagination.pageSize, pagination.totalEntries);
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-white/10 pt-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        {rankingsPaginationLabel(pagination)}
+        <span className="ml-2 text-slate-600">
+          {firstEntry}-{lastEntry} of {pagination.totalEntries}
+        </span>
+      </span>
+      <div className="flex items-center gap-2">
+        {currentPlayerPage ? (
+          <button
+            aria-label={`Go to your rank ${currentPlayerPage.rank}`}
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-cyan-300/20 bg-cyan-300/10 px-2.5 text-cyan-100 transition hover:border-cyan-200/50 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={loading || pagination.page === currentPlayerPage.page}
+            onClick={onCurrentPlayer}
+            title="Go to your rank"
+            type="button"
+          >
+            <UserRound aria-hidden="true" size={13} />
+            <span className="font-mono">#{currentPlayerPage.rank}</span>
+          </button>
+        ) : null}
+        <button
+          aria-label="Previous rankings page"
+          className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={loading || !pagination.hasPreviousPage}
+          onClick={onPrevious}
+          title="Previous page"
+          type="button"
+        >
+          <ChevronLeft aria-hidden="true" size={14} />
+        </button>
+        <button
+          aria-label="Next rankings page"
+          className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={loading || !pagination.hasNextPage}
+          onClick={onNext}
+          title="Next page"
+          type="button"
+        >
+          <ChevronRight aria-hidden="true" size={14} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -145,6 +235,7 @@ export function RankingsTable({
   hasLoadedData = entries.length > 0,
   loading,
   onSelectAlliance,
+  onSelectPlayer,
   onSelectPlanet,
 }: {
   active?: HighscoreCategory;
@@ -154,6 +245,7 @@ export function RankingsTable({
   hasLoadedData?: boolean | undefined;
   loading: boolean;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   return (
@@ -180,6 +272,7 @@ export function RankingsTable({
             entry={entry}
             key={`${active}-${entry.wallet}`}
             onSelectAlliance={onSelectAlliance}
+            onSelectPlayer={onSelectPlayer}
             onSelectPlanet={onSelectPlanet}
           />
         ))
@@ -194,6 +287,7 @@ function RankingRow({
   currentWallet,
   entry,
   onSelectAlliance,
+  onSelectPlayer,
   onSelectPlanet,
 }: {
   active: HighscoreCategory;
@@ -201,10 +295,12 @@ function RankingRow({
   currentWallet?: string | undefined;
   entry: HighscoreEntry;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   const homePlanet = entry.homePlanet ?? null;
   const canOpenHomePlanet = Boolean(homePlanet && onSelectPlanet);
+  const canOpenPlayer = Boolean(onSelectPlayer);
   const commanderLabel = entry.displayName?.trim() || shortAddress(entry.wallet);
   const normalizedWallet = entry.wallet.toLowerCase();
   const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
@@ -230,6 +326,10 @@ function RankingRow({
   const openAlliance = () => {
     if (!alliance || !onSelectAlliance) return;
     onSelectAlliance(alliance.allianceId);
+  };
+  const openPlayer = () => {
+    if (!onSelectPlayer) return;
+    onSelectPlayer(entry.wallet);
   };
 
   return (
@@ -271,12 +371,13 @@ function RankingRow({
               </button>
             ) : null}
             <button
-              className={`min-w-0 text-left ${canOpenHomePlanet ? "cursor-pointer" : "cursor-default"}`}
-              disabled={!canOpenHomePlanet}
-              onClick={openHomePlanet}
+              className={`min-w-0 text-left ${canOpenPlayer ? "cursor-pointer" : "cursor-default"}`}
+              disabled={!canOpenPlayer}
+              onClick={openPlayer}
+              title={`Open player ${commanderLabel}`}
               type="button"
             >
-              <span className={`block truncate font-mono ${canOpenHomePlanet ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
+              <span className={`block truncate font-mono ${canOpenPlayer ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
                 {commanderLabel}
               </span>
             </button>

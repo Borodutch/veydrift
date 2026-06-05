@@ -261,6 +261,8 @@ export type ChainInfrastructureState = {
   wallet: string;
   homePlanetId: string | null;
   indexer?: BackendIndexerState;
+  planetId?: string | null;
+  planetLastSettledAt?: string | null;
   source?: "contract-state-indexer" | string;
   degraded?: boolean;
   stale?: boolean;
@@ -492,6 +494,18 @@ export type HighscoreResponse = {
     target?: string;
     excludedCategories?: string[];
   };
+  pagination?: {
+    page: number;
+    pageSize: number;
+    totalEntries: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+  currentPlayer?: {
+    wallet: string;
+    rankings: Record<HighscoreCategory, { rank: number; page: number } | null>;
+  };
   rankings: Record<HighscoreCategory, HighscoreEntry[]>;
 };
 
@@ -672,7 +686,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/execution reverted/i.test(message)) {
-    return "The game contract rejected a wallet read. Retry after the latest deployment finishes, or reconnect your wallet on Base Sepolia.";
+    return "The game contract rejected this transaction. Refresh the latest backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.";
   }
 
   return message;
@@ -1466,7 +1480,7 @@ export async function sendStartBuildingUpgradeTransaction(
   buildingId: number
 ): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
-  const transaction = {
+  const transaction: TransactionRequest = {
     from: account,
     to: contractAddress,
     data
@@ -1474,6 +1488,7 @@ export async function sendStartBuildingUpgradeTransaction(
 
   const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
   if (!accountProbeReadyChecked) await assertWalletUnlocked(provider);
+  await assertWalletTransactionEstimated(provider, transaction, "Building upgrade");
 
   return sendWalletTransaction(provider, account, transaction, {
     accountProbeReadyChecked
@@ -1907,11 +1922,30 @@ export async function updatePlayerDisplayName(
   return response.json() as Promise<PlayerProfile>;
 }
 
-export async function fetchHighscores(apiUrl: string, limit = 100): Promise<HighscoreResponse> {
+export type FetchHighscoreOptions = {
+  currentWallet?: string;
+  limit?: number;
+  page?: number;
+  pageSize?: number;
+};
+
+export async function fetchHighscores(
+  apiUrl: string,
+  options: FetchHighscoreOptions | number = 100
+): Promise<HighscoreResponse> {
+  const params = new URLSearchParams();
+  if (typeof options === "number") {
+    params.set("limit", String(options));
+  } else {
+    params.set("limit", String(options.limit ?? options.pageSize ?? 100));
+    if (options.currentWallet !== undefined) params.set("currentWallet", options.currentWallet);
+    if (options.page !== undefined) params.set("page", String(options.page));
+    if (options.pageSize !== undefined) params.set("pageSize", String(options.pageSize));
+  }
   let response: Response;
 
   try {
-    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?limit=${limit}`, {
+    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?${params.toString()}`, {
       headers: {
         accept: "application/json"
       }

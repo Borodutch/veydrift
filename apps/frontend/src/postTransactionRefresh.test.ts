@@ -213,6 +213,14 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.queues.ship?.quantity).toBe(3);
   });
 
+  test("accepts started ship production when the expected item is in the backlog", () => {
+    expect(isStartedShipProductionVisible(startedShipBacklogProductionSnapshot(), {
+      itemId: 1,
+      planetId: "7",
+      quantity: 2,
+    })).toBe(true);
+  });
+
   test("polls until started research is visible on Research and Overview state", async () => {
     expect(isStartedResearchStateVisible(staleStartedResearchSnapshot(), {
       itemId: 4,
@@ -524,6 +532,38 @@ function startedShipProductionSnapshot(): StartedShipProductionSnapshot {
     queues: {
       ...staleShipProductionSnapshot().queues,
       ship: shipQueue,
+    },
+  };
+}
+
+function startedShipBacklogProductionSnapshot(): StartedShipProductionSnapshot {
+  const activeShipQueue = {
+    active: true,
+    kind: "ship" as const,
+    itemId: 0,
+    quantity: 3,
+    readyAt: "1770000060",
+    cost: { metal: "6000", crystal: "6000", deuterium: "0" },
+    backlog: [
+      {
+        active: true,
+        kind: "ship" as const,
+        itemId: 1,
+        quantity: 2,
+        readyAt: "1770000120",
+        cost: { metal: "6000", crystal: "2000", deuterium: "0" },
+      },
+    ],
+  };
+
+  return {
+    shipyard: {
+      ...staleShipProductionSnapshot().shipyard,
+      queue: activeShipQueue,
+    },
+    queues: {
+      ...staleShipProductionSnapshot().queues,
+      ship: activeShipQueue,
     },
   };
 }

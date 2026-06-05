@@ -3,6 +3,7 @@ import {
   buildingCompletionUnavailableReasonFor,
   buildingCompletionUnavailableReasonAfterBackendRevalidation,
   buildingCompletionReadyToFinishFlag,
+  buildingUpgradeActionErrorLabel,
   buildingFinishUnavailableReasonForDisplay,
   buildingFinishActionErrorLabel,
   canLoadIndexedPageState,
@@ -32,6 +33,7 @@ import {
   researchStateForCompletionRevalidation,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
+  shipCompletionPlanetIdFor,
   topBarEnergyFor,
   walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
@@ -43,7 +45,7 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
+import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
@@ -627,6 +629,40 @@ describe("Playable MVP app display helpers", () => {
       defenseState: defenseState({ homePlanetId: "11" }),
       walletQueues: undefined,
     })).toBe("11");
+  });
+
+  test("lets Overview Shipyard completion use the selected wallet queue planet before Shipyard state is loaded", () => {
+    expect(shipCompletionPlanetIdFor({
+      activePlanetId: "9",
+      shipyardState: null,
+      walletQueues: playerQueues({
+        homePlanetId: "7",
+        ship: {
+          active: true,
+          cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+          itemId: 1,
+          kind: "ship",
+          quantity: 1,
+          readyAt: "1700000000",
+        },
+      }),
+    })).toBe("9");
+  });
+
+  test("falls back to wallet queue home planet for Overview Shipyard completion when page state is absent", () => {
+    expect(shipCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      shipyardState: null,
+      walletQueues: playerQueues({ homePlanetId: "7" }),
+    })).toBe("7");
+  });
+
+  test("keeps loaded Shipyard state as a Shipyard completion fallback", () => {
+    expect(shipCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      shipyardState: shipyardState({ homePlanetId: "11", planetId: "12" }),
+      walletQueues: undefined,
+    })).toBe("12");
   });
 
   test("preserves active research queues when a background wallet poll returns an empty research queue", () => {
@@ -1450,6 +1486,31 @@ describe("Playable MVP app display helpers", () => {
     })).toContain("Requires");
   });
 
+  test("blocks Shipyard upgrades while refreshed backend infrastructure is stale", () => {
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "shipyard",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState({
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toBe(infrastructureBackendSyncPausedLabel);
+  });
+
+  test("keeps Shipyard upgrade backend read failures out of wallet reconnect copy", () => {
+    const label = buildingUpgradeActionErrorLabel(
+      new Error("Infrastructure API failed: 400: RPC 3: execution reverted")
+    );
+
+    expect(label).toBe(infrastructureBackendSyncPausedLabel);
+    expect(label).not.toContain("wallet");
+    expect(label).not.toContain("Base Sepolia");
+  });
+
   test("blocks building transactions when refreshed backend infrastructure has an active building queue", () => {
     expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
       buildingKey: "metalMine",
@@ -1892,13 +1953,14 @@ function playerQueues({
   defense,
   homePlanetId,
   research,
-}: Partial<Pick<PlayerQueuesResponse, "defense" | "homePlanetId" | "research">> = {}): PlayerQueuesResponse {
+  ship,
+}: Partial<Pick<PlayerQueuesResponse, "defense" | "homePlanetId" | "research" | "ship">> = {}): PlayerQueuesResponse {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: homePlanetId ?? "7",
     building: null,
     defense: defense ?? null,
-    ship: null,
+    ship: ship ?? null,
     research: research ?? null,
   };
 }
@@ -1916,6 +1978,24 @@ function defenseState({
     missileSiloLevel: 0,
     technologyLevels: {},
     defenses: [],
+    queue: null,
+  };
+}
+
+function shipyardState({
+  homePlanetId,
+  planetId,
+}: Partial<Pick<ChainShipyardState, "homePlanetId" | "planetId">> = {}): ChainShipyardState {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: homePlanetId ?? "7",
+    planetId: planetId ?? null,
+    productionAvailable: true,
+    resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+    shipyardLevel: 1,
+    naniteLevel: 0,
+    technologyLevels: {},
+    ships: [],
     queue: null,
   };
 }

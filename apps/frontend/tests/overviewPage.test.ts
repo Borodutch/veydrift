@@ -3,12 +3,14 @@ import {
   DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
 } from "../src/overviewHeroImage";
+import { productionQueueViewModel } from "../src/components/ProductionCatalog";
 import {
   isOverviewResearchReadyToFinish,
   overviewBuildingActionNoticeFor,
   overviewBuildingFinishAction,
   overviewBuildingNoticeForFinishAction,
   overviewDefenseFinishAction,
+  overviewShipyardFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
   shouldShowOverviewBuildingFinishAction,
@@ -16,10 +18,13 @@ import {
 import {
   overviewQueueItemLabelClassName,
   overviewQueueItemRemainingClassName,
+  defenseQueuePreview,
   queueProgressBarState,
   queueProgressFillState,
+  shipQueuePreview,
 } from "../src/overviewData";
-import { queueProgressPercent } from "../src/playableMvp";
+import { defenseCatalog, queueProgressPercent, shipCatalog } from "../src/playableMvp";
+import { timestampToMs } from "../src/timestampFormat";
 import type { Planet } from "../src/types";
 
 const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
@@ -110,6 +115,81 @@ describe("overview queue progress display", () => {
     expect(overviewSource.match(/mt-auto flex h-9 w-full/g)?.length).toBeGreaterThanOrEqual(3);
     expect(overviewSource).toContain("<ArrowRight");
     expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
+  });
+
+  test("uses canonical on-chain timelines for Overview defense and shipyard queues", () => {
+    expect(overviewSource).toContain("const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt)");
+    expect(overviewSource).toContain("startedAt={defenseStartedAt}");
+    expect(overviewSource).toContain("const shipStartedAt = queueTimestampMs(onChainQueues?.ship?.startedAt)");
+    expect(overviewSource).toContain("startedAt={shipStartedAt}");
+    expect(overviewSource).toContain("const shouldIndeterminate = indeterminate ?? (!hasCanonicalTimeline && progress === undefined)");
+    expect(overviewSource).toContain("label={onChainShipQueue.label}");
+  });
+
+  test("matches Defense page label, asset, and progress for the same queue snapshot", () => {
+    const queue = {
+      active: true,
+      cost: { metal: "4000", crystal: "0", deuterium: "0" },
+      itemId: 0,
+      kind: "defense",
+      quantity: 2,
+      readyAt: "1700000120",
+      startedAt: "1700000000",
+    };
+    const now = 1_700_000_060_000;
+    const overview = defenseQueuePreview(queue);
+    const detail = productionQueueViewModel(queue, defenseCatalog);
+
+    expect(detail).toBeDefined();
+    expect(overview).toEqual({
+      asset: detail?.asset,
+      label: `${detail?.label} x${detail?.quantity}`,
+    });
+    expect(queueProgressFillState({
+      now,
+      readyAt: timestampToMs(queue.readyAt),
+      remaining: "1m",
+      startedAt: timestampToMs(queue.startedAt),
+    }).progress).toBe(queueProgressFillState({
+      now,
+      readyAt: timestampToMs(detail?.readyAt),
+      remaining: "1m",
+      startedAt: timestampToMs(detail?.startedAt),
+    }).progress);
+  });
+
+  test("matches Shipyard page concrete label, asset, and progress for the same queue snapshot", () => {
+    const queue = {
+      active: true,
+      cost: { metal: "4000", crystal: "4000", deuterium: "0" },
+      itemId: 0,
+      kind: "ship",
+      quantity: 1,
+      readyAt: "1700000120",
+      startedAt: "1700000000",
+    };
+    const now = 1_700_000_060_000;
+    const overview = shipQueuePreview(queue);
+    const detail = productionQueueViewModel(queue, shipCatalog);
+
+    expect(detail).toBeDefined();
+    expect(overview).toEqual({
+      asset: detail?.asset,
+      label: `${detail?.label} x${detail?.quantity}`,
+    });
+    expect(overview.label).toBe("Small Cargo x1");
+    expect(overview.label).not.toBe("Ship x1");
+    expect(queueProgressFillState({
+      now,
+      readyAt: timestampToMs(queue.readyAt),
+      remaining: "1m",
+      startedAt: timestampToMs(queue.startedAt),
+    }).progress).toBe(queueProgressFillState({
+      now,
+      readyAt: timestampToMs(detail?.readyAt),
+      remaining: "1m",
+      startedAt: timestampToMs(detail?.startedAt),
+    }).progress);
   });
 
   test("renders ready queues as complete even when the source payload was indeterminate", () => {
@@ -241,6 +321,20 @@ describe("overview queue progress display", () => {
     expect(overviewSource).toContain("researchCatalog");
     expect(overviewSource).toContain("thumbnailSrc={onChainResearchAsset}");
     expect(overviewSource).toContain("thumbnailSrc={settledResearchAsset}");
+  });
+
+  test("resolves active Shipyard queues to catalog names and thumbnails", () => {
+    const preview = shipQueuePreview({
+      active: true,
+      cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+      itemId: 1,
+      kind: "ship",
+      quantity: 2,
+      readyAt: "1700000600",
+    });
+
+    expect(preview.label).toBe("Light Fighter x2");
+    expect(preview.asset).toContain("light-fighter");
   });
 
   test("shows the ready building finish action for infrastructure-backed queues", () => {
@@ -467,8 +561,10 @@ describe("overview queue progress display", () => {
       },
     });
 
-    expect(action.visible).toBe(true);
-    expect(action.disabled).toBe(false);
+    expect(action).toMatchObject({
+      disabled: false,
+      visible: true,
+    });
     action.onFinish?.();
     expect(calls).toBe(1);
   });
@@ -509,6 +605,88 @@ describe("overview queue progress display", () => {
     expect(action.visible).toBe(true);
     expect(action.disabled).toBe(true);
     expect(action.onFinish).toBeUndefined();
+  });
+
+  test("shows and invokes the ready Shipyard completion action on Overview", () => {
+    let calls = 0;
+    const action = overviewShipyardFinishAction({
+      now: 1_700_000_000_000,
+      onFinishShipProduction: () => {
+        calls += 1;
+      },
+      queue: {
+        active: true,
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        itemId: 1,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(false);
+    action.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("keeps not-ready Shipyard queues passive on Overview", () => {
+    const action = overviewShipyardFinishAction({
+      now: 1_699_999_000_000,
+      onFinishShipProduction: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        itemId: 1,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(false);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("disables ready Shipyard completion while a Shipyard transaction is pending", () => {
+    const action = overviewShipyardFinishAction({
+      actionPending: true,
+      now: 1_700_000_000_000,
+      onFinishShipProduction: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        itemId: 1,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("keeps ready Shipyard completion visible but disabled while backend state is syncing", () => {
+    const action = overviewShipyardFinishAction({
+      chainStatus: "loading",
+      now: 1_700_000_000_000,
+      onFinishShipProduction: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        itemId: 1,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+    expect(action.reason).toBe("Shipyard state is syncing. Refresh and retry once backend state is ready.");
   });
 
   test("shows and invokes the ready research completion action on Overview", () => {
