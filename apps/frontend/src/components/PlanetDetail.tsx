@@ -22,12 +22,46 @@ export type PlanetRecordRow = {
   tone?: "default" | "accent" | "muted";
 };
 
+export function planetDetailRefreshStartPlanet({
+  coords,
+  currentPlanet,
+  trustedHomePlanet,
+}: {
+  coords: Coordinates;
+  currentPlanet: Planet | null;
+  trustedHomePlanet: Planet | null;
+}): Planet | null {
+  return trustedHomePlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
+}
+
+export function planetDetailRefreshResultPlanet({
+  apiPlanet,
+  coords,
+  currentPlanet,
+  trustedHomePlanet,
+}: {
+  apiPlanet: Planet | null;
+  coords: Coordinates;
+  currentPlanet: Planet | null;
+  trustedHomePlanet: Planet | null;
+}): Planet | null {
+  return trustedHomePlanet ?? apiPlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
+}
+
 export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack }: Props) {
   const trustedHomePlanet = useMemo(
     () => sameCoordinates(homeCoords, coords) && homePlanet
       ? homePlanet
       : null,
-    [coords.galaxy, coords.position, coords.system, homeCoords, homePlanet],
+    [
+      coords.galaxy,
+      coords.position,
+      coords.system,
+      homeCoords?.galaxy,
+      homeCoords?.position,
+      homeCoords?.system,
+      homePlanet,
+    ],
   );
   const [planet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
@@ -37,7 +71,11 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
 
   useEffect(() => {
     const abortController = new AbortController();
-    setPlanet(trustedHomePlanet);
+    setPlanet((current) => planetDetailRefreshStartPlanet({
+      coords,
+      currentPlanet: current,
+      trustedHomePlanet,
+    }));
     setSource("loading");
 
     fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
@@ -50,7 +88,12 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       })
       .then((payload) => {
         const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
-        setPlanet(sameCoordinates(homeCoords, coords) && homePlanet ? homePlanet : apiPlanet);
+        setPlanet((current) => planetDetailRefreshResultPlanet({
+          apiPlanet,
+          coords,
+          currentPlanet: current,
+          trustedHomePlanet,
+        }));
         setSource("api");
       })
       .catch((error) => {
@@ -61,7 +104,13 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, coords, homeCoords, homePlanet, trustedHomePlanet]);
+  }, [
+    apiBaseUrl,
+    coords.galaxy,
+    coords.position,
+    coords.system,
+    trustedHomePlanet,
+  ]);
 
   useEffect(() => {
     setImageLoaded(isImageReady(imageRef.current));
