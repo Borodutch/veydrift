@@ -113,7 +113,8 @@ describe("overview queue progress display", () => {
     expect(overviewSource).toContain("function QueuePanelContent");
     expect(overviewSource).toContain("flex min-h-0 flex-1 flex-col gap-2");
     expect(overviewSource).toContain("mt-auto flex min-h-9 w-full min-w-0");
-    expect(overviewSource.match(/mt-auto flex h-9 w-full/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(overviewSource).toContain("mt-auto flex min-h-9 w-full min-w-0 items-center justify-center whitespace-normal break-words");
+    expect(overviewSource.match(/mt-auto flex h-9 w-full/g)?.length).toBeGreaterThanOrEqual(2);
     expect(overviewSource).toContain("<ArrowRight");
     expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
   });
@@ -472,10 +473,10 @@ describe("overview queue progress display", () => {
     expect(calls).toBe(0);
   });
 
-  test("keeps Overview building finish button copy compact", () => {
+  test("keeps Overview building finish button copy compact without clipping", () => {
     expect(overviewSource).toContain('label: actionPending ? "Completing building" : "Complete building"');
-    expect(overviewSource).toContain("w-full min-w-0 items-center justify-center overflow-hidden");
-    expect(overviewSource).toContain("max-w-full overflow-hidden text-ellipsis whitespace-nowrap");
+    expect(overviewSource).toContain("w-full min-w-0 items-center justify-center whitespace-normal break-words");
+    expect(overviewSource).toContain("max-w-full whitespace-normal break-words");
   });
 
   test("shows building finish action notices for the active overview queue", () => {

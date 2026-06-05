@@ -213,6 +213,7 @@ const buildingFinishFailedSyncLabel =
   "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.";
 const buildingFinishRejectedLabel =
   "Building completion was cancelled in the wallet. The ready queue is still available; retry when you are ready to confirm the game-state update.";
+const buildingFinishClientClockSafetyMs = 30_000;
 export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 const buildingWalletConfirmationLabel = (label: string) =>
@@ -434,7 +435,7 @@ export function buildingCompletionReadyToFinishFlag({
     return false;
   }
 
-  return isBuildingQueueReadyToFinish(
+  return isBuildingQueueSafelyReadyToFinish(
     buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue),
     now,
   );
@@ -481,11 +482,19 @@ export function buildingCompletionUnavailableReasonFor({
     return "Building completion time is unavailable. Refresh infrastructure state before finishing.";
   }
 
-  if (readyAt > now) {
+  if (readyAt + buildingFinishClientClockSafetyMs > now) {
     return "Building upgrade is not ready to finish yet.";
   }
 
   return undefined;
+}
+
+function isBuildingQueueSafelyReadyToFinish(
+  queue: QueueStateResponse | null | undefined,
+  now = Date.now(),
+): boolean {
+  const readyAt = timestampToMs(queue?.readyAt);
+  return Boolean(queue?.active && readyAt !== undefined && readyAt + buildingFinishClientClockSafetyMs <= now);
 }
 
 function buildingCompletionQueueForVerification(
