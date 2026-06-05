@@ -1917,6 +1917,15 @@ export function shipDurationEstimate(
   return shipDurationSeconds(shipyardLevel, naniteLevel, cost, quantity);
 }
 
+export function defenseDurationEstimate(
+  shipyardLevel: number,
+  naniteLevel: number,
+  cost: Resources,
+  quantity = 1,
+): number {
+  return shipDurationSeconds(shipyardLevel, naniteLevel, cost, quantity);
+}
+
 export function canAfford(resources: Resources, cost: Resources): boolean {
   return resources.metal >= cost.metal
     && resources.crystal >= cost.crystal

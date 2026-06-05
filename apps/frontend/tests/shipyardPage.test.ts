@@ -101,21 +101,18 @@ describe("Shipyard page display helpers", () => {
       countLabel: "Owned",
       countValue: 4,
       description: expect.stringContaining("freighter"),
-      detailStats: expect.arrayContaining([
-        { label: "Structure", value: "400" },
-        { label: "Cargo", value: "5,000" },
-        { label: "Fuel use", value: "10" },
-      ]),
+      detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
       quantity: 3,
       status: "ready",
     });
+    expect(items.find((item) => item.key === "smallCargo")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
       status: "locked",
       statusLabel: "Locked",
     });
   });
 
-  test("shows Solar Satellite energy per unit from shipyard state", () => {
+  test("keeps Solar Satellite compact ship stats in selected-panel subtext", () => {
     const baseState = shipyardState();
     const items = shipProductionItems({
       actionPending: false,
@@ -146,9 +143,8 @@ describe("Shipyard page display helpers", () => {
       }),
     });
 
-    expect(items.find((item) => item.key === "solarSatellite")?.detailStats).toContainEqual({
-      label: "E/unit",
-      value: "22",
+    expect(items.find((item) => item.key === "solarSatellite")).toMatchObject({
+      detailNote: "Attack 1 · Shield 1 · Hull 200 · Cargo 0",
     });
   });
 

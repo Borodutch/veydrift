@@ -597,6 +597,7 @@ describe("tester universe display data", () => {
       productionAvailable: true,
       resources: null,
       shipyardLevel: 1,
+      naniteLevel: 0,
       missileSiloLevel: 4,
       technologyLevels: {},
       defenses: [

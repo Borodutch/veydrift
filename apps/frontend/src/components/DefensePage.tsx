@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
-import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
+import { canAfford, defenseCatalog, defenseCombatStats, defenseDurationEstimate, missingUnlockRequirements } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainDefenseState } from "../walletFlow";
@@ -208,6 +208,9 @@ export function defenseProductionItems({
     const baseCost = productionAvailable ? toResources(chainDefense?.cost) : undefined;
     const quantity = quantities[defense.key] ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+    const durationSeconds = baseCost
+      ? defenseDurationEstimate(defenseState?.shipyardLevel ?? 0, defenseState?.naniteLevel ?? 0, baseCost, quantity)
+      : undefined;
     const missing = getMissingRequirements(defense, defenseState);
     const requirements = getDefenseRequirementStates(defense, defenseState);
     const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
@@ -226,7 +229,7 @@ export function defenseProductionItems({
     const disabled = Boolean(blockedReason) || actionPending;
     const queued = queuedDefenseCount(defense.id, queue);
     const combatStats = defenseCombatStats(defense);
-    const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
+    const stats = combatStats.rows.map((row) => `${row.label} ${formatStatValue(row.value)}`).join(" · ");
 
     return {
       actionLabel: queued > 0 ? "Add" : "Build",
@@ -237,12 +240,8 @@ export function defenseProductionItems({
       countValue: deployed,
       description: defenseDescriptions[defense.key],
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
-      detailStats: combatStats.rows.map((row) => ({
-        hint: row.hint,
-        label: row.label,
-        value: formatStatValue(row.value),
-      })),
       disabled,
+      durationSeconds,
       group: defense.group,
       groupLabel: groupLabels[defense.group],
       id: defense.id,
@@ -252,7 +251,6 @@ export function defenseProductionItems({
       quantity,
       queued,
       requirements,
-      notes: combatStats.notes,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked",
     };
