@@ -4513,6 +4513,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onBack={() => handleNavigate("rankings")}
           onOpenAlliance={handleSelectAlliance}
           onSelectPlanet={handleSelectPlanet}
+          originCoords={activePlanetCoords}
           wallet={inspectedPlayerWallet}
         />
       );

@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { ArrowLeft, Crown, RefreshCw, UserRound } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
 import {
@@ -9,6 +10,8 @@ import {
   shortAddress,
   type ChainAllianceState,
   type HighscoreEntry,
+  type ManagedPlanetResponse,
+  type OnChainResources,
   type WalletPlanetsResponse,
 } from "../walletFlow";
 import {
@@ -40,6 +43,7 @@ export function PlayerInspectPage({
   onBack,
   onOpenAlliance,
   onSelectPlanet,
+  originCoords,
   wallet,
 }: {
   apiBaseUrl: string | undefined;
@@ -47,6 +51,7 @@ export function PlayerInspectPage({
   onBack: () => void;
   onOpenAlliance: (allianceId: string) => void;
   onSelectPlanet: (coords: Coordinates) => void;
+  originCoords?: Coordinates | undefined;
   wallet: string;
 }) {
   const [state, setState] = useState<PlayerInspectState>({ status: "loading" });
@@ -84,79 +89,111 @@ export function PlayerInspectPage({
     ? state.highscore?.displayName?.trim() || state.planets?.player?.displayName?.trim() || shortAddress(wallet)
     : shortAddress(wallet);
   const isCurrentWallet = currentWallet?.toLowerCase() === wallet.toLowerCase();
+  const alliance = state.status === "loaded" ? state.highscore?.alliance ?? null : null;
+  const scoreItems = state.status === "loaded" ? playerInspectScoreItems(state.highscore) : [];
+  const originLabel = originCoords ? `[${originCoords.galaxy}:${originCoords.system}:${originCoords.position}]` : undefined;
 
   return (
     <InspectShell
-      eyebrow="Player Inspect"
       title={displayName}
-      subtitle={wallet}
+      subtitle={`${wallet}${isCurrentWallet ? " / You" : ""}`}
+      titlePrefix={alliance ? (
+        <button
+          className="shrink-0 rounded border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold leading-none text-cyan-100 transition hover:border-cyan-200/50 hover:bg-cyan-300/15"
+          onClick={() => onOpenAlliance(alliance.allianceId)}
+          title={`Open alliance ${alliance.tag}`}
+          type="button"
+        >
+          [{alliance.tag}]
+        </button>
+      ) : null}
       onBack={onBack}
     >
       {state.status === "loading" ? <VeydriftLoader label="Loading player" /> : null}
       {state.status === "error" ? <Notice tone="error">{state.label}</Notice> : null}
       {state.status === "loaded" ? (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <section className="grid gap-3">
-            <div className="grid gap-2 sm:grid-cols-4">
-              <MiniStat label="Rank" value={state.highscore ? `#${state.highscore.rank}` : "Unranked"} />
-              <MiniStat label="Planets" value={String(state.planets?.planets.length ?? state.highscore?.planetCount ?? 0)} />
-              <MiniStat label="Total Score" value={formatScore(state.highscore?.score.total)} />
-              <MiniStat label="Wallet" value={isCurrentWallet ? "You" : shortAddress(wallet)} />
-            </div>
+        <div className="grid gap-4">
+          <div className="flex flex-wrap gap-2 rounded border border-white/10 bg-black/20 px-3 py-2">
+            <CompactStat label="Rank" value={state.highscore ? `#${state.highscore.rank}` : "Unranked"} />
+            <CompactStat label="Planets" value={String(state.planets?.planets.length ?? state.highscore?.planetCount ?? 0)} />
+            <CompactStat label="Total" value={formatScore(state.highscore?.score.total)} />
+            {state.highscore?.attackProtection && !state.highscore.attackProtection.allowed && state.highscore.attackProtection.blockedReason !== "none" ? (
+              <CompactStat label="Risk" value={state.highscore.attackProtection.blockedReasonLabel ?? "Protected"} />
+            ) : (
+              <CompactStat label="Risk" value="Attackable" />
+            )}
+            {originLabel ? <CompactStat label="Origin" value={originLabel} /> : null}
+          </div>
 
-            <Panel title="Planets">
-              {state.planets?.planets.length ? (
-                <div className="grid gap-2">
-                  {state.planets.planets.map((planet) => (
-                    <button
-                      className="grid gap-1 rounded border border-white/10 bg-black/20 px-3 py-2 text-left hover:bg-white/[0.06]"
-                      key={planet.planetId}
-                      onClick={() => onSelectPlanet({ galaxy: planet.galaxy, system: planet.system, position: planet.position })}
-                      type="button"
-                    >
-                      <span className="text-sm font-semibold text-white">{planet.name || `Planet #${planet.planetId}`}</span>
-                      <span className="text-xs text-slate-500">
-                        [{planet.galaxy}:{planet.system}:{planet.position}] / {planet.fieldsUsed}/{planet.fieldsCapacity} fields
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-400">No indexed public planets are available for this player.</p>
-              )}
-            </Panel>
-          </section>
+          <Panel title="Planets">
+            {state.planets?.planets.length ? (
+              <div className="grid gap-2">
+                {state.planets.planets.map((planet) => (
+                  <PlayerPlanetRow
+                    attackProtection={state.highscore?.attackProtection ?? null}
+                    key={planet.planetId}
+                    onSelectPlanet={onSelectPlanet}
+                    originCoords={originCoords}
+                    planet={planet}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">No indexed public planets are available for this player.</p>
+            )}
+          </Panel>
 
-          <aside className="grid content-start gap-4">
-            <Panel title="Alliance">
-              {state.highscore?.alliance ? (
-                <button
-                  className="w-full rounded border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-left hover:bg-cyan-300/15"
-                  onClick={() => onOpenAlliance(state.highscore?.alliance?.allianceId ?? "")}
-                  type="button"
-                >
-                  <span className="font-mono text-xs font-semibold text-cyan-100">[{state.highscore.alliance.tag}]</span>
-                  <span className="ml-2 text-sm font-semibold text-white">{state.highscore.alliance.name}</span>
-                </button>
-              ) : (
-                <p className="text-sm text-slate-400">No public alliance is indexed for this player.</p>
-              )}
-            </Panel>
-            <Panel title="Score">
-              {state.highscore ? (
-                <div className="grid grid-cols-2 gap-2">
-                  {Object.entries(state.highscore.score).map(([key, value]) => (
-                    <MiniStat key={key} label={scoreLabel(key)} value={formatScore(value)} />
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-400">No public score row is indexed yet.</p>
-              )}
-            </Panel>
-          </aside>
+          <Panel title="Score">
+            {scoreItems.length ? (
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {scoreItems.map((item) => (
+                  <CompactStat key={item.label} label={item.label} value={item.value} />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">No public score row is indexed yet.</p>
+            )}
+          </Panel>
         </div>
       ) : null}
     </InspectShell>
+  );
+}
+
+function PlayerPlanetRow({
+  attackProtection,
+  onSelectPlanet,
+  originCoords,
+  planet,
+}: {
+  attackProtection: HighscoreEntry["attackProtection"] | null;
+  onSelectPlanet: (coords: Coordinates) => void;
+  originCoords?: Coordinates | undefined;
+  planet: ManagedPlanetResponse;
+}) {
+  const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
+  const signals = playerPlanetTacticalSignals(planet, originCoords, attackProtection);
+
+  return (
+    <button
+      className="grid gap-2 rounded border border-white/10 bg-black/20 px-3 py-2 text-left transition hover:border-cyan-300/25 hover:bg-white/[0.06]"
+      key={planet.planetId}
+      onClick={() => onSelectPlanet(coords)}
+      title={`Open [${coords.galaxy}:${coords.system}:${coords.position}]`}
+      type="button"
+    >
+      <span className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-semibold text-white">{planet.name || `Planet #${planet.planetId}`}</span>
+        <span className="font-mono text-xs text-cyan-100">[{coords.galaxy}:{coords.system}:{coords.position}]</span>
+      </span>
+      <span className="grid gap-1 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-4">
+        {signals.map((signal) => (
+          <span className="min-w-0 truncate" key={signal.label}>
+            <span className="text-slate-600">{signal.label}</span> {signal.value}
+          </span>
+        ))}
+      </span>
+    </button>
   );
 }
 
@@ -308,13 +345,14 @@ export function AllianceInspectPage({
   );
 }
 
-function InspectShell({ action, children, eyebrow, onBack, subtitle, title }: {
+function InspectShell({ action, children, eyebrow, onBack, subtitle, title, titlePrefix }: {
   action?: ComponentChildren;
   children: ComponentChildren;
   eyebrow?: string | undefined;
   onBack: () => void;
   subtitle: string;
   title: string;
+  titlePrefix?: ComponentChildren;
 }) {
   return (
     <section className="min-h-0 overflow-auto bg-[#080d16]">
@@ -325,7 +363,10 @@ function InspectShell({ action, children, eyebrow, onBack, subtitle, title }: {
               <ArrowLeft size={14} /> Back
             </button>
             {eyebrow ? <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-200/70">{eyebrow}</p> : null}
-            <h1 className="mt-1 truncate text-2xl font-semibold text-white">{title}</h1>
+            <h1 className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-2xl font-semibold text-white">
+              {titlePrefix}
+              <span className="min-w-0 truncate">{title}</span>
+            </h1>
             <p className="mt-1 break-all text-sm text-slate-400">{subtitle}</p>
           </div>
           {action}
@@ -435,6 +476,15 @@ function memberRowTone(member: RosterMember, isViewer: boolean): string {
   return "border-white/10 bg-white/[0.03]";
 }
 
+function CompactStat({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1.5 rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-xs">
+      <span className="shrink-0 font-semibold uppercase text-slate-500">{label}</span>
+      <span className="min-w-0 truncate font-mono text-slate-100">{value}</span>
+    </span>
+  );
+}
+
 function Notice({ children, tone = "info" }: { children: ComponentChildren; tone?: "error" | "info" }) {
   return (
     <div className={`rounded border px-3 py-2 text-sm ${tone === "error" ? "border-red-400/30 bg-red-400/10 text-red-100" : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"}`}>
@@ -452,8 +502,61 @@ function formatScore(value: string | undefined): string {
   }
 }
 
-function scoreLabel(key: string): string {
-  if (key === "researchLevels") return "Research Lvls";
-  if (key === "fleetCount") return "Ships";
-  return key;
+export function playerInspectScoreItems(highscore: HighscoreEntry | null): Array<{ label: string; value: string }> {
+  if (!highscore) return [];
+  return [
+    { label: "Economy", value: formatScore(highscore.score.economy) },
+    { label: "Military", value: formatScore(highscore.score.military) },
+    { label: "Fleet", value: formatScore(highscore.score.fleet) },
+    { label: "Defense", value: formatScore(highscore.score.defense) },
+    { label: "Research", value: formatScore(highscore.score.research) },
+    { label: "Research Lvls", value: formatScore(highscore.score.researchLevels) },
+    { label: "Ships", value: formatScore(highscore.score.fleetCount) },
+  ];
+}
+
+export function playerPlanetTacticalSignals(
+  planet: ManagedPlanetResponse,
+  originCoords: Coordinates | undefined,
+  attackProtection: HighscoreEntry["attackProtection"] | null,
+): Array<{ label: string; value: string }> {
+  return [
+    { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Origin unavailable" },
+    { label: "Raidable", value: formatResources(planet.resources) },
+    { label: "Risk", value: attackRiskLabel(attackProtection) },
+    { label: "Ships/Def", value: "Not indexed publicly" },
+    { label: "Fields", value: `${planet.fieldsUsed}/${planet.fieldsCapacity}` },
+    { label: "Queues", value: planetQueueSignal(planet) },
+    { label: "Moon", value: planet.moon?.exists ? "Yes" : "No" },
+  ];
+}
+
+function attackRiskLabel(attackProtection: HighscoreEntry["attackProtection"] | null): string {
+  if (!attackProtection || attackProtection.allowed || attackProtection.blockedReason === "none") return "Attackable";
+  return attackProtection.blockedReasonLabel ?? "Protected";
+}
+
+function formatResources(resources: OnChainResources): string {
+  return `${formatShortNumber(resources.metal)} M / ${formatShortNumber(resources.crystal)} C / ${formatShortNumber(resources.deuterium)} D`;
+}
+
+function formatShortNumber(value: string): string {
+  try {
+    const number = BigInt(value);
+    if (number >= 1_000_000_000n) return `${(Number(number / 100_000_000n) / 10).toLocaleString("en-US")}B`;
+    if (number >= 1_000_000n) return `${(Number(number / 100_000n) / 10).toLocaleString("en-US")}M`;
+    if (number >= 1_000n) return `${(Number(number / 100n) / 10).toLocaleString("en-US")}K`;
+    return number.toLocaleString("en-US");
+  } catch {
+    return value;
+  }
+}
+
+function planetQueueSignal(planet: ManagedPlanetResponse): string {
+  const active = [
+    planet.queues.building?.active ? "Building" : null,
+    planet.queues.ship?.active ? "Shipyard" : null,
+    planet.queues.defense?.active ? "Defense" : null,
+  ].filter(Boolean);
+  return active.length ? active.join(", ") : "Idle";
 }
