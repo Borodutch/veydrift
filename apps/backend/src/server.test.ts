@@ -3328,6 +3328,46 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("adds current wallet attack protection to highscore rows", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const requestedTargets: string[] = [];
+    const chainReader = new class extends MockChainReader {
+      override async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+        expect(wallet).toBe(attacker);
+        requestedTargets.push(targetPlanetId.toString());
+        return {
+          wallet,
+          targetPlanetId: targetPlanetId.toString(),
+          allowed: false,
+          blockedReason: "score_protection",
+          blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+          relation: "weaker",
+          defenderHonorStatus: "neutral",
+          plunderBps: 0,
+          defenderInactive: false
+        };
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(requestedTargets).toContain(planet.planetId);
+    expect(body.rankings.total[0].attackProtection).toEqual({
+      allowed: false,
+      blockedReason: "score_protection",
+      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
+    });
+  });
+
   test("serves empty highscore rankings as a successful payload", async () => {
     const chainReader = new MockChainReader();
     chainReader.listSettledPlanetEvents = async () => [];
