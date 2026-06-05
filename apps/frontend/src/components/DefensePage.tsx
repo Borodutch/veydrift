@@ -6,8 +6,10 @@ import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainDefenseState } from "../walletFlow";
 import {
   Notice,
+  parseProductionQuantity,
   ProductionCatalog,
   type ProductionCatalogItem,
+  type ProductionQuantityInput,
   type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
@@ -60,7 +62,7 @@ export function DefensePage({
   selectedDefenseKey,
   spendableResources,
 }: DefensePageProps) {
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
   const selectedKey = selectedDefenseKey ?? localSelectedKey;
   const shipyardLevel = defenseState?.shipyardLevel ?? 0;
@@ -198,7 +200,7 @@ export function defenseProductionItems({
   defenseState: ChainDefenseState | null;
   productionAvailable: boolean;
   productionRates?: Resources | undefined;
-  quantities: Record<string, number>;
+  quantities: Record<string, ProductionQuantityInput>;
   queue?: ChainDefenseState["queue"] | undefined;
   resources: Resources | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
@@ -206,7 +208,9 @@ export function defenseProductionItems({
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
     const deployed = productionAvailable ? chainDefense?.count : undefined;
     const baseCost = productionAvailable ? toResources(chainDefense?.cost) : undefined;
-    const quantity = quantities[defense.key] ?? 1;
+    const quantityInput = quantities[defense.key] ?? 1;
+    const parsedQuantity = parseProductionQuantity(quantityInput);
+    const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
     const durationSeconds = baseCost
       ? defenseDurationEstimate(defenseState?.shipyardLevel ?? 0, defenseState?.naniteLevel ?? 0, baseCost, quantity)
@@ -248,6 +252,8 @@ export function defenseProductionItems({
       label: defense.label,
       missing,
       quantity,
+      quantityInput,
+      quantityValid: parsedQuantity !== undefined,
       queued,
       requirements,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",

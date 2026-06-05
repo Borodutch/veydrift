@@ -13,6 +13,7 @@ import {
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 export type ProductionRequirementState = RequirementFlair;
+export type ProductionQuantityInput = number | string;
 
 export type ProductionCatalogItem<Key extends string = string> = {
   key: Key;
@@ -32,6 +33,8 @@ export type ProductionCatalogItem<Key extends string = string> = {
   missing: string[];
   blockedReason?: string | undefined;
   quantity: number;
+  quantityInput?: ProductionQuantityInput | undefined;
+  quantityValid?: boolean | undefined;
   disabled: boolean;
   actionLabel: string;
   detailNote: string;
@@ -100,7 +103,7 @@ export function ProductionCatalog<Key extends string>({
   onBuild: (item: ProductionCatalogItem<Key>) => void;
   onFinishQueue?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
-  onQuantity: (key: Key, quantity: number) => void;
+  onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
   onRefreshQueue?: (() => void) | undefined;
   onSelect: (key: Key) => void;
   queue?: ProductionQueue | undefined;
@@ -267,7 +270,7 @@ function SelectedProductionPanel<Key extends string>({
   item: ProductionCatalogItem<Key> | undefined;
   onBuild: (item: ProductionCatalogItem<Key>) => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
-  onQuantity: (key: Key, quantity: number) => void;
+  onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
 }) {
   if (!item) {
     return (
@@ -276,6 +279,9 @@ function SelectedProductionPanel<Key extends string>({
       </aside>
     );
   }
+
+  const quantityInput = item.quantityInput ?? item.quantity;
+  const quantityInvalid = item.quantityValid === false;
 
   return (
     <aside className="grid gap-4 rounded border border-white/10 bg-[#101624] p-4 xl:sticky xl:top-4 xl:order-2">
@@ -316,27 +322,52 @@ function SelectedProductionPanel<Key extends string>({
           <input
             aria-label={`${item.label} quantity`}
             className="h-9 w-24 rounded border border-white/10 bg-black/20 px-2 text-sm text-white outline-none focus:border-signal/60"
+            inputMode="numeric"
             min={1}
-            onInput={(event) => {
-              const value = Number((event.currentTarget as HTMLInputElement).value);
-              onQuantity(item.key, Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1);
+            onBlur={() => {
+              if (quantityInvalid) {
+                onQuantity(item.key, 1);
+              }
             }}
+            onInput={(event) => {
+              const rawValue = (event.currentTarget as HTMLInputElement).value;
+              onQuantity(item.key, rawValue);
+            }}
+            step={1}
             type="number"
-            value={item.quantity}
+            value={quantityInput}
           />
           <button
             className="h-9 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-            disabled={item.disabled}
+            disabled={item.disabled || quantityInvalid}
             onClick={() => onBuild(item)}
             type="button"
           >
             {item.actionLabel}
           </button>
         </div>
-        {item.blockedReason ? <p className="text-xs text-slate-500">{item.blockedReason}</p> : null}
+        {quantityInvalid || item.blockedReason ? (
+          <p className="text-xs text-slate-500">
+            {quantityInvalid ? productionQuantityValidationMessage : item.blockedReason}
+          </p>
+        ) : null}
       </div>
     </aside>
   );
+}
+
+export const productionQuantityValidationMessage = "Enter a whole number of 1 or more.";
+
+export function parseProductionQuantity(input: ProductionQuantityInput | undefined): number | undefined {
+  if (input === undefined) return 1;
+  if (typeof input === "number") {
+    return Number.isSafeInteger(input) && input >= 1 ? input : undefined;
+  }
+
+  const trimmed = input.trim();
+  if (!/^[0-9]+$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : undefined;
 }
 
 function ProductionRequirementFlairs({
