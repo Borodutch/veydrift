@@ -258,7 +258,6 @@ export function shipProductionItems({
       countLabel: "Owned",
       countValue: owned,
       detailNote: stats || "Production unit",
-      description: ship.description,
       disabled,
       durationSeconds,
       group: ship.group,

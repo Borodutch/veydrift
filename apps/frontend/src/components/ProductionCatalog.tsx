@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { formatCost } from "../buildingDetails";
 import type { Resources } from "../playableMvp";
 import type { QueueStateResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
@@ -34,7 +35,6 @@ export type ProductionCatalogItem<Key extends string = string> = {
   disabled: boolean;
   actionLabel: string;
   detailNote: string;
-  description?: string | undefined;
   notes?: string[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
@@ -297,18 +297,12 @@ function SelectedProductionPanel<Key extends string>({
         </div>
       </div>
 
-      {item.description ? (
-        <p className="rounded border border-white/10 bg-black/20 p-3 text-sm leading-5 text-slate-300">
-          {item.description}
-        </p>
-      ) : null}
-
       <div className="grid gap-2">
         <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Details</h4>
         <dl className="grid grid-cols-2 gap-2 text-xs">
           <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
           <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
-          <Stat className="col-span-2" label="Price" value={item.cost ? formatPrice(item.cost) : "-"} />
+          <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
         </dl>
       </div>
 
@@ -418,8 +412,8 @@ function format(value: number): string {
   return formatter.format(Math.floor(value));
 }
 
-function formatPrice(cost: Resources): string {
-  return `M ${format(cost.metal)} · C ${format(cost.crystal)} · D ${format(cost.deuterium)}`;
+export function formatProductionPrice(cost: Resources): string {
+  return formatCost(cost);
 }
 
 function formatDuration(seconds: number): string {
