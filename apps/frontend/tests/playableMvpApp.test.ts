@@ -50,6 +50,8 @@ describe("Playable MVP app display helpers", () => {
     "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
   const buildingFinishLiveStateRequiredLabel =
     "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
+  const buildingCompletionWalletPrompt =
+    "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
 
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
@@ -112,7 +114,7 @@ describe("Playable MVP app display helpers", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: {
         status: "pending",
-        label: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+        label: buildingCompletionWalletPrompt,
       },
       gameContract: "0x3333333333333333333333333333333333333333",
       homePlanetId: "7",
@@ -159,16 +161,16 @@ describe("Playable MVP app display helpers", () => {
     });
 
     expect(infrastructureFinishAction({
-      actionUnavailableReason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      actionUnavailableReason: buildingCompletionWalletPrompt,
       isActionPending: true,
       isBuildingReadyToFinish: true,
       onFinishBuilding,
       queue,
     })).toEqual({
       disabled: true,
-      label: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      label: buildingCompletionWalletPrompt,
       onFinish: undefined,
-      reason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      reason: buildingCompletionWalletPrompt,
       visible: true,
     });
 

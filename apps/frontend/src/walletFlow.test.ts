@@ -956,6 +956,7 @@ describe("walletFlow", () => {
     let sentTransactions = 0;
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
+      if (method === "eth_estimateGas") return "0x5208";
       sentTransactions += 1;
       return `0xtx${sentTransactions}`;
     });
@@ -987,6 +988,16 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0x165715e3", [7, 0])
+          }
+        ]
+      },
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
           }
         ]
       },
@@ -1043,13 +1054,11 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("submits ready finish building upgrade transactions without a wallet-backed preflight call", async () => {
+  test("preflights ready finish building upgrade transactions before wallet submission", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") {
-        throw new Error("eth_call should not block a ready finish click");
-      }
+      if (method === "eth_estimateGas") return "0x3658c";
       return "0xfinish";
     });
 
@@ -1059,7 +1068,45 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      },
+      {
         method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("blocks invalid finish building upgrade transactions before opening the wallet", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_estimateGas") {
+        throw new Error("execution reverted: ConstructionInactive");
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(provider, account, contract, "1")
+    ).rejects.toThrow("Building completion cannot be confirmed by the game contract yet");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_estimateGas",
         params: [
           {
             from: account,
