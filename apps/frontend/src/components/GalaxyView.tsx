@@ -121,6 +121,7 @@ interface Props {
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
 }
@@ -138,6 +139,7 @@ export function GalaxyView({
   shipyardState = null,
   onAction,
   onSelectAlliance,
+  onSelectPlayer,
   onSelectPlanet,
   onNavigate,
 }: Props) {
@@ -432,6 +434,7 @@ export function GalaxyView({
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
                   onSelectAlliance={onSelectAlliance}
+                  onSelectPlayer={onSelectPlayer}
                   onAction={onAction}
                   missionSpeedPercent={missionSpeedPercent}
                   attackProtection={planet?.occupiedBy ? attackProtection[planet.occupiedBy.planetId] : undefined}
@@ -641,6 +644,7 @@ function GalaxySlot({
   attackProtection,
   onSelectPlanet,
   onSelectAlliance,
+  onSelectPlayer,
 }: {
   account: string | undefined;
   actionState: GalaxyActionState;
@@ -658,6 +662,7 @@ function GalaxySlot({
   attackProtection: AttackProtectionStatus | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onSelectAlliance: ((allianceId: string) => void) | undefined;
+  onSelectPlayer: ((wallet: string) => void) | undefined;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -805,7 +810,19 @@ function GalaxySlot({
 
       <div className={`hidden min-w-32 justify-self-end text-right text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
         <div className="min-w-0">
-          <span className="break-words">{commanderLabel}</span>
+          {planet.occupiedBy?.owner ? (
+            <button
+              className="break-words text-right hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
+              disabled={!onSelectPlayer}
+              onClick={() => onSelectPlayer?.(planet.occupiedBy?.owner ?? "")}
+              title={`Open player ${commanderLabel}`}
+              type="button"
+            >
+              {commanderLabel}
+            </button>
+          ) : (
+            <span className="break-words">{commanderLabel}</span>
+          )}
         </div>
         {planet.alliance ? (
           <button

@@ -15,6 +15,8 @@ import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { MissionControlPage } from "./components/MissionControlPage";
 import { RankingsPage } from "./components/RankingsPage";
+import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
+import { buildInspectHash, parseInspectRoute, type InspectRoute } from "./inspectRoutes";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
@@ -232,7 +234,7 @@ export function canApplyRefreshRequest(gate: RefreshFreshnessGate, requestId: nu
 }
 
 export function shouldRefreshAllianceStateForPage(page: Page): boolean {
-  return page === "alliance" || page === "rankings";
+  return page === "alliance" || page === "rankings" || page === "alliance-inspect";
 }
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
@@ -1289,11 +1291,29 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
   };
 }
 
+function initialInspectPageState(): { page: Page; playerWallet: string | null; allianceId: string | null } {
+  if (typeof window === "undefined") return { page: "overview", playerWallet: null, allianceId: null };
+  const route = parseInspectRoute(window.location.hash);
+  if (route.kind === "player") return { page: "player-inspect", playerWallet: route.wallet, allianceId: null };
+  if (route.kind === "alliance") return { page: "alliance-inspect", playerWallet: null, allianceId: route.allianceId };
+  return { page: route.page, playerWallet: null, allianceId: null };
+}
+
+function writeInspectHash(route: InspectRoute): void {
+  if (typeof window === "undefined") return;
+  const hash = buildInspectHash(route);
+  if (window.location.hash !== hash) {
+    window.location.hash = hash;
+  }
+}
+
 export function PlayableMvpApp({ provider, account, miniAppMode = false, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>(() => initialInspectPageState().page);
+  const [inspectedPlayerWallet, setInspectedPlayerWallet] = useState<string | null>(() => initialInspectPageState().playerWallet);
+  const [inspectedAllianceId, setInspectedAllianceId] = useState<string | null>(() => initialInspectPageState().allianceId);
   const [selectedBuildingKey, setSelectedBuildingKey] = useState<BuildingKey>("metalMine");
   const [selectedResearchKey, setSelectedResearchKey] = useState<ResearchKey>("energy");
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
@@ -1415,6 +1435,35 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     apiBaseUrl,
     hydratedWalletSnapshotKey,
   });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleRouteChange = () => applyInspectRoute(parseInspectRoute(window.location.hash));
+    window.addEventListener("hashchange", handleRouteChange);
+    return () => window.removeEventListener("hashchange", handleRouteChange);
+
+    function applyInspectRoute(route: InspectRoute) {
+      if (route.kind === "player") {
+        setInspectedPlayerWallet(route.wallet);
+        setInspectedAllianceId(null);
+        setSelectedCoords(undefined);
+        setPage("player-inspect");
+        return;
+      }
+      if (route.kind === "alliance") {
+        setInspectedAllianceId(route.allianceId);
+        setSelectedAllianceId(route.allianceId);
+        setInspectedPlayerWallet(null);
+        setSelectedCoords(undefined);
+        setPage("alliance-inspect");
+        return;
+      }
+      setInspectedPlayerWallet(null);
+      setInspectedAllianceId(null);
+      setPage(route.page);
+      if (route.page !== "planet") setSelectedCoords(undefined);
+    }
+  }, []);
 
   useEffect(() => {
     setPlayerProfile(undefined);
@@ -3677,25 +3726,45 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
 
   const handleNavigate = useCallback((target: Page) => {
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
     setPage(target);
     setSelectedCoords(undefined);
+    writeInspectHash({ kind: "page", page: target });
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
     setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
     setPage("planet");
+    writeInspectHash({ kind: "page", page: "planet" });
   }, []);
 
   const handleSelectAlliance = useCallback((allianceId: string) => {
     setSelectedAllianceId(allianceId);
+    setInspectedAllianceId(allianceId);
+    setInspectedPlayerWallet(null);
     setSelectedCoords(undefined);
-    setPage("alliance");
+    setPage("alliance-inspect");
+    writeInspectHash({ kind: "alliance", allianceId });
+  }, []);
+
+  const handleSelectPlayer = useCallback((wallet: string) => {
+    setInspectedPlayerWallet(wallet);
+    setInspectedAllianceId(null);
+    setSelectedCoords(undefined);
+    setPage("player-inspect");
+    writeInspectHash({ kind: "player", wallet });
   }, []);
 
   const handleNavigateSystem = useCallback((g: number, s: number) => {
     setGalaxyNav({ galaxy: g, system: s });
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
     setPage("galaxy");
+    writeInspectHash({ kind: "page", page: "galaxy" });
   }, []);
 
   const handleOpenRequirement = useCallback((target: RequirementTarget) => {
@@ -3774,6 +3843,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           shipyardState={shipyardState}
           onAction={handleGalaxyAction}
           onSelectAlliance={handleSelectAlliance}
+          onSelectPlayer={handleSelectPlayer}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
@@ -3928,9 +3998,44 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onJoinRequest={handleRequestAllianceJoin}
           onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
+          onOpenAlliance={handleSelectAlliance}
+          onOpenPlayer={handleSelectPlayer}
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}
           onUpdateProfile={handleUpdateAllianceProfile}
+        />
+      );
+    }
+
+    if (page === "alliance-inspect" && inspectedAllianceId) {
+      return (
+        <AllianceInspectPage
+          actionBusy={allianceAction.status === "pending"}
+          allianceId={inspectedAllianceId}
+          allianceState={allianceState}
+          canTransact={Boolean(provider && account && allianceContract)}
+          disabled={allianceLoading}
+          onApproveJoinRequest={handleApproveAllianceJoinRequest}
+          onBack={() => handleNavigate("alliance")}
+          onDismissJoinRequest={handleDismissAllianceJoinRequest}
+          onInvite={handleInviteAllianceMember}
+          onKick={handleKickAllianceMember}
+          onOpenPlayer={handleSelectPlayer}
+          onRefresh={refreshAllianceState}
+          onSetRole={handleSetAllianceRole}
+        />
+      );
+    }
+
+    if (page === "player-inspect" && inspectedPlayerWallet) {
+      return (
+        <PlayerInspectPage
+          apiBaseUrl={apiBaseUrl}
+          currentWallet={account}
+          onBack={() => handleNavigate("rankings")}
+          onOpenAlliance={handleSelectAlliance}
+          onSelectPlanet={handleSelectPlanet}
+          wallet={inspectedPlayerWallet}
         />
       );
     }
@@ -3983,6 +4088,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           currentAllianceId={allianceState?.membership.allianceId}
           currentWallet={account}
           onSelectAlliance={handleSelectAlliance}
+          onSelectPlayer={handleSelectPlayer}
           onSelectPlanet={handleSelectPlanet}
         />
       );
