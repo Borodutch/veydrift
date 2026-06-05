@@ -119,6 +119,14 @@ describe("Rift requirement projection", () => {
       }
     ]);
   });
+
+  test("uses canonical Hyperspace technology id for the Rift requirement", () => {
+    expect(riftRequirements(false, 0, 0, { "8": 1 }).find((requirement) => requirement.key === "hyperspace"))
+      .toMatchObject({ currentLevel: 1, requiredLevel: 1 });
+
+    expect(riftRequirements(false, 0, 0, { "9": 1 }).find((requirement) => requirement.key === "hyperspace"))
+      .toMatchObject({ currentLevel: 0, requiredLevel: 1 });
+  });
 });
 
 class MockChainReader implements ChainReader {
