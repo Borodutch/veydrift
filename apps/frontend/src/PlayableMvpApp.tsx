@@ -497,7 +497,6 @@ export function buildingFinishUnavailableReasonForDisplay({
   backendSyncPausedReason,
   canTransact,
   completedBuildingFinishExpectation,
-  failedBuildingFinishExpectation,
   infrastructureState,
   isBuildingReadyToFinish,
   isDisplayedBuildingQueueReady,
@@ -507,7 +506,6 @@ export function buildingFinishUnavailableReasonForDisplay({
   backendSyncPausedReason?: string | undefined;
   canTransact: boolean;
   completedBuildingFinishExpectation?: FinishedBuildingExpectation | undefined;
-  failedBuildingFinishExpectation?: FinishedBuildingExpectation | undefined;
   infrastructureState: ChainInfrastructureState | null;
   isBuildingReadyToFinish: boolean;
   isDisplayedBuildingQueueReady: boolean;
@@ -527,14 +525,6 @@ export function buildingFinishUnavailableReasonForDisplay({
   });
   if (completedQueueSyncReason) {
     return completedQueueSyncReason;
-  }
-
-  const failedQueueSyncReason = failedBuildingFinishSyncReasonFor({
-    activeBuildingQueue,
-    expectation: failedBuildingFinishExpectation,
-  });
-  if (failedQueueSyncReason) {
-    return failedQueueSyncReason;
   }
 
   if (backendSyncPausedReason) {
@@ -2339,7 +2329,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       backendSyncPausedReason: infrastructureBackendSyncPausedReason,
       canTransact: Boolean(provider && account && gameContract),
       completedBuildingFinishExpectation,
-      failedBuildingFinishExpectation,
       infrastructureState: infrastructureChainState,
       isBuildingReadyToFinish,
       isDisplayedBuildingQueueReady,
@@ -2349,7 +2338,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     account,
     activeBuildingQueue,
     completedBuildingFinishExpectation,
-    failedBuildingFinishExpectation,
     gameContract,
     infrastructureBackendSyncPausedReason,
     infrastructureChainState,
@@ -2646,15 +2634,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         const duplicateFinishReason = completedBuildingFinishSyncReasonFor({
           activeBuildingQueue,
           expectation: completedBuildingFinishExpectation,
-        }) ?? failedBuildingFinishSyncReasonFor({
-          activeBuildingQueue,
-          expectation: failedBuildingFinishExpectation,
         });
         if (duplicateFinishReason) {
           setBuildingAction({ status: "error", buildingKey: completionBuildingKey, label: duplicateFinishReason });
           return;
         }
 
+        setFailedBuildingFinishExpectation(undefined);
         setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendFinishBuildingUpgradeTransaction(
           provider,
