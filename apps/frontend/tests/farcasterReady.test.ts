@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   detectFarcasterMiniApp,
+  farcasterMiniAppPlatformType,
   hasMiniAppUrlHint,
   resetFarcasterReadyForTests,
   scheduleFarcasterReady,
@@ -92,5 +93,32 @@ describe("Farcaster Mini App ready lifecycle", () => {
         ready: () => undefined,
       },
     }, { pathname: "/", search: "" })).resolves.toBe(false);
+  });
+
+  test("reads Mini App platform type from SDK context", async () => {
+    await expect(farcasterMiniAppPlatformType({
+      context: Promise.resolve({
+        client: {
+          platformType: "web",
+        },
+      }),
+      actions: {
+        ready: () => undefined,
+      },
+    })).resolves.toBe("web");
+
+    await expect(farcasterMiniAppPlatformType({
+      context: Promise.resolve({ client: {} }),
+      actions: {
+        ready: () => undefined,
+      },
+    })).resolves.toBe("unknown");
+
+    await expect(farcasterMiniAppPlatformType({
+      context: Promise.reject(new Error("host unavailable")),
+      actions: {
+        ready: () => undefined,
+      },
+    })).resolves.toBe("unknown");
   });
 });
