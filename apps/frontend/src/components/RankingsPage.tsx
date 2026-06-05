@@ -27,7 +27,7 @@ const categories: Array<{ key: HighscoreCategory; label: string }> = [
 ];
 
 export const rankingsColumnLabels = ["Rank", "Commander", "Planets", "Score", "Total"] as const;
-export const rankingsPageSize = 25;
+export const rankingsPageSize = 50;
 
 export function primaryRankingEntries(data: HighscoreResponse | null): HighscoreEntry[] {
   return data?.rankings.total ?? [];
