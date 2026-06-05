@@ -38,10 +38,21 @@ function matchingActiveProductionQueue(
 
   return valuesMatch(primaryQueue.itemId, fallbackQueue.itemId)
     && valuesMatch(primaryQueue.targetLevel, fallbackQueue.targetLevel)
-    && valuesMatch(primaryQueue.quantity, fallbackQueue.quantity)
-    && valuesMatch(primaryQueue.readyAt, fallbackQueue.readyAt);
+    && hasUsableFallbackStartedAt(primaryQueue, fallbackQueue);
 }
 
 function valuesMatch<T>(primaryValue: T | undefined, fallbackValue: T | undefined): boolean {
   return primaryValue === undefined || fallbackValue === undefined || primaryValue === fallbackValue;
+}
+
+function hasUsableFallbackStartedAt(
+  primaryQueue: QueueStateResponse,
+  fallbackQueue: QueueStateResponse,
+): boolean {
+  if (fallbackQueue.startedAt === undefined || fallbackQueue.startedAt === null) return false;
+
+  const startedAt = Number(fallbackQueue.startedAt);
+  const readyAt = Number(primaryQueue.readyAt ?? fallbackQueue.readyAt);
+
+  return Number.isFinite(startedAt) && Number.isFinite(readyAt) && startedAt < readyAt;
 }

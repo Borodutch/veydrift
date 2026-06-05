@@ -161,6 +161,7 @@ describe("walletFlow", () => {
       ...mockProvider(async ({ method, params }) => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [account];
+        if (method === "eth_estimateGas") return "0x5208";
         if (method === "eth_sendTransaction") return "0xabc";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -171,6 +172,14 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
+      {
+        method: "eth_estimateGas",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -188,6 +197,7 @@ describe("walletFlow", () => {
       ...mockProvider(async ({ method, params }) => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [account];
+        if (method === "eth_estimateGas") return "0x5208";
         if (method === "eth_sendTransaction") return "0xdef";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -198,6 +208,14 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
+      {
+        method: "eth_estimateGas",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -245,6 +263,7 @@ describe("walletFlow", () => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [];
         if (method === "eth_requestAccounts") return [account];
+        if (method === "eth_estimateGas") return "0x5208";
         if (method === "eth_sendTransaction") return "0xbuild";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -256,6 +275,14 @@ describe("walletFlow", () => {
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
       { method: "eth_requestAccounts", params: undefined },
+      {
+        method: "eth_estimateGas",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -909,7 +936,8 @@ describe("walletFlow", () => {
     expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
       "wallet could not read the current game contract state"
     );
-    expect(walletRequestErrorMessage(new Error("execution reverted"))).toContain("game contract rejected");
+    expect(walletRequestErrorMessage(new Error("execution reverted"))).toContain("indexed spendable balance");
+    expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("reconnect your wallet");
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
       "Unlock or reconnect your wallet"
     );
@@ -1033,6 +1061,16 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 0])
+          }
+        ]
+      },
+      {
         method: "eth_sendTransaction",
         params: [
           {
@@ -1099,6 +1137,34 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: "0xa5a0d5970000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("blocks invalid start building upgrade transactions before opening the wallet", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_estimateGas") {
+        throw new Error("execution reverted: MissingDependency");
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 5)
+    ).rejects.toThrow("Building upgrade cannot be confirmed by the game contract yet");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 5])
           }
         ]
       }
@@ -1801,6 +1867,19 @@ describe("walletFlow", () => {
         pointsDivisor: "1000",
         summary: "Veydrift score"
       },
+      currentPlayer: {
+        wallet: account.toLowerCase(),
+        rankings: {
+          total: { rank: 27, page: 2 },
+          economy: null,
+          research: null,
+          researchLevels: null,
+          military: null,
+          fleet: null,
+          fleetCount: null,
+          defense: null
+        }
+      },
       rankings: {
         total: [],
         economy: [],
@@ -1826,6 +1905,52 @@ describe("walletFlow", () => {
 
     try {
       await expect(fetchHighscores("https://api.example.test///")).resolves.toEqual(rankings);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches a specific highscore rankings page", async () => {
+    const originalFetch = globalThis.fetch;
+    const rankings = {
+      generatedAt: "2026-05-26T00:00:00.000Z",
+      formula: {
+        pointsDivisor: "1000",
+        summary: "Veydrift score"
+      },
+      pagination: {
+        page: 2,
+        pageSize: 25,
+        totalEntries: 60,
+        totalPages: 3,
+        hasPreviousPage: true,
+        hasNextPage: true
+      },
+      rankings: {
+        total: [],
+        economy: [],
+        research: [],
+        researchLevels: [],
+        military: [],
+        fleet: [],
+        fleetCount: [],
+        defense: []
+      }
+    };
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe(`https://api.example.test/highscores?limit=25&currentWallet=${account}&page=2&pageSize=25`);
+      expect(init).toEqual({
+        headers: { accept: "application/json" },
+      });
+      return new Response(JSON.stringify(rankings), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchHighscores("https://api.example.test", { currentWallet: account, page: 2, pageSize: 25 })).resolves.toEqual(rankings);
     } finally {
       globalThis.fetch = originalFetch;
     }

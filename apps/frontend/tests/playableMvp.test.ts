@@ -628,6 +628,29 @@ describe("playable MVP contract display helpers", () => {
     });
   });
 
+  test("reports zero current Fusion Reactor output when the reactor is not built", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 0,
+      solarPlant: 6,
+    };
+    const fusionEffect = buildingEffectMetrics(buildings, "fusionReactor");
+
+    expect(energyBalance(buildings)).toMatchObject({
+      produced: 212,
+      sources: {
+        fusionReactor: 0,
+        solarPlant: 212,
+      },
+    });
+    expect(fusionEffect).toMatchObject({
+      currentProduced: 0,
+      deltaProduced: 31,
+      nextProduced: 31,
+    });
+  });
+
   test("surfaces loaded top-bar energy even when production and usage are zero", () => {
     const state = createInitialPlayableState(1_000);
 

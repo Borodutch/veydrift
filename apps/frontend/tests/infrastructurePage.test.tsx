@@ -283,6 +283,34 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
+  test("does not leak Solar Plant output into unbuilt Fusion Reactor details", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 0,
+      solarPlant: 6,
+    };
+    const fusionRows = detailEffectRows(
+      buildingEffectMetrics(buildings, "fusionReactor"),
+      buildingEnergyDetail(buildings, "fusionReactor"),
+    );
+
+    expect(fusionRows).toContainEqual({
+      delta: "+31",
+      label: "Energy output",
+      next: "31 produced",
+      value: "0 produced",
+    });
+    expect(fusionRows.some((row) => row.value === "212 produced" || row.next === "243 produced")).toBe(false);
+    expect(fusionRows).toContainEqual({
+      delta: "+11/h",
+      label: "Deuterium use",
+      next: "11/h",
+      tone: "warning",
+      value: "0/h",
+    });
+  });
+
   test("keeps Solar Plant and Fusion Reactor outputs separate when both produce energy", () => {
     const state = createInitialPlayableState(1_000);
     const buildings = {

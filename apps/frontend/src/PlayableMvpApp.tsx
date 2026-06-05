@@ -15,6 +15,8 @@ import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { MissionControlPage } from "./components/MissionControlPage";
 import { RankingsPage } from "./components/RankingsPage";
+import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
+import { buildInspectHash, parseInspectRoute, type InspectRoute } from "./inspectRoutes";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
@@ -216,6 +218,10 @@ const buildingWalletConfirmationLabel = (label: string) =>
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 
 type RefreshFreshnessGate = { current: number };
+type ResourceSnapshotFreshness = {
+  planetId: string | null;
+  lastSettledAt: string | null;
+};
 
 export function beginRefreshRequest(gate: RefreshFreshnessGate): number {
   gate.current += 1;
@@ -231,8 +237,63 @@ export function canApplyRefreshRequest(gate: RefreshFreshnessGate, requestId: nu
   return requestId === gate.current;
 }
 
+export function resourceSnapshotFreshnessForSettlement(
+  settlement: WalletSettlementResponse | undefined,
+): ResourceSnapshotFreshness {
+  return {
+    planetId: settlement?.planet?.planetId ?? settlement?.homePlanetId ?? null,
+    lastSettledAt: settlement?.planet?.lastSettledAt ?? null,
+  };
+}
+
+export function resourceSnapshotFreshnessForInfrastructure(
+  infrastructure: ChainInfrastructureState | null,
+): ResourceSnapshotFreshness {
+  return {
+    planetId: infrastructure?.planetId ?? infrastructure?.homePlanetId ?? null,
+    lastSettledAt: infrastructure?.planetLastSettledAt ?? null,
+  };
+}
+
+export function shouldApplyResourceSnapshot(
+  current: ResourceSnapshotFreshness,
+  next: ResourceSnapshotFreshness,
+): boolean {
+  if (current.planetId && next.planetId && current.planetId !== next.planetId) {
+    return true;
+  }
+
+  const currentSettledAt = resourceSnapshotSettledAt(current);
+  const nextSettledAt = resourceSnapshotSettledAt(next);
+  if (currentSettledAt === undefined || nextSettledAt === undefined) {
+    return true;
+  }
+
+  return nextSettledAt >= currentSettledAt;
+}
+
+export function recordedResourceSnapshotFreshness(
+  current: ResourceSnapshotFreshness,
+  next: ResourceSnapshotFreshness,
+): ResourceSnapshotFreshness {
+  if (current.planetId === next.planetId && !next.lastSettledAt) {
+    return current;
+  }
+
+  return next;
+}
+
 export function shouldRefreshAllianceStateForPage(page: Page): boolean {
-  return page === "alliance" || page === "rankings";
+  return page === "alliance" || page === "rankings" || page === "alliance-inspect";
+}
+
+function resourceSnapshotSettledAt(snapshot: ResourceSnapshotFreshness): bigint | undefined {
+  if (!snapshot.lastSettledAt) return undefined;
+  try {
+    return BigInt(snapshot.lastSettledAt);
+  } catch {
+    return undefined;
+  }
 }
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
@@ -815,6 +876,19 @@ export function infrastructureBackendSyncPausedReasonFor({
   return undefined;
 }
 
+export function buildingUpgradeActionErrorLabel(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (
+    /Infrastructure API/i.test(message)
+    || /reading infrastructure from the game API/i.test(message)
+    || /backend connection recovers/i.test(message)
+  ) {
+    return infrastructureBackendSyncPausedLabel;
+  }
+
+  return walletRequestErrorMessage(error);
+}
+
 function backendCanonicalStatePaused(state: ChainInfrastructureState | null): boolean {
   return state?.degraded === true || state?.stale === true;
 }
@@ -1289,11 +1363,29 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
   };
 }
 
+function initialInspectPageState(): { page: Page; playerWallet: string | null; allianceId: string | null } {
+  if (typeof window === "undefined") return { page: "overview", playerWallet: null, allianceId: null };
+  const route = parseInspectRoute(window.location.hash);
+  if (route.kind === "player") return { page: "player-inspect", playerWallet: route.wallet, allianceId: null };
+  if (route.kind === "alliance") return { page: "alliance-inspect", playerWallet: null, allianceId: route.allianceId };
+  return { page: route.page, playerWallet: null, allianceId: null };
+}
+
+function writeInspectHash(route: InspectRoute): void {
+  if (typeof window === "undefined") return;
+  const hash = buildInspectHash(route);
+  if (window.location.hash !== hash) {
+    window.location.hash = hash;
+  }
+}
+
 export function PlayableMvpApp({ provider, account, miniAppMode = false, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>(() => initialInspectPageState().page);
+  const [inspectedPlayerWallet, setInspectedPlayerWallet] = useState<string | null>(() => initialInspectPageState().playerWallet);
+  const [inspectedAllianceId, setInspectedAllianceId] = useState<string | null>(() => initialInspectPageState().allianceId);
   const [selectedBuildingKey, setSelectedBuildingKey] = useState<BuildingKey>("metalMine");
   const [selectedResearchKey, setSelectedResearchKey] = useState<ResearchKey>("energy");
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
@@ -1350,6 +1442,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const onChainRefreshGate = useRef(0);
   const infrastructureRefreshGate = useRef(0);
+  const latestOnChainResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
+  const latestInfrastructureResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     if (planet?.coordinates) {
@@ -1417,6 +1511,35 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   });
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleRouteChange = () => applyInspectRoute(parseInspectRoute(window.location.hash));
+    window.addEventListener("hashchange", handleRouteChange);
+    return () => window.removeEventListener("hashchange", handleRouteChange);
+
+    function applyInspectRoute(route: InspectRoute) {
+      if (route.kind === "player") {
+        setInspectedPlayerWallet(route.wallet);
+        setInspectedAllianceId(null);
+        setSelectedCoords(undefined);
+        setPage("player-inspect");
+        return;
+      }
+      if (route.kind === "alliance") {
+        setInspectedAllianceId(route.allianceId);
+        setSelectedAllianceId(route.allianceId);
+        setInspectedPlayerWallet(null);
+        setSelectedCoords(undefined);
+        setPage("alliance-inspect");
+        return;
+      }
+      setInspectedPlayerWallet(null);
+      setInspectedAllianceId(null);
+      setPage(route.page);
+      if (route.page !== "planet") setSelectedCoords(undefined);
+    }
+  }, []);
+
+  useEffect(() => {
     setPlayerProfile(undefined);
     setPlayerProfileAction({ status: "idle" });
   }, [account]);
@@ -1473,6 +1596,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const refreshInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
     if (!apiBaseUrl || !account) {
+      latestInfrastructureResourceSnapshot.current = { planetId: null, lastSettledAt: null };
       setInfrastructureChainState(null);
       setMoonState(null);
       setInfrastructureLoading(false);
@@ -1491,7 +1615,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       ]);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return;
       if (infrastructureResult.status === "fulfilled") {
-        setInfrastructureChainState(infrastructureResult.value);
+        const nextFreshness = resourceSnapshotFreshnessForInfrastructure(infrastructureResult.value);
+        if (shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness)) {
+          latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+            latestInfrastructureResourceSnapshot.current,
+            nextFreshness,
+          );
+          setInfrastructureChainState(infrastructureResult.value);
+        }
       } else {
         console.error(infrastructureResult.reason);
         setInfrastructureError(infrastructureResult.reason instanceof Error ? infrastructureResult.reason.message : "Infrastructure state could not be loaded.");
@@ -1513,6 +1644,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const refreshLiveInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
     if (!apiBaseUrl || !account) {
+      latestInfrastructureResourceSnapshot.current = { planetId: null, lastSettledAt: null };
       setInfrastructureChainState(null);
       return null;
     }
@@ -1522,7 +1654,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     try {
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return nextInfrastructure;
-      setInfrastructureChainState(nextInfrastructure);
+      const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
+      if (shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness)) {
+        latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+          latestInfrastructureResourceSnapshot.current,
+          nextFreshness,
+        );
+        setInfrastructureChainState(nextInfrastructure);
+      }
       return nextInfrastructure;
     } catch (error) {
       console.error(error);
@@ -1649,6 +1788,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }) => {
     const requestId = beginRefreshRequest(onChainRefreshGate);
     if (!apiBaseUrl || !account) {
+      latestOnChainResourceSnapshot.current = { planetId: null, lastSettledAt: null };
       setOnChainSettlement(undefined);
       setWalletPlanets([]);
       setOnChainQueues(undefined);
@@ -1677,6 +1817,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(onChainRefreshGate, requestId)) {
         return;
       }
+      const nextFreshness = resourceSnapshotFreshnessForSettlement(nextSettlement);
+      if (!shouldApplyResourceSnapshot(latestOnChainResourceSnapshot.current, nextFreshness)) {
+        return;
+      }
+      latestOnChainResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        latestOnChainResourceSnapshot.current,
+        nextFreshness,
+      );
       setWalletPlanets(planets);
       if (!selectedPlanetId && selectedPlanet?.planetId) {
         setSelectedPlanetId(selectedPlanet.planetId);
@@ -1724,6 +1872,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
       markFreshStateWrite(onChainRefreshGate);
       markFreshStateWrite(infrastructureRefreshGate);
+      latestOnChainResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        latestOnChainResourceSnapshot.current,
+        resourceSnapshotFreshnessForSettlement(snapshot.settlement),
+      );
+      latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        latestInfrastructureResourceSnapshot.current,
+        resourceSnapshotFreshnessForInfrastructure(snapshot.infrastructure),
+      );
       setOnChainSettlement(snapshot.settlement);
       setOnChainQueues(snapshot.queues);
       setOnChainError(undefined);
@@ -2357,6 +2513,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
       const building = buildingContractIds[key];
       const label = "Building upgrade";
+      let backendStateReady = false;
       setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
 
       try {
@@ -2375,6 +2532,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           return;
         }
 
+        backendStateReady = true;
         setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
@@ -2397,7 +2555,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: walletRequestErrorMessage(error),
+          label: backendStateReady ? walletRequestErrorMessage(error) : buildingUpgradeActionErrorLabel(error),
         });
       }
     });
@@ -3677,25 +3835,45 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
 
   const handleNavigate = useCallback((target: Page) => {
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
     setPage(target);
     setSelectedCoords(undefined);
+    writeInspectHash({ kind: "page", page: target });
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
     setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
     setPage("planet");
+    writeInspectHash({ kind: "page", page: "planet" });
   }, []);
 
   const handleSelectAlliance = useCallback((allianceId: string) => {
     setSelectedAllianceId(allianceId);
+    setInspectedAllianceId(allianceId);
+    setInspectedPlayerWallet(null);
     setSelectedCoords(undefined);
-    setPage("alliance");
+    setPage("alliance-inspect");
+    writeInspectHash({ kind: "alliance", allianceId });
+  }, []);
+
+  const handleSelectPlayer = useCallback((wallet: string) => {
+    setInspectedPlayerWallet(wallet);
+    setInspectedAllianceId(null);
+    setSelectedCoords(undefined);
+    setPage("player-inspect");
+    writeInspectHash({ kind: "player", wallet });
   }, []);
 
   const handleNavigateSystem = useCallback((g: number, s: number) => {
     setGalaxyNav({ galaxy: g, system: s });
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
     setPage("galaxy");
+    writeInspectHash({ kind: "page", page: "galaxy" });
   }, []);
 
   const handleOpenRequirement = useCallback((target: RequirementTarget) => {
@@ -3774,6 +3952,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           shipyardState={shipyardState}
           onAction={handleGalaxyAction}
           onSelectAlliance={handleSelectAlliance}
+          onSelectPlayer={handleSelectPlayer}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
@@ -3928,9 +4107,44 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onJoinRequest={handleRequestAllianceJoin}
           onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
+          onOpenAlliance={handleSelectAlliance}
+          onOpenPlayer={handleSelectPlayer}
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}
           onUpdateProfile={handleUpdateAllianceProfile}
+        />
+      );
+    }
+
+    if (page === "alliance-inspect" && inspectedAllianceId) {
+      return (
+        <AllianceInspectPage
+          actionBusy={allianceAction.status === "pending"}
+          allianceId={inspectedAllianceId}
+          allianceState={allianceState}
+          canTransact={Boolean(provider && account && allianceContract)}
+          disabled={allianceLoading}
+          onApproveJoinRequest={handleApproveAllianceJoinRequest}
+          onBack={() => handleNavigate("alliance")}
+          onDismissJoinRequest={handleDismissAllianceJoinRequest}
+          onInvite={handleInviteAllianceMember}
+          onKick={handleKickAllianceMember}
+          onOpenPlayer={handleSelectPlayer}
+          onRefresh={refreshAllianceState}
+          onSetRole={handleSetAllianceRole}
+        />
+      );
+    }
+
+    if (page === "player-inspect" && inspectedPlayerWallet) {
+      return (
+        <PlayerInspectPage
+          apiBaseUrl={apiBaseUrl}
+          currentWallet={account}
+          onBack={() => handleNavigate("rankings")}
+          onOpenAlliance={handleSelectAlliance}
+          onSelectPlanet={handleSelectPlanet}
+          wallet={inspectedPlayerWallet}
         />
       );
     }
@@ -3983,6 +4197,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           currentAllianceId={allianceState?.membership.allianceId}
           currentWallet={account}
           onSelectAlliance={handleSelectAlliance}
+          onSelectPlayer={handleSelectPlayer}
           onSelectPlanet={handleSelectPlanet}
         />
       );
