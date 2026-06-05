@@ -235,6 +235,7 @@ export type DefenseState = {
   unavailableReason?: string;
   resources: Resources | null;
   shipyardLevel: number;
+  naniteLevel: number;
   missileSiloLevel: number;
   technologyLevels: Record<string, number>;
   defenses: Array<{
@@ -248,6 +249,8 @@ export type DefenseState = {
 export type InfrastructureState = {
   wallet: Address;
   homePlanetId: string | null;
+  planetId?: string | null;
+  planetLastSettledAt?: string | null;
   infrastructureAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
@@ -1312,6 +1315,7 @@ export class VeydriftGameReader implements ChainReader {
           "The deployed contract only supports first-planet settlement. Defense production is not available on this deployment yet.",
         resources: null,
         shipyardLevel: 0,
+        naniteLevel: 0,
         missileSiloLevel: 0,
         technologyLevels: {},
         defenses: [],
@@ -1326,6 +1330,7 @@ export class VeydriftGameReader implements ChainReader {
         productionAvailable: true,
         resources: null,
         shipyardLevel: 0,
+        naniteLevel: 0,
         missileSiloLevel: 0,
         technologyLevels: {},
         defenses: Array.from({ length: defenseCount }, (_, id) => ({
@@ -1338,9 +1343,10 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, shipyardLevel, missileSiloLevel, queue, technologyLevels, defenses] = await Promise.all([
+    const [resources, shipyardLevel, naniteLevel, missileSiloLevel, queue, technologyLevels, defenses] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(14n)]),
       this.readPlanetQueue("0x5758361d", planetId, "defense"),
       this.readTechnologyLevels(wallet),
@@ -1353,6 +1359,7 @@ export class VeydriftGameReader implements ChainReader {
       productionAvailable: true,
       resources,
       shipyardLevel: Number(shipyardLevel),
+      naniteLevel: Number(naniteLevel),
       missileSiloLevel: Number(missileSiloLevel),
       technologyLevels,
       defenses,

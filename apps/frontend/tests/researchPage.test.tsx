@@ -5,6 +5,7 @@ import {
   formatCost,
   formatResearchRequirements,
   getResearchRequirementStates,
+  ResearchEffectsSection,
   ResearchLoadErrorPanel,
   researchRefreshErrorLabel,
   researchActionStatus,
@@ -12,7 +13,7 @@ import {
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
 import { RequirementFlairs } from "../src/components/RequirementFlairs";
-import { createInitialPlayableState } from "../src/playableMvp";
+import { createInitialPlayableState, researchEffectRows, researchUnlockRows } from "../src/playableMvp";
 import type { ChainResearchState } from "../src/walletFlow";
 
 describe("Research page load-error display", () => {
@@ -101,6 +102,21 @@ describe("Research page load-error display", () => {
     ]);
   });
 
+  test("routes energy production requirements to Solar Satellite production", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        researchLab: 12,
+      },
+    };
+
+    expect(getResearchRequirementStates(state, "graviton")).toEqual([
+      { label: "Research Lab 12", met: true, target: { kind: "building", key: "researchLab" } },
+      { label: "Energy production 300,000", met: false, target: { kind: "ship", key: "solarSatellite" } },
+    ]);
+  });
+
   test("renders concrete requirement states as accessible navigation buttons", () => {
     const flairs = RequirementFlairs({
       onOpenRequirement: () => undefined,
@@ -138,6 +154,64 @@ describe("Research page load-error display", () => {
     expect(text).toContain("50 %");
     expect(text).toContain("Time remaining");
     expect(text).toContain("Ready at");
+  });
+
+  test("shows Energy Technology impact on Fusion Reactor output", () => {
+    const base = createInitialPlayableState(10_000);
+    const state = {
+      ...base,
+      buildings: {
+        ...base.buildings,
+        fusionReactor: 3,
+      },
+      research: {
+        ...base.research,
+        energy: 2,
+      },
+    };
+
+    expect(researchEffectRows(state, "energy")).toEqual([
+      {
+        current: "110 produced",
+        delta: "+3",
+        next: "113 produced",
+        target: "Fusion Reactor output",
+      },
+    ]);
+  });
+
+  test("shows non-energy combat research as current and next-level scaling", () => {
+    const base = createInitialPlayableState(10_000);
+    const state = {
+      ...base,
+      research: {
+        ...base.research,
+        weapons: 4,
+      },
+    };
+
+    expect(researchEffectRows(state, "weapons")).toEqual([
+      {
+        current: "+40%",
+        delta: "+10%",
+        next: "+50%",
+        target: "Ship and defense attack",
+      },
+    ]);
+  });
+
+  test("renders unlock-only research impact without fake numeric values", () => {
+    const unlockRows = researchUnlockRows("laser");
+    const section = ResearchEffectsSection({
+      effectRows: [],
+      unlockRows,
+    });
+    const text = visibleText(section);
+
+    expect(text).toContain("Effects");
+    expect(text).toContain("Plasma Technology at Level 10");
+    expect(text).toContain("Battlecruiser at Level 12");
+    expect(text).not.toContain("Current Next");
   });
 
   test("enables research completion from the app clock once the queue is ready", () => {

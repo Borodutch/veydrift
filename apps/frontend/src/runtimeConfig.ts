@@ -30,7 +30,14 @@ export type RuntimeConfigState =
   | { status: "ready"; config: RuntimeConfig }
   | { status: "error" };
 
-export const playableApiUrl = import.meta.env.VITE_VEYDRIFT_API_URL ?? "https://api-test.veydrift.com";
+export const defaultPlayableApiUrl = "https://api-test.veydrift.com";
+
+export function resolvePlayableApiUrl(value: string | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.replace(/\/+$/, "") : defaultPlayableApiUrl;
+}
+
+export const playableApiUrl = resolvePlayableApiUrl(import.meta.env.VITE_VEYDRIFT_API_URL);
 
 export function runtimeConfigUrl(apiUrl = playableApiUrl): string {
   return `${apiUrl.replace(/\/+$/, "")}/runtime-config`;

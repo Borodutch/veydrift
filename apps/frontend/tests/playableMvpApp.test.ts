@@ -50,6 +50,8 @@ describe("Playable MVP app display helpers", () => {
     "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
   const buildingFinishLiveStateRequiredLabel =
     "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
+  const buildingCompletionWalletPrompt =
+    "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
 
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
@@ -76,6 +78,14 @@ describe("Playable MVP app display helpers", () => {
       label: "Building upgrade transaction failed.",
       tone: "error",
     });
+
+    expect(infrastructureDisplayActionNoticeFor({
+      action: {
+        status: "error",
+        label: infrastructureBackendSyncPausedLabel,
+      },
+      finishUnavailableReason: infrastructureBackendSyncPausedLabel,
+    })).toBeUndefined();
   });
 
   test("gates page state refreshes until the current wallet snapshot is hydrated", () => {
@@ -104,7 +114,7 @@ describe("Playable MVP app display helpers", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: {
         status: "pending",
-        label: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+        label: buildingCompletionWalletPrompt,
       },
       gameContract: "0x3333333333333333333333333333333333333333",
       homePlanetId: "7",
@@ -151,16 +161,16 @@ describe("Playable MVP app display helpers", () => {
     });
 
     expect(infrastructureFinishAction({
-      actionUnavailableReason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      actionUnavailableReason: buildingCompletionWalletPrompt,
       isActionPending: true,
       isBuildingReadyToFinish: true,
       onFinishBuilding,
       queue,
     })).toEqual({
       disabled: true,
-      label: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      label: buildingCompletionWalletPrompt,
       onFinish: undefined,
-      reason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      reason: buildingCompletionWalletPrompt,
       visible: true,
     });
 
@@ -1070,6 +1080,14 @@ describe("Playable MVP app display helpers", () => {
     })).toContain("Building completion failed for this ready queue");
   });
 
+  test("keeps wallet cancellation copy retryable for ready building completion", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("Building completion was cancelled in the wallet. The ready queue is still available");
+    expect(source).toContain("label: isRejectedByUser ? buildingFinishRejectedLabel : failedSyncReason ?? label");
+    expect(source).toContain("if (!isRejectedByUser && failedSyncReason)");
+  });
+
   test("clears failed finish blocking when the active building queue changes", () => {
     const readyQueue = readyBuildingQueue();
 
@@ -1879,6 +1897,7 @@ function defenseState({
     productionAvailable: true,
     resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
     shipyardLevel: 1,
+    naniteLevel: 0,
     missileSiloLevel: 0,
     technologyLevels: {},
     defenses: [],

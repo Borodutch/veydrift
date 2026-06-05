@@ -3,7 +3,13 @@ import {
   beginRefreshRequest,
   canApplyRefreshRequest,
   markFreshStateWrite,
+  recordedResourceSnapshotFreshness,
+  resourceSnapshotFreshnessForInfrastructure,
+  resourceSnapshotFreshnessForSettlement,
+  shouldApplyResourceSnapshot,
+  shouldRefreshAllianceStateForPage,
 } from "../src/PlayableMvpApp";
+import type { ChainInfrastructureState, WalletSettlementResponse } from "../src/walletFlow";
 
 describe("playable chain refresh", () => {
   test("uses backend chain events instead of the old fast unconditional polling loops", async () => {
@@ -46,6 +52,45 @@ describe("playable chain refresh", () => {
     expect(canApplyRefreshRequest(gate, newerPollRequest)).toBe(true);
   });
 
+  test("rejects older accrued resource snapshots after newer transaction writes", () => {
+    let latestSnapshot = resourceSnapshotFreshnessForSettlement(undefined);
+    let topBarResources = { metal: "0", crystal: "0", deuterium: "0" };
+    const applySettlementResources = (settlement: WalletSettlementResponse): boolean => {
+      const nextSnapshot = resourceSnapshotFreshnessForSettlement(settlement);
+      if (!shouldApplyResourceSnapshot(latestSnapshot, nextSnapshot)) {
+        return false;
+      }
+
+      latestSnapshot = recordedResourceSnapshotFreshness(latestSnapshot, nextSnapshot);
+      topBarResources = settlement.planet?.resources ?? topBarResources;
+      return true;
+    };
+
+    expect(applySettlementResources(settlementSnapshot("7", "200", { metal: "120", crystal: "80", deuterium: "40" }))).toBe(true);
+    expect(applySettlementResources(settlementSnapshot("7", "100", { metal: "20", crystal: "10", deuterium: "5" }))).toBe(false);
+    expect(topBarResources).toEqual({ metal: "120", crystal: "80", deuterium: "40" });
+  });
+
+  test("uses infrastructure last-settled markers to reject older resource polls", () => {
+    const current = resourceSnapshotFreshnessForInfrastructure(infrastructureSnapshot("7", "200"));
+    const older = resourceSnapshotFreshnessForInfrastructure(infrastructureSnapshot("7", "100"));
+    const otherPlanet = resourceSnapshotFreshnessForInfrastructure(infrastructureSnapshot("8", "50"));
+    const markerless = resourceSnapshotFreshnessForInfrastructure({
+      ...infrastructureSnapshot("7", "300"),
+      planetLastSettledAt: undefined,
+    });
+
+    expect(shouldApplyResourceSnapshot(current, older)).toBe(false);
+    expect(shouldApplyResourceSnapshot(current, otherPlanet)).toBe(true);
+    expect(recordedResourceSnapshotFreshness(current, markerless)).toBe(current);
+  });
+
+  test("refreshes alliance state for rankings so same-alliance rows can highlight", () => {
+    expect(shouldRefreshAllianceStateForPage("rankings")).toBe(true);
+    expect(shouldRefreshAllianceStateForPage("alliance")).toBe(true);
+    expect(shouldRefreshAllianceStateForPage("overview")).toBe(false);
+  });
+
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
     const walletFlowSource = await Bun.file(new URL("../src/walletFlow.ts", import.meta.url)).text();
@@ -63,3 +108,46 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("sendCollectResourcesTransaction");
   });
 });
+
+function settlementSnapshot(
+  planetId: string,
+  lastSettledAt: string,
+  resources: { metal: string; crystal: string; deuterium: string },
+): WalletSettlementResponse {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    hasFirstPlanet: true,
+    homePlanetId: planetId,
+    planet: {
+      planetId,
+      owner: "0x2222222222222222222222222222222222222222",
+      name: null,
+      galaxy: 1,
+      system: 2,
+      position: 3,
+      fields: 200,
+      temperature: 20,
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 10_000,
+      lastSettledAt,
+      resources,
+    },
+  };
+}
+
+function infrastructureSnapshot(planetId: string, planetLastSettledAt: string): ChainInfrastructureState {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: planetId,
+    planetId,
+    planetLastSettledAt,
+    infrastructureAvailable: true,
+    resources: { metal: "120", crystal: "80", deuterium: "40" },
+    productionPerHour: { metal: "60", crystal: "30", deuterium: "10" },
+    energyBalance: null,
+    storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
+    buildings: [],
+    queue: null,
+  };
+}

@@ -61,6 +61,7 @@ import {
   sendCreateAllianceTransaction,
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
+  requestAccounts,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
@@ -338,6 +339,39 @@ describe("walletFlow", () => {
     })).resolves.toBeUndefined();
   });
 
+  test("falls back to the legacy Farcaster ethProvider when getEthereumProvider is unavailable", async () => {
+    const miniAppProvider = mockProvider(async () => null);
+
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        ethProvider: miniAppProvider,
+        getEthereumProvider: () => undefined,
+      },
+    })).resolves.toEqual({
+      provider: miniAppProvider,
+      source: "farcaster",
+    });
+
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        ethProvider: miniAppProvider,
+        getEthereumProvider: () => {
+          throw new Error("capability probe failed");
+        },
+      },
+    })).resolves.toEqual({
+      provider: miniAppProvider,
+      source: "farcaster",
+    });
+
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        ethProvider: { notAProvider: true } as unknown as Eip1193Provider,
+        getEthereumProvider: () => undefined,
+      },
+    })).resolves.toBeUndefined();
+  });
+
   test("ignores unavailable Mini App wallet provider outside host sessions", async () => {
     await expect(getAvailableWalletProvider({}, {
       wallet: {
@@ -346,6 +380,23 @@ describe("walletFlow", () => {
         },
       },
     })).resolves.toBeUndefined();
+  });
+
+  test("reports an unavailable account when wallet authorization returns no account", async () => {
+    await expect(requestAccounts(mockProvider(async ({ method }) => {
+      if (method === "eth_requestAccounts") return [];
+      throw new Error(`Unexpected wallet method ${method}`);
+    }))).rejects.toThrow("Wallet account is unavailable. Reconnect your wallet, then retry.");
+  });
+
+  test("bounds Farcaster provider and account authorization requests", async () => {
+    const source = await Bun.file(new URL("./walletFlow.ts", import.meta.url)).text();
+
+    expect(source).toContain("FARCASTER_WALLET_PROVIDER_TIMEOUT_MS");
+    expect(source).toContain("\"Farcaster wallet provider\"");
+    expect(source).toContain("method: \"eth_requestAccounts\"");
+    expect(source).toContain("\"wallet account authorization\"");
+    expect(source).not.toContain("const accounts = await provider.request<string[]>({\n    method: \"eth_requestAccounts\"");
   });
 
   test("keeps a known commander name over fallback-only profile refreshes for the same wallet", () => {
@@ -956,6 +1007,7 @@ describe("walletFlow", () => {
     let sentTransactions = 0;
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
+      if (method === "eth_estimateGas") return "0x5208";
       sentTransactions += 1;
       return `0xtx${sentTransactions}`;
     });
@@ -987,6 +1039,16 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0x165715e3", [7, 0])
+          }
+        ]
+      },
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
           }
         ]
       },
@@ -1043,13 +1105,11 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("submits ready finish building upgrade transactions without a wallet-backed preflight call", async () => {
+  test("preflights ready finish building upgrade transactions before wallet submission", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") {
-        throw new Error("eth_call should not block a ready finish click");
-      }
+      if (method === "eth_estimateGas") return "0x3658c";
       return "0xfinish";
     });
 
@@ -1058,6 +1118,83 @@ describe("walletFlow", () => {
     ).resolves.toBe("0xfinish");
 
     expect(requests).toEqual([
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("blocks invalid finish building upgrade transactions before opening the wallet", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_estimateGas") {
+        throw new Error("execution reverted: ConstructionInactive");
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(provider, account, contract, "1")
+    ).rejects.toThrow("Building completion cannot be confirmed by the game contract yet");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("keeps wallet rejection after building completion preflight as a user rejection", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_estimateGas") return "0x3658c";
+      if (method === "eth_sendTransaction") {
+        throw { code: 4001, message: "User rejected the request." };
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(provider, account, contract, "1")
+    ).rejects.toMatchObject({ code: 4001 });
+
+    expect(requests).toEqual([
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      },
       {
         method: "eth_sendTransaction",
         params: [

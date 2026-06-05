@@ -7,7 +7,9 @@ import {
   BuildingLevelInfoModal,
   InfrastructureLoadErrorPanel,
   InfrastructureRefreshErrorPanel,
+  MetricDeltaSubtext,
   detailEffectRows,
+  infrastructureCatalogStatusText,
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
 import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
@@ -158,13 +160,14 @@ describe("Infrastructure page display helpers", () => {
 
     expect(rows).toEqual([
       {
+        delta: "+32",
         label: "Energy output",
         next: "32 produced",
         value: "0 produced",
       },
       {
-        delta: "(+11/h)",
-        label: "Deuterium consumed",
+        delta: "+11/h",
+        label: "Deuterium use",
         next: "11/h",
         tone: "warning",
         value: "0/h",
@@ -217,6 +220,114 @@ describe("Infrastructure page display helpers", () => {
       value: "11 required",
     });
     expect(mineRows.some((row) => row.delta?.includes("required"))).toBe(false);
+  });
+
+  test("renders infrastructure deltas as quiet subtext instead of badges", () => {
+    const positiveDelta = MetricDeltaSubtext({
+      children: "+126",
+    });
+    const warningDelta = MetricDeltaSubtext({
+      children: "+14/h",
+      tone: "warning",
+    });
+
+    expect(visibleText(positiveDelta)).toBe("+126");
+    expect(visibleText(warningDelta)).toBe("+14/h");
+    expect(positiveDelta.props.className).toContain("block");
+    expect(positiveDelta.props.className).toContain("text-xs");
+    expect(positiveDelta.props.className).toContain("text-signal");
+    expect(positiveDelta.props.className).not.toMatch(/border|rounded|bg-/);
+    expect(warningDelta.props.className).toContain("text-amber-200");
+    expect(warningDelta.props.className).not.toMatch(/border|rounded|bg-/);
+  });
+
+  test("keeps Solar Plant and Fusion Reactor energy output deltas source-specific", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 1,
+      solarPlant: 11,
+    };
+    const solarRows = detailEffectRows(
+      buildingEffectMetrics(buildings, "solarPlant", undefined, 3),
+      buildingEnergyDetail(buildings, "solarPlant", 3),
+    );
+
+    expect(solarRows).toContainEqual({
+      delta: "+126",
+      label: "Energy output",
+      next: "753 produced",
+      value: "627 produced",
+    });
+    expect(solarRows.some((row) => row.value === "659 produced" || row.next === "785 produced")).toBe(false);
+    expect(solarRows.some((row) => row.label === "Deuterium use")).toBe(false);
+
+    const fusionRows = detailEffectRows(
+      buildingEffectMetrics(buildings, "fusionReactor", undefined, 3),
+      buildingEnergyDetail(buildings, "fusionReactor", 3),
+    );
+
+    expect(fusionRows).toContainEqual({
+      delta: "+37",
+      label: "Energy output",
+      next: "69 produced",
+      value: "32 produced",
+    });
+    expect(fusionRows.some((row) => row.value === "659 produced" || row.next === "696 produced")).toBe(false);
+    expect(fusionRows).toContainEqual({
+      delta: "+14/h",
+      label: "Deuterium use",
+      next: "25/h",
+      tone: "warning",
+      value: "11/h",
+    });
+  });
+
+  test("keeps Solar Plant and Fusion Reactor outputs separate when both produce energy", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 1,
+      solarPlant: 11,
+    };
+
+    const solarEffect = buildingEffectMetrics(buildings, "solarPlant", undefined, 3);
+    const fusionEffect = buildingEffectMetrics(buildings, "fusionReactor", undefined, 3);
+
+    expect(solarEffect).toMatchObject({
+      currentProduced: 627,
+      deltaProduced: 126,
+      kind: "energy",
+      nextProduced: 753,
+    });
+    expect(fusionEffect).toMatchObject({
+      currentProduced: 32,
+      deltaProduced: 37,
+      kind: "energy",
+      nextProduced: 69,
+    });
+    if (solarEffect.kind !== "energy" || fusionEffect.kind !== "energy") {
+      throw new Error("Expected Solar Plant and Fusion Reactor to be energy effects");
+    }
+    expect(solarEffect.currentProduced).not.toBe(fusionEffect.currentProduced);
+  });
+
+  test("uses energy research when formatting energy building catalog summaries", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        fusionReactor: 1,
+        solarPlant: 11,
+      },
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        energy: 3,
+      },
+    };
+
+    expect(infrastructureCatalogStatusText(state, "solarPlant")).toBe("627 energy");
+    expect(infrastructureCatalogStatusText(state, "fusionReactor")).toBe("32 energy");
   });
 
   test("keeps build-level production capacity positive when current power would throttle output", () => {

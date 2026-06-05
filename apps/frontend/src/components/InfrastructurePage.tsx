@@ -187,7 +187,6 @@ export function InfrastructurePage({
       <InspectTwoColumnLayout
         catalog={buildingCatalog.map((building) => {
           const currentLevel = settledState.buildings[building.key];
-          const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
           const isSelected = building.key === selectedBuilding.key;
           const missingRequirement = unmetBuildingRequirement(settledState, building.key);
           const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
@@ -200,7 +199,7 @@ export function InfrastructurePage({
               isSelected={isSelected}
               key={building.key}
               label={building.label}
-              statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : compactEffect(effect)}
+              statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile)}
               statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
               onClick={() => handleSelectBuilding(building.key)}
             />
@@ -773,6 +772,28 @@ function ComparisonMetric({
   tone?: "neutral" | "positive" | "warning" | undefined;
   value: string;
 }) {
+  return (
+    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
+      <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
+      <dd className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 text-sm font-semibold">
+        <span className="min-w-0">
+          <span className="break-words text-slate-200">{value}</span>
+          {delta && <MetricDeltaSubtext tone={tone}>{delta}</MetricDeltaSubtext>}
+        </span>
+        <span aria-hidden="true" className="text-slate-500">→</span>
+        <span className="min-w-0 break-words text-signal">{next}</span>
+      </dd>
+    </div>
+  );
+}
+
+export function MetricDeltaSubtext({
+  children,
+  tone = "positive",
+}: {
+  children: string;
+  tone?: "neutral" | "positive" | "warning" | undefined;
+}) {
   const deltaClass = tone === "warning"
     ? "text-amber-200"
     : tone === "neutral"
@@ -780,15 +801,9 @@ function ComparisonMetric({
       : "text-signal";
 
   return (
-    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
-      <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
-      <dd className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-baseline gap-2 text-sm font-semibold">
-        <span className="min-w-0 break-words text-slate-200">{value}</span>
-        <span aria-hidden="true" className="text-slate-500">→</span>
-        <span className="min-w-0 break-words text-signal">{next}</span>
-      </dd>
-      {delta && <dd className={`mt-1 text-xs font-medium ${deltaClass}`}>{delta}</dd>}
-    </div>
+    <span className={`mt-0.5 block text-xs font-medium leading-4 ${deltaClass}`}>
+      {children}
+    </span>
   );
 }
 
@@ -840,19 +855,19 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (effect.kind === "energy") {
     rows.push({
-      ...(effect.deltaProduced !== 0 && effect.currentDeuteriumConsumed === 0 && effect.nextDeuteriumConsumed === 0
+      ...(effect.deltaProduced !== 0
         ? { delta: formatSigned(effect.deltaProduced) }
         : {}),
       label: "Energy output",
       next: `${formatNumber(effect.nextProduced)} produced`,
       value: `${formatNumber(effect.currentProduced)} produced`,
     });
-    if (effect.nextDeuteriumConsumed > 0 || effect.currentDeuteriumConsumed > 0) {
+    if (effect.showsDeuteriumConsumption && (effect.nextDeuteriumConsumed > 0 || effect.currentDeuteriumConsumed > 0)) {
       rows.push({
         ...(effect.deltaDeuteriumConsumed !== 0
-          ? { delta: `(${formatSigned(effect.deltaDeuteriumConsumed)}/h)` }
+          ? { delta: `${formatSigned(effect.deltaDeuteriumConsumed)}/h` }
           : {}),
-        label: "Deuterium consumed",
+        label: "Deuterium use",
         next: `${formatNumber(effect.nextDeuteriumConsumed)}/h`,
         tone: "warning",
         value: `${formatNumber(effect.currentDeuteriumConsumed)}/h`,
@@ -947,6 +962,19 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
   }
 
   return rows;
+}
+
+export function infrastructureCatalogStatusText(
+  state: PlayableState,
+  key: BuildingKey,
+  profile?: PlanetProductionProfile | undefined,
+): string {
+  return compactEffect(buildingEffectMetrics(
+    state.buildings,
+    key,
+    profile,
+    state.research.energy,
+  ));
 }
 
 function compactEffect(effect: BuildingEffectMetrics): string {

@@ -972,7 +972,7 @@ function enrichAllianceState(
   state: AllianceState,
   indexer: SettlementIndexer | undefined
 ): AllianceState {
-  const dismissJoinRequestAvailable = process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED === "true";
+  const dismissJoinRequestAvailable = process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED !== "false";
   if (!indexer) return { ...state, dismissJoinRequestAvailable };
 
   const displayNameField = <Key extends string>(key: Key, wallet: `0x${string}`): Record<Key, string> | Record<string, never> => {
@@ -1226,6 +1226,8 @@ function indexedInfrastructureState(
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
+    planetId: planet?.planetId ?? settlement.homePlanetId,
+    planetLastSettledAt: planet?.lastSettledAt ?? null,
     infrastructureAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
@@ -1288,6 +1290,7 @@ function indexedDefenseState(
     unavailableReason,
     resources: planet?.resources ?? null,
     shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
+    naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0,
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
     technologyLevels: indexer.technologyLevels(wallet),
     defenses: planet ? indexer.defenseRows(planet.planetId) : [],

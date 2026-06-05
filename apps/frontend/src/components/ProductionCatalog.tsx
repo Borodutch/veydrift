@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { formatCost } from "../buildingDetails";
 import type { Resources } from "../playableMvp";
 import type { QueueStateResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
@@ -17,6 +18,12 @@ export type ProductionDetailStat = {
   label: string;
   value: string;
   hint?: string | undefined;
+  wide?: boolean | undefined;
+};
+
+export type ProductionDetailSection = {
+  title: string;
+  stats: ProductionDetailStat[];
 };
 
 export type ProductionCatalogItem<Key extends string = string> = {
@@ -40,9 +47,8 @@ export type ProductionCatalogItem<Key extends string = string> = {
   disabled: boolean;
   actionLabel: string;
   detailNote: string;
-  description?: string | undefined;
+  detailSections?: ProductionDetailSection[] | undefined;
   notes?: string[] | undefined;
-  detailStats?: ProductionDetailStat[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
 
@@ -304,37 +310,41 @@ function SelectedProductionPanel<Key extends string>({
         </div>
       </div>
 
-      {item.description ? (
-        <p className="rounded border border-white/10 bg-black/20 p-3 text-sm leading-5 text-slate-300">
-          {item.description}
-        </p>
-      ) : null}
-
-      {item.detailStats?.length ? (
-        <div className="grid gap-2">
-          <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Specs</h4>
-          <dl className="grid grid-cols-2 gap-2 text-xs">
-            {item.detailStats.map((stat) => (
-              <Stat hint={stat.hint} label={stat.label} value={stat.value} key={stat.label} />
-            ))}
-          </dl>
-        </div>
-      ) : null}
-
-      <dl className="grid grid-cols-2 gap-2 text-xs">
-        <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
-        <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
-        <Stat label="Metal" value={item.cost ? format(item.cost.metal) : "-"} />
-        <Stat label="Crystal" value={item.cost ? format(item.cost.crystal) : "-"} />
-        <Stat label="Deut" value={item.cost ? format(item.cost.deuterium) : "-"} />
-        <Stat label="Status" value={item.statusLabel} />
-      </dl>
-
       {item.notes?.length ? (
         <ul className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs leading-5 text-slate-400">
           {item.notes.map((note) => <li key={note}>{note}</li>)}
         </ul>
       ) : null}
+
+      {item.detailSections?.length ? (
+        <div className="grid gap-3">
+          {item.detailSections.map((section) => (
+            <section className="grid gap-2" key={section.title}>
+              <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{section.title}</h4>
+              <dl className="grid grid-cols-2 gap-2 text-xs">
+                {section.stats.map((stat) => (
+                  <Stat
+                    className={stat.wide ? "col-span-2" : ""}
+                    hint={stat.hint}
+                    key={`${section.title}-${stat.label}`}
+                    label={stat.label}
+                    value={stat.value}
+                  />
+                ))}
+              </dl>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Details</h4>
+          <dl className="grid grid-cols-2 gap-2 text-xs">
+            <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
+            <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
+            <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
+          </dl>
+        </div>
+      )}
 
       <ProductionRequirementFlairs
         missing={item.missing}
@@ -400,11 +410,21 @@ function ProductionRequirementFlairs({
   );
 }
 
-function Stat({ hint, label, value }: { hint?: string | undefined; label: string; value: string }) {
+function Stat({
+  className = "",
+  hint,
+  label,
+  value,
+}: {
+  className?: string | undefined;
+  hint?: string | undefined;
+  label: string;
+  value: string;
+}) {
   return (
-    <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+    <div className={`rounded border border-white/10 bg-black/20 px-2 py-1.5 ${className}`}>
       <dt className="text-[10px] uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="truncate text-slate-200">{value}</dd>
+      <dd className="break-words text-slate-200">{value}</dd>
       {hint ? <dd className="mt-1 line-clamp-2 text-[10px] leading-3 text-slate-500">{hint}</dd> : null}
     </div>
   );
@@ -424,6 +444,10 @@ function formatQueueReadyAt(readyAt: string | null): string {
 
 function format(value: number): string {
   return formatter.format(Math.floor(value));
+}
+
+export function formatProductionPrice(cost: Resources): string {
+  return formatCost(cost);
 }
 
 function formatDuration(seconds: number): string {

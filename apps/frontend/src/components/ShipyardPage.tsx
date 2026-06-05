@@ -1,12 +1,14 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
-import { formatMissingResources, formatNumber } from "../buildingDetails";
+import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
 import {
+  formatProductionPrice,
   Notice,
   ProductionCatalog,
+  type ProductionDetailSection,
   type ProductionCatalogItem,
   type ProductionRequirementState,
   productionQueueViewModel,
@@ -248,11 +250,7 @@ export function shipProductionItems({
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const combatStats = shipCombatStats(ship);
-    const stats = combatStats.rows.map((row) => `${row.label} ${row.value}`).join(" · ");
-    const detailStats = shipSpecRows(ship);
-    if (ship.key === "solarSatellite" && chainShip?.energyPerUnit) {
-      detailStats.push({ label: "E/unit", value: formatNumber(Number(chainShip.energyPerUnit)) });
-    }
+    const stats = combatStats.rows.map((row) => `${row.label} ${formatShipStatValue(row.label, row.value)}`).join(" · ");
 
     return {
       actionLabel: "Build",
@@ -261,9 +259,16 @@ export function shipProductionItems({
       cost: totalCost,
       countLabel: "Owned",
       countValue: owned,
+      detailSections: shipDetailSections({
+        cost: totalCost,
+        durationSeconds,
+        missing,
+        owned,
+        requirements,
+        ship,
+        statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
+      }),
       detailNote: stats || "Production unit",
-      description: ship.description,
-      detailStats,
       disabled,
       durationSeconds,
       group: ship.group,
@@ -272,14 +277,112 @@ export function shipProductionItems({
       key: ship.key,
       label: ship.label,
       missing,
+      notes: shipNotes(ship),
       quantity,
       queued,
       requirements,
-      notes: combatStats.notes,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
       statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
     };
   });
+}
+
+function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
+  if (ship.key === "solarSatellite") {
+    return [
+      ship.description,
+      "Special: generates energy in orbit and cannot move, haul cargo, or spend fuel.",
+    ];
+  }
+
+  return [ship.description];
+}
+
+function shipDetailSections({
+  cost,
+  durationSeconds,
+  missing,
+  owned,
+  requirements,
+  ship,
+  statusLabel,
+}: {
+  cost: Resources | undefined;
+  durationSeconds: number | undefined;
+  missing: string[];
+  owned: number | undefined;
+  requirements: ProductionRequirementState[];
+  ship: (typeof shipCatalog)[number];
+  statusLabel: string;
+}): ProductionDetailSection[] {
+  const specs = shipSpecRows(ship);
+  const stat = (label: string) => specs.find((row) => row.label === label)?.value ?? "-";
+  const metCount = requirements.filter((requirement) => requirement.met).length;
+  const unlockValue = requirements.length > 0 ? `${metCount}/${requirements.length} met` : "No unlocks";
+  const missingValue = missing.length > 0 ? missing.join(", ") : "None";
+
+  return [
+    {
+      title: "Combat",
+      stats: [
+        { label: "Structure", value: stat("Structure") },
+        { label: "Shield", value: stat("Shield") },
+        { label: "Attack", value: stat("Attack") },
+      ],
+    },
+    {
+      title: "Logistics",
+      stats: [
+        { label: "Cargo", value: formatShipSpecValue(ship, "Cargo", stat("Cargo")) },
+        { label: "Base speed", value: formatShipSpecValue(ship, "Base speed", stat("Base speed")) },
+        { label: "Fuel use", value: formatShipSpecValue(ship, "Fuel use", stat("Fuel use")) },
+      ],
+    },
+    {
+      title: "Build",
+      stats: [
+        { label: "Owned", value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US") },
+        { label: "Build time", value: durationSeconds === undefined ? "-" : formatShipyardDuration(durationSeconds) },
+        { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
+      ],
+    },
+    {
+      title: "Requirements",
+      stats: [
+        { label: "Status", value: statusLabel },
+        { label: "Unlocks", value: unlockValue },
+        { label: "Missing", value: missingValue, wide: true },
+      ],
+    },
+  ];
+}
+
+function formatShipStatValue(label: string, value: number | string): string {
+  if (label === "Cargo" && value === 0) return "No cargo";
+  return formatStatValue(value);
+}
+
+function formatShipSpecValue(ship: (typeof shipCatalog)[number], label: string, value: string): string {
+  if (label === "Cargo" && value === "0") return "No cargo";
+  if (label === "Fuel use" && value === "None") return "No fuel";
+  if (label === "Base speed" && value === "Stationary") return ship.key === "solarSatellite" ? "Stationary energy platform" : "Stationary";
+  return value;
+}
+
+function formatStatValue(value: number | string): string {
+  return typeof value === "number" ? value.toLocaleString("en-US") : value;
+}
+
+function formatShipyardDuration(seconds: number): string {
+  if (seconds < 3_600) {
+    return `${Math.ceil(seconds / 60)}m`;
+  }
+
+  if (seconds < 86_400) {
+    return `${Math.floor(seconds / 3_600)}h ${Math.ceil((seconds % 3_600) / 60)}m`;
+  }
+
+  return `${Math.floor(seconds / 86_400)}d ${Math.ceil((seconds % 86_400) / 3_600)}h`;
 }
 
 export function getMissingRequirements(

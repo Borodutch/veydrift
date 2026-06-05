@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
+import { formatProductionPrice, productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
 import { getBlockedReason, getShipRequirementStates, shipProductionItems, shipyardRefreshErrorLabel } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
 import { shipCatalog } from "../src/playableMvp";
 
 describe("Shipyard page display helpers", () => {
+  test("formats shipyard prices like building cost rows", () => {
+    expect(formatProductionPrice({ metal: 2_000, crystal: 2_000, deuterium: 0 })).toBe("Metal 2,000, Crystal 2,000");
+  });
+
   test("reports a per-ship deployment mismatch without treating the whole page as unloaded", () => {
     expect(getBlockedReason({
       affordable: false,
@@ -100,22 +104,39 @@ describe("Shipyard page display helpers", () => {
       actionLabel: "Build",
       countLabel: "Owned",
       countValue: 4,
-      description: expect.stringContaining("freighter"),
-      detailStats: expect.arrayContaining([
-        { label: "Structure", value: "400" },
-        { label: "Cargo", value: "5,000" },
-        { label: "Fuel use", value: "10" },
-      ]),
+      detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
+      detailSections: [
+        {
+          title: "Combat",
+          stats: [
+            { label: "Structure", value: "400" },
+            { label: "Shield", value: "10" },
+            { label: "Attack", value: "5" },
+          ],
+        },
+        {
+          title: "Logistics",
+          stats: [
+            { label: "Cargo", value: "5,000" },
+            { label: "Base speed", value: "5,000" },
+            { label: "Fuel use", value: "10" },
+          ],
+        },
+        expect.objectContaining({ title: "Build" }),
+        expect.objectContaining({ title: "Requirements" }),
+      ],
+      notes: [expect.stringContaining("freighter")],
       quantity: 3,
       status: "ready",
     });
+    expect(items.find((item) => item.key === "smallCargo")).not.toHaveProperty("description");
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
       status: "locked",
       statusLabel: "Locked",
     });
   });
 
-  test("shows Solar Satellite energy per unit from shipyard state", () => {
+  test("keeps Solar Satellite compact ship stats in selected-panel subtext", () => {
     const baseState = shipyardState();
     const items = shipProductionItems({
       actionPending: false,
@@ -146,9 +167,22 @@ describe("Shipyard page display helpers", () => {
       }),
     });
 
-    expect(items.find((item) => item.key === "solarSatellite")?.detailStats).toContainEqual({
-      label: "E/unit",
-      value: "22",
+    expect(items.find((item) => item.key === "solarSatellite")).toMatchObject({
+      detailNote: "Attack 1 · Shield 1 · Hull 200 · Cargo No cargo",
+      detailSections: expect.arrayContaining([
+        {
+          title: "Logistics",
+          stats: [
+            { label: "Cargo", value: "No cargo" },
+            { label: "Base speed", value: "Stationary energy platform" },
+            { label: "Fuel use", value: "No fuel" },
+          ],
+        },
+      ]),
+      notes: [
+        expect.stringContaining("energy platform"),
+        expect.stringContaining("cannot move, haul cargo, or spend fuel"),
+      ],
     });
   });
 

@@ -381,6 +381,7 @@ class MockChainReader implements ChainReader {
       productionAvailable: true,
       resources: planet.resources,
       shipyardLevel: 1,
+      naniteLevel: 0,
       missileSiloLevel: 2,
       technologyLevels: {
         "1": 1
@@ -1410,6 +1411,7 @@ describe("Veydrift backend", () => {
       description: "Discord: https://discord.gg/vdft",
       memberCount: 1
     });
+    expect(body.dismissJoinRequestAvailable).toBe(true);
     expect(body.members).toEqual([{ address: player, role: "owner", joinedAt: "1770000000" }]);
   });
 
@@ -2224,6 +2226,8 @@ describe("Veydrift backend", () => {
     expect(infrastructureResponse.status).toBe(200);
     expect(settlementBody.planet.resources.metal).toBe("5064");
     expect(planetsBody.planets[0].resources.metal).toBe("5064");
+    expect(infrastructureBody.planetId).toBe("7");
+    expect(infrastructureBody.planetLastSettledAt).toBe(settlementBody.planet.lastSettledAt);
     expect(infrastructureBody.resources.metal).toBe("5064");
     expect(infrastructureBody.raidableResources.metal).toBe("5064");
   });

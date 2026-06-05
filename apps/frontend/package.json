@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:playable": "(node scripts/generate-image-variants.mjs || bun scripts/generate-image-variants.mjs) && vite build --mode playable",
     "build:test": "(node scripts/generate-image-variants.mjs || bun scripts/generate-image-variants.mjs) && vite build --mode settlement",
-    "check": "tsc --project tsconfig.json && vite build",
+    "check": "tsc --project tsconfig.json && vite build && vite build --mode settlement && node ../../scripts/veydrift-test-frontend-config-check.mjs --dist dist --api-url https://api-test.veydrift.com",
     "dev": "vite --host 0.0.0.0",
     "prebuild": "node scripts/generate-image-variants.mjs || bun scripts/generate-image-variants.mjs",
     "precheck": "node scripts/generate-image-variants.mjs || bun scripts/generate-image-variants.mjs",
