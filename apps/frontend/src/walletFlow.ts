@@ -1910,6 +1910,12 @@ export async function fetchBattleReport(apiUrl: string, missionId: string): Prom
   return response.json() as Promise<BattleReport>;
 }
 
+export async function fetchBattleReports(apiUrl: string): Promise<BattleReport[]> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/battle-reports`);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Battle reports"));
+  return response.json() as Promise<BattleReport[]>;
+}
+
 export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
   return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, withWalletReadOptions("infrastructure", planetId, options), "Infrastructure");
 }

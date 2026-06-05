@@ -72,6 +72,10 @@ export class CachedChainReader implements ChainReader {
     return this.cached(`battle-report:${missionId.toString()}`, () => this.inner.getBattleReport(missionId));
   }
 
+  listBattleReports(): Promise<BattleReport[]> {
+    return this.cached("battle-reports", () => this.inner.listBattleReports());
+  }
+
   getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState> {
     return this.cached(`moon:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getMoonState(wallet, planetId));
   }
