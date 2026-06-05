@@ -30,6 +30,8 @@ import {
   shouldShowGalaxyRows
 } from "../src/components/GalaxyView";
 import {
+  planetDetailRefreshResultPlanet,
+  planetDetailRefreshStartPlanet,
   planetRecordStatusLabel,
   publicCommanderRows,
   publicQueueRows,
@@ -434,6 +436,82 @@ describe("tester universe display data", () => {
       ...publicProductionRows(planet).map((row) => row.value),
     ].join(" ");
     expect(copy).not.toMatch(/\b(indexed|indexer|backend|universe data|OGame|ogame)\b/i);
+  });
+
+  test("keeps loaded planet detail visible during same-coordinate background refreshes", () => {
+    const [loadedPlanet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [{
+        fields: 211,
+        galaxy: 2,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        position: 8,
+        system: 44,
+        temperature: -8,
+      }],
+    });
+    const [freshPlanet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [{
+        fields: 212,
+        galaxy: 2,
+        key: "2:44:8-fresh",
+        metalMultiplierBps: 11_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        position: 8,
+        system: 44,
+        temperature: -6,
+      }],
+    });
+    const coords = { galaxy: 2, system: 44, position: 8 };
+
+    expect(planetDetailRefreshStartPlanet({
+      coords,
+      currentPlanet: loadedPlanet,
+      trustedHomePlanet: null,
+    })).toBe(loadedPlanet);
+
+    expect(planetDetailRefreshResultPlanet({
+      apiPlanet: null,
+      coords,
+      currentPlanet: loadedPlanet,
+      trustedHomePlanet: null,
+    })).toBe(loadedPlanet);
+
+    expect(planetDetailRefreshResultPlanet({
+      apiPlanet: freshPlanet,
+      coords,
+      currentPlanet: loadedPlanet,
+      trustedHomePlanet: null,
+    })).toBe(freshPlanet);
+  });
+
+  test("uses initial planet detail loader only when the selected coordinates have no loaded data", () => {
+    const [loadedPlanet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [{
+        fields: 211,
+        galaxy: 2,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        position: 8,
+        system: 44,
+        temperature: -8,
+      }],
+    });
+
+    expect(planetDetailRefreshStartPlanet({
+      coords: { galaxy: 2, system: 44, position: 9 },
+      currentPlanet: loadedPlanet,
+      trustedHomePlanet: null,
+    })).toBeNull();
   });
 
   test("formats moon chance status for galaxy rows", () => {
