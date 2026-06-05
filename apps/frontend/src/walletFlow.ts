@@ -26,6 +26,7 @@ export type InjectedWindow = {
 };
 
 const WALLET_READ_TIMEOUT_MS = 10_000;
+const FARCASTER_WALLET_PROVIDER_TIMEOUT_MS = 1_200;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
 export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock your wallet and try again.";
 export const WALLET_ACCOUNT_UNAVAILABLE_MESSAGE = "Wallet account is unavailable. Reconnect your wallet, then retry.";
@@ -614,7 +615,10 @@ async function getFarcasterEthereumProvider(
   farcasterClient: FarcasterWalletClient,
 ): Promise<Eip1193Provider | undefined> {
   try {
-    const provider = await farcasterClient.wallet?.getEthereumProvider?.();
+    const providerRequest = farcasterClient.wallet?.getEthereumProvider?.();
+    const provider = providerRequest
+      ? await timeoutPromise(Promise.resolve(providerRequest), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "Farcaster wallet provider")
+      : undefined;
     if (isEip1193Provider(provider)) {
       return provider;
     }
@@ -1114,9 +1118,9 @@ export async function getCurrentAccounts(provider: Eip1193Provider): Promise<str
 }
 
 export async function requestAccounts(provider: Eip1193Provider): Promise<string[]> {
-  const accounts = await provider.request<string[]>({
+  const accounts = await readWalletRequest<string[]>(provider, {
     method: "eth_requestAccounts"
-  });
+  }, "wallet account authorization");
   if (!accounts[0]) {
     throw new Error(WALLET_ACCOUNT_UNAVAILABLE_MESSAGE);
   }
