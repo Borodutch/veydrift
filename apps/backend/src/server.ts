@@ -609,7 +609,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname === "/highscores") {
       const startedAt = Date.now();
       try {
-        const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 250);
+        const pagination = highscorePagination(url);
         let planetsByOwner: Map<string, SettledPlanetEvent[]>;
         let entries: HighscoreEntry[];
         let source: "contract-state-indexer" | "live-chain-reader";
@@ -632,13 +632,27 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
         const profiles = indexer?.playerProfiles(planetsByOwner.keys()) ?? new Map<string, PlayerProfile>();
         const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), chainReader);
-        const rankings = highscoreRankings(entries, limit, planetsByOwner, profiles, allianceIntel);
+        const totalEntries = entries.length;
+        const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
+        const page = Math.min(pagination.page, totalPages);
+        const offset = (page - 1) * pagination.pageSize;
+        const rankings = highscoreRankings(entries, pagination.pageSize, offset, planetsByOwner, profiles, allianceIntel);
+        const currentPlayer = highscoreCurrentPlayerPages(entries, pagination.pageSize, url.searchParams.get("currentWallet"));
 
         return Response.json(
           {
             generatedAt: new Date().toISOString(),
             durationMs: Date.now() - startedAt,
             formula: highscoreFormula,
+            pagination: {
+              page,
+              pageSize: pagination.pageSize,
+              totalEntries,
+              totalPages,
+              hasPreviousPage: page > 1,
+              hasNextPage: page < totalPages
+            },
+            currentPlayer,
             rankings,
             source
           },
@@ -1730,15 +1744,63 @@ type RankedHighscorePlanet = {
 
 type HighscoreCategory = keyof ScoreBreakdown;
 
+type HighscoreCurrentPlayerPage = {
+  rank: number;
+  page: number;
+};
+
+function highscorePagination(url: URL): { page: number; pageSize: number } {
+  const limit = Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100;
+  const pageSize = Number.parseInt(url.searchParams.get("pageSize") ?? String(limit), 10) || limit;
+  const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
+
+  return {
+    page: Math.max(page, 1),
+    pageSize: Math.min(Math.max(pageSize, 1), 250)
+  };
+}
+
+function highscoreCurrentPlayerPages(
+  entries: HighscoreEntry[],
+  pageSize: number,
+  wallet: string | null
+): { wallet: string; rankings: Record<HighscoreCategory, HighscoreCurrentPlayerPage | null> } | undefined {
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) return undefined;
+
+  const normalizedWallet = wallet.toLowerCase();
+  const rankings = Object.fromEntries(
+    highscoreCategories.map((category) => {
+      const index = sortedHighscores(entries, category)
+        .findIndex((entry) => entry.wallet.toLowerCase() === normalizedWallet);
+      const rank = index === -1 ? null : index + 1;
+      return [
+        category,
+        rank === null
+          ? null
+          : {
+              rank,
+              page: Math.max(1, Math.ceil(rank / pageSize))
+            }
+      ];
+    })
+  ) as Record<HighscoreCategory, HighscoreCurrentPlayerPage | null>;
+
+  return {
+    wallet: normalizedWallet,
+    rankings
+  };
+}
+
 function highscoreRankings(
   entries: HighscoreEntry[],
   limit: number,
+  offset: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
   profiles: ReadonlyMap<string, PlayerProfile> = new Map(),
   allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map()
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
   return Object.fromEntries(
-    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, planetsByOwner, profiles, allianceIntel)])
+    highscoreCategories.map((category) => [category, rankHighscores(entries, category, limit, offset, planetsByOwner, profiles, allianceIntel)])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
 
@@ -1746,24 +1808,28 @@ function rankHighscores(
   entries: HighscoreEntry[],
   category: HighscoreCategory,
   limit: number,
+  offset: number,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
   profiles: ReadonlyMap<string, PlayerProfile>,
   allianceIntel: ReadonlyMap<string, AllianceIdentity>
 ): RankedHighscoreEntry[] {
-  return [...entries]
-    .sort((left, right) => {
-      const delta = BigInt(right.score[category]) - BigInt(left.score[category]);
-      if (delta !== 0n) return delta > 0n ? 1 : -1;
-      return left.wallet.localeCompare(right.wallet);
-    })
-    .slice(0, limit)
+  return sortedHighscores(entries, category)
+    .slice(offset, offset + limit)
     .map((entry, index) => ({
       ...entry,
       alliance: allianceIntel.get(entry.wallet.toLowerCase()) ?? null,
       displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
       homePlanet: rankedHighscoreHomePlanet(entry, planetsByOwner),
-      rank: index + 1
+      rank: offset + index + 1
     }));
+}
+
+function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory): HighscoreEntry[] {
+  return [...entries].sort((left, right) => {
+    const delta = BigInt(right.score[category]) - BigInt(left.score[category]);
+    if (delta !== 0n) return delta > 0n ? 1 : -1;
+    return left.wallet.localeCompare(right.wallet);
+  });
 }
 
 function rankedHighscoreHomePlanet(

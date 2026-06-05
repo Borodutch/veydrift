@@ -17,7 +17,9 @@ export type Page =
   | "rift"
   | "rankings"
   | "galaxy"
-  | "planet";
+  | "planet"
+  | "player-inspect"
+  | "alliance-inspect";
 
 interface NavBarProps {
   active: Page;
@@ -74,7 +76,7 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
             {pages.map((page) => (
               <NavItem
-                active={active === page.key || (active === "planet" && page.key === "galaxy")}
+                active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
                 icon={page.icon}
                 key={page.key}
                 label={page.label}
@@ -134,7 +136,7 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
             <nav aria-label="Mobile app sections" className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
               {pages.map((page) => (
                 <MobileTab
-                  active={active === page.key || (active === "planet" && page.key === "galaxy")}
+                  active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
                   key={page.key}
                   icon={page.icon}
                   label={page.mobileLabel}
