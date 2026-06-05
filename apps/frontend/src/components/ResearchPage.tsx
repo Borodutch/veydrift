@@ -1,3 +1,4 @@
+import { Info, X } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from "../playableMvp";
@@ -7,6 +8,7 @@ import {
   energyBalance,
   researchEffectRows,
   researchCatalog,
+  researchCost,
   researchDurationEstimate,
   researchLabRequirementFor,
   researchRequirementsFor,
@@ -447,7 +449,11 @@ function ResearchDetailPanel({
     researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
   });
   const unlockRows = researchUnlockRows(research.key);
+  const levelInfoRows = researchLevelInfoRows(state, research.key, {
+    researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
+  });
   const isSelectedResearchQueued = queue?.key === research.key;
+  const [isInfoOpen, setIsInfoOpen] = useState(false);
 
   return (
     <InspectDetailShell>
@@ -463,9 +469,13 @@ function ResearchDetailPanel({
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="break-words text-lg font-semibold text-white">{research.label}</h3>
-            <p className="mt-1 text-sm text-slate-400">
-              Level {status.currentLevel} to {status.targetLevel}
-            </p>
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
+              <span>Level {status.currentLevel} to {status.targetLevel}</span>
+              <ResearchLevelInfoButton
+                onClick={() => setIsInfoOpen(true)}
+                researchLabel={research.label}
+              />
+            </div>
           </div>
           <span className={`rounded px-2 py-1 text-xs font-semibold ${status.disabled ? "bg-white/5 text-slate-400" : "bg-emerald-300/10 text-emerald-200"}`}>
             {status.badge}
@@ -520,8 +530,310 @@ function ResearchDetailPanel({
       >
         {status.actionLabel}
       </button>
+
+      {isInfoOpen && (
+        <ResearchLevelInfoModal
+          currentLevel={status.currentLevel}
+          onClose={() => setIsInfoOpen(false)}
+          researchLabel={research.label}
+          rows={levelInfoRows}
+        />
+      )}
     </InspectDetailShell>
   );
+}
+
+export type ResearchLevelInfoRow = {
+  cost: Resources;
+  current: boolean;
+  durationSeconds?: number | undefined;
+  effect: string;
+  level: number;
+  next: boolean;
+  requirementStatus: string;
+};
+
+const MAX_RESEARCH_INFO_LEVEL = 12;
+
+export function researchLevelInfoRows(
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  key: ResearchKey,
+  options: {
+    maxLevel?: number | undefined;
+    researchNetworkLabLevels?: readonly number[] | undefined;
+  } = {},
+): ResearchLevelInfoRow[] {
+  const currentLevel = state.research[key];
+  const maxLevel = Math.max(
+    1,
+    options.maxLevel ?? Math.max(MAX_RESEARCH_INFO_LEVEL, currentLevel + 5),
+  );
+
+  return Array.from({ length: maxLevel }, (_, index) => {
+    const level = index + 1;
+    const preResearch = { ...state.research, [key]: level - 1 };
+    const targetState = {
+      ...state,
+      research: preResearch,
+    };
+    const cost = researchCost(preResearch, key);
+    const requirementStatus = researchLevelRequirementStatus(targetState, key, level);
+    const locked = requirementStatus !== "Met";
+    const durationSeconds = locked
+      ? undefined
+      : researchDurationEstimate(state.buildings, cost, {
+          networkLevel: preResearch.intergalacticResearchNetwork,
+          requiredLabLevel: researchLabRequirementFor(key),
+          researchNetworkLabLevels: options.researchNetworkLabLevels,
+        });
+
+    return {
+      cost,
+      current: currentLevel === level,
+      durationSeconds,
+      effect: researchLevelEffectSummary(state, key, level, options.researchNetworkLabLevels),
+      level,
+      next: currentLevel + 1 === level,
+      requirementStatus,
+    };
+  });
+}
+
+export function ResearchLevelInfoButton({
+  onClick,
+  researchLabel,
+}: {
+  onClick: () => void;
+  researchLabel: string;
+}) {
+  return (
+    <button
+      aria-label="Research level details"
+      className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-200"
+      onClick={onClick}
+      title={`${researchLabel} level details`}
+      type="button"
+    >
+      <Info aria-hidden="true" size={15} strokeWidth={2.2} />
+    </button>
+  );
+}
+
+export function ResearchLevelInfoModal({
+  currentLevel,
+  onClose,
+  researchLabel,
+  rows,
+}: {
+  currentLevel: number;
+  onClose: () => void;
+  researchLabel: string;
+  rows: ResearchLevelInfoRow[];
+}) {
+  return (
+    <div
+      aria-labelledby="research-level-info-title"
+      aria-modal="true"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
+      role="dialog"
+    >
+      <div className="max-h-[min(44rem,calc(100vh-1.5rem))] w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40">
+        <div className="flex min-w-0 items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div className="min-w-0">
+            <h3 id="research-level-info-title" className="break-words text-base font-semibold text-white">
+              {researchLabel} levels
+            </h3>
+            <p className="mt-1 text-xs text-slate-400">
+              Current Level {currentLevel}
+            </p>
+          </div>
+          <button
+            aria-label="Close level table"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden="true" size={16} strokeWidth={2.2} />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(100vh-8rem)] overflow-auto">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+            <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
+              <tr>
+                <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Level</ResearchLevelInfoHeader>
+                <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Status</ResearchLevelInfoHeader>
+                <ResearchLevelInfoHeader className="min-w-52">Research cost</ResearchLevelInfoHeader>
+                <ResearchLevelInfoHeader className="min-w-32">Research time</ResearchLevelInfoHeader>
+                <ResearchLevelInfoHeader className="min-w-52">Requirements</ResearchLevelInfoHeader>
+                <ResearchLevelInfoHeader className="min-w-60">Effect</ResearchLevelInfoHeader>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr
+                  className={`border-t border-white/10 ${
+                    row.current
+                      ? "bg-emerald-300/10"
+                      : row.next
+                        ? "bg-cyan-300/10"
+                        : "odd:bg-white/[0.015]"
+                  }`}
+                  key={row.level}
+                >
+                  <ResearchLevelInfoCell className="whitespace-nowrap">
+                    <span className="font-semibold text-white">Level {row.level}</span>
+                  </ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell className="min-w-24">
+                    <div className="flex flex-wrap gap-1">
+                      {row.current ? <ResearchLevelPill tone="current">Current</ResearchLevelPill> : null}
+                      {row.next ? <ResearchLevelPill tone="next">Next</ResearchLevelPill> : null}
+                      {!row.current && !row.next && row.requirementStatus !== "Met" ? (
+                        <ResearchLevelPill tone="locked">Locked</ResearchLevelPill>
+                      ) : null}
+                    </div>
+                  </ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell>{formatCost(row.cost)}</ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell>
+                    {row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds)}
+                  </ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell>{row.requirementStatus}</ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell>{row.effect}</ResearchLevelInfoCell>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResearchLevelInfoHeader({
+  children,
+  className = "",
+}: {
+  children: ComponentChildren;
+  className?: string | undefined;
+}) {
+  return (
+    <th className={`border-b border-white/10 px-3 py-2 font-semibold ${className}`}>
+      {children}
+    </th>
+  );
+}
+
+function ResearchLevelInfoCell({
+  children,
+  className = "",
+}: {
+  children: ComponentChildren;
+  className?: string | undefined;
+}) {
+  return (
+    <td className={`border-b border-white/10 px-3 py-2 align-top text-slate-200 ${className}`}>
+      {children}
+    </td>
+  );
+}
+
+function ResearchLevelPill({
+  children,
+  tone,
+}: {
+  children: string;
+  tone: "current" | "locked" | "next";
+}) {
+  const className = tone === "current"
+    ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-200"
+    : tone === "next"
+      ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-200"
+      : "border-amber-300/30 bg-amber-300/10 text-amber-200";
+
+  return (
+    <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+function researchLevelRequirementStatus(
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  key: ResearchKey,
+  targetLevel: number,
+): string {
+  const missing = researchRequirementsFor(key).flatMap((requirement) => {
+    if (requirement.type === "building") {
+      return state.buildings[requirement.key] >= requirement.level
+        ? []
+        : [`Requires ${formatRequirement(requirement)}`];
+    }
+
+    if (requirement.type === "energy") {
+      const produced = energyBalance(
+        state.buildings,
+        state.research.energy,
+        state.ships.solarSatellite,
+      ).produced;
+      const required = researchEnergyRequirementForLevel(key, targetLevel, requirement.produced);
+      return produced >= required
+        ? []
+        : [`Requires Energy production ${required.toLocaleString()}`];
+    }
+
+    return state.research[requirement.key] >= requirement.level
+      ? []
+      : [`Requires ${formatRequirement(requirement)}`];
+  });
+
+  return missing.length > 0 ? missing.join(", ") : "Met";
+}
+
+function researchEnergyRequirementForLevel(
+  key: ResearchKey,
+  targetLevel: number,
+  baseRequirement: number,
+): number {
+  if (key !== "graviton") return baseRequirement;
+  return Math.floor(baseRequirement * (3 ** Math.max(0, targetLevel - 1)));
+}
+
+function researchLevelEffectSummary(
+  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  key: ResearchKey,
+  targetLevel: number,
+  researchNetworkLabLevels?: readonly number[] | undefined,
+): string {
+  const beforeLevel = targetLevel - 1;
+  const rowState = {
+    ...state,
+    research: {
+      ...state.research,
+      [key]: beforeLevel,
+    },
+  };
+  const effectRows = researchEffectRows(rowState, key, { researchNetworkLabLevels });
+  const directEffects = effectRows.map((row) => {
+    const delta = row.delta ? ` (${row.delta})` : "";
+    return `${row.target}: ${row.next}${delta}`;
+  });
+  const unlocks = researchUnlockRows(key)
+    .filter((row) => row.endsWith(`Level ${targetLevel}`))
+    .map((row) => row.replace(` at Level ${targetLevel}`, ""));
+
+  if (directEffects.length > 0 && unlocks.length > 0) {
+    return `${directEffects.join("; ")}; unlocks ${unlocks.join(", ")}`;
+  }
+
+  if (directEffects.length > 0) {
+    return directEffects.join("; ");
+  }
+
+  if (unlocks.length > 0) {
+    return `Unlocks ${unlocks.join(", ")}`;
+  }
+
+  return "Used as an unlock or prerequisite in current Veydrift rules";
 }
 
 export function ResearchEffectsSection({

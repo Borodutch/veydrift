@@ -6,7 +6,10 @@ import {
   formatResearchRequirements,
   getResearchRequirementStates,
   ResearchEffectsSection,
+  ResearchLevelInfoButton,
+  ResearchLevelInfoModal,
   ResearchLoadErrorPanel,
+  researchLevelInfoRows,
   researchRefreshErrorLabel,
   researchActionStatus,
   researchCompletionButtonState,
@@ -248,6 +251,94 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Plasma Technology at Level 10");
     expect(text).toContain("Battlecruiser at Level 12");
     expect(text).not.toContain("Current Next");
+  });
+
+  test("builds research level info rows with costs, timing, requirements, and effects", () => {
+    const base = createInitialPlayableState(10_000);
+    const state = {
+      ...base,
+      buildings: {
+        ...base.buildings,
+        researchLab: 1,
+      },
+      research: {
+        ...base.research,
+        energy: 1,
+      },
+    };
+
+    const rows = researchLevelInfoRows(state, "energy", { maxLevel: 3 });
+
+    expect(rows).toMatchObject([
+      {
+        cost: { metal: 0, crystal: 800, deuterium: 400 },
+        current: true,
+        effect: "Fusion Reactor output: 0 produced; unlocks Light Laser, Combustion Drive, Impulse Drive",
+        level: 1,
+        next: false,
+        requirementStatus: "Met",
+      },
+      {
+        cost: { metal: 0, crystal: 1_600, deuterium: 800 },
+        current: false,
+        effect: "Fusion Reactor output: 0 produced; unlocks Laser Technology",
+        level: 2,
+        next: true,
+        requirementStatus: "Met",
+      },
+      {
+        cost: { metal: 0, crystal: 3_200, deuterium: 1_600 },
+        current: false,
+        level: 3,
+        next: false,
+        requirementStatus: "Met",
+      },
+    ]);
+    expect(rows[0]!.durationSeconds).toBeGreaterThan(0);
+  });
+
+  test("marks locked research level rows with unmet prerequisites", () => {
+    const state = createInitialPlayableState(10_000);
+
+    expect(researchLevelInfoRows(state, "laser", { maxLevel: 1 })[0]).toMatchObject({
+      durationSeconds: undefined,
+      requirementStatus: "Requires Research Lab 1, Requires Energy Technology 2",
+    });
+  });
+
+  test("renders research level info button and modal with accessible labels", () => {
+    const button = ResearchLevelInfoButton({
+      onClick: () => undefined,
+      researchLabel: "Energy Technology",
+    }) as VNode;
+    expect(button.props["aria-label"]).toBe("Research level details");
+    expect(button.props.title).toBe("Energy Technology level details");
+
+    const modal = ResearchLevelInfoModal({
+      currentLevel: 1,
+      onClose: () => undefined,
+      researchLabel: "Energy Technology",
+      rows: researchLevelInfoRows({
+        ...createInitialPlayableState(10_000),
+        buildings: {
+          ...createInitialPlayableState(10_000).buildings,
+          researchLab: 1,
+        },
+      }, "energy", { maxLevel: 2 }),
+    });
+    const text = visibleText(modal);
+
+    expect(text).toContain("Energy Technology levels");
+    expect(text).toContain("Current Level 1");
+    expect(text).toContain("Research cost");
+    expect(text).toContain("Research time");
+    expect(text).toContain("Requirements");
+    expect(text).toContain("Effect");
+    expect(text).toContain("Level 1");
+    expect(text).toContain("Level 2");
+    expect(text).toContain("Current");
+    expect(text).toContain("Next");
+    expect(text).toContain("Crystal 800, Deut. 400");
   });
 
   test("enables research completion from the app clock once the queue is ready", () => {
