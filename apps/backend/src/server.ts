@@ -672,7 +672,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const protection = await rankedHighscoreProtectionLookup(
           highscoreRankingRows(rankings),
           chainReader,
-          url.searchParams.get("currentWallet")
+          url.searchParams.get("currentWallet"),
+          highscoreAttackProtectionRequested(url)
         );
         const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
         const currentPlayer = highscoreCurrentPlayerPages(entries, pagination.pageSize, url.searchParams.get("currentWallet"));
@@ -1833,6 +1834,11 @@ function highscoreCurrentPlayerPages(
   };
 }
 
+function highscoreAttackProtectionRequested(url: URL): boolean {
+  const value = url.searchParams.get("includeAttackProtection") ?? "";
+  return /^(1|true|yes)$/i.test(value);
+}
+
 function highscoreRankings(
   entries: HighscoreEntry[],
   limit: number,
@@ -1911,8 +1917,11 @@ function rankHighscores(
 async function rankedHighscoreProtectionLookup(
   rows: Iterable<RankedHighscoreEntry>,
   chainReader: ChainReader | undefined,
-  currentWallet: string | null | undefined
+  currentWallet: string | null | undefined,
+  includeAttackProtection: boolean
 ): Promise<Map<string, RankedHighscoreAttackProtection | null>> {
+  if (!includeAttackProtection) return new Map();
+
   const uniquePlanets = new Map<string, RankedHighscorePlanet>();
   for (const row of rows) {
     if (row.homePlanet) uniquePlanets.set(row.homePlanet.planetId, row.homePlanet);
