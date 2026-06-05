@@ -57,6 +57,8 @@ type TransactionRequest = {
   value?: string;
 };
 
+type GasEstimateResult = string | number | bigint;
+
 export type OnChainResources = {
   metal: string;
   crystal: string;
@@ -770,6 +772,33 @@ async function sendWalletTransaction(
     method: "eth_sendTransaction",
     params: [transaction]
   });
+}
+
+async function assertWalletTransactionEstimated(
+  provider: Eip1193Provider,
+  transaction: TransactionRequest,
+  label: string,
+): Promise<void> {
+  try {
+    const estimate = await readWalletRequest<GasEstimateResult>(provider, {
+      method: "eth_estimateGas",
+      params: [transaction],
+    }, `${label.toLowerCase()} gas estimate`);
+    if (gasEstimateIsPositive(estimate)) return;
+  } catch (error) {
+    if (isUserRejected(error)) throw error;
+  }
+
+  throw new Error(`${label} cannot be confirmed by the game contract yet. Refresh infrastructure state and retry before opening your wallet.`);
+}
+
+function gasEstimateIsPositive(estimate: GasEstimateResult | null | undefined): boolean {
+  if (estimate === null || estimate === undefined) return false;
+  try {
+    return BigInt(estimate) > 0n;
+  } catch {
+    return false;
+  }
 }
 
 function isAccountProbeWallet(provider: Eip1193Provider): boolean {
@@ -1491,6 +1520,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   if (!accountProbeReadyChecked) {
     await assertWalletUnlocked(provider);
   }
+  await assertWalletTransactionEstimated(provider, transaction, "Building completion");
 
   return sendWalletTransaction(provider, account, transaction, {
     accountProbeReadyChecked

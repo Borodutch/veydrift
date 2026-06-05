@@ -205,10 +205,14 @@ const buildingFinishSubmittedSyncLabel =
   "Building completion submitted. Waiting for backend state to clear this completed queue before another finish attempt.";
 const buildingFinishFailedSyncLabel =
   "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.";
+const buildingFinishRejectedLabel =
+  "Building completion was cancelled in the wallet. The ready queue is still available; retry when you are ready to confirm the game-state update.";
 export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 const buildingWalletConfirmationLabel = (label: string) =>
-  `${label}: unlock your wallet if needed, then confirm in your wallet.`;
+  label === "Building completion"
+    ? "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected."
+    : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 
 type RefreshFreshnessGate = { current: number };
@@ -2518,7 +2522,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setBuildingAction({
           status: "error",
           buildingKey: completionBuildingKey,
-          label: failedSyncReason ?? label,
+          label: isRejectedByUser ? buildingFinishRejectedLabel : failedSyncReason ?? label,
         });
       }
     });
