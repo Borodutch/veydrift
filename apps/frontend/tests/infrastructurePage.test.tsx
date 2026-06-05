@@ -254,8 +254,8 @@ describe("Infrastructure page display helpers", () => {
     expect(solarRows).toContainEqual({
       delta: "+126",
       label: "Energy output",
-      next: "785 produced",
-      value: "659 produced",
+      next: "753 produced",
+      value: "627 produced",
     });
     expect(solarRows.some((row) => row.label === "Deuterium consumed")).toBe(false);
 
@@ -267,8 +267,8 @@ describe("Infrastructure page display helpers", () => {
     expect(fusionRows).toContainEqual({
       delta: "+37",
       label: "Energy output",
-      next: "696 produced",
-      value: "659 produced",
+      next: "69 produced",
+      value: "32 produced",
     });
     expect(fusionRows).toContainEqual({
       delta: "(+14/h)",
@@ -277,6 +277,35 @@ describe("Infrastructure page display helpers", () => {
       tone: "warning",
       value: "11/h",
     });
+  });
+
+  test("keeps Solar Plant and Fusion Reactor outputs separate when both produce energy", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 1,
+      solarPlant: 11,
+    };
+
+    const solarEffect = buildingEffectMetrics(buildings, "solarPlant", undefined, 3);
+    const fusionEffect = buildingEffectMetrics(buildings, "fusionReactor", undefined, 3);
+
+    expect(solarEffect).toMatchObject({
+      currentProduced: 627,
+      deltaProduced: 126,
+      kind: "energy",
+      nextProduced: 753,
+    });
+    expect(fusionEffect).toMatchObject({
+      currentProduced: 32,
+      deltaProduced: 37,
+      kind: "energy",
+      nextProduced: 69,
+    });
+    if (solarEffect.kind !== "energy" || fusionEffect.kind !== "energy") {
+      throw new Error("Expected Solar Plant and Fusion Reactor to be energy effects");
+    }
+    expect(solarEffect.currentProduced).not.toBe(fusionEffect.currentProduced);
   });
 
   test("keeps build-level production capacity positive when current power would throttle output", () => {

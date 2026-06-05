@@ -418,6 +418,28 @@ describe("building detail helpers", () => {
     expect(rows.map((row) => row.effect)).toEqual([undefined, undefined]);
   });
 
+  test("reports Solar Plant and Fusion Reactor energy as per-building output", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 1,
+      solarPlant: 11,
+    };
+
+    expect(buildingEnergyDetail(buildings, "solarPlant", 3)).toEqual({
+      current: 627,
+      delta: 126,
+      kind: "produces",
+      next: 753,
+    });
+    expect(buildingEnergyDetail(buildings, "fusionReactor", 3)).toEqual({
+      current: 32,
+      delta: 37,
+      kind: "produces",
+      next: 69,
+    });
+  });
+
   test("builds storage level table rows without production or energy columns", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
 
