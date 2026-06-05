@@ -346,7 +346,7 @@ function RankingRow({
       className={`grid grid-cols-[52px_minmax(0,1fr)_88px] items-center border-b px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_120px] ${rowTone}`}
       data-ranking-wallet={normalizedWallet}
     >
-      <span className={`font-mono ${isCurrentPlayer ? "text-cyan-100" : isSameAlliance ? "text-emerald-100" : "text-slate-400"}`}>#{entry.rank}</span>
+      <span className={`font-mono ${isCurrentPlayer ? "text-cyan-100" : isSameAlliance ? "text-sky-100" : "text-slate-400"}`}>#{entry.rank}</span>
       <span className="flex min-w-0 items-center gap-2.5">
         {rankedPlanets.length > 0 ? (
           <span className="flex max-w-28 shrink-0 flex-wrap gap-1">

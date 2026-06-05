@@ -1,5 +1,6 @@
 import type {
   Address,
+  AllianceIdentity,
   AllianceState,
   AttackProtectionStatus,
   BattleReport,
@@ -98,6 +99,18 @@ export class CachedChainReader implements ChainReader {
 
   getAllianceState(wallet: Address): Promise<AllianceState> {
     return this.cached(`alliance:${wallet.toLowerCase()}`, () => this.inner.getAllianceState(wallet));
+  }
+
+  getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+    if (!this.inner.getAllianceIntelForPlayers) {
+      return Promise.resolve(new Map());
+    }
+
+    const normalizedWallets = Array.from(new Set(wallets.map((wallet) => wallet.toLowerCase() as Address))).sort();
+    return this.cached(
+      `alliance-intel:${normalizedWallets.join(",")}`,
+      () => this.inner.getAllianceIntelForPlayers!(normalizedWallets)
+    );
   }
 
   getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {

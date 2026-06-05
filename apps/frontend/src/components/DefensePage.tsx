@@ -14,7 +14,7 @@ import {
   productionQueueViewModel,
 } from "./ProductionCatalog";
 import type { RequirementTarget } from "./RequirementFlairs";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { VeydriftLoader } from "./VeydriftLoader";
 
 type DefenseActionState =
   | { status: "idle" }
@@ -46,6 +46,23 @@ const groupLabels = {
   missile: "Missiles",
 } as const;
 
+export function defenseRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
+  return {
+    disabled: loading,
+    label: loading ? "Refreshing" : "Refresh",
+  };
+}
+
+export function shouldShowDefenseInitialLoader({
+  defenseState,
+  loading,
+}: {
+  defenseState?: ChainDefenseState | null | undefined;
+  loading: boolean;
+}): boolean {
+  return loading && !defenseState;
+}
+
 export function DefensePage({
   actionState,
   canTransact,
@@ -69,7 +86,8 @@ export function DefensePage({
   const resources = toResources(defenseState?.resources);
   const queue = activeProductionQueue(defenseState?.queue, overviewQueue, "defense");
   const productionAvailable = defenseState?.productionAvailable !== false;
-  const initialLoading = loading && !defenseState;
+  const initialLoading = shouldShowDefenseInitialLoader({ defenseState, loading });
+  const refreshButton = defenseRefreshButtonState(loading);
 
   return (
     <div className="grid gap-4">
@@ -86,11 +104,12 @@ export function DefensePage({
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={refreshButton.disabled}
             onClick={onRefresh}
             type="button"
           >
-            Refresh
+            {refreshButton.label}
           </button>
         </div>
       </div>
@@ -146,10 +165,6 @@ function StatusPanel({
   error: string | undefined;
   loading: boolean;
 }) {
-  if (loading && defenseState) {
-    return <InlineSyncIndicator label="Refreshing defenses" />;
-  }
-
   if (loading) {
     return null;
   }
