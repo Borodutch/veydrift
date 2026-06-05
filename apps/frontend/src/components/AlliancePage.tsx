@@ -122,7 +122,7 @@ export function AlliancePage({
   }, [profile?.tag, profile?.name, profile?.description]);
 
   useEffect(() => {
-    if (selectedAllianceId) setActiveAllianceId(selectedAllianceId);
+    setActiveAllianceId(selectedAllianceId ?? null);
   }, [selectedAllianceId]);
 
   useEffect(() => {
