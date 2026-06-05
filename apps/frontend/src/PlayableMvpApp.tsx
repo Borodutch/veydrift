@@ -108,6 +108,7 @@ import {
   fetchPlayerProfile,
   mergePlayerProfile,
   walletRequestErrorMessage,
+  confirmTransactionReceipt,
   sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
@@ -1603,6 +1604,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const moonContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? moonContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const confirmSubmittedTransaction = useCallback(async (txHash: string) => {
+    if (!provider) {
+      throw new Error("Wallet provider is unavailable while confirming the transaction.");
+    }
+    await confirmTransactionReceipt(provider, txHash);
+  }, [provider]);
 
   const refreshInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
@@ -2557,6 +2564,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           buildingKey: key,
           label: transactionConfirmingLabel(label, txHash),
         });
+        await confirmSubmittedTransaction(txHash);
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
         await refreshOnChainState();
         await refreshInfrastructureState();
@@ -2574,6 +2582,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     account,
     activePlanetId,
     apiBaseUrl,
+    confirmSubmittedTransaction,
     gameContract,
     infrastructureUnavailableReason,
     isWalletConnected,
@@ -2654,6 +2663,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           buildingKey: completionBuildingKey,
           label: transactionConfirmingLabel(label, txHash),
         });
+        await confirmSubmittedTransaction(txHash);
         setCompletedBuildingFinishExpectation(expectation);
         setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: transactionSyncingLabel(label) });
         const synced = await refreshFinishedBuildingState(expectation);
@@ -2701,6 +2711,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     activePlanetId,
     apiBaseUrl,
     completedBuildingFinishExpectation,
+    confirmSubmittedTransaction,
     failedBuildingFinishExpectation,
     gameContract,
     infrastructureChainState,
@@ -2725,6 +2736,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       try {
         const txHash = await send();
         setShipyardAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
+        await confirmSubmittedTransaction(txHash);
         setShipyardAction({ status: "pending", label: transactionSyncingLabel(label) });
         let synced = true;
         if (afterReceipt) {
@@ -2747,7 +2759,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
       }
     });
-  }, [refreshInfrastructureState, refreshOnChainState, refreshShipyardState, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, transactionActionGate]);
 
   const runDefenseTransaction = useCallback(async (
     label: string,
@@ -2761,6 +2773,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       try {
         const txHash = await send();
         setDefenseAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
+        await confirmSubmittedTransaction(txHash);
         setDefenseAction({ status: "pending", label: transactionSyncingLabel(label) });
         if (afterReceipt) {
           await afterReceipt();
@@ -2778,7 +2791,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
       }
     });
-  }, [refreshDefenseState, refreshInfrastructureState, refreshOnChainState, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, transactionActionGate]);
 
   const waitForAllianceApplicationState = useCallback((
     expectation: AllianceApplicationExpectation,
@@ -2804,6 +2817,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     try {
       const txHash = await send();
       setAllianceAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
+      await confirmSubmittedTransaction(txHash);
       const next = await (afterReceipt ? afterReceipt() : refreshAllianceState());
       if (next) {
         setAllianceState(next);
@@ -2819,7 +2833,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     } finally {
       setAllianceLoading(false);
     }
-  }, [refreshAllianceState]);
+  }, [confirmSubmittedTransaction, refreshAllianceState]);
 
   const runResearchTransaction = useCallback(async (
     label: string,
@@ -2832,6 +2846,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       try {
         const txHash = await send();
         setResearchAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
+        await confirmSubmittedTransaction(txHash);
         setResearchAction({ status: "pending", label: transactionSyncingLabel(label) });
         if (afterReceipt) {
           await afterReceipt();
@@ -2849,7 +2864,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
       }
     });
-  }, [refreshInfrastructureState, refreshOnChainState, refreshResearchState, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshResearchState, transactionActionGate]);
 
   const runRiftTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setRiftAction({ status: "pending", label });
@@ -2857,10 +2872,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     try {
       const txHash = await send();
       setRiftAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-      setRiftAction({ status: "success", label: `${label} confirmed.` });
+      await confirmSubmittedTransaction(txHash);
+      setRiftAction({ status: "pending", label: transactionSyncingLabel(label) });
       refreshRiftState();
       void refreshOnChainState();
       refreshInfrastructureState();
+      setRiftAction({ status: "success", label: `${label} confirmed.` });
     } catch (error) {
       console.error(error);
       setRiftAction({
@@ -2868,7 +2885,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         label: error instanceof Error ? error.message : `${label} failed.`,
       });
     }
-  }, [refreshInfrastructureState, refreshOnChainState, refreshRiftState]);
+  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshRiftState]);
 
   const runGalaxyTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setGalaxyAction({ status: "pending", label });
@@ -2876,11 +2893,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     try {
       const txHash = await send();
       setGalaxyAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-      setGalaxyAction({ status: "success", label: `${label} confirmed.` });
+      await confirmSubmittedTransaction(txHash);
+      setGalaxyAction({ status: "pending", label: transactionSyncingLabel(label) });
       refreshShipyardState();
       refreshDefenseState();
       void refreshOnChainState();
       refreshInfrastructureState();
+      setGalaxyAction({ status: "success", label: `${label} confirmed.` });
     } catch (error) {
       console.error(error);
       setGalaxyAction({
@@ -2888,7 +2907,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         label: error instanceof Error ? error.message : `${label} failed.`,
       });
     }
-  }, [refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
+  }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
 
   const runMoonTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setMoonAction({ status: "pending", label });
@@ -2896,9 +2915,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     try {
       const txHash = await send();
       setMoonAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-      setMoonAction({ status: "success", label: `${label} confirmed.` });
+      await confirmSubmittedTransaction(txHash);
+      setMoonAction({ status: "pending", label: transactionSyncingLabel(label) });
       await refreshInfrastructureState();
       void refreshOnChainState();
+      setMoonAction({ status: "success", label: `${label} confirmed.` });
     } catch (error) {
       console.error(error);
       setMoonAction({
@@ -2906,7 +2927,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         label: error instanceof Error ? error.message : `${label} failed.`,
       });
     }
-  }, [refreshInfrastructureState, refreshOnChainState]);
+  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
     const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
@@ -3530,6 +3551,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     void sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, trimmedName)
       .then(async (txHash) => {
         setPlanetRenameAction({ status: "pending", label: transactionConfirmingLabel("Planet rename", txHash) });
+        await confirmSubmittedTransaction(txHash);
+        setPlanetRenameAction({ status: "pending", label: transactionSyncingLabel("Planet rename") });
         await refreshOnChainState({ planetId: activePlanetId, name: trimmedName });
         setPlanetRenameAction({ status: "success", label: "Planet renamed." });
       })
@@ -3540,7 +3563,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           label: error instanceof Error ? error.message : "Rename transaction failed.",
         });
       });
-  }, [account, activePlanetId, gameContract, provider, refreshOnChainState]);
+  }, [account, activePlanetId, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState]);
 
   const handleUpdatePlayerDisplayName = useCallback((displayName: string) => {
     if (!provider || !account || !apiBaseUrl) {
@@ -3586,6 +3609,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     void sendAbandonPlanetTransaction(provider, account, gameContract, activePlanetId)
       .then(async (txHash) => {
         setPlanetManagementAction({ status: "pending", label: transactionConfirmingLabel("Colony abandon", txHash) });
+        await confirmSubmittedTransaction(txHash);
+        setPlanetManagementAction({ status: "pending", label: transactionSyncingLabel("Colony abandon") });
         setSelectedPlanetId(undefined);
         await refreshOnChainState();
         setPlanetManagementAction({ status: "success", label: "Colony abandoned." });
@@ -3597,7 +3622,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           label: error instanceof Error ? error.message : "Abandon transaction failed.",
         });
       });
-  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, selectedManagedPlanet]);
+  }, [account, activePlanetId, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState, selectedManagedPlanet]);
 
   const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent = 100) => {
     if (!action.enabled) return;
@@ -3752,6 +3777,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     request()
       .then(async (txHash) => {
         setMissionAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
+        await confirmSubmittedTransaction(txHash);
+        setMissionAction({ status: "pending", label: transactionSyncingLabel(label) });
         await refreshOnChainState();
         setMissionAction({ status: "success", label: `${label} confirmed.` });
       })
@@ -3762,7 +3789,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           label: error instanceof Error ? error.message : `${label} transaction failed.`,
         });
       });
-  }, [account, gameContract, provider, refreshOnChainState]);
+  }, [account, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState]);
 
   const handleRecallMission = useCallback((missionId: string) => {
     if (!provider || !account || !gameContract) {
