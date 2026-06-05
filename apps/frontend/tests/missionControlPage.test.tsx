@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionControlPage, formatMissionTime, missionLifecycleActions } from "../src/components/MissionControlPage";
-import type { FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
+import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
   test("renders mission timing with relative and exact local timestamps", () => {
@@ -76,7 +76,6 @@ describe("MissionControlPage", () => {
       onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
-      onOpenBattleReports: () => undefined,
       onRecall: () => undefined,
       onRefresh: () => undefined,
       onResolve: () => undefined,
@@ -91,8 +90,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Incoming attacks 1");
     expect(text).toContain("Outgoing fleets 1");
     expect(text).toContain("Returning fleets 1");
-    expect(text).toContain("Battle reports");
-    expect(text).toContain("Resolved battle reports 0 Open list");
+    expect(text).toContain("Resolved battle reports 0");
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Origin Planet #7");
     expect(text).toContain("Target Planet #9");
@@ -108,6 +106,8 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("MISSION CONTROL");
     expect(text).not.toContain("Galaxy");
     expect(text).not.toContain("Reports");
+    expect(text).not.toContain("Battle reports");
+    expect(text).not.toContain("Open list");
     expect(text).not.toContain("Contract-indexed");
     expect(text).not.toContain("contract-supported");
     expect(text).not.toContain("game contract");
@@ -191,6 +191,31 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Ready to resolve 1");
     expect(text).toContain("Resolve battle");
   });
+
+  test("paginates resolved battle reports inline without a separate list action", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        battleReports: Array.from({ length: 7 }, (_, index) => battleReport((index + 1).toString())),
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Resolved battle reports 7");
+    expect(text).toContain("Mission # 1");
+    expect(text).toContain("Mission # 6");
+    expect(text).not.toContain("Mission # 7");
+    expect(text).toContain("Page 1 of 2");
+    expect(text).toContain("Previous");
+    expect(text).toContain("Next");
+    expect(text).not.toContain("Open list");
+    expect(text).not.toContain("Battle reports");
+  });
 });
 
 function missionControlPage(overrides: Partial<Parameters<typeof MissionControlPage>[0]> = {}): ComponentChildren {
@@ -213,7 +238,6 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
     onOpenBattleReport: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
-    onOpenBattleReports: () => undefined,
     onRecall: () => undefined,
     onRefresh: () => undefined,
     onResolve: () => undefined,
@@ -285,6 +309,24 @@ function managedPlanet(overrides: Partial<ManagedPlanetResponse> = {}): ManagedP
   };
 }
 
+function battleReport(missionId: string): BattleReport {
+  return {
+    missionId,
+    attacker: "0x2222222222222222222222222222222222222222",
+    targetPlanetId: "7",
+    outcome: "AttackerWin",
+    rounds: 2,
+    randomSeed: "99",
+    loot: { metal: "1200", crystal: "300", deuterium: "0" },
+    attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
+    defenderLosses: { metal: "900", crystal: "250", deuterium: "0" },
+    debris: { metal: "600", crystal: "150" },
+    roundReports: [],
+    transactionHash: "0xabc",
+    blockNumber: "1234",
+  };
+}
+
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();
 }
@@ -308,6 +350,9 @@ function textParts(node: ComponentChildren): string[] {
       return [];
     }
     return textParts(vnode.type(vnode.props));
+  }
+  if ((vnode.props as { hidden?: boolean } | undefined)?.hidden) {
+    return [];
   }
   return textParts(vnode.props?.children as ComponentChildren);
 }

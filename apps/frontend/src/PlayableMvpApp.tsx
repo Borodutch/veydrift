@@ -4131,16 +4131,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     writeInspectHash({ kind: "battle-report", missionId });
   }, []);
 
-  const handleOpenBattleReports = useCallback(() => {
-    setBattleReportMissionId(null);
-    setInspectedPlayerWallet(null);
-    setInspectedAllianceId(null);
-    setMissionReportId(null);
-    setSelectedCoords(undefined);
-    setPage("battle-reports");
-    writeInspectHash({ kind: "page", page: "battle-reports" });
-  }, []);
-
   const handleOpenRequirement = useCallback((target: RequirementTarget) => {
     setSelectedCoords(undefined);
 
@@ -4346,7 +4336,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenBattleReport={handleOpenBattleReport}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
-          onOpenBattleReports={handleOpenBattleReports}
           onRecall={handleRecallMission}
           onRefresh={() => void refreshOnChainState()}
           onResolve={handleResolveMission}
