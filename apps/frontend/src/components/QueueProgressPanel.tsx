@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { formatDurationUntil } from "../durationFormat";
-import { queueProgressPercent } from "../playableMvp";
+import { queueProgressBarState, queueProgressFillState } from "../overviewData";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
 
@@ -18,7 +18,9 @@ export interface QueueProgressPanelProps {
   asset?: string | undefined;
   children?: ComponentChildren;
   label: string;
+  indeterminate?: boolean | undefined;
   now?: number | undefined;
+  progress?: number | undefined;
   quantity?: number | undefined;
   readyAt: QueueTimestamp;
   startedAt?: QueueTimestamp;
@@ -65,8 +67,10 @@ export function QueueProgressPanel({
   action,
   asset,
   children,
+  indeterminate,
   label,
   now = Date.now(),
+  progress,
   quantity,
   readyAt,
   startedAt,
@@ -76,14 +80,23 @@ export function QueueProgressPanel({
   const classes = toneClasses[tone];
   const readyAtMs = queueTimestampToMs(readyAt);
   const startedAtMs = queueTimestampToMs(startedAt);
-  const percent = queueProgressPercent(
-    readyAtMs === undefined ? undefined : {
-      readyAt: readyAtMs,
-      startedAt: startedAtMs ?? readyAtMs,
-    },
-    now,
-  );
   const remaining = readyAtMs === undefined ? "Unknown" : formatDurationUntil(readyAtMs, now);
+  const hasCanonicalTimeline = readyAtMs !== undefined && startedAtMs !== undefined && startedAtMs < readyAtMs;
+  const shouldIndeterminate = indeterminate ?? (!hasCanonicalTimeline && progress === undefined);
+  const progressBar = queueProgressBarState({
+    indeterminate: shouldIndeterminate,
+    progress,
+    remaining,
+  });
+  const progressFill = queueProgressFillState({
+    indeterminate: shouldIndeterminate,
+    now,
+    progress,
+    readyAt: readyAtMs,
+    remaining,
+    startedAt: hasCanonicalTimeline ? startedAtMs : undefined,
+  });
+  const percent = Math.round(progressFill.progress * 100);
 
   return (
     <section className={`grid gap-3 rounded-md border ${classes.border} ${classes.background} p-3 sm:grid-cols-[64px_minmax(0,1fr)_auto] sm:items-center`}>
@@ -112,15 +125,19 @@ export function QueueProgressPanel({
             ) : null}
           </div>
           <span className="shrink-0 rounded bg-black/20 px-2 py-1 text-xs font-semibold text-white">
-            {percent}%
+            {progressBar.indeterminate ? "Pending" : `${percent}%`}
           </span>
         </div>
 
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/25">
-          <div
-            className={`h-full rounded-full ${classes.fill} transition-[width]`}
-            style={{ width: `${percent}%` }}
-          />
+          {progressBar.indeterminate ? (
+            <div className={`h-full w-2/3 rounded-full ${classes.fill} animate-pulse`} />
+          ) : (
+            <div
+              className={`h-full rounded-full ${classes.fill} transition-[width]`}
+              style={{ width: `${percent}%` }}
+            />
+          )}
         </div>
 
         <div className="mt-3 grid gap-2 text-xs text-white/90 sm:grid-cols-2">

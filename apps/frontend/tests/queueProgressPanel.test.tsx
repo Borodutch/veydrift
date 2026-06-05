@@ -28,10 +28,42 @@ describe("QueueProgressPanel", () => {
 
     expect(text).toContain("Active queue");
     expect(text).toContain("Rocket Launcher x2");
-    expect(text).toContain("50 %");
+    expect(text).toContain("50%");
     expect(text).toContain("Time remaining 8m 20s");
     expect(text).toContain("Ready at");
     expect(text).toContain("Complete queue");
+  });
+
+  test("keeps pending queues without a canonical timeline indeterminate", () => {
+    const panel = QueueProgressPanel({
+      label: "Light Laser",
+      now: 1_500_000,
+      quantity: 3,
+      readyAt: "2000",
+      title: "Active queue",
+      tone: "rose",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("Pending");
+    expect(text).not.toContain("0%");
+    expect(hasClass(panel, "animate-pulse")).toBe(true);
+  });
+
+  test("renders ready queues as complete even without a started timestamp", () => {
+    const panel = QueueProgressPanel({
+      label: "Small Cargo",
+      now: 2_500_000,
+      quantity: 1,
+      readyAt: "2000",
+      title: "Active queue",
+      tone: "cyan",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("100%");
+    expect(text).toContain("Time remaining Ready");
+    expect(hasClass(panel, "animate-pulse")).toBe(false);
   });
 });
 
@@ -54,4 +86,22 @@ function textParts(node: ComponentChildren): string[] {
 
   const vnode = node as VNode;
   return textParts(vnode.props?.children);
+}
+
+function hasClass(node: ComponentChildren, className: string): boolean {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return false;
+  }
+
+  if (typeof node === "string" || typeof node === "number") {
+    return false;
+  }
+
+  if (Array.isArray(node)) {
+    return node.some((child) => hasClass(child, className));
+  }
+
+  const vnode = node as VNode;
+  const classes = typeof vnode.props?.className === "string" ? vnode.props.className : "";
+  return classes.split(/\s+/).includes(className) || hasClass(vnode.props?.children, className);
 }
