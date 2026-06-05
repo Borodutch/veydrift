@@ -972,7 +972,7 @@ function enrichAllianceState(
   state: AllianceState,
   indexer: SettlementIndexer | undefined
 ): AllianceState {
-  const dismissJoinRequestAvailable = process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED === "true";
+  const dismissJoinRequestAvailable = process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED !== "false";
   if (!indexer) return { ...state, dismissJoinRequestAvailable };
 
   const displayNameField = <Key extends string>(key: Key, wallet: `0x${string}`): Record<Key, string> | Record<string, never> => {

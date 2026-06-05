@@ -1411,6 +1411,7 @@ describe("Veydrift backend", () => {
       description: "Discord: https://discord.gg/vdft",
       memberCount: 1
     });
+    expect(body.dismissJoinRequestAvailable).toBe(true);
     expect(body.members).toEqual([{ address: player, role: "owner", joinedAt: "1770000000" }]);
   });
 
