@@ -411,6 +411,56 @@ describe("Research page load-error display", () => {
     });
   });
 
+  test("keeps active research disabled when display queue normalization is incomplete", () => {
+    const state = createInitialPlayableState(10_000);
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 400, crystal: 800, deuterium: 200 },
+      error: undefined,
+      key: "impulseDrive",
+      loading: false,
+      now: 1_700_003_000_000,
+      researchState: researchState({
+        technologyLevels: { "9": 0 },
+        technologies: [
+          { id: 9, level: 0, cost: { metal: "400", crystal: "800", deuterium: "200" } },
+        ],
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 9,
+          targetLevel: 1,
+          readyAt: "1700004320",
+          startedAt: null,
+          cost: null,
+        },
+      }),
+      state: {
+        ...state,
+        buildings: {
+          ...state.buildings,
+          researchLab: 1,
+        },
+        research: {
+          ...state.research,
+          impulseDrive: 0,
+        },
+        researchQueue: undefined,
+      },
+    });
+
+    expect(status).toMatchObject({
+      actionLabel: "In progress",
+      badge: "In progress",
+      completionReady: false,
+      disabled: true,
+      reason: "Research to Level 1 in progress",
+      targetLevel: 1,
+      tileStatus: "Active",
+    });
+  });
+
   test("lets selected queued research complete once authoritative ready time has passed", () => {
     const status = researchActionStatus({
       actionPending: false,
