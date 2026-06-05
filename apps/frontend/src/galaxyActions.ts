@@ -13,6 +13,12 @@ export type GalaxyActionKind =
 
 export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize" | "missileAttack">;
 
+export type GalaxyAttackProtectionStatus = {
+  allowed: boolean;
+  blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
+  blockedReasonLabel: string | null;
+};
+
 export type MissionShipKey =
   | "smallCargo"
   | "lightFighter"
@@ -92,6 +98,7 @@ export function galaxyActionsForSlot({
   planet,
   defenseState,
   shipyardState,
+  attackProtection,
 }: {
   account: string | undefined;
   homePlanetId: string | null | undefined;
@@ -99,6 +106,7 @@ export function galaxyActionsForSlot({
   planet: Planet | undefined;
   defenseState?: ChainDefenseState | null | undefined;
   shipyardState: ChainShipyardState | null;
+  attackProtection?: GalaxyAttackProtectionStatus | null | undefined;
 }): GalaxyAction[] {
   const commonBlocker = baseActionBlocker(account, homePlanetId, shipyardState);
   const owner = planet?.occupiedBy?.owner?.toLowerCase() ?? planet?.ownerId?.toLowerCase() ?? null;
@@ -172,7 +180,7 @@ export function galaxyActionsForSlot({
     ];
   }
 
-  const attackBlocker = commonBlocker ?? firstAvailableFleetShipBlocker(shipyardState);
+  const attackBlocker = commonBlocker ?? attackProtectionBlocker(attackProtection) ?? firstAvailableFleetShipBlocker(shipyardState);
   const missileBlocker = commonBlocker ?? interplanetaryMissileBlocker(defenseState);
 
   return [
@@ -322,6 +330,15 @@ function debrisFieldBlocker(planet: Planet | undefined): string | undefined {
     return "No debris field at this coordinate.";
   }
   return undefined;
+}
+
+function attackProtectionBlocker(status: GalaxyAttackProtectionStatus | null | undefined): string | undefined {
+  if (!status || status.allowed || status.blockedReason === "none") return undefined;
+  if (status.blockedReasonLabel) return status.blockedReasonLabel;
+  if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit.";
+  if (status.blockedReason === "score_protection") return "Attack blocked by newbie or score-ratio protection.";
+  if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
+  return "Attack blocked.";
 }
 
 function firstAvailableCargoShip(shipyardState: ChainShipyardState | null): MissionShipKey | undefined {

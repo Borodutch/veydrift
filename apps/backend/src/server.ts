@@ -1781,6 +1781,7 @@ type RankedHighscoreEntry = HighscoreEntry & {
   attackProtection: RankedHighscoreAttackProtection | null;
   displayName: string | null;
   homePlanet: RankedHighscorePlanet | null;
+  planets: RankedHighscorePlanet[];
   rank: number;
 };
 
@@ -1892,7 +1893,8 @@ function highscoreRows(
 ): Map<string, RankedHighscoreEntry> {
   return new Map(
     entries.map((entry) => {
-      const homePlanet = rankedHighscoreHomePlanet(entry, planetsByOwner);
+      const planets = rankedHighscorePlanets(entry, planetsByOwner);
+      const homePlanet = rankedHighscoreHomePlanet(entry, planets);
       return [
         entry.wallet.toLowerCase(),
         {
@@ -1901,6 +1903,7 @@ function highscoreRows(
           attackProtection: null,
           displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
           homePlanet,
+          planets,
           rank: 0
         }
       ];
@@ -1936,7 +1939,9 @@ async function rankedHighscoreProtectionLookup(
 
   const uniquePlanets = new Map<string, RankedHighscorePlanet>();
   for (const row of rows) {
-    if (row.homePlanet) uniquePlanets.set(row.homePlanet.planetId, row.homePlanet);
+    for (const planet of row.planets) {
+      uniquePlanets.set(planet.planetId, planet);
+    }
   }
 
   const statuses = await Promise.all(
@@ -1976,19 +1981,11 @@ function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory
   });
 }
 
-function rankedHighscoreHomePlanet(
+function rankedHighscorePlanets(
   entry: HighscoreEntry,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
-): RankedHighscorePlanet | null {
-  if (!entry.homePlanetId) return null;
-
-  const planet = planetsByOwner
-    .get(entry.wallet.toLowerCase())
-    ?.find((candidate) => candidate.planetId === entry.homePlanetId);
-
-  if (!planet) return null;
-
-  return {
+): RankedHighscorePlanet[] {
+  return (planetsByOwner.get(entry.wallet.toLowerCase()) ?? []).map((planet) => ({
     planetId: planet.planetId,
     name: planet.name,
     coordinates: {
@@ -1997,7 +1994,15 @@ function rankedHighscoreHomePlanet(
       position: planet.position
     },
     archetype: planetArchetypeForTemperature(planet.temperature)
-  };
+  }));
+}
+
+function rankedHighscoreHomePlanet(
+  entry: HighscoreEntry,
+  planets: readonly RankedHighscorePlanet[]
+): RankedHighscorePlanet | null {
+  if (!entry.homePlanetId) return null;
+  return planets.find((candidate) => candidate.planetId === entry.homePlanetId) ?? null;
 }
 
 function unavailableResponse(problems: ConfigProblem[]): Response {

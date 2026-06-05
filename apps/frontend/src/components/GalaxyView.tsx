@@ -670,6 +670,7 @@ function GalaxySlot({
   const coords = { galaxy, system, position };
   const actions = galaxyActionsForSlot({
     account,
+    attackProtection,
     homePlanetId,
     isOrigin: isHome,
     planet,
@@ -705,7 +706,7 @@ function GalaxySlot({
           <div className="text-sm font-medium text-slate-500">Empty space</div>
           <div className="text-xs text-slate-700">No public planet at this position.</div>
         </div>
-        <ActionButtons
+        <GalaxyActionButtons
           actions={actions}
           busy={actionState.status === "pending"}
           coords={coords}
@@ -847,7 +848,7 @@ function GalaxySlot({
         >
           Inspect
         </button>
-        <ActionButtons
+        <GalaxyActionButtons
           actions={actions}
           busy={actionState.status === "pending"}
           coords={coords}
@@ -879,7 +880,7 @@ function GalaxySlot({
   );
 }
 
-function ActionButtons({
+export function GalaxyActionButtons({
   actions,
   busy,
   coords,

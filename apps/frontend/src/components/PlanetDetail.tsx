@@ -1,19 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
+import { DEFAULT_MISSION_SPEED_PERCENT } from "../fleetMissionRules";
+import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { playableApiUrl } from "../runtimeConfig";
-import { shortAddress } from "../walletFlow";
+import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
+import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 interface Props {
+  account?: string | undefined;
+  actionState?: GalaxyActionState | undefined;
   coords: Coordinates;
   apiBaseUrl?: string | undefined;
+  defenseState?: ChainDefenseState | null | undefined;
   homeCoords?: Coordinates | undefined;
+  homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
+  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
   onBack: () => void;
+  shipyardState?: ChainShipyardState | null | undefined;
 }
 
 export type PlanetRecordRow = {
@@ -22,22 +31,38 @@ export type PlanetRecordRow = {
   tone?: "default" | "accent" | "muted";
 };
 
-export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack }: Props) {
+export function PlanetDetail({
+  account,
+  actionState = { status: "idle" },
+  coords,
+  apiBaseUrl = playableApiUrl,
+  defenseState = null,
+  homeCoords,
+  homePlanetId,
+  homePlanet,
+  onAction,
+  onBack,
+  shipyardState = null,
+}: Props) {
   const trustedHomePlanet = useMemo(
     () => sameCoordinates(homeCoords, coords) && homePlanet
       ? homePlanet
       : null,
-    [coords.galaxy, coords.position, coords.system, homeCoords, homePlanet],
+    [coords.galaxy, coords.position, coords.system, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, homePlanet],
   );
   const [planet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
+  const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
+  const loadedDetailKeyRef = useRef<string | undefined>();
+  const detailKey = `${apiBaseUrl.replace(/\/+$/, "")}:${coords.galaxy}:${coords.system}:${coords.position}`;
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
 
   useEffect(() => {
     const abortController = new AbortController();
-    setPlanet(trustedHomePlanet);
+    const canPreservePlanet = loadedDetailKeyRef.current === detailKey;
+    setPlanet((current) => canPreservePlanet ? current ?? trustedHomePlanet : trustedHomePlanet);
     setSource("loading");
 
     fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
@@ -50,7 +75,10 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       })
       .then((payload) => {
         const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
-        setPlanet(sameCoordinates(homeCoords, coords) && homePlanet ? homePlanet : apiPlanet);
+        setPlanet((current) => sameCoordinates(homeCoords, coords) && homePlanet
+          ? homePlanet
+          : apiPlanet ?? (canPreservePlanet ? current : null));
+        loadedDetailKeyRef.current = detailKey;
         setSource("api");
       })
       .catch((error) => {
@@ -61,14 +89,54 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, coords, homeCoords, homePlanet, trustedHomePlanet]);
+  }, [
+    apiBaseUrl,
+    coords.galaxy,
+    coords.position,
+    coords.system,
+    detailKey,
+    homeCoords?.galaxy,
+    homeCoords?.position,
+    homeCoords?.system,
+    homePlanet,
+    trustedHomePlanet,
+  ]);
+
+  useEffect(() => {
+    const targetPlanetId = planet?.occupiedBy?.planetId;
+    if (!account || !targetPlanetId || isHome) {
+      setAttackProtection(null);
+      return;
+    }
+
+    const abortController = new AbortController();
+    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/wallet/${account}/attack-protection?targetPlanetId=${targetPlanetId}`, {
+      headers: { accept: "application/json" },
+      signal: abortController.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Attack protection request failed with ${response.status}`);
+        return response.json() as Promise<AttackProtectionStatus>;
+      })
+      .then((status) => {
+        if (!abortController.signal.aborted) setAttackProtection(status);
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setAttackProtection(null);
+        }
+      });
+
+    return () => abortController.abort();
+  }, [account, apiBaseUrl, isHome, planet?.occupiedBy?.planetId]);
 
   useEffect(() => {
     setImageLoaded(isImageReady(imageRef.current));
   }, [planet?.image]);
 
   if (!planet) {
-    if (source === "loading") {
+    if (shouldShowPlanetDetailInitialLoader({ planet, source })) {
       return (
         <div className="flex flex-col gap-4 p-4 sm:p-6">
           <div className="flex items-center gap-3">
@@ -111,6 +179,17 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       </div>
     );
   }
+
+  const missionActions = galaxyActionsForSlot({
+    account,
+    attackProtection,
+    defenseState,
+    homePlanetId,
+    isOrigin: isHome,
+    planet,
+    shipyardState,
+  });
+  const attackBlockLabel = formatAttackBlockReason(attackProtection ?? undefined);
 
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
@@ -158,16 +237,45 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
         {/* Planet info */}
         <div className="flex flex-col gap-3">
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-            <h2 className="text-xl font-semibold text-white">{planet.name}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
-              <span>{formatPlanetType(planet.type)}</span>
-              <span className="text-slate-700">|</span>
-              <span>Position [{planet.galaxy}:{planet.system}:{planet.position}]</span>
-              <span className="text-slate-700">|</span>
-              <span>{planet.diameter.toLocaleString()} km</span>
-              <span className="text-slate-700">|</span>
-              <span>{planetRecordStatusLabel(planet, source, isHome)}</span>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-xl font-semibold text-white">{planet.name}</h2>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+                  <span>{formatPlanetType(planet.type)}</span>
+                  <span className="text-slate-700">|</span>
+                  <span>Position [{planet.galaxy}:{planet.system}:{planet.position}]</span>
+                  <span className="text-slate-700">|</span>
+                  <span>{planet.diameter.toLocaleString()} km</span>
+                  <span className="text-slate-700">|</span>
+                  <span>{planetRecordStatusLabel(planet, source, isHome)}</span>
+                  {attackBlockLabel ? (
+                    <>
+                      <span className="text-slate-700">|</span>
+                      <span className="text-red-100">{attackBlockLabel}</span>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+              <GalaxyActionButtons
+                actions={missionActions}
+                busy={actionState.status === "pending"}
+                coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
+                missionSpeedPercent={DEFAULT_MISSION_SPEED_PERCENT}
+                onAction={onAction}
+                planet={planet}
+              />
             </div>
+            {actionState.status !== "idle" ? (
+              <div className={`mt-3 rounded border px-3 py-2 text-xs ${
+                actionState.status === "error"
+                  ? "border-red-300/30 bg-red-500/10 text-red-100"
+                  : actionState.status === "success"
+                    ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
+                    : "border-signal/25 bg-signal/10 text-signal"
+              }`}>
+                {actionState.label}
+              </div>
+            ) : null}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -255,6 +363,16 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
       </div>
     </div>
   );
+}
+
+export function shouldShowPlanetDetailInitialLoader({
+  planet,
+  source,
+}: {
+  planet: Planet | null;
+  source: "api" | "error" | "loading";
+}): boolean {
+  return source === "loading" && !planet;
 }
 
 export function planetRecordStatusLabel(

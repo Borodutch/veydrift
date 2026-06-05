@@ -26,7 +26,7 @@ const categories: Array<{ key: HighscoreCategory; label: string }> = [
   { key: "defense", label: "Defense" },
 ];
 
-export const rankingsColumnLabels = ["Rank", "Commander", "Planets", "Score", "Total"] as const;
+export const rankingsColumnLabels = ["Rank", "Commander", "Score"] as const;
 export const rankingsPageSize = 50;
 
 export function primaryRankingEntries(data: HighscoreResponse | null): HighscoreEntry[] {
@@ -250,9 +250,9 @@ export function RankingsTable({
 }) {
   return (
     <div className="overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
-      <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px_120px]">
+      <div className="grid grid-cols-[52px_minmax(0,1fr)_88px] border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_minmax(0,1fr)_120px]">
         {rankingsColumnLabels.map((label) => (
-          <span className={`${label === "Total" ? "hidden sm:block " : ""}${label === "Rank" || label === "Commander" ? "" : "text-right"}`} key={label}>
+          <span className={`${label === "Rank" || label === "Commander" ? "" : "text-right"}`} key={label}>
             {label}
           </span>
         ))}
@@ -299,13 +299,13 @@ function RankingRow({
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   const homePlanet = entry.homePlanet ?? null;
-  const canOpenHomePlanet = Boolean(homePlanet && onSelectPlanet);
+  const rankedPlanets = rankingPlanets(entry);
   const canOpenPlayer = Boolean(onSelectPlayer);
   const commanderLabel = entry.displayName?.trim() || shortAddress(entry.wallet);
   const normalizedWallet = entry.wallet.toLowerCase();
   const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
   const alliance = entry.alliance ?? null;
-  const isScoreProtected = entry.attackProtection?.blockedReason === "score_protection";
+  const isUnattackable = Boolean(entry.attackProtection && !entry.attackProtection.allowed && entry.attackProtection.blockedReason !== "none");
   const isSameAlliance = Boolean(
     !isCurrentPlayer
       && alliance
@@ -317,14 +317,9 @@ function RankingRow({
     ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
     : isSameAlliance
       ? "border-emerald-300/20 bg-emerald-300/[0.055] shadow-[inset_3px_0_0_rgba(110,231,183,0.55)]"
-      : isScoreProtected
+      : isUnattackable
         ? "border-red-300/20 bg-red-300/[0.06] shadow-[inset_3px_0_0_rgba(248,113,113,0.5)]"
         : "border-white/5";
-
-  const openHomePlanet = () => {
-    if (!homePlanet || !onSelectPlanet) return;
-    onSelectPlanet(homePlanet.coordinates);
-  };
 
   const openAlliance = () => {
     if (!alliance || !onSelectAlliance) return;
@@ -338,27 +333,33 @@ function RankingRow({
   return (
     <div
       aria-current={isCurrentPlayer ? "true" : undefined}
-      className={`grid grid-cols-[52px_minmax(0,1fr)_72px_88px] items-center border-b px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px_120px] ${rowTone}`}
+      className={`grid grid-cols-[52px_minmax(0,1fr)_88px] items-center border-b px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_120px] ${rowTone}`}
       data-ranking-wallet={normalizedWallet}
     >
       <span className={`font-mono ${isCurrentPlayer ? "text-cyan-100" : isSameAlliance ? "text-emerald-100" : "text-slate-400"}`}>#{entry.rank}</span>
-      <span className="flex min-w-0 items-center gap-2">
-        {homePlanet ? (
-          <button
-            aria-label={`Open home planet at ${homePlanetCoordinatesLabel(homePlanet)}`}
-            className="relative h-9 w-9 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 transition hover:border-cyan-200/50 focus:outline-none focus:ring-2 focus:ring-cyan-300/40"
-            onClick={openHomePlanet}
-            title={`Open ${homePlanetHoverLabel(homePlanet)}`}
-            type="button"
-          >
-            <OptimizedImage
-              alt=""
-              className="h-full w-full object-cover"
-              loading="lazy"
-              sizes="icon"
-              src={planetImageForType(homePlanet.archetype)}
-            />
-          </button>
+      <span className="flex min-w-0 items-center gap-2.5">
+        {rankedPlanets.length > 0 ? (
+          <span className="flex max-w-28 shrink-0 flex-wrap gap-1">
+            {rankedPlanets.map((planet) => (
+              <button
+                aria-label={`Open planet at ${homePlanetCoordinatesLabel(planet)}`}
+                className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 transition hover:border-cyan-200/50 focus:outline-none focus:ring-2 focus:ring-cyan-300/40"
+                disabled={!onSelectPlanet}
+                key={planet.planetId}
+                onClick={() => onSelectPlanet?.(planet.coordinates)}
+                title={`Open ${homePlanetHoverLabel(planet)}`}
+                type="button"
+              >
+                <OptimizedImage
+                  alt=""
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                  sizes="icon"
+                  src={planetImageForType(planet.archetype)}
+                />
+              </button>
+            ))}
+          </span>
         ) : null}
         <span className="min-w-0 text-left">
           <span className="flex min-w-0 items-center gap-1.5">
@@ -389,30 +390,23 @@ function RankingRow({
                 You
               </span>
             ) : null}
-            {isScoreProtected ? (
+            {isUnattackable ? (
               <span
                 className="shrink-0 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-red-100"
-                title={entry.attackProtection?.blockedReasonLabel ?? "Protected by newbie or score-ratio protection"}
+                title={entry.attackProtection?.blockedReasonLabel ?? "Attack blocked by protection rules"}
               >
                 Protected
               </span>
             ) : null}
           </span>
           {homePlanet ? (
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500" title={homePlanetHoverLabel(homePlanet)}>
-              <span className="truncate">{homePlanetLabel(homePlanet)}</span>
-              {homePlanet.name?.trim() ? (
-                <span className="shrink-0 font-mono text-slate-400" aria-label={`Home planet coordinates ${homePlanetCoordinatesLabel(homePlanet)}`}>
-                  {homePlanetCoordinatesLabel(homePlanet)}
-                </span>
-              ) : null}
+            <span className="block min-w-0 truncate text-xs text-slate-500" title={homePlanetHoverLabel(homePlanet)}>
+              {homePlanetLabel(homePlanet)}
             </span>
           ) : null}
         </span>
       </span>
-      <span className="text-right font-mono text-slate-300">{entry.planetCount}</span>
       <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
-      <span className="hidden text-right font-mono text-slate-400 sm:block">{formatScore(entry.score.total)}</span>
     </div>
   );
 }
@@ -434,7 +428,7 @@ function formatScore(value: string): string {
 }
 
 function homePlanetLabel(planet: HighscorePlanet): string {
-  return planet.name?.trim() || homePlanetCoordinatesLabel(planet);
+  return planet.name?.trim() || "Unnamed planet";
 }
 
 function homePlanetCoordinatesLabel(planet: HighscorePlanet): string {
@@ -446,4 +440,18 @@ function homePlanetHoverLabel(planet: HighscorePlanet): string {
   const coordinates = homePlanetCoordinatesLabel(planet);
   const name = planet.name?.trim();
   return name ? `${name} ${coordinates}` : coordinates;
+}
+
+function rankingPlanets(entry: HighscoreEntry): HighscorePlanet[] {
+  const planets = entry.planets && entry.planets.length > 0
+    ? entry.planets
+    : entry.homePlanet
+      ? [entry.homePlanet]
+      : [];
+  const seen = new Set<string>();
+  return planets.filter((planet) => {
+    if (seen.has(planet.planetId)) return false;
+    seen.add(planet.planetId);
+    return true;
+  });
 }
