@@ -2,10 +2,17 @@ import { sdk } from "@farcaster/miniapp-sdk";
 
 export type FarcasterReadyClient = {
   isInMiniApp?: (timeoutMs?: number) => Promise<boolean>;
+  context?: Promise<{
+    client?: {
+      platformType?: FarcasterMiniAppPlatformType;
+    };
+  }>;
   actions: {
     ready: (options?: Record<string, unknown>) => Promise<void> | void;
   };
 };
+
+export type FarcasterMiniAppPlatformType = "web" | "mobile" | "unknown";
 
 type ReadyScheduler = (callback: () => void) => void;
 type MiniAppLocation = Pick<Location, "pathname" | "search">;
@@ -28,6 +35,17 @@ export async function detectFarcasterMiniApp(
   }
 
   return client.isInMiniApp?.(500).catch(() => false) ?? false;
+}
+
+export async function farcasterMiniAppPlatformType(
+  client: FarcasterReadyClient = sdk,
+): Promise<FarcasterMiniAppPlatformType> {
+  try {
+    const context = await withTimeout(client.context ?? Promise.resolve(undefined), 1_200);
+    return context?.client?.platformType ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 export function signalFarcasterReadyOnce(

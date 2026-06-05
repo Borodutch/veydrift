@@ -6,7 +6,12 @@ import { PlayableMvpApp } from "./PlayableMvpApp";
 import { gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
-import { detectFarcasterMiniApp, hasMiniAppUrlHint } from "./farcasterReady";
+import {
+  detectFarcasterMiniApp,
+  farcasterMiniAppPlatformType,
+  hasMiniAppUrlHint,
+  type FarcasterMiniAppPlatformType,
+} from "./farcasterReady";
 import {
   createTransactionActionGate,
   transactionAwaitingWalletLabel,
@@ -43,6 +48,7 @@ export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing st
 export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
 const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
 const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
+export const FARCASTER_DESKTOP_ACCOUNT_UNAVAILABLE_MESSAGE = "Farcaster Desktop did not expose an authorized wallet account to this Mini App. Open Veydrift in Farcaster mobile, or use a desktop browser wallet until Farcaster Desktop wallet authorization is available.";
 
 type SettlementConfigState =
   | { status: "loading"; apiUrl?: string; config: SettlementConfig }
@@ -50,6 +56,7 @@ type SettlementConfigState =
 
 export function shouldAutoConnectFarcasterWallet(input: {
   miniAppMode: boolean;
+  miniAppPlatformType: FarcasterMiniAppPlatformType | undefined;
   providerAvailable: boolean;
   settlementConfigReady: boolean;
   walletProviderSource: "injected" | "farcaster" | undefined;
@@ -57,6 +64,7 @@ export function shouldAutoConnectFarcasterWallet(input: {
 }): boolean {
   return input.providerAvailable
     && input.miniAppMode
+    && input.miniAppPlatformType !== undefined
     && input.walletProviderSource === "farcaster"
     && input.settlementConfigReady
     && !input.alreadyAttempted;
@@ -85,6 +93,32 @@ export function shouldRetryFarcasterWalletProviderProbe(input: {
     && input.attempt < (input.maxAttempts ?? FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS);
 }
 
+export function shouldRetryRejectedRequestWithSettlement(wallet: WalletState): boolean {
+  return wallet.kind === "connected";
+}
+
+export function shouldUsePassiveFarcasterAccountAuthorization(input: WalletProviderContext): boolean {
+  return input.miniAppMode
+    && input.walletProviderSource === "farcaster"
+    && input.miniAppPlatformType !== "mobile";
+}
+
+export async function walletConnectionAccounts(
+  provider: Eip1193Provider,
+  context: WalletProviderContext,
+): Promise<string[]> {
+  if (!shouldUsePassiveFarcasterAccountAuthorization(context)) {
+    return requestAccounts(provider);
+  }
+
+  const accounts = await getCurrentAccounts(provider);
+  if (!accounts[0]) {
+    throw new Error(FARCASTER_DESKTOP_ACCOUNT_UNAVAILABLE_MESSAGE);
+  }
+
+  return accounts;
+}
+
 type SettlementFunding =
   | { status: "idle" }
   | { status: "loading" }
@@ -94,6 +128,7 @@ type SettlementFunding =
 type WalletProviderDetails = Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>;
 type WalletProviderContext = {
   miniAppMode: boolean;
+  miniAppPlatformType: FarcasterMiniAppPlatformType | undefined;
   walletProviderSource: "injected" | "farcaster" | undefined;
 };
 
@@ -114,6 +149,7 @@ export function FirstPlanetSettlementApp() {
   const [miniAppMode, setMiniAppMode] = useState(() => (
     typeof window !== "undefined" ? hasMiniAppUrlHint(window.location) : false
   ));
+  const [miniAppPlatformType, setMiniAppPlatformType] = useState<FarcasterMiniAppPlatformType | undefined>();
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const farcasterAutoConnectAttempted = useRef(false);
@@ -137,6 +173,25 @@ export function FirstPlanetSettlementApp() {
       disposed = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!miniAppMode) {
+      setMiniAppPlatformType(undefined);
+      return;
+    }
+
+    let disposed = false;
+
+    void farcasterMiniAppPlatformType().then((platformType) => {
+      if (!disposed) {
+        setMiniAppPlatformType(platformType);
+      }
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [miniAppMode]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -250,6 +305,7 @@ export function FirstPlanetSettlementApp() {
     if (!shouldAutoConnectFarcasterWallet({
       alreadyAttempted: farcasterAutoConnectAttempted.current,
       miniAppMode,
+      miniAppPlatformType,
       providerAvailable: Boolean(provider),
       settlementConfigReady: settlementConfigState.status === "ready",
       walletProviderSource,
@@ -259,7 +315,7 @@ export function FirstPlanetSettlementApp() {
 
     farcasterAutoConnectAttempted.current = true;
     void connectWallet();
-  }, [miniAppMode, provider, settlementConfigState.status, walletProviderSource]);
+  }, [miniAppMode, miniAppPlatformType, provider, settlementConfigState.status, walletProviderSource]);
 
   async function loadWalletProviderDetails({
     waitForFarcasterProvider = false,
@@ -334,6 +390,7 @@ export function FirstPlanetSettlementApp() {
   function walletProviderContext(source = walletProviderSource): WalletProviderContext {
     return {
       miniAppMode: miniAppMode || source === "farcaster",
+      miniAppPlatformType,
       walletProviderSource: source,
     };
   }
@@ -529,7 +586,7 @@ export function FirstPlanetSettlementApp() {
     }
 
     try {
-      const accounts = await requestAccounts(activeProvider);
+      const accounts = await walletConnectionAccounts(activeProvider, providerContext);
       await refreshWallet(activeProvider, accounts[0], providerContext);
     } catch (error) {
       setWallet({
@@ -855,7 +912,7 @@ function FlowBody({
       <StateMessage
         title={planet.kind === "rejected" ? "Request rejected" : "Wallet error"}
         body={planet.message}
-        action={<PrimaryButton onClick={planet.kind === "rejected" ? onSettle : onConnect}>Retry</PrimaryButton>}
+        action={<PrimaryButton onClick={planet.kind === "rejected" && shouldRetryRejectedRequestWithSettlement(wallet) ? onSettle : onConnect}>Retry</PrimaryButton>}
         tone="warning"
       />
     );

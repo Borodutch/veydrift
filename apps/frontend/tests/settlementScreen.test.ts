@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  FARCASTER_DESKTOP_ACCOUNT_UNAVAILABLE_MESSAGE,
   indexedSettlementState,
   noWalletDetectedMessage,
   POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
@@ -7,9 +8,13 @@ import {
   shouldAttemptFarcasterNetworkSetup,
   shouldAutoConnectFarcasterWallet,
   shouldRetryFarcasterWalletProviderProbe,
+  shouldRetryRejectedRequestWithSettlement,
+  shouldUsePassiveFarcasterAccountAuthorization,
   waitForIndexedSettledPlanet,
+  walletConnectionAccounts,
 } from "../src/FirstPlanetSettlementApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "../src/settlementScreen";
+import type { Eip1193Provider } from "../src/walletFlow";
 
 const connected = {
   account: "0x1111111111111111111111111111111111111111",
@@ -240,6 +245,7 @@ describe("settlement screen mode", () => {
     expect(shouldAutoConnectFarcasterWallet({
       alreadyAttempted: false,
       miniAppMode: true,
+      miniAppPlatformType: "mobile",
       providerAvailable: true,
       settlementConfigReady: true,
       walletProviderSource: "farcaster",
@@ -247,6 +253,7 @@ describe("settlement screen mode", () => {
     expect(shouldAutoConnectFarcasterWallet({
       alreadyAttempted: false,
       miniAppMode: true,
+      miniAppPlatformType: "mobile",
       providerAvailable: true,
       settlementConfigReady: true,
       walletProviderSource: "injected",
@@ -254,6 +261,15 @@ describe("settlement screen mode", () => {
     expect(shouldAutoConnectFarcasterWallet({
       alreadyAttempted: true,
       miniAppMode: true,
+      miniAppPlatformType: "mobile",
+      providerAvailable: true,
+      settlementConfigReady: true,
+      walletProviderSource: "farcaster",
+    })).toBe(false);
+    expect(shouldAutoConnectFarcasterWallet({
+      alreadyAttempted: false,
+      miniAppMode: true,
+      miniAppPlatformType: undefined,
       providerAvailable: true,
       settlementConfigReady: true,
       walletProviderSource: "farcaster",
@@ -314,6 +330,66 @@ describe("settlement screen mode", () => {
     })).toBe(false);
   });
 
+  test("routes rejected wallet authorization retries back through wallet connect", () => {
+    expect(shouldRetryRejectedRequestWithSettlement({ kind: "disconnected" })).toBe(false);
+    expect(shouldRetryRejectedRequestWithSettlement({ kind: "connecting" })).toBe(false);
+    expect(shouldRetryRejectedRequestWithSettlement(connected)).toBe(true);
+  });
+
+  test("uses passive wallet account binding for Farcaster desktop Mini App", async () => {
+    const calls: string[] = [];
+    const provider = walletProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "eth_accounts") return [connected.account];
+      if (method === "eth_requestAccounts") throw new Error("desktop should not request accounts");
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    expect(shouldUsePassiveFarcasterAccountAuthorization({
+      miniAppMode: true,
+      miniAppPlatformType: "web",
+      walletProviderSource: "farcaster",
+    })).toBe(true);
+    await expect(walletConnectionAccounts(provider, {
+      miniAppMode: true,
+      miniAppPlatformType: "web",
+      walletProviderSource: "farcaster",
+    })).resolves.toEqual([connected.account]);
+    expect(calls).toEqual(["eth_accounts"]);
+  });
+
+  test("keeps Farcaster mobile wallet binding on active account authorization", async () => {
+    const calls: string[] = [];
+    const provider = walletProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "eth_requestAccounts") return [connected.account];
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    expect(shouldUsePassiveFarcasterAccountAuthorization({
+      miniAppMode: true,
+      miniAppPlatformType: "mobile",
+      walletProviderSource: "farcaster",
+    })).toBe(false);
+    await expect(walletConnectionAccounts(provider, {
+      miniAppMode: true,
+      miniAppPlatformType: "mobile",
+      walletProviderSource: "farcaster",
+    })).resolves.toEqual([connected.account]);
+    expect(calls).toEqual(["eth_requestAccounts"]);
+  });
+
+  test("surfaces a precise Farcaster desktop blocked state when no account is exposed", async () => {
+    await expect(walletConnectionAccounts(walletProvider(async ({ method }) => {
+      if (method === "eth_accounts") return [];
+      throw new Error(`Unexpected method ${method}`);
+    }), {
+      miniAppMode: true,
+      miniAppPlatformType: "web",
+      walletProviderSource: "farcaster",
+    })).rejects.toThrow(FARCASTER_DESKTOP_ACCOUNT_UNAVAILABLE_MESSAGE);
+  });
+
   test("uses backend settlement state instead of Mini App read-provider fallbacks", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
@@ -345,10 +421,16 @@ describe("settlement screen mode", () => {
 
     expect(source).toContain("await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode })");
     expect(source).toContain("shouldRetryFarcasterWalletProviderProbe");
-    expect(source).toContain("const accounts = await requestAccounts(activeProvider)");
+    expect(source).toContain("const accounts = await walletConnectionAccounts(activeProvider, providerContext)");
     expect(source).toContain("await refreshWallet(activeProvider, accounts[0], providerContext)");
   });
 });
+
+function walletProvider(
+  request: Eip1193Provider["request"],
+): Eip1193Provider {
+  return { request };
+}
 
 function indexedSettlementResponse({
   lastSettledAt,
