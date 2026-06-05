@@ -865,7 +865,7 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     if (effect.showsDeuteriumConsumption && (effect.nextDeuteriumConsumed > 0 || effect.currentDeuteriumConsumed > 0)) {
       rows.push({
         ...(effect.deltaDeuteriumConsumed !== 0
-          ? { delta: `(${formatSigned(effect.deltaDeuteriumConsumed)}/h)` }
+          ? { delta: `${formatSigned(effect.deltaDeuteriumConsumed)}/h` }
           : {}),
         label: "Deuterium use",
         next: `${formatNumber(effect.nextDeuteriumConsumed)}/h`,
