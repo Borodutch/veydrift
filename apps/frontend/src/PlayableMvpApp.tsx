@@ -3699,8 +3699,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setSelectedResearchKey(target.key);
-    setPage("research");
+    if (target.kind === "research") {
+      setSelectedResearchKey(target.key);
+      setPage("research");
+      return;
+    }
+
+    setSelectedShipKey(target.key);
+    setPage("shipyard");
   }, []);
 
   const topBar = (
@@ -3957,6 +3963,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onApprove={handleApproveRiftResource}
           onDeposit={handleDepositRiftResource}
           onFinishWithdrawal={handleFinishRiftWithdrawal}
+          onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshRiftState}
           onRequestWithdrawal={handleRequestRiftWithdrawal}
           riftState={riftState}

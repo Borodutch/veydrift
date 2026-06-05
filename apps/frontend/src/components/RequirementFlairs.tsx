@@ -1,8 +1,9 @@
-import type { BuildingKey, ResearchKey } from "../playableMvp";
+import type { BuildingKey, ResearchKey, ShipKey } from "../playableMvp";
 
 export type RequirementTarget =
   | { kind: "building"; key: BuildingKey }
-  | { kind: "research"; key: ResearchKey };
+  | { kind: "research"; key: ResearchKey }
+  | { kind: "ship"; key: ShipKey };
 
 export type RequirementFlair = {
   label: string;
