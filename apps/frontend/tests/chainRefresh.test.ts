@@ -100,6 +100,7 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("{ readProvider }");
     expect(source).not.toContain("receiptProvider");
     expect(source).not.toContain("waitForReceipt(");
+    expect(walletFlowSource).not.toContain("eth_estimateGas");
     expect(walletFlowSource).not.toContain("waitForReceipt(");
     expect(walletFlowSource).toContain("eth_getTransactionReceipt");
     expect(source).toContain("confirmSubmittedTransaction(txHash)");
