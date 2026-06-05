@@ -15,6 +15,7 @@ import {
   allianceRosterPageSize,
   allianceDisplayName,
   allianceExitActionState,
+  AllianceExitActionPanel,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
   buildAllianceRoster,
@@ -278,19 +279,11 @@ export function AllianceInspectPage({
               </Panel>
             ) : null}
             {isCurrentAlliance ? (
-              <Panel title="Alliance Actions">
-                {exitAction.reason ? (
-                  <p className="mb-3 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{exitAction.reason}</p>
-                ) : null}
-                <button
-                  className="rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:opacity-50"
-                  disabled={busy || !exitAction.canSubmit}
-                  onClick={onLeaveAlliance}
-                  type="button"
-                >
-                  {exitAction.label}
-                </button>
-              </Panel>
+              <AllianceExitActionPanel
+                disabled={busy}
+                exitAction={exitAction}
+                onSubmit={onLeaveAlliance}
+              />
             ) : null}
             {canManageMembers ? (
               <Panel title="Applications">

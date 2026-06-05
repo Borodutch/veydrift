@@ -199,6 +199,17 @@ describe("AlliancePage loading display", () => {
       label: "Leave Alliance",
       reason: null,
     });
+    expect(allianceExitActionState(memberAllianceState({
+      membership: {
+        allianceId: "7",
+        joinedAt: "1770000000",
+        role: "member",
+      },
+    }))).toEqual({
+      canSubmit: true,
+      label: "Leave Alliance",
+      reason: null,
+    });
 
     expect(allianceExitActionState(memberAllianceState({
       membership: {

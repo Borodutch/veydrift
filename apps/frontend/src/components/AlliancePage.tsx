@@ -587,20 +587,11 @@ function MyAllianceSection({
           </div>
         ) : null}
 
-        <div className="rounded border border-red-300/20 bg-red-950/20 p-3">
-          <h3 className="text-sm font-semibold text-red-50">Alliance Actions</h3>
-          {exitAction.reason ? (
-            <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{exitAction.reason}</p>
-          ) : null}
-          <button
-            className="mt-3 rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled || !exitAction.canSubmit}
-            onClick={onLeaveAlliance}
-            type="button"
-          >
-            {exitAction.label}
-          </button>
-        </div>
+        <AllianceExitActionPanel
+          disabled={disabled}
+          exitAction={exitAction}
+          onSubmit={onLeaveAlliance}
+        />
 
         <RosterSection
           canManageMembers={canManageMembers}
@@ -872,6 +863,67 @@ function JoinRequests({
         <p className="text-sm text-slate-400">No pending applications.</p>
       )}
     </Panel>
+  );
+}
+
+export function AllianceExitActionPanel({
+  disabled,
+  exitAction,
+  onSubmit,
+}: {
+  disabled: boolean;
+  exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
+  onSubmit: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const blocked = disabled || !exitAction.canSubmit;
+  const isDelete = exitAction.label === "Delete Alliance";
+  const confirmLabel = isDelete ? "Confirm Delete" : "Confirm Leave";
+
+  return (
+    <div className="rounded border border-red-300/20 bg-red-950/20 p-3">
+      <h3 className="text-sm font-semibold text-red-50">Alliance Actions</h3>
+      {exitAction.reason ? (
+        <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{exitAction.reason}</p>
+      ) : null}
+      {confirming && !blocked ? (
+        <div className="mt-3 rounded border border-red-300/25 bg-black/20 p-3">
+          <p className="text-sm font-semibold text-red-50">{exitAction.label}?</p>
+          <p className="mt-1 text-xs text-red-100/80">
+            {isDelete ? "This removes the alliance after the wallet transaction confirms." : "This removes your wallet from the alliance after the wallet transaction confirms."}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              className="rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={disabled}
+              onClick={() => {
+                setConfirming(false);
+                onSubmit();
+              }}
+              type="button"
+            >
+              {confirmLabel}
+            </button>
+            <button
+              className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
+              onClick={() => setConfirming(false)}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          className="mt-3 rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={blocked}
+          onClick={() => setConfirming(true)}
+          type="button"
+        >
+          {exitAction.label}
+        </button>
+      )}
+    </div>
   );
 }
 
