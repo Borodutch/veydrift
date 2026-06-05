@@ -133,7 +133,7 @@ export function isStartedDefenseProductionVisible(
   if (expectation.planetId && snapshot.defense.homePlanetId !== expectation.planetId) return false;
 
   return defenseQueueMatches(snapshot.defense.queue, expectation)
-    && defenseQueueMatches(snapshot.queues.defense, expectation);
+    || defenseQueueMatches(snapshot.queues.defense, expectation);
 }
 
 export function isStartedShipProductionVisible(
@@ -143,7 +143,7 @@ export function isStartedShipProductionVisible(
   if (expectation.planetId && (snapshot.shipyard.planetId ?? snapshot.shipyard.homePlanetId) !== expectation.planetId) return false;
 
   return shipQueueMatches(snapshot.shipyard.queue, expectation)
-    && shipQueueMatches(snapshot.queues.ship, expectation);
+    || shipQueueMatches(snapshot.queues.ship, expectation);
 }
 
 export function isStartedResearchStateVisible(
