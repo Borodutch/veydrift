@@ -646,6 +646,10 @@ export type AvailableWalletProvider = {
   source: "injected" | "farcaster";
 };
 
+type AvailableWalletProviderOptions = {
+  preferFarcaster?: boolean;
+};
+
 export function getInjectedProvider(
   globalWindow: InjectedWindow | undefined,
 ): Eip1193Provider | undefined {
@@ -661,7 +665,18 @@ export function getInjectedProvider(
 export async function getAvailableWalletProviderDetails(
   globalWindow: InjectedWindow | undefined,
   farcasterClient: FarcasterWalletClient = sdk as unknown as FarcasterWalletClient,
+  options: AvailableWalletProviderOptions = {},
 ): Promise<AvailableWalletProvider | undefined> {
+  if (options.preferFarcaster) {
+    const farcasterProvider = await getFarcasterEthereumProvider(farcasterClient);
+    if (farcasterProvider) {
+      return {
+        provider: farcasterProvider,
+        source: "farcaster",
+      };
+    }
+  }
+
   const injected = getInjectedProvider(globalWindow);
   if (injected) {
     return {
@@ -682,8 +697,9 @@ export async function getAvailableWalletProviderDetails(
 export async function getAvailableWalletProvider(
   globalWindow: InjectedWindow | undefined,
   farcasterClient: FarcasterWalletClient = sdk as unknown as FarcasterWalletClient,
+  options: AvailableWalletProviderOptions = {},
 ): Promise<Eip1193Provider | undefined> {
-  return (await getAvailableWalletProviderDetails(globalWindow, farcasterClient))?.provider;
+  return (await getAvailableWalletProviderDetails(globalWindow, farcasterClient, options))?.provider;
 }
 
 async function getFarcasterEthereumProvider(

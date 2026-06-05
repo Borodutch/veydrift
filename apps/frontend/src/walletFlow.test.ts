@@ -340,6 +340,29 @@ describe("walletFlow", () => {
     expect(getInjectedProvider({})).toBeUndefined();
   });
 
+  test("prefers Farcaster SDK wallet over injected providers in Mini App mode only", async () => {
+    const provider = mockProvider(async () => null);
+    const miniAppProvider = mockProvider(async () => null);
+
+    await expect(getAvailableWalletProviderDetails({ ethereum: provider }, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { preferFarcaster: true })).resolves.toEqual({
+      provider: miniAppProvider,
+      source: "farcaster",
+    });
+
+    await expect(getAvailableWalletProviderDetails({ ethereum: provider }, {
+      wallet: {
+        getEthereumProvider: () => ({ notAProvider: true }) as unknown as Eip1193Provider,
+      },
+    }, { preferFarcaster: true })).resolves.toEqual({
+      provider,
+      source: "injected",
+    });
+  });
+
   test("reports whether the selected wallet provider came from Farcaster", async () => {
     const provider = mockProvider(async () => null);
     const miniAppProvider = mockProvider(async () => null);
