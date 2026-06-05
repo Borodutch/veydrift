@@ -205,11 +205,13 @@ const buildingFinishSubmittedSyncLabel =
   "Building completion submitted. Waiting for backend state to clear this completed queue before another finish attempt.";
 const buildingFinishFailedSyncLabel =
   "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.";
+const buildingFinishRejectedLabel =
+  "Building completion was cancelled in wallet. No transaction was submitted; retry while the ready queue is still visible.";
 export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 const buildingWalletConfirmationLabel = (label: string) =>
   label === "Building completion"
-    ? "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected."
+    ? "Building completion: wallet preflight passed. Confirm the storage update in MetaMask; token or ETH balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 
@@ -234,6 +236,10 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
 }
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
+  if (isUserRejected(error)) {
+    return buildingFinishRejectedLabel;
+  }
+
   if (!(error instanceof Error)) {
     return "Finish building upgrade transaction failed.";
   }

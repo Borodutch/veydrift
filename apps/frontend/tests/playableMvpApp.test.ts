@@ -51,7 +51,9 @@ describe("Playable MVP app display helpers", () => {
   const buildingFinishLiveStateRequiredLabel =
     "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
   const buildingCompletionWalletPrompt =
-    "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
+    "Building completion: wallet preflight passed. Confirm the storage update in MetaMask; token or ETH balance changes are not expected.";
+  const buildingCompletionRejectedLabel =
+    "Building completion was cancelled in wallet. No transaction was submitted; retry while the ready queue is still visible.";
 
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
@@ -236,6 +238,12 @@ describe("Playable MVP app display helpers", () => {
 
     expect(buildingFinishActionErrorLabel(new Error("Internal JSON-RPC error.")))
       .toBe(buildingFinishStateReadFailureLabel);
+  });
+
+  test("returns ready building completion to retry copy after wallet cancellation", () => {
+    expect(buildingFinishActionErrorLabel({ code: 4001 })).toBe(buildingCompletionRejectedLabel);
+    expect(buildingFinishActionErrorLabel(new Error("User denied transaction signature")))
+      .toBe(buildingCompletionRejectedLabel);
   });
 
   test("keeps actionable building finish preflight errors specific", () => {

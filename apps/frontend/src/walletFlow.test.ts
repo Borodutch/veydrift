@@ -1118,6 +1118,47 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("surfaces wallet cancellation after a valid finish building preflight", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_estimateGas") return "0x3658c";
+      if (method === "eth_sendTransaction") {
+        const error = new Error("User denied transaction signature");
+        (error as { code?: number }).code = 4001;
+        throw error;
+      }
+      throw new Error(`Unexpected wallet method ${method}`);
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(provider, account, contract, "1")
+    ).rejects.toThrow("User denied transaction signature");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
+          }
+        ]
+      }
+    ]);
+  });
+
   test("requests Rabby accounts before other production, research, and rift submissions", async () => {
     const walletRequests: Array<{ method: string; params: unknown[] | undefined }> = [];
     let authorized = false;

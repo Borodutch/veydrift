@@ -24,7 +24,7 @@ import type { Planet } from "../src/types";
 
 const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
 const buildingCompletionWalletPrompt =
-  "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
+  "Building completion: wallet preflight passed. Confirm the storage update in MetaMask; token or ETH balance changes are not expected.";
 
 const homePlanet: Planet = {
   alliance: null,
