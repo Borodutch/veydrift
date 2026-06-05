@@ -3,6 +3,7 @@ import {
   beginRefreshRequest,
   canApplyRefreshRequest,
   markFreshStateWrite,
+  shouldRefreshAllianceStateForPage,
 } from "../src/PlayableMvpApp";
 
 describe("playable chain refresh", () => {
@@ -44,6 +45,12 @@ describe("playable chain refresh", () => {
     const newerPollRequest = beginRefreshRequest(gate);
 
     expect(canApplyRefreshRequest(gate, newerPollRequest)).toBe(true);
+  });
+
+  test("refreshes alliance state for rankings so same-alliance rows can highlight", () => {
+    expect(shouldRefreshAllianceStateForPage("rankings")).toBe(true);
+    expect(shouldRefreshAllianceStateForPage("alliance")).toBe(true);
+    expect(shouldRefreshAllianceStateForPage("overview")).toBe(false);
   });
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
