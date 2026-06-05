@@ -100,8 +100,9 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("{ readProvider }");
     expect(source).not.toContain("receiptProvider");
     expect(source).not.toContain("waitForReceipt(");
-    expect(walletFlowSource).not.toContain("eth_getTransactionReceipt");
     expect(walletFlowSource).not.toContain("waitForReceipt(");
+    expect(walletFlowSource).toContain("eth_getTransactionReceipt");
+    expect(source).toContain("confirmSubmittedTransaction(txHash)");
     expect(source).toContain("sendStartBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          building,\n        )");
     expect(source).not.toContain("building,\n          { readProvider },");
     expect(source).toContain("sendFinishBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n        )");

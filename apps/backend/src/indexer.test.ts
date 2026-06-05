@@ -351,6 +351,44 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("settles accrued resources before subtracting indexed queued spends", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x83",
+      blockTimestamp: "0x69801c90",
+      transactionHash: "0xbuild",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(5n)],
+      data: abiWords(1n, 1770004000n, 400n, 120n, 60n)
+    });
+
+    const updated = indexer.walletSettlement(player).planet;
+    expect(updated?.lastSettledAt).toBe("1770003600");
+    expect(Number(updated?.resources.metal)).toBeGreaterThan(4600);
+    expect(Number(updated?.resources.metal)).toBeLessThan(5000);
+    expect(Number(updated?.resources.crystal)).toBe(4780);
+  });
+
   test("applies combat ship count changes to indexed ship rows", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

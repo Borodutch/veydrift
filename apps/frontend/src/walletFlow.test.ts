@@ -29,6 +29,7 @@ import {
   getAvailableWalletProvider,
   getAvailableWalletProviderDetails,
   getInjectedProvider,
+  confirmTransactionReceipt,
   isBaseSepoliaChain,
   isUserRejected,
   miniAppUnsupportedChainMessage,
@@ -88,6 +89,32 @@ describe("walletFlow", () => {
     expect(isUserRejected({ code: 4001 })).toBe(true);
     expect(isUserRejected({ message: "User denied transaction signature" })).toBe(true);
     expect(isUserRejected({ code: -32603 })).toBe(false);
+  });
+
+  test("throws when a submitted transaction receipt is reverted", async () => {
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("eth_getTransactionReceipt");
+      expect(params).toEqual(["0xreverted"]);
+      return { status: "0x0", transactionHash: "0xreverted" };
+    });
+
+    await expect(confirmTransactionReceipt(provider, "0xreverted")).rejects.toThrow(
+      "Transaction reverted on-chain. No game state was changed."
+    );
+  });
+
+  test("resolves only after a submitted transaction receipt is mined successfully", async () => {
+    let polls = 0;
+    const provider = mockProvider(async () => {
+      polls += 1;
+      return polls === 1 ? null : { status: "0x1", transactionHash: "0xok" };
+    });
+
+    await expect(confirmTransactionReceipt(provider, "0xok", { pollMs: 1, timeoutMs: 100 })).resolves.toMatchObject({
+      status: "0x1",
+      transactionHash: "0xok"
+    });
+    expect(polls).toBe(2);
   });
 
   test("selects Rabby from a multi-provider injected wallet", () => {
