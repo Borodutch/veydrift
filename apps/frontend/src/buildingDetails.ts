@@ -1,5 +1,6 @@
 import type { BuildingKey, PlayableState, ResearchKey, Resources } from "./playableMvp";
 import {
+  buildingEnergyProduction,
   buildingCost,
   buildingDurationEstimate,
   buildingRequirementsFor,
@@ -216,8 +217,7 @@ export function buildingLevelInfoRows(
     }
 
     if (key === "solarPlant" || key === "fusionReactor") {
-      const energy = energyBalance(rowBuildings, energyTechnologyLevel);
-      row.energyProduced = energy.produced;
+      row.energyProduced = buildingEnergyProduction(rowBuildings, key, energyTechnologyLevel, profile);
       if (key === "fusionReactor") {
         row.deuteriumConsumed = fusionReactorDeuteriumConsumption(level);
       }
@@ -287,11 +287,12 @@ export function buildingEnergyDetail(
   energyTechnologyLevel = 0,
 ): BuildingEnergyDetail {
   if (key === "solarPlant" || key === "fusionReactor") {
-    const current = energyBalance(buildings, energyTechnologyLevel).produced;
-    const next = energyBalance(
+    const current = buildingEnergyProduction(buildings, key, energyTechnologyLevel);
+    const next = buildingEnergyProduction(
       { ...buildings, [key]: buildings[key] + 1 },
+      key,
       energyTechnologyLevel,
-    ).produced;
+    );
     return {
       kind: "produces",
       current,
