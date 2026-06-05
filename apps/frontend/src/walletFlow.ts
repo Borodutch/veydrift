@@ -560,6 +560,7 @@ const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"
 
 export type FarcasterWalletClient = {
   wallet?: {
+    ethProvider?: Eip1193Provider | undefined;
     getEthereumProvider?: () => Promise<Eip1193Provider | undefined> | Eip1193Provider | undefined;
   };
 };
@@ -614,10 +615,15 @@ async function getFarcasterEthereumProvider(
 ): Promise<Eip1193Provider | undefined> {
   try {
     const provider = await farcasterClient.wallet?.getEthereumProvider?.();
-    return isEip1193Provider(provider) ? provider : undefined;
+    if (isEip1193Provider(provider)) {
+      return provider;
+    }
   } catch {
-    return undefined;
+    // Fall through to the legacy SDK provider below.
   }
+
+  const legacyProvider = farcasterClient.wallet?.ethProvider;
+  return isEip1193Provider(legacyProvider) ? legacyProvider : undefined;
 }
 
 function isEip1193Provider(provider: unknown): provider is Eip1193Provider {
@@ -1108,9 +1114,14 @@ export async function getCurrentAccounts(provider: Eip1193Provider): Promise<str
 }
 
 export async function requestAccounts(provider: Eip1193Provider): Promise<string[]> {
-  return provider.request<string[]>({
+  const accounts = await provider.request<string[]>({
     method: "eth_requestAccounts"
   });
+  if (!accounts[0]) {
+    throw new Error(WALLET_ACCOUNT_UNAVAILABLE_MESSAGE);
+  }
+
+  return accounts;
 }
 
 export async function getChainId(provider: Eip1193Provider): Promise<string> {
