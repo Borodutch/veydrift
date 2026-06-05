@@ -3274,6 +3274,18 @@ describe("Veydrift backend", () => {
         },
         archetype: "temperate-ocean"
       },
+      planets: [
+        {
+          planetId: planet.planetId,
+          name: "Eos",
+          coordinates: {
+            galaxy: 2,
+            system: 44,
+            position: 9
+          },
+          archetype: "temperate-ocean"
+        }
+      ],
       planetCount: 1,
       score: {
         total: "15",
@@ -3358,6 +3370,67 @@ describe("Veydrift backend", () => {
         }
       }
     });
+  });
+
+  test("includes all indexed planets for each ranked commander", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => [
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "7",
+        owner: player,
+        transactionHash: "0xabc1",
+        blockNumber: "123"
+      },
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "8",
+        name: "Borealis",
+        galaxy: 3,
+        system: 12,
+        position: 4,
+        owner: player,
+        temperature: -40,
+        transactionHash: "0xabc2",
+        blockNumber: "124"
+      }
+    ];
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total[0].planets).toEqual([
+      {
+        planetId: "7",
+        name: "Eos",
+        coordinates: {
+          galaxy: 2,
+          system: 44,
+          position: 9
+        },
+        archetype: "temperate-ocean"
+      },
+      {
+        planetId: "8",
+        name: "Borealis",
+        coordinates: {
+          galaxy: 3,
+          system: 12,
+          position: 4
+        },
+        archetype: "frozen-ice"
+      }
+    ]);
   });
 
   test("does not block indexed highscore rankings on attack-protection reads by default", async () => {

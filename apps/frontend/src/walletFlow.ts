@@ -526,6 +526,7 @@ export type HighscoreEntry = {
   displayName?: string | null;
   homePlanetId: string | null;
   homePlanet: HighscorePlanet | null;
+  planets?: HighscorePlanet[];
   planetCount: number;
   score: Record<HighscoreCategory, string>;
 };

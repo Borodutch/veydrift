@@ -37,7 +37,8 @@ import {
   publicProductionRows,
   publicResourceRows,
   publicStateRows,
-  publicSignalRows
+  publicSignalRows,
+  shouldShowPlanetDetailInitialLoader
 } from "../src/components/PlanetDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
@@ -368,6 +369,14 @@ describe("tester universe display data", () => {
     expect(shouldShowGalaxyRows({
       hasCurrentSystemData: false,
     })).toBe(false);
+  });
+
+  test("keeps current planet detail records visible during background refreshes", () => {
+    const planet = generateSystem(2, 44).find((item) => item.position === 8)!;
+
+    expect(shouldShowPlanetDetailInitialLoader({ planet: null, source: "loading" })).toBe(true);
+    expect(shouldShowPlanetDetailInitialLoader({ planet, source: "loading" })).toBe(false);
+    expect(planetRecordStatusLabel(planet, "loading", false)).toBe("Refreshing public records");
   });
 
   test("planet detail public records show useful public planet data", () => {

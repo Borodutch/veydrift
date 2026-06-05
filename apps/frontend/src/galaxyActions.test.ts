@@ -57,6 +57,47 @@ describe("galaxyActions", () => {
       reason: "Requires a recycler on your home planet.",
     });
   });
+
+  test("uses canonical attack protection to block attack actions", () => {
+    const attack = galaxyActionsForSlot({
+      account,
+      attackProtection: {
+        allowed: false,
+        blockedReason: "score_protection",
+        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      },
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    }).find((action) => action.kind === "attack");
+
+    expect(attack).toMatchObject({
+      enabled: false,
+      reason: "Attack blocked: target is protected by newbie or score-ratio protection.",
+    });
+  });
+
+  test("keeps transport and deploy available for owned non-origin planets", () => {
+    const ownColony = planet({
+      ownerId: account,
+      occupiedBy: {
+        owner: account,
+        planetId: "9",
+      },
+    });
+    const actions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      isOrigin: false,
+      planet: ownColony,
+      shipyardState: shipyardState([{ id: 0, count: 1 }]),
+    });
+
+    expect(actions.map((action) => [action.kind, action.enabled])).toEqual([
+      ["transport", true],
+      ["deploy", true],
+    ]);
+  });
 });
 
 function planet(overrides: Partial<Planet> = {}): Planet {
