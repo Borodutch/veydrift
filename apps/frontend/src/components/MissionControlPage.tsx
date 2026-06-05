@@ -1,8 +1,8 @@
-import { RefreshCw, Route, Swords } from "lucide-preact";
+import { Clipboard, RefreshCw, Route } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import type { BattleReport, FleetMissionSummary, FleetMissionVisibilityResponse } from "../walletFlow";
+import type { FleetMissionSummary, FleetMissionVisibilityResponse } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type MissionControlActionState =
@@ -29,7 +29,6 @@ interface MissionControlPageProps {
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
   onNavigateGalaxy: () => void;
-  onOpenBattleReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
   onResolve: (missionId: string) => void;
@@ -44,7 +43,6 @@ export function MissionControlPage({
   onCompleteReturn,
   onCounterplay,
   onNavigateGalaxy,
-  onOpenBattleReport,
   onRecall,
   onRefresh,
   onResolve,
@@ -52,7 +50,6 @@ export function MissionControlPage({
   const incoming = fleetVisibility?.incoming ?? [];
   const outgoing = fleetVisibility?.outgoing ?? [];
   const returning = fleetVisibility?.returning ?? [];
-  const battleReports = fleetVisibility?.battleReports ?? [];
   const due = [...incoming, ...outgoing].filter((mission) => isMissionDue(mission, now));
   const activeCount = incoming.length + outgoing.length + returning.length;
   const initialLoading = loading && !fleetVisibility;
@@ -64,9 +61,9 @@ export function MissionControlPage({
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300/80">
             Mission Control
           </p>
-          <h2 className="mt-1 text-lg font-semibold text-white">Fleet Dashboard</h2>
+          <h2 className="mt-1 text-lg font-semibold text-white">Mission Control</h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-            Track launches, inbound attacks, returning fleets, combat outcomes, and counterplay from one command view.
+            Watch inbound attacks, active launches, returning fleets, and time-critical battle actions from one command table.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -102,30 +99,38 @@ export function MissionControlPage({
         <>
           <div className="grid gap-3 md:grid-cols-4">
             <Metric label="Active missions" value={activeCount.toString()} />
-            <Metric label="Arrived" value={due.length.toString()} />
+            <Metric label="Due resolvers" value={due.length.toString()} />
             <Metric label="Hostile inbound" value={incoming.length.toString()} />
-            <Metric label="Battle reports" value={battleReports.length.toString()} />
+            <Metric label="Returns" value={returning.length.toString()} />
           </div>
 
           {activeCount === 0 ? (
             <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
-              No visible missions for this wallet. Launch transport, deploy, attack, harvest, or missile actions from Galaxy.
+              No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.
             </div>
           ) : null}
 
           {due.length > 0 ? (
-            <MissionSection
-              actionContext="due"
-              canTransact={canTransact}
-              missions={due}
-              now={now}
-              onCompleteReturn={onCompleteReturn}
-              onCounterplay={onCounterplay}
-              onRecall={onRecall}
-              onResolve={onResolve}
-              title="Arrived Missions"
-              tone="danger"
-            />
+            <section className="rounded-lg border border-red-300/25 bg-red-400/10 p-3">
+              <div className="mb-3">
+                <h3 className="text-sm font-semibold text-white">Needs orders now</h3>
+                <p className="mt-1 text-xs leading-5 text-red-100/80">
+                  These missions have reached their target. Resolve battles or land fleets before relying on those ships and slots again.
+                </p>
+              </div>
+              <MissionSection
+                actionContext="due"
+                canTransact={canTransact}
+                missions={due}
+                now={now}
+                onCompleteReturn={onCompleteReturn}
+                onCounterplay={onCounterplay}
+                onRecall={onRecall}
+                onResolve={onResolve}
+                title="Ready to resolve"
+                tone="danger"
+              />
+            </section>
           ) : null}
 
           <div className="grid gap-3 xl:grid-cols-3">
@@ -139,7 +144,7 @@ export function MissionControlPage({
               onCounterplay={onCounterplay}
               onRecall={onRecall}
               onResolve={onResolve}
-              title="Incoming Attacks"
+              title="Incoming attacks"
               tone="danger"
             />
             <MissionSection
@@ -152,7 +157,7 @@ export function MissionControlPage({
               onCounterplay={onCounterplay}
               onRecall={onRecall}
               onResolve={onResolve}
-              title="Outgoing"
+              title="Outgoing fleets"
               tone="neutral"
             />
             <MissionSection
@@ -165,15 +170,10 @@ export function MissionControlPage({
               onCounterplay={onCounterplay}
               onRecall={onRecall}
               onResolve={onResolve}
-              title="Returning"
+              title="Returning fleets"
               tone="warning"
             />
           </div>
-
-          <BattleReportSection
-            reports={battleReports}
-            onOpenBattleReport={onOpenBattleReport}
-          />
         </>
       )}
     </section>
@@ -199,7 +199,7 @@ export function missionLifecycleActions({
     actions.push({
       enabled: canTransact && due,
       kind: "resolve",
-      label: "Resolve",
+      label: "Resolve battle",
       reason: due ? walletReason(canTransact) : "Mission has not arrived yet.",
     });
   }
@@ -208,7 +208,7 @@ export function missionLifecycleActions({
     actions.push({
       enabled: canTransact && !due,
       kind: "recall",
-      label: "Recall",
+      label: "Recall fleet",
       reason: due ? "Mission is already due for resolution." : walletReason(canTransact),
     });
   }
@@ -217,7 +217,7 @@ export function missionLifecycleActions({
     actions.push({
       enabled: canTransact && returned,
       kind: "completeReturn",
-      label: "Complete return",
+      label: "Land fleet",
       reason: returned ? walletReason(canTransact) : "Fleet has not reached its origin yet.",
     });
   }
@@ -321,11 +321,11 @@ function MissionCard({
             {mission.missionType} #{mission.missionId}
           </h4>
           <p className="mt-1 text-xs text-slate-500">
-            {mission.originPlanetId} {"->"} {mission.targetPlanetId} / {mission.status}
+            Planet {mission.originPlanetId} {"->"} planet {mission.targetPlanetId} / {missionStatusLabel(mission.status)}
           </p>
         </div>
         <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-medium text-slate-300">
-          Fuel {formatResource(mission.fuelCost)}
+          Fuel {formatResource(mission.fuelCost)} D
         </span>
       </div>
 
@@ -334,6 +334,8 @@ function MissionCard({
         <MissionDatum label="Return" value={formatMissionTime(mission.returnAt, now)} />
         <MissionDatum label="Cargo" value={formatCargo(mission.cargo)} />
         <MissionDatum label="Ships" value={formatShips(mission.ships)} />
+        <MissionDatum label="Commander" value={shortAddress(mission.owner)} />
+        <MissionDatum label="Report" value={missionReportLabel(mission)} />
       </dl>
 
       {actions.length > 0 ? (
@@ -341,7 +343,7 @@ function MissionCard({
           {actions.map((action) => action.kind === "counterplay" ? (
             <span className="contents" key={action.kind}>
               <ActionButton
-                action={{ ...action, label: "Group defend" }}
+                action={{ ...action, label: "Defend with ACS" }}
                 onClick={() => onCounterplay(mission.missionId, "acsDefend")}
               />
               <ActionButton
@@ -362,62 +364,17 @@ function MissionCard({
           ))}
         </div>
       ) : null}
-    </article>
-  );
-}
 
-function BattleReportSection({
-  onOpenBattleReport,
-  reports,
-}: {
-  onOpenBattleReport: (missionId: string) => void;
-  reports: BattleReport[];
-}) {
-  return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-3">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
-            <Swords aria-hidden="true" size={17} />
-          </span>
-          <h3 className="text-sm font-semibold text-white">Battle Reports</h3>
-        </div>
-        <span className="text-xs tabular-nums text-slate-400">{reports.length}</span>
-      </div>
-      {reports.length === 0 ? (
-        <p className="text-xs text-slate-500">No resolved attack reports for this wallet yet.</p>
-      ) : (
-        <div className="grid gap-2 lg:grid-cols-2">
-          {reports.slice(0, 6).map((report) => (
-            <article className="min-w-0 rounded-md border border-white/10 bg-black/20 p-3" key={report.missionId}>
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h4 className="truncate text-sm font-semibold text-white">
-                    Mission #{report.missionId} / {battleOutcomeLabel(report.outcome)}
-                  </h4>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
-                  </p>
-                </div>
-                <button
-                  className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
-                  onClick={() => onOpenBattleReport(report.missionId)}
-                  type="button"
-                >
-                  Open report
-                </button>
-              </div>
-              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <MissionDatum label="Rounds" value={report.rounds.toString()} />
-                <MissionDatum label="Loot" value={formatCargo(report.loot)} />
-                <MissionDatum label="Attacker losses" value={formatCargo(report.attackerLosses)} />
-                <MissionDatum label="Defender losses" value={formatCargo(report.defenderLosses)} />
-              </dl>
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
+      <button
+        className="mt-3 inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+        onClick={() => copyMissionReport(mission)}
+        title="Copy a compact battle report for chat"
+        type="button"
+      >
+        <Clipboard aria-hidden="true" size={13} />
+        Copy report
+      </button>
+    </article>
   );
 }
 
@@ -481,7 +438,7 @@ function isMissionReturned(mission: FleetMissionSummary, now: number): boolean {
 }
 
 function walletReason(canTransact: boolean): string | undefined {
-  return canTransact ? undefined : "Wallet or game contract unavailable.";
+  return canTransact ? undefined : "Wallet or mission actions unavailable.";
 }
 
 function formatCargo(cargo: FleetMissionSummary["cargo"]): string {
@@ -499,20 +456,50 @@ function formatShips(ships: Record<string, string>): string {
   return active.length > 0 ? active.slice(0, 3).join(", ") : "None";
 }
 
+function missionStatusLabel(status: string): string {
+  if (status === "Outbound") return "en route";
+  if (status === "Returning") return "returning";
+  if (status === "Recalled") return "recalled";
+  return status;
+}
+
+function missionReportLabel(mission: FleetMissionSummary): string {
+  const joinedAttackMissionIds = mission.joinedAttackMissionIds ?? [];
+  if (mission.attackGroupId) return `ACS ${mission.attackGroupId}`;
+  if (joinedAttackMissionIds.length > 0) {
+    return `Joined ${joinedAttackMissionIds.join(", ")}`;
+  }
+  return mission.transactionHash ? `${mission.transactionHash.slice(0, 10)}...` : "Ready to share";
+}
+
+function missionReportText(mission: FleetMissionSummary): string {
+  const joinedAttackMissionIds = mission.joinedAttackMissionIds ?? [];
+  return [
+    `Veydrift ${mission.missionType} #${mission.missionId}`,
+    `Status: ${missionStatusLabel(mission.status)}`,
+    `Route: planet ${mission.originPlanetId} -> planet ${mission.targetPlanetId}`,
+    `Ships: ${formatShips(mission.ships)}`,
+    `Cargo: ${formatCargo(mission.cargo)}`,
+    `Fuel: ${formatResource(mission.fuelCost)} deuterium`,
+    mission.attackGroupId ? `ACS group: ${mission.attackGroupId}` : null,
+    joinedAttackMissionIds.length > 0 ? `Joined attacks: ${joinedAttackMissionIds.join(", ")}` : null,
+    mission.transactionHash ? `Tx: ${mission.transactionHash}` : null,
+  ].filter(Boolean).join("\n");
+}
+
+function copyMissionReport(mission: FleetMissionSummary): void {
+  void globalThis.navigator?.clipboard?.writeText(missionReportText(mission));
+}
+
+function shortAddress(address: string): string {
+  if (address.length <= 12) return address;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
 function formatResource(value: string): string {
   return Number(value).toLocaleString();
 }
 
 function shipLabel(key: string): string {
   return key.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
-}
-
-function battleOutcomeLabel(outcome: BattleReport["outcome"]): string {
-  if (outcome === "AttackerWin") return "Attacker win";
-  if (outcome === "DefenderWin") return "Defender win";
-  return "Draw";
-}
-
-function shortHash(value: string): string {
-  return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
 }

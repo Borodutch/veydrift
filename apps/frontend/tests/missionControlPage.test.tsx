@@ -14,7 +14,7 @@ describe("MissionControlPage", () => {
     expect(millisecondsLabel).toBe(secondsLabel);
   });
 
-  test("enables only contract-supported lifecycle actions for mission timing", () => {
+  test("enables only playable lifecycle actions for mission timing", () => {
     const now = 1_770_000_100_000;
 
     expect(missionLifecycleActions({
@@ -56,7 +56,7 @@ describe("MissionControlPage", () => {
     ]);
   });
 
-  test("renders fleet operations from visibility data with explicit espionage exclusion copy", () => {
+  test("renders player-facing mission control rows without implementation copy", () => {
     const page = MissionControlPage({
       actionState: { status: "idle" },
       canTransact: true,
@@ -78,18 +78,52 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Fleet Operations");
+    expect(text).toContain("Mission Control");
+    expect(text).toContain("Watch inbound attacks");
     expect(text).toContain("Active missions 3");
+    expect(text).toContain("Incoming attacks 1");
+    expect(text).toContain("Outgoing fleets 1");
+    expect(text).toContain("Returning fleets 1");
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Transport # 9");
-    expect(text).toContain("Complete return");
-    expect(text).toContain("No Spy Reports");
-    expect(text).toContain("Target intel is public contract state");
+    expect(text).toContain("Land fleet");
+    expect(text).toContain("Copy report");
+    expect(text).toContain("0x3333...3333");
+    expect(text).toContain("Report 0xabc...");
+    expect(text).not.toContain("Fleet Operations");
+    expect(text).not.toContain("Contract-indexed");
+    expect(text).not.toContain("contract-supported");
+    expect(text).not.toContain("game contract");
+    expect(text).not.toContain("ACS and Intercept");
+    expect(text).not.toContain("Harvests and Saves");
+    expect(text).not.toContain("Missiles and Moons");
+    expect(text).not.toContain("No Spy Reports");
+    expect(text).not.toContain("Target intel is public contract state");
     expect(text).not.toContain("Espionage mission");
     expect(text).not.toContain("Scan mission");
     expect(text).not.toContain("Protected storage");
     expect(text).not.toContain("Raid-exposed resources");
     expect(text).not.toContain("Contract raid protection");
+  });
+
+  test("surfaces due missions as urgent playable orders", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Attack" })],
+        returning: [],
+        joinableAttacks: [],
+      },
+      now: 1_770_000_700_000,
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Needs orders now");
+    expect(text).toContain("Resolve battles or land fleets");
+    expect(text).toContain("Ready to resolve 1");
+    expect(text).toContain("Resolve battle");
   });
 });
 
@@ -128,6 +162,8 @@ function mission(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSumm
     returnAt: "1770000600",
     fuelCost: "25",
     recallCost: null,
+    attackGroupId: null,
+    joinedAttackMissionIds: [],
     cargo: { metal: "0", crystal: "0", deuterium: "0" },
     ships: {
       smallCargo: "0",
