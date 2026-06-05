@@ -1140,13 +1140,20 @@ describe("SettlementIndexer", () => {
       topics: [shipQueuedTopic, topic(7n), topic(1n)],
       data: abiWords(3n, 1770001600n, 9000n, 3000n, 0n)
     });
+    indexer.applyLog({
+      blockNumber: "0xa2",
+      transactionHash: "0xqueue-small-cargo-more",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 1770002000n, 0n, 0n, 0n)
+    });
 
     expect(indexer.playerQueues(player, planet.planetId).ship).toMatchObject({
       kind: "ship",
       itemId: 0,
-      quantity: 2,
-      readyAt: "1770001000",
-      cost: { metal: "4000", crystal: "4000", deuterium: "0" },
+      quantity: 4,
+      readyAt: "1770002000",
+      cost: { metal: "0", crystal: "0", deuterium: "0" },
       backlog: [
         {
           kind: "ship",
