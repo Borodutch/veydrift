@@ -854,13 +854,25 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
       value: `${formatNumber(effect.currentPerHour)} ${shortResourceLabels[effect.resource]}/h`,
     });
   } else if (effect.kind === "energy") {
+    const output = energy.kind === "produces"
+      ? {
+          current: energy.current,
+          delta: energy.delta,
+          next: energy.next,
+        }
+      : {
+          current: effect.currentProduced,
+          delta: effect.deltaProduced,
+          next: effect.nextProduced,
+        };
+
     rows.push({
-      ...(effect.deltaProduced !== 0
-        ? { delta: formatSigned(effect.deltaProduced) }
+      ...(output.delta !== 0
+        ? { delta: formatSigned(output.delta) }
         : {}),
       label: "Energy output",
-      next: `${formatNumber(effect.nextProduced)} produced`,
-      value: `${formatNumber(effect.currentProduced)} produced`,
+      next: `${formatNumber(output.next)} produced`,
+      value: `${formatNumber(output.current)} produced`,
     });
     if (effect.showsDeuteriumConsumption && (effect.nextDeuteriumConsumed > 0 || effect.currentDeuteriumConsumed > 0)) {
       rows.push({
