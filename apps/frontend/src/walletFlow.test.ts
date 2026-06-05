@@ -1801,6 +1801,19 @@ describe("walletFlow", () => {
         pointsDivisor: "1000",
         summary: "Veydrift score"
       },
+      currentPlayer: {
+        wallet: account.toLowerCase(),
+        rankings: {
+          total: { rank: 27, page: 2 },
+          economy: null,
+          research: null,
+          researchLevels: null,
+          military: null,
+          fleet: null,
+          fleetCount: null,
+          defense: null
+        }
+      },
       rankings: {
         total: [],
         economy: [],
@@ -1826,6 +1839,52 @@ describe("walletFlow", () => {
 
     try {
       await expect(fetchHighscores("https://api.example.test///")).resolves.toEqual(rankings);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches a specific highscore rankings page", async () => {
+    const originalFetch = globalThis.fetch;
+    const rankings = {
+      generatedAt: "2026-05-26T00:00:00.000Z",
+      formula: {
+        pointsDivisor: "1000",
+        summary: "Veydrift score"
+      },
+      pagination: {
+        page: 2,
+        pageSize: 25,
+        totalEntries: 60,
+        totalPages: 3,
+        hasPreviousPage: true,
+        hasNextPage: true
+      },
+      rankings: {
+        total: [],
+        economy: [],
+        research: [],
+        researchLevels: [],
+        military: [],
+        fleet: [],
+        fleetCount: [],
+        defense: []
+      }
+    };
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe(`https://api.example.test/highscores?limit=25&currentWallet=${account}&page=2&pageSize=25`);
+      expect(init).toEqual({
+        headers: { accept: "application/json" },
+      });
+      return new Response(JSON.stringify(rankings), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchHighscores("https://api.example.test", { currentWallet: account, page: 2, pageSize: 25 })).resolves.toEqual(rankings);
     } finally {
       globalThis.fetch = originalFetch;
     }
