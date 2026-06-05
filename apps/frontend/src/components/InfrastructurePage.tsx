@@ -867,7 +867,7 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
         ...(effect.deltaDeuteriumConsumed !== 0
           ? { delta: `(${formatSigned(effect.deltaDeuteriumConsumed)}/h)` }
           : {}),
-        label: "Deuterium consumed",
+        label: "Deuterium use",
         next: `${formatNumber(effect.nextDeuteriumConsumed)}/h`,
         tone: "warning",
         value: `${formatNumber(effect.currentDeuteriumConsumed)}/h`,
