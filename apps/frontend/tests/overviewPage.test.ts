@@ -23,6 +23,8 @@ import { queueProgressPercent } from "../src/playableMvp";
 import type { Planet } from "../src/types";
 
 const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
+const buildingCompletionWalletPrompt =
+  "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
 
 const homePlanet: Planet = {
   alliance: null,
@@ -316,7 +318,7 @@ describe("overview queue progress display", () => {
 
     const pending = overviewBuildingFinishAction({
       actionPending: true,
-      actionPendingLabel: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      actionPendingLabel: buildingCompletionWalletPrompt,
       isBuildingReadyToFinish: true,
       onFinishBuilding,
       queue,
@@ -325,7 +327,7 @@ describe("overview queue progress display", () => {
       disabled: true,
       label: "Completing building",
       onFinish: undefined,
-      reason: "Building completion: unlock your wallet if needed, then confirm in your wallet.",
+      reason: buildingCompletionWalletPrompt,
       reasonTone: "pending",
       visible: true,
     });
@@ -394,7 +396,7 @@ describe("overview queue progress display", () => {
   });
 
   test("deduplicates identical ready building completion prompts on Overview", () => {
-    const duplicatePrompt = "Building completion: unlock your wallet if needed, then confirm in your wallet.";
+    const duplicatePrompt = buildingCompletionWalletPrompt;
     const notice = {
       buildingKey: "metalMine" as const,
       label: duplicatePrompt,
