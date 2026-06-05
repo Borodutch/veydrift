@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  FARCASTER_DESKTOP_ACCOUNT_UNAVAILABLE_MESSAGE,
   indexedSettlementState,
   noWalletDetectedMessage,
   POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
@@ -9,7 +8,6 @@ import {
   shouldAutoConnectFarcasterWallet,
   shouldRetryFarcasterWalletProviderProbe,
   shouldRetryRejectedRequestWithSettlement,
-  shouldUsePassiveFarcasterAccountAuthorization,
   waitForIndexedSettledPlanet,
   walletConnectionAccounts,
 } from "../src/FirstPlanetSettlementApp";
@@ -336,26 +334,20 @@ describe("settlement screen mode", () => {
     expect(shouldRetryRejectedRequestWithSettlement(connected)).toBe(true);
   });
 
-  test("uses passive wallet account binding for Farcaster desktop Mini App", async () => {
+  test("uses active SDK wallet authorization for Farcaster desktop Mini App", async () => {
     const calls: string[] = [];
     const provider = walletProvider(async ({ method }) => {
       calls.push(method);
-      if (method === "eth_accounts") return [connected.account];
-      if (method === "eth_requestAccounts") throw new Error("desktop should not request accounts");
+      if (method === "eth_requestAccounts") return [connected.account];
       throw new Error(`Unexpected method ${method}`);
     });
 
-    expect(shouldUsePassiveFarcasterAccountAuthorization({
-      miniAppMode: true,
-      miniAppPlatformType: "web",
-      walletProviderSource: "farcaster",
-    })).toBe(true);
     await expect(walletConnectionAccounts(provider, {
       miniAppMode: true,
       miniAppPlatformType: "web",
       walletProviderSource: "farcaster",
     })).resolves.toEqual([connected.account]);
-    expect(calls).toEqual(["eth_accounts"]);
+    expect(calls).toEqual(["eth_requestAccounts"]);
   });
 
   test("keeps Farcaster mobile wallet binding on active account authorization", async () => {
@@ -366,11 +358,6 @@ describe("settlement screen mode", () => {
       throw new Error(`Unexpected method ${method}`);
     });
 
-    expect(shouldUsePassiveFarcasterAccountAuthorization({
-      miniAppMode: true,
-      miniAppPlatformType: "mobile",
-      walletProviderSource: "farcaster",
-    })).toBe(false);
     await expect(walletConnectionAccounts(provider, {
       miniAppMode: true,
       miniAppPlatformType: "mobile",
@@ -379,15 +366,15 @@ describe("settlement screen mode", () => {
     expect(calls).toEqual(["eth_requestAccounts"]);
   });
 
-  test("surfaces a precise Farcaster desktop blocked state when no account is exposed", async () => {
+  test("surfaces unavailable account when SDK wallet authorization returns no account", async () => {
     await expect(walletConnectionAccounts(walletProvider(async ({ method }) => {
-      if (method === "eth_accounts") return [];
+      if (method === "eth_requestAccounts") return [];
       throw new Error(`Unexpected method ${method}`);
     }), {
       miniAppMode: true,
       miniAppPlatformType: "web",
       walletProviderSource: "farcaster",
-    })).rejects.toThrow(FARCASTER_DESKTOP_ACCOUNT_UNAVAILABLE_MESSAGE);
+    })).rejects.toThrow("Wallet account is unavailable. Reconnect your wallet, then retry.");
   });
 
   test("uses backend settlement state instead of Mini App read-provider fallbacks", async () => {
@@ -408,6 +395,8 @@ describe("settlement screen mode", () => {
 
     expect(source).toContain("farcasterAutoConnectAttempted");
     expect(source).toContain("input.walletProviderSource === \"farcaster\"");
+    expect(source).toContain("probeFarcasterMiniAppRuntime");
+    expect(source).toContain("{ includeFarcasterWallet: farcasterRuntime, preferFarcasterWallet: farcasterRuntime }");
     expect(source).toContain("void connectWallet()");
     expect(source).toContain("await ensureBaseSepoliaNetwork(injected)");
     expect(source).toContain("Retry Base Sepolia");
@@ -419,7 +408,7 @@ describe("settlement screen mode", () => {
   test("rechecks the Farcaster wallet provider when connect is clicked after a cold desktop load", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
-    expect(source).toContain("await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode })");
+    expect(source).toContain("await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode && farcasterRuntime })");
     expect(source).toContain("shouldRetryFarcasterWalletProviderProbe");
     expect(source).toContain("const accounts = await walletConnectionAccounts(activeProvider, providerContext)");
     expect(source).toContain("await refreshWallet(activeProvider, accounts[0], providerContext)");

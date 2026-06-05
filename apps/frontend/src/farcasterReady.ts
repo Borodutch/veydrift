@@ -34,6 +34,12 @@ export async function detectFarcasterMiniApp(
     return true;
   }
 
+  return probeFarcasterMiniAppRuntime(client);
+}
+
+export async function probeFarcasterMiniAppRuntime(
+  client: FarcasterReadyClient = sdk,
+): Promise<boolean> {
   return client.isInMiniApp?.(500).catch(() => false) ?? false;
 }
 

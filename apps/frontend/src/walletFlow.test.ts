@@ -327,6 +327,11 @@ describe("walletFlow", () => {
         getEthereumProvider: () => miniAppProvider,
       },
     })).resolves.toBe(provider);
+    await expect(getAvailableWalletProvider({ ethereum: provider }, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { includeFarcasterWallet: true, preferFarcasterWallet: true })).resolves.toBe(miniAppProvider);
     await expect(getAvailableWalletProvider({}, {
       wallet: {
         getEthereumProvider: () => miniAppProvider,
@@ -337,6 +342,11 @@ describe("walletFlow", () => {
         getEthereumProvider: () => ({ notAProvider: true }) as unknown as Eip1193Provider,
       },
     })).resolves.toBeUndefined();
+    await expect(getAvailableWalletProvider({}, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { includeFarcasterWallet: false })).resolves.toBeUndefined();
     expect(getInjectedProvider({})).toBeUndefined();
   });
 
@@ -352,6 +362,14 @@ describe("walletFlow", () => {
       provider,
       source: "injected",
     });
+    await expect(getAvailableWalletProviderDetails({ ethereum: provider }, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { includeFarcasterWallet: true, preferFarcasterWallet: true })).resolves.toEqual({
+      provider: miniAppProvider,
+      source: "farcaster",
+    });
     await expect(getAvailableWalletProviderDetails({}, {
       wallet: {
         getEthereumProvider: () => miniAppProvider,
@@ -359,6 +377,19 @@ describe("walletFlow", () => {
     })).resolves.toEqual({
       provider: miniAppProvider,
       source: "farcaster",
+    });
+    await expect(getAvailableWalletProviderDetails({}, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { includeFarcasterWallet: false })).resolves.toBeUndefined();
+    await expect(getAvailableWalletProviderDetails({ ethereum: provider }, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { includeFarcasterWallet: false })).resolves.toEqual({
+      provider,
+      source: "injected",
     });
     await expect(getAvailableWalletProviderDetails({}, {
       wallet: {

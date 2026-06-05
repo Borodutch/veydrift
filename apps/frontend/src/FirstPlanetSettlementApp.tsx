@@ -10,6 +10,7 @@ import {
   detectFarcasterMiniApp,
   farcasterMiniAppPlatformType,
   hasMiniAppUrlHint,
+  probeFarcasterMiniAppRuntime,
   type FarcasterMiniAppPlatformType,
 } from "./farcasterReady";
 import {
@@ -48,7 +49,6 @@ export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing st
 export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
 const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
 const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
-export const FARCASTER_DESKTOP_ACCOUNT_UNAVAILABLE_MESSAGE = "Farcaster Desktop did not expose an authorized wallet account to this Mini App. Open Veydrift in Farcaster mobile, or use a desktop browser wallet until Farcaster Desktop wallet authorization is available.";
 
 type SettlementConfigState =
   | { status: "loading"; apiUrl?: string; config: SettlementConfig }
@@ -97,26 +97,11 @@ export function shouldRetryRejectedRequestWithSettlement(wallet: WalletState): b
   return wallet.kind === "connected";
 }
 
-export function shouldUsePassiveFarcasterAccountAuthorization(input: WalletProviderContext): boolean {
-  return input.miniAppMode
-    && input.walletProviderSource === "farcaster"
-    && input.miniAppPlatformType !== "mobile";
-}
-
 export async function walletConnectionAccounts(
   provider: Eip1193Provider,
-  context: WalletProviderContext,
+  _context: WalletProviderContext,
 ): Promise<string[]> {
-  if (!shouldUsePassiveFarcasterAccountAuthorization(context)) {
-    return requestAccounts(provider);
-  }
-
-  const accounts = await getCurrentAccounts(provider);
-  if (!accounts[0]) {
-    throw new Error(FARCASTER_DESKTOP_ACCOUNT_UNAVAILABLE_MESSAGE);
-  }
-
-  return accounts;
+  return requestAccounts(provider);
 }
 
 type SettlementFunding =
@@ -149,6 +134,7 @@ export function FirstPlanetSettlementApp() {
   const [miniAppMode, setMiniAppMode] = useState(() => (
     typeof window !== "undefined" ? hasMiniAppUrlHint(window.location) : false
   ));
+  const [farcasterRuntime, setFarcasterRuntime] = useState(false);
   const [miniAppPlatformType, setMiniAppPlatformType] = useState<FarcasterMiniAppPlatformType | undefined>();
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
@@ -163,10 +149,18 @@ export function FirstPlanetSettlementApp() {
   useEffect(() => {
     let disposed = false;
 
-    void detectFarcasterMiniApp().then((detected) => {
-      if (!disposed && detected) {
+    void Promise.all([
+      detectFarcasterMiniApp(),
+      probeFarcasterMiniAppRuntime(),
+    ]).then(([detected, runtime]) => {
+      if (disposed) {
+        return;
+      }
+
+      if (detected) {
         setMiniAppMode(true);
       }
+      setFarcasterRuntime(runtime);
     });
 
     return () => {
@@ -175,7 +169,7 @@ export function FirstPlanetSettlementApp() {
   }, []);
 
   useEffect(() => {
-    if (!miniAppMode) {
+    if (!miniAppMode || !farcasterRuntime) {
       setMiniAppPlatformType(undefined);
       return;
     }
@@ -191,7 +185,7 @@ export function FirstPlanetSettlementApp() {
     return () => {
       disposed = true;
     };
-  }, [miniAppMode]);
+  }, [farcasterRuntime, miniAppMode]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -255,7 +249,7 @@ export function FirstPlanetSettlementApp() {
     let disposed = false;
 
     void (async () => {
-      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode && farcasterRuntime });
       if (disposed) return;
       bindWalletProviderDetails(walletProvider);
 
@@ -274,7 +268,7 @@ export function FirstPlanetSettlementApp() {
   }, []);
 
   useEffect(() => {
-    if (!miniAppMode || provider || wallet.kind !== "no-wallet") {
+    if (!miniAppMode || !farcasterRuntime || provider || wallet.kind !== "no-wallet") {
       return;
     }
 
@@ -291,7 +285,7 @@ export function FirstPlanetSettlementApp() {
     return () => {
       disposed = true;
     };
-  }, [miniAppMode, provider, wallet.kind]);
+  }, [farcasterRuntime, miniAppMode, provider, wallet.kind]);
 
   useEffect(() => {
     if (!provider || settlementConfigState.status !== "ready") {
@@ -320,7 +314,11 @@ export function FirstPlanetSettlementApp() {
   async function loadWalletProviderDetails({
     waitForFarcasterProvider = false,
   }: { waitForFarcasterProvider?: boolean } = {}): Promise<WalletProviderDetails> {
-    let walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+    let walletProvider = await getAvailableWalletProviderDetails(
+      window as typeof window & { ethereum?: Eip1193Provider },
+      undefined,
+      { includeFarcasterWallet: farcasterRuntime, preferFarcasterWallet: farcasterRuntime },
+    );
 
     for (
       let attempt = 1;
@@ -332,7 +330,11 @@ export function FirstPlanetSettlementApp() {
       attempt += 1
     ) {
       await delay(FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS);
-      walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider });
+      walletProvider = await getAvailableWalletProviderDetails(
+        window as typeof window & { ethereum?: Eip1193Provider },
+        undefined,
+        { includeFarcasterWallet: farcasterRuntime, preferFarcasterWallet: farcasterRuntime },
+      );
     }
 
     return walletProvider;
@@ -574,7 +576,7 @@ export function FirstPlanetSettlementApp() {
 
     const walletProvider = provider
       ? undefined
-      : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+      : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode && farcasterRuntime });
     const activeProvider = provider ?? bindWalletProviderDetails(walletProvider);
     const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
 

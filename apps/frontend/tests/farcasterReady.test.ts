@@ -3,6 +3,7 @@ import {
   detectFarcasterMiniApp,
   farcasterMiniAppPlatformType,
   hasMiniAppUrlHint,
+  probeFarcasterMiniAppRuntime,
   resetFarcasterReadyForTests,
   scheduleFarcasterReady,
   signalFarcasterReadyOnce,
@@ -93,6 +94,18 @@ describe("Farcaster Mini App ready lifecycle", () => {
         ready: () => undefined,
       },
     }, { pathname: "/", search: "" })).resolves.toBe(false);
+  });
+
+  test("separates Mini App URL hints from actual Farcaster runtime probing", async () => {
+    const client = {
+      isInMiniApp: async () => false,
+      actions: {
+        ready: () => undefined,
+      },
+    };
+
+    await expect(detectFarcasterMiniApp(client, { pathname: "/", search: "?miniApp=true" })).resolves.toBe(true);
+    await expect(probeFarcasterMiniAppRuntime(client)).resolves.toBe(false);
   });
 
   test("reads Mini App platform type from SDK context", async () => {
