@@ -14,6 +14,7 @@ import {
   shouldShowAllianceInitialLoader,
   shouldShowAllianceRefreshIndicator,
   sortedAllianceDirectory,
+  sortedRosterMembers,
 } from "../src/components/AlliancePage";
 import type { ChainAllianceState } from "../src/walletFlow";
 
@@ -291,6 +292,41 @@ describe("AlliancePage loading display", () => {
     expect(rosterPageRows(rows, 99)).toEqual(rows.slice(120, 121));
   });
 
+  test("sorts alliance rosters by role group and member score before pagination", () => {
+    const rows = [
+      rosterMember("0x4000000000000000000000000000000000000000", "member", "90"),
+      rosterMember("0x3000000000000000000000000000000000000000", "officer", "10"),
+      rosterMember("0x1000000000000000000000000000000000000000", "owner", "1"),
+      rosterMember("0x5000000000000000000000000000000000000000", "member", "300"),
+      rosterMember("0x2000000000000000000000000000000000000000", "officer", "200"),
+      ...Array.from({ length: 9 }, (_, index) =>
+        rosterMember(`0x6${String(index).repeat(39)}`, "member", String(80 - index))
+      ),
+    ];
+    const sortedRows = sortedRosterMembers(rows);
+
+    expect(sortedRows.slice(0, 5).map((member) => member.address)).toEqual([
+      "0x1000000000000000000000000000000000000000",
+      "0x2000000000000000000000000000000000000000",
+      "0x3000000000000000000000000000000000000000",
+      "0x5000000000000000000000000000000000000000",
+      "0x4000000000000000000000000000000000000000",
+    ]);
+    expect(rosterPageRows(sortedRows, 1)).toEqual(sortedRows.slice(0, 10));
+    expect(rosterPageRows(sortedRows, 1).map((member) => member.role)).toEqual([
+      "owner",
+      "officer",
+      "officer",
+      "member",
+      "member",
+      "member",
+      "member",
+      "member",
+      "member",
+      "member",
+    ]);
+  });
+
   test("sorts alliance directory by total member score and paginates at 10 rows", () => {
     const alliances = [
       directoryAlliance("1", true, { name: "Low", totalMemberScore: "100", memberCount: 2 }),
@@ -376,6 +412,19 @@ function allianceInvite(allianceId: string): ChainAllianceState["pendingInvites"
     allianceId,
     invitedAt: "1770000001",
     inviter: "0x2222222222222222222222222222222222222222",
+  };
+}
+
+function rosterMember(
+  address: string,
+  role: ChainAllianceState["members"][number]["role"],
+  totalScore: string
+): ChainAllianceState["members"][number] {
+  return {
+    address,
+    joinedAt: "1770000000",
+    role,
+    totalScore,
   };
 }
 

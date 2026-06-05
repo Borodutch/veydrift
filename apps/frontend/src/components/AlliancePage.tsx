@@ -997,9 +997,10 @@ function RosterList({
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
 }) {
   const [page, setPage] = useState(1);
-  const pageCount = rosterPageCount(rows.length);
+  const sortedRows = useMemo(() => sortedRosterMembers(rows), [rows]);
+  const pageCount = rosterPageCount(sortedRows.length);
   const clampedPage = Math.min(page, pageCount);
-  const visibleRows = rosterPageRows(rows, clampedPage);
+  const visibleRows = rosterPageRows(sortedRows, clampedPage);
 
   useEffect(() => {
     setPage(1);
@@ -1009,9 +1010,9 @@ function RosterList({
     <div className="rounded border border-white/10 bg-black/20 p-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{title}</h3>
-        <span className="text-xs text-slate-500">{rows.length}</span>
+        <span className="text-xs text-slate-500">{sortedRows.length}</span>
       </div>
-      {rows.length ? (
+      {sortedRows.length ? (
         <div className="mt-2 grid gap-1.5">
           {visibleRows.map((member) => (
             <MemberRow
@@ -1030,7 +1031,7 @@ function RosterList({
             <RosterPagination
               page={clampedPage}
               pageCount={pageCount}
-              total={rows.length}
+              total={sortedRows.length}
               onNext={() => setPage((current) => Math.min(pageCount, current + 1))}
               onPrevious={() => setPage((current) => Math.max(1, current - 1))}
             />
@@ -1267,9 +1268,10 @@ function MemberRow({
   const isViewer = viewer?.toLowerCase() === member.address.toLowerCase();
   const canKick = canManageMembers && member.role === "member";
   const ownerCanChangeRole = isOwner && member.role !== "owner";
+  const rowTone = memberRowTone(member, isViewer);
 
   return (
-    <div className="grid gap-2 rounded border border-white/10 bg-white/[0.03] px-2 py-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+    <div className={`grid gap-2 rounded border px-2 py-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${rowTone}`}>
       <button className="min-w-0 text-left" onClick={() => onOpenPlayer(member.address)} type="button">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {member.role === "owner" ? <Crown size={14} className="text-amber-200" /> : <UserRound size={14} className="text-slate-500" />}
@@ -1280,9 +1282,10 @@ function MemberRow({
           <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-300">
             {roleLabel(member.role)}
           </span>
-          {isViewer ? <span className="text-xs text-cyan-100">You</span> : null}
         </div>
-        <p className="mt-1 text-xs text-slate-500">Joined {formatUserTimestamp(member.joinedAt)}</p>
+        <p className="mt-1 text-xs text-slate-500">
+          Score {formatScore(member.totalScore)} / Joined {formatUserTimestamp(member.joinedAt)}
+        </p>
       </button>
       {canManageMembers ? (
         <div className="flex flex-wrap gap-2 md:justify-end">
@@ -1456,15 +1459,20 @@ export function buildAllianceRoster(members: RosterMember[], owner?: string | un
       displayName: existing?.displayName ?? null,
       joinedAt: existing?.joinedAt ?? "0",
       role: "owner",
+      ...(existing?.totalScore ? { totalScore: existing.totalScore } : {}),
     });
   }
 
-  const all = [...byAddress.values()].sort(compareRosterMembers);
+  const all = sortedRosterMembers([...byAddress.values()]);
   return {
     all,
     officers: all.filter((member) => member.role === "owner" || member.role === "officer"),
     members: all.filter((member) => member.role === "member"),
   };
+}
+
+export function sortedRosterMembers<T extends Pick<RosterMember, "address" | "role" | "totalScore">>(members: T[]): T[] {
+  return [...members].sort(compareRosterMembers);
 }
 
 export function findAllianceEntry(
@@ -1497,7 +1505,7 @@ function currentAllianceEntry(allianceState: ChainAllianceState | null, rosterCo
   };
 }
 
-function compareRosterMembers(left: RosterMember, right: RosterMember): number {
+function compareRosterMembers<T extends Pick<RosterMember, "address" | "role" | "totalScore">>(left: T, right: T): number {
   const roleOrder: Record<AllianceRole, number> = {
     owner: 0,
     officer: 1,
@@ -1506,7 +1514,16 @@ function compareRosterMembers(left: RosterMember, right: RosterMember): number {
   };
   const roleDelta = roleOrder[left.role] - roleOrder[right.role];
   if (roleDelta !== 0) return roleDelta;
+  const scoreDelta = scoreValue(right.totalScore) - scoreValue(left.totalScore);
+  if (scoreDelta !== 0n) return scoreDelta > 0n ? 1 : -1;
   return left.address.localeCompare(right.address);
+}
+
+function memberRowTone(member: RosterMember, isViewer: boolean): string {
+  if (isViewer) return "border-emerald-300/35 bg-emerald-300/[0.10]";
+  if (member.role === "owner") return "border-amber-300/35 bg-amber-300/[0.10]";
+  if (member.role === "officer") return "border-emerald-300/25 bg-emerald-300/[0.07]";
+  return "border-white/10 bg-white/[0.03]";
 }
 
 function roleLabel(role: AllianceRole): string {
