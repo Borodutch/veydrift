@@ -1470,6 +1470,78 @@ describe("Veydrift backend", () => {
     expect(body.members).toEqual([{ address: player, role: "owner", joinedAt: "1770000000" }]);
   });
 
+  test("adds indexed total member score to alliance profiles and directory rows", async () => {
+    const chainReader = new class extends MockChainReader {
+      async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+        expect(wallets).toContain(player);
+        return new Map([
+          [player, {
+            allianceId: "1",
+            name: "Veydrift Union",
+            tag: "VDFT"
+          }]
+        ]);
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xbuildingdone",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xdefensedone",
+      logIndex: "0x0",
+      topics: [
+        defenseCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(3n, 3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xshipdone",
+      logIndex: "0x0",
+      topics: [
+        shipCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xresearchdone",
+      logIndex: "0x0",
+      topics: [
+        researchCompletedTopic,
+        addressTopic(player),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/alliance`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.profile.totalMemberScore).toBe("15");
+    expect(body.directory[0].totalMemberScore).toBe("15");
+  });
+
   test("falls back to compact settlement reads when configured contract is not VeydriftGame", async () => {
     const reader = new VeydriftGameReader(configuredTestConfig, {
       async request<T>(_method: string, params: unknown[]): Promise<T> {

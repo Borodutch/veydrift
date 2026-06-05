@@ -1,15 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allianceDirectoryPageSize,
   allianceRosterPageSize,
   allianceExitActionState,
   allianceInviteAcceptanceState,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
+  directoryPageCount,
+  directoryPageRows,
   hasAllianceMembership,
   rosterPageCount,
   rosterPageRows,
   shouldShowAllianceInitialLoader,
   shouldShowAllianceRefreshIndicator,
+  sortedAllianceDirectory,
 } from "../src/components/AlliancePage";
 import type { ChainAllianceState } from "../src/walletFlow";
 
@@ -261,15 +265,34 @@ describe("AlliancePage loading display", () => {
     });
   });
 
-  test("paginates long alliance rosters at 50 members per page", () => {
+  test("paginates long alliance rosters at 10 members per page", () => {
     const rows = Array.from({ length: 121 }, (_, index) => `member-${index + 1}`);
 
-    expect(allianceRosterPageSize).toBe(50);
-    expect(rosterPageCount(rows.length)).toBe(3);
-    expect(rosterPageRows(rows, 1)).toEqual(rows.slice(0, 50));
-    expect(rosterPageRows(rows, 2)).toEqual(rows.slice(50, 100));
-    expect(rosterPageRows(rows, 3)).toEqual(rows.slice(100, 121));
-    expect(rosterPageRows(rows, 99)).toEqual(rows.slice(100, 121));
+    expect(allianceRosterPageSize).toBe(10);
+    expect(rosterPageCount(rows.length)).toBe(13);
+    expect(rosterPageRows(rows, 1)).toEqual(rows.slice(0, 10));
+    expect(rosterPageRows(rows, 2)).toEqual(rows.slice(10, 20));
+    expect(rosterPageRows(rows, 13)).toEqual(rows.slice(120, 121));
+    expect(rosterPageRows(rows, 99)).toEqual(rows.slice(120, 121));
+  });
+
+  test("sorts alliance directory by total member score and paginates at 10 rows", () => {
+    const alliances = [
+      directoryAlliance("1", true, { name: "Low", totalMemberScore: "100", memberCount: 2 }),
+      directoryAlliance("2", true, { name: "Top", totalMemberScore: "900", memberCount: 1 }),
+      directoryAlliance("3", true, { name: "Mid", totalMemberScore: "500", memberCount: 5 }),
+      directoryAlliance("4", true, { name: "No Score", memberCount: 99 }),
+    ];
+    const rows = Array.from({ length: 24 }, (_, index) => directoryAlliance(String(index + 10), true, {
+      name: `Alliance ${index + 10}`,
+      totalMemberScore: String(24 - index),
+    }));
+
+    expect(sortedAllianceDirectory(alliances).map((alliance) => alliance.allianceId)).toEqual(["2", "3", "1", "4"]);
+    expect(allianceDirectoryPageSize).toBe(10);
+    expect(directoryPageCount(rows.length)).toBe(3);
+    expect(directoryPageRows(rows, 1)).toEqual(rows.slice(0, 10));
+    expect(directoryPageRows(rows, 3)).toEqual(rows.slice(20, 24));
   });
 });
 
@@ -341,7 +364,11 @@ function allianceInvite(allianceId: string): ChainAllianceState["pendingInvites"
   };
 }
 
-function directoryAlliance(allianceId: string, active: boolean): ChainAllianceState["directory"][number] {
+function directoryAlliance(
+  allianceId: string,
+  active: boolean,
+  overrides: Partial<ChainAllianceState["directory"][number]> = {}
+): ChainAllianceState["directory"][number] {
   return {
     active,
     allianceId,
@@ -351,6 +378,7 @@ function directoryAlliance(allianceId: string, active: boolean): ChainAllianceSt
     name: "Veydrift Union",
     owner: "0x2222222222222222222222222222222222222222",
     tag: "VDFT",
+    ...overrides,
   };
 }
 

@@ -1,4 +1,4 @@
-import { Crown, Info, RefreshCw, Shield, UserRound, Users, X } from "lucide-preact";
+import { Crown, RefreshCw, Shield, UserRound, Users, X } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
@@ -7,7 +7,8 @@ import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsRes
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
-export const allianceRosterPageSize = 50;
+export const allianceRosterPageSize = 10;
+export const allianceDirectoryPageSize = 10;
 
 type AllianceActionState =
   | { status: "idle" }
@@ -90,7 +91,7 @@ export function AlliancePage({
   const [profileName, setProfileName] = useState("");
   const [profileDescription, setProfileDescription] = useState("");
   const [inviteAddress, setInviteAddress] = useState("");
-  const [roleInfoOpen, setRoleInfoOpen] = useState(false);
+  const [inviteFormOpen, setInviteFormOpen] = useState(false);
   const [activeAllianceId, setActiveAllianceId] = useState<string | null>(selectedAllianceId ?? null);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfileState>({ status: "idle" });
@@ -112,6 +113,7 @@ export function AlliancePage({
   );
   const directory = allianceState?.directory ?? [];
   const selectedAlliance = findAllianceEntry(directory, activeAllianceId, currentAlliance);
+  const selectedDirectoryAlliance = selectedAlliance?.allianceId === currentAllianceId ? null : selectedAlliance;
   const initialLoading = shouldShowAllianceInitialLoader({ allianceState, loading });
   const backgroundRefresh = shouldShowAllianceRefreshIndicator({ allianceState, loading });
   const openPlayer = onOpenPlayer ?? setSelectedPlayer;
@@ -185,7 +187,7 @@ export function AlliancePage({
         {initialLoading ? (
           <VeydriftLoader label="Loading alliance data" />
         ) : (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className={`grid gap-4 ${selectedDirectoryAlliance || (!onOpenPlayer && playerProfile.status !== "idle") ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
             <div className="grid gap-4">
               <MyAllianceSection
                 canManageMembers={canManageMembers}
@@ -193,13 +195,13 @@ export function AlliancePage({
                 disabled={disabled}
                 exitAction={exitAction}
                 inviteAddress={inviteAddress}
+                inviteFormOpen={inviteFormOpen}
                 isMember={isMember}
                 isOwner={isOwner}
                 profileDescription={profileDescription}
                 profileName={profileName}
                 profileTag={profileTag}
                 role={role}
-                roleInfoOpen={roleInfoOpen}
                 roster={roster}
                 tag={tag}
                 name={name}
@@ -213,36 +215,16 @@ export function AlliancePage({
                 onOpenPlayer={openPlayer}
                 onSetDescription={setDescription}
                 onSetInviteAddress={setInviteAddress}
+                onSetInviteFormOpen={setInviteFormOpen}
                 onSetName={setName}
                 onSetProfileDescription={setProfileDescription}
                 onSetProfileName={setProfileName}
                 onSetProfileTag={setProfileTag}
                 onSetRole={onSetRole}
-                onSetRoleInfoOpen={setRoleInfoOpen}
                 onSetTag={setTag}
                 onUpdateProfile={onUpdateProfile}
               />
 
-              <DirectorySection
-                alliances={directory}
-                currentAllianceId={isMember ? currentAllianceId : null}
-                disabled={disabled}
-                pendingJoinRequests={allianceState?.pendingJoinRequests ?? []}
-                selectedAllianceId={selectedAlliance?.allianceId ?? null}
-                onCancelJoinRequest={onCancelJoinRequest}
-                onJoinRequest={onJoinRequest}
-                onOpenAlliance={openAlliance}
-                onSelectAlliance={setActiveAllianceId}
-              />
-            </div>
-
-            <aside className="grid gap-4 content-start">
-              <AllianceDetailsPanel
-                alliance={selectedAlliance}
-                isCurrentAlliance={Boolean(selectedAlliance && selectedAlliance.allianceId === currentAllianceId)}
-                roster={selectedAlliance?.allianceId === currentAllianceId ? roster : undefined}
-                onOpenPlayer={openPlayer}
-              />
               <PendingInvites
                 allianceState={allianceState}
                 disabled={disabled}
@@ -260,13 +242,36 @@ export function AlliancePage({
                   onOpenPlayer={openPlayer}
                 />
               ) : null}
+
+              <DirectorySection
+                alliances={directory}
+                currentAllianceId={isMember ? currentAllianceId : null}
+                disabled={disabled}
+                pendingJoinRequests={allianceState?.pendingJoinRequests ?? []}
+                selectedAllianceId={selectedAlliance?.allianceId ?? null}
+                onCancelJoinRequest={onCancelJoinRequest}
+                onJoinRequest={onJoinRequest}
+                onOpenAlliance={openAlliance}
+                onSelectAlliance={setActiveAllianceId}
+              />
+            </div>
+
+            {selectedDirectoryAlliance || (!onOpenPlayer && playerProfile.status !== "idle") ? (
+              <aside className="grid gap-4 content-start">
+                {selectedDirectoryAlliance ? (
+                  <AllianceDetailsPanel
+                    alliance={selectedDirectoryAlliance}
+                    onOpenPlayer={openPlayer}
+                  />
+                ) : null}
               {!onOpenPlayer ? (
                 <PlayerProfilePanel
                   profile={playerProfile}
                   onClose={() => setSelectedPlayer(null)}
                 />
               ) : null}
-            </aside>
+              </aside>
+            ) : null}
           </div>
         )}
       </div>
@@ -411,13 +416,13 @@ function MyAllianceSection({
   disabled,
   exitAction,
   inviteAddress,
+  inviteFormOpen,
   isMember,
   isOwner,
   profileDescription,
   profileName,
   profileTag,
   role,
-  roleInfoOpen,
   roster,
   tag,
   name,
@@ -431,12 +436,12 @@ function MyAllianceSection({
   onOpenPlayer,
   onSetDescription,
   onSetInviteAddress,
+  onSetInviteFormOpen,
   onSetName,
   onSetProfileDescription,
   onSetProfileName,
   onSetProfileTag,
   onSetRole,
-  onSetRoleInfoOpen,
   onSetTag,
   onUpdateProfile,
 }: {
@@ -445,13 +450,13 @@ function MyAllianceSection({
   disabled: boolean;
   exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
   inviteAddress: string;
+  inviteFormOpen: boolean;
   isMember: boolean;
   isOwner: boolean;
   profileDescription: string;
   profileName: string;
   profileTag: string;
   role: AllianceRole;
-  roleInfoOpen: boolean;
   roster: RosterGroups;
   tag: string;
   name: string;
@@ -465,12 +470,12 @@ function MyAllianceSection({
   onOpenPlayer: (playerAddress: string) => void;
   onSetDescription: (value: string) => void;
   onSetInviteAddress: (value: string) => void;
+  onSetInviteFormOpen: (value: boolean) => void;
   onSetName: (value: string) => void;
   onSetProfileDescription: (value: string) => void;
   onSetProfileName: (value: string) => void;
   onSetProfileTag: (value: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
-  onSetRoleInfoOpen: (value: boolean) => void;
   onSetTag: (value: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
 }) {
@@ -508,21 +513,9 @@ function MyAllianceSection({
   }
 
   return (
-    <Panel
-      title="My Alliance"
-      action={(
-        <button
-          className="inline-flex h-8 items-center gap-1 rounded border border-white/10 px-2 text-xs font-semibold text-slate-200 hover:bg-white/10"
-          onClick={() => onSetRoleInfoOpen(!roleInfoOpen)}
-          type="button"
-        >
-          <Info size={14} />
-          {roleLabel(role)}
-        </button>
-      )}
-    >
+    <Panel title="My Alliance">
       <div className="grid gap-4">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="grid gap-3">
           <div className="min-w-0">
             <button
               className="flex min-w-0 flex-wrap items-center gap-2 text-left disabled:cursor-default"
@@ -540,14 +533,7 @@ function MyAllianceSection({
               {currentAlliance.description || "No public alliance description."}
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-right sm:min-w-72">
-            <MiniStat label="Members" value={String(currentAlliance.memberCount)} />
-            <MiniStat label="Officers" value={String(roster.officers.length)} />
-            <MiniStat label="Role" value={roleLabel(role)} />
-          </div>
         </div>
-
-        {roleInfoOpen ? <RoleInfo role={role} /> : null}
 
         {isOwner ? (
           <div className="rounded border border-white/10 bg-black/20 p-3">
@@ -570,37 +556,22 @@ function MyAllianceSection({
           </div>
         ) : null}
 
-        {canManageMembers ? (
-          <div className="rounded border border-white/10 bg-black/20 p-3">
-            <h3 className="text-sm font-semibold text-white">Invite</h3>
-            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-              <TextField label="Wallet" value={inviteAddress} onInput={onSetInviteAddress} placeholder="0x..." />
-              <button
-                className="self-end rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled || !inviteAddress.trim()}
-                onClick={() => onInvite(inviteAddress.trim())}
-                type="button"
-              >
-                Invite
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        <AllianceExitActionPanel
-          disabled={disabled}
-          exitAction={exitAction}
-          onSubmit={onLeaveAlliance}
-        />
-
         <RosterSection
           canManageMembers={canManageMembers}
           disabled={disabled}
           isOwner={isOwner}
+          inviteAddress={inviteAddress}
+          inviteFormOpen={inviteFormOpen}
           roster={roster}
+          role={role}
           viewer={viewer}
+          exitAction={exitAction}
+          onInvite={onInvite}
           onKick={onKick}
+          onLeaveAlliance={onLeaveAlliance}
           onOpenPlayer={onOpenPlayer}
+          onSetInviteAddress={onSetInviteAddress}
+          onSetInviteFormOpen={onSetInviteFormOpen}
           onSetRole={onSetRole}
         />
       </div>
@@ -630,15 +601,23 @@ function DirectorySection({
   onSelectAlliance: (allianceId: string) => void;
 }) {
   const pendingIds = new Set(pendingJoinRequests.map((request) => request.allianceId));
-  const visibleAlliances = currentAllianceId
+  const visibleAlliances = sortedAllianceDirectory(currentAllianceId
     ? alliances.filter((alliance) => alliance.allianceId !== currentAllianceId)
-    : alliances;
+    : alliances);
+  const [page, setPage] = useState(1);
+  const pageCount = directoryPageCount(visibleAlliances.length);
+  const clampedPage = Math.min(page, pageCount);
+  const pageRows = directoryPageRows(visibleAlliances, clampedPage);
+
+  useEffect(() => {
+    setPage(1);
+  }, [alliances, currentAllianceId]);
 
   return (
     <Panel title="Other Alliances">
       {visibleAlliances.length ? (
         <div className="grid gap-2">
-          {visibleAlliances.map((alliance) => {
+          {pageRows.map((alliance) => {
             const pending = pendingIds.has(alliance.allianceId);
             const selected = selectedAllianceId === alliance.allianceId;
             return (
@@ -663,6 +642,7 @@ function DirectorySection({
                   <p className="mt-2 line-clamp-2 text-sm text-slate-400">{alliance.description || "No public description."}</p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                     <span>{alliance.memberCount} members</span>
+                    <span>Total score {formatScore(alliance.totalMemberScore)}</span>
                     <span>Owner {playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
                     <span>Created {formatUserTimestamp(alliance.createdAt)}</span>
                   </div>
@@ -689,6 +669,15 @@ function DirectorySection({
               </div>
             );
           })}
+          {pageCount > 1 ? (
+            <DirectoryPagination
+              page={clampedPage}
+              pageCount={pageCount}
+              total={visibleAlliances.length}
+              onNext={() => setPage((current) => Math.min(pageCount, current + 1))}
+              onPrevious={() => setPage((current) => Math.max(1, current - 1))}
+            />
+          ) : null}
         </div>
       ) : (
         <p className="text-sm text-slate-400">No other public alliances found yet.</p>
@@ -699,13 +688,9 @@ function DirectorySection({
 
 function AllianceDetailsPanel({
   alliance,
-  isCurrentAlliance,
-  roster,
   onOpenPlayer,
 }: {
   alliance: AllianceEntry | null;
-  isCurrentAlliance: boolean;
-  roster?: RosterGroups | undefined;
   onOpenPlayer: (playerAddress: string) => void;
 }) {
   return (
@@ -723,39 +708,18 @@ function AllianceDetailsPanel({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <MiniStat label="Members" value={String(alliance.memberCount)} />
-            <MiniStat label="Alliance ID" value={alliance.allianceId} />
+            <MiniStat label="Total Score" value={formatScore(alliance.totalMemberScore)} />
           </div>
-          {isCurrentAlliance && roster ? (
-            <div className="grid gap-2">
-              <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Roster Preview</h4>
-              {roster.all.slice(0, 6).map((member) => (
-                <MemberRow
-                  canManageMembers={false}
-                  disabled={false}
-                  isOwner={false}
-                  key={member.address}
-                  member={member}
-                  viewer={undefined}
-                  onKick={() => undefined}
-                  onOpenPlayer={onOpenPlayer}
-                  onSetRole={() => undefined}
-                />
-              ))}
-            </div>
-          ) : (
-            <>
-              <button
-                className="rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
-                onClick={() => onOpenPlayer(alliance.owner)}
-                type="button"
-              >
-                Owner <span className="font-mono text-cyan-100">{playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
-              </button>
-              <p className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-400">
-                Full roster is available after joining or from a current-alliance view.
-              </p>
-            </>
-          )}
+          <button
+            className="rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
+            onClick={() => onOpenPlayer(alliance.owner)}
+            type="button"
+          >
+            Owner <span className="font-mono text-cyan-100">{playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
+          </button>
+          <p className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-400">
+            Full roster is available after joining or from a current-alliance view.
+          </p>
         </div>
       ) : (
         <p className="text-sm text-slate-400">Select an alliance from the directory to inspect its public profile.</p>
@@ -866,7 +830,7 @@ function JoinRequests({
   );
 }
 
-export function AllianceExitActionPanel({
+export function AllianceExitActionButton({
   disabled,
   exitAction,
   onSubmit,
@@ -881,13 +845,9 @@ export function AllianceExitActionPanel({
   const confirmLabel = isDelete ? "Confirm Delete" : "Confirm Leave";
 
   return (
-    <div className="rounded border border-red-300/20 bg-red-950/20 p-3">
-      <h3 className="text-sm font-semibold text-red-50">Alliance Actions</h3>
-      {exitAction.reason ? (
-        <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{exitAction.reason}</p>
-      ) : null}
+    <div className="grid gap-2">
       {confirming && !blocked ? (
-        <div className="mt-3 rounded border border-red-300/25 bg-black/20 p-3">
+        <div className="rounded border border-red-300/25 bg-red-950/20 p-3">
           <p className="text-sm font-semibold text-red-50">{exitAction.label}?</p>
           <p className="mt-1 text-xs text-red-100/80">
             {isDelete ? "This removes the alliance after the wallet transaction confirms." : "This removes your wallet from the alliance after the wallet transaction confirms."}
@@ -915,35 +875,57 @@ export function AllianceExitActionPanel({
         </div>
       ) : (
         <button
-          className="mt-3 rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={blocked}
           onClick={() => setConfirming(true)}
           type="button"
+          title={exitAction.reason ?? exitAction.label}
         >
           {exitAction.label}
         </button>
       )}
+      {exitAction.reason ? (
+        <p className="rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{exitAction.reason}</p>
+      ) : null}
     </div>
   );
 }
 
+export const AllianceExitActionPanel = AllianceExitActionButton;
+
 function RosterSection({
   canManageMembers,
   disabled,
+  exitAction,
+  inviteAddress,
+  inviteFormOpen,
   isOwner,
   roster,
+  role,
   viewer,
+  onInvite,
   onKick,
+  onLeaveAlliance,
   onOpenPlayer,
+  onSetInviteAddress,
+  onSetInviteFormOpen,
   onSetRole,
 }: {
   canManageMembers: boolean;
   disabled: boolean;
+  exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
+  inviteAddress: string;
+  inviteFormOpen: boolean;
   isOwner: boolean;
   roster: RosterGroups;
+  role: AllianceRole;
   viewer?: string | undefined;
+  onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
+  onLeaveAlliance: () => void;
   onOpenPlayer: (playerAddress: string) => void;
+  onSetInviteAddress: (value: string) => void;
+  onSetInviteFormOpen: (value: boolean) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
 }) {
   return (
@@ -951,23 +933,20 @@ function RosterSection({
       <RosterList
         canManageMembers={canManageMembers}
         disabled={disabled}
+        exitAction={exitAction}
+        inviteAddress={inviteAddress}
+        inviteFormOpen={inviteFormOpen}
         isOwner={isOwner}
-        rows={roster.officers}
-        title="Officers"
-        viewer={viewer}
-        onKick={onKick}
-        onOpenPlayer={onOpenPlayer}
-        onSetRole={onSetRole}
-      />
-      <RosterList
-        canManageMembers={canManageMembers}
-        disabled={disabled}
-        isOwner={isOwner}
-        rows={roster.members}
+        role={role}
+        rows={roster.all}
         title="Members"
         viewer={viewer}
+        onInvite={onInvite}
         onKick={onKick}
+        onLeaveAlliance={onLeaveAlliance}
         onOpenPlayer={onOpenPlayer}
+        onSetInviteAddress={onSetInviteAddress}
+        onSetInviteFormOpen={onSetInviteFormOpen}
         onSetRole={onSetRole}
       />
     </div>
@@ -977,22 +956,38 @@ function RosterSection({
 function RosterList({
   canManageMembers,
   disabled,
+  exitAction,
+  inviteAddress,
+  inviteFormOpen,
   isOwner,
+  role,
   rows,
   title,
   viewer,
+  onInvite,
   onKick,
+  onLeaveAlliance,
   onOpenPlayer,
+  onSetInviteAddress,
+  onSetInviteFormOpen,
   onSetRole,
 }: {
   canManageMembers: boolean;
   disabled: boolean;
+  exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
+  inviteAddress: string;
+  inviteFormOpen: boolean;
   isOwner: boolean;
+  role: AllianceRole;
   rows: RosterMember[];
   title: string;
   viewer?: string | undefined;
+  onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
+  onLeaveAlliance: () => void;
   onOpenPlayer: (playerAddress: string) => void;
+  onSetInviteAddress: (value: string) => void;
+  onSetInviteFormOpen: (value: boolean) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
 }) {
   const [page, setPage] = useState(1);
@@ -1034,10 +1029,96 @@ function RosterList({
               onPrevious={() => setPage((current) => Math.max(1, current - 1))}
             />
           ) : null}
+          <AllianceMemberActions
+            canManageMembers={canManageMembers}
+            disabled={disabled}
+            exitAction={exitAction}
+            inviteAddress={inviteAddress}
+            inviteFormOpen={inviteFormOpen}
+            role={role}
+            onInvite={onInvite}
+            onLeaveAlliance={onLeaveAlliance}
+            onSetInviteAddress={onSetInviteAddress}
+            onSetInviteFormOpen={onSetInviteFormOpen}
+          />
         </div>
       ) : (
-        <p className="mt-2 text-sm text-slate-400">No {title.toLowerCase()} found.</p>
+        <div className="mt-2 grid gap-3">
+          <p className="text-sm text-slate-400">No {title.toLowerCase()} found.</p>
+          <AllianceMemberActions
+            canManageMembers={canManageMembers}
+            disabled={disabled}
+            exitAction={exitAction}
+            inviteAddress={inviteAddress}
+            inviteFormOpen={inviteFormOpen}
+            role={role}
+            onInvite={onInvite}
+            onLeaveAlliance={onLeaveAlliance}
+            onSetInviteAddress={onSetInviteAddress}
+            onSetInviteFormOpen={onSetInviteFormOpen}
+          />
+        </div>
       )}
+    </div>
+  );
+}
+
+function AllianceMemberActions({
+  canManageMembers,
+  disabled,
+  exitAction,
+  inviteAddress,
+  inviteFormOpen,
+  role,
+  onInvite,
+  onLeaveAlliance,
+  onSetInviteAddress,
+  onSetInviteFormOpen,
+}: {
+  canManageMembers: boolean;
+  disabled: boolean;
+  exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
+  inviteAddress: string;
+  inviteFormOpen: boolean;
+  role: AllianceRole;
+  onInvite: (playerAddress: string) => void;
+  onLeaveAlliance: () => void;
+  onSetInviteAddress: (value: string) => void;
+  onSetInviteFormOpen: (value: boolean) => void;
+}) {
+  return (
+    <div className="mt-2 border-t border-white/10 pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded border border-white/10 px-2 py-1 text-xs font-semibold capitalize text-slate-300">{roleLabel(role)}</span>
+        {canManageMembers ? (
+          <button
+            className="rounded border border-cyan-300/25 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled}
+            onClick={() => onSetInviteFormOpen(!inviteFormOpen)}
+            type="button"
+          >
+            Invite
+          </button>
+        ) : null}
+        <AllianceExitActionButton
+          disabled={disabled}
+          exitAction={exitAction}
+          onSubmit={onLeaveAlliance}
+        />
+      </div>
+      {inviteFormOpen && canManageMembers ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <TextField label="Wallet" value={inviteAddress} onInput={onSetInviteAddress} placeholder="0x..." />
+          <button
+            className="self-end rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled || !inviteAddress.trim()}
+            onClick={() => onInvite(inviteAddress.trim())}
+            type="button"
+          >
+            Send Invite
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1050,6 +1131,28 @@ export function rosterPageRows<T>(rows: T[], page: number): T[] {
   const clampedPage = Math.min(Math.max(1, page), rosterPageCount(rows.length));
   const start = (clampedPage - 1) * allianceRosterPageSize;
   return rows.slice(start, start + allianceRosterPageSize);
+}
+
+export function sortedAllianceDirectory<T extends Pick<DirectoryEntry, "allianceId" | "memberCount" | "name" | "totalMemberScore">>(alliances: T[]): T[] {
+  return [...alliances].sort((left, right) => {
+    const scoreDelta = scoreValue(right.totalMemberScore) - scoreValue(left.totalMemberScore);
+    if (scoreDelta !== 0n) return scoreDelta > 0n ? 1 : -1;
+    const memberDelta = right.memberCount - left.memberCount;
+    if (memberDelta !== 0) return memberDelta;
+    const nameDelta = left.name.localeCompare(right.name);
+    if (nameDelta !== 0) return nameDelta;
+    return compareNumericStrings(left.allianceId, right.allianceId);
+  });
+}
+
+export function directoryPageCount(total: number): number {
+  return Math.max(1, Math.ceil(total / allianceDirectoryPageSize));
+}
+
+export function directoryPageRows<T>(rows: T[], page: number): T[] {
+  const clampedPage = Math.min(Math.max(1, page), directoryPageCount(rows.length));
+  const start = (clampedPage - 1) * allianceDirectoryPageSize;
+  return rows.slice(start, start + allianceDirectoryPageSize);
 }
 
 function RosterPagination({
@@ -1067,6 +1170,48 @@ function RosterPagination({
 }) {
   const first = (page - 1) * allianceRosterPageSize + 1;
   const last = Math.min(page * allianceRosterPageSize, total);
+
+  return (
+    <div className="mt-2 flex flex-col gap-2 border-t border-white/10 pt-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+      <span>{first}-{last} of {total}</span>
+      <div className="flex items-center gap-2">
+        <button
+          className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={page <= 1}
+          onClick={onPrevious}
+          type="button"
+        >
+          Previous
+        </button>
+        <span>Page {page} of {pageCount}</span>
+        <button
+          className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={page >= pageCount}
+          onClick={onNext}
+          type="button"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DirectoryPagination({
+  onNext,
+  onPrevious,
+  page,
+  pageCount,
+  total,
+}: {
+  onNext: () => void;
+  onPrevious: () => void;
+  page: number;
+  pageCount: number;
+  total: number;
+}) {
+  const first = (page - 1) * allianceDirectoryPageSize + 1;
+  const last = Math.min(page * allianceDirectoryPageSize, total);
 
   return (
     <div className="mt-2 flex flex-col gap-2 border-t border-white/10 pt-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
@@ -1213,17 +1358,6 @@ function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState;
   );
 }
 
-function RoleInfo({ role }: { role: AllianceRole }) {
-  return (
-    <div className="rounded border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-sm text-cyan-50">
-      {role === "owner" ? "Owner: profile editing, officer management, invitations, applications, and removals." : null}
-      {role === "officer" ? "Officer: invitations, application approvals, and member removals." : null}
-      {role === "member" ? "Member: roster access and alliance coordination." : null}
-      {role === "none" ? "No alliance role is active for this wallet." : null}
-    </div>
-  );
-}
-
 function Panel({ action, children, title }: { action?: ComponentChildren; children: ComponentChildren; title: string }) {
   return (
     <section className="rounded border border-white/10 bg-white/[0.03] p-4">
@@ -1353,6 +1487,7 @@ function currentAllianceEntry(allianceState: ChainAllianceState | null, rosterCo
     ownerDisplayName: profile.ownerDisplayName ?? null,
     rosterAvailable: true,
     tag: profile.tag,
+    ...(profile.totalMemberScore ? { totalMemberScore: profile.totalMemberScore } : {}),
   };
 }
 
@@ -1383,6 +1518,25 @@ function formatScore(value: string | undefined): string {
   if (!value) return "0";
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric.toLocaleString() : value;
+}
+
+function scoreValue(value: string | undefined): bigint {
+  try {
+    return BigInt(value ?? "0");
+  } catch {
+    return 0n;
+  }
+}
+
+function compareNumericStrings(left: string, right: string): number {
+  try {
+    const delta = BigInt(left) - BigInt(right);
+    if (delta < 0n) return -1;
+    if (delta > 0n) return 1;
+    return 0;
+  } catch {
+    return left.localeCompare(right);
+  }
 }
 
 async function fetchPlayerHighscore(apiBaseUrl: string, wallet: string): Promise<HighscoreEntry | null> {

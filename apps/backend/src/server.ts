@@ -555,7 +555,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        return Response.json(enrichAllianceState(await liveWalletRead(ready.getAllianceState(wallet), "alliance"), indexer), {
+        return Response.json(await enrichAllianceState(await liveWalletRead(ready.getAllianceState(wallet), "alliance"), indexer, ready), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -1033,16 +1033,22 @@ function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
   };
 }
 
-function enrichAllianceState(
+async function enrichAllianceState(
   state: AllianceState,
-  indexer: SettlementIndexer | undefined
-): AllianceState {
+  indexer: SettlementIndexer | undefined,
+  chainReader: ChainReader | undefined
+): Promise<AllianceState> {
   const dismissJoinRequestAvailable = process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED !== "false";
   if (!indexer) return { ...state, dismissJoinRequestAvailable };
 
   const displayNameField = <Key extends string>(key: Key, wallet: `0x${string}`): Record<Key, string> | Record<string, never> => {
     const displayName = indexer.playerProfile(wallet).displayName;
     return displayName ? { [key]: displayName } as Record<Key, string> : {};
+  };
+  const scoreByAllianceId = await allianceMemberScoreTotals(indexer, chainReader);
+  const totalScoreField = (allianceId: string): { totalMemberScore?: string } => {
+    const total = scoreByAllianceId.get(allianceId);
+    return total !== undefined ? { totalMemberScore: total.toString() } : {};
   };
 
   return {
@@ -1051,12 +1057,14 @@ function enrichAllianceState(
     profile: state.profile
       ? {
           ...state.profile,
-          ...displayNameField("ownerDisplayName", state.profile.owner)
+          ...displayNameField("ownerDisplayName", state.profile.owner),
+          ...totalScoreField(state.membership.allianceId)
         }
       : null,
     directory: state.directory.map((alliance) => ({
       ...alliance,
-      ...displayNameField("ownerDisplayName", alliance.owner)
+      ...displayNameField("ownerDisplayName", alliance.owner),
+      ...totalScoreField(alliance.allianceId)
     })),
     pendingInvites: state.pendingInvites.map((invite) => ({
       ...invite,
@@ -1075,6 +1083,27 @@ function enrichAllianceState(
       ...displayNameField("displayName", member.address)
     }))
   };
+}
+
+async function allianceMemberScoreTotals(
+  indexer: SettlementIndexer,
+  chainReader: ChainReader | undefined
+): Promise<Map<string, bigint>> {
+  if (!chainReader?.getAllianceIntelForPlayers) return new Map();
+
+  const planetsByOwner = indexer.settledPlanetsByOwner();
+  const entries = indexer.highscoreEntriesForOwners(planetsByOwner);
+  const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), chainReader);
+  const totals = new Map<string, bigint>();
+
+  for (const entry of entries) {
+    const alliance = allianceIntel.get(entry.wallet.toLowerCase());
+    if (!alliance) continue;
+    const score = BigInt(entry.score.total);
+    totals.set(alliance.allianceId, (totals.get(alliance.allianceId) ?? 0n) + score);
+  }
+
+  return totals;
 }
 
 type IndexedDegradedBody<T extends object> = T & {
