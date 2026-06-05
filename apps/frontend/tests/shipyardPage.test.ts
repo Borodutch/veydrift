@@ -15,7 +15,6 @@ describe("Shipyard page display helpers", () => {
       canTransact: true,
       hasPlanet: true,
       missing: ["Unavailable on current deployment"],
-      queueActive: false,
       resources: {
         metal: 5000,
         crystal: 5000,
@@ -50,7 +49,6 @@ describe("Shipyard page display helpers", () => {
       canTransact: true,
       hasPlanet: false,
       missing: [],
-      queueActive: false,
       resources: undefined,
       shipUnavailable: false,
       shipyardState: null,
@@ -105,31 +103,12 @@ describe("Shipyard page display helpers", () => {
       countLabel: "Owned",
       countValue: 4,
       detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
-      detailSections: [
-        {
-          title: "Combat",
-          stats: [
-            { label: "Structure", value: "400" },
-            { label: "Shield", value: "10" },
-            { label: "Attack", value: "5" },
-          ],
-        },
-        {
-          title: "Logistics",
-          stats: [
-            { label: "Cargo", value: "5,000" },
-            { label: "Base speed", value: "5,000" },
-            { label: "Fuel use", value: "10" },
-          ],
-        },
-        expect.objectContaining({ title: "Build" }),
-        expect.objectContaining({ title: "Requirements" }),
-      ],
-      notes: [expect.stringContaining("freighter")],
       quantity: 3,
       status: "ready",
     });
     expect(items.find((item) => item.key === "smallCargo")).not.toHaveProperty("description");
+    expect(items.find((item) => item.key === "smallCargo")?.detailSections).toBeUndefined();
+    expect(items.find((item) => item.key === "smallCargo")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
       status: "locked",
       statusLabel: "Locked",
@@ -168,22 +147,10 @@ describe("Shipyard page display helpers", () => {
     });
 
     expect(items.find((item) => item.key === "solarSatellite")).toMatchObject({
-      detailNote: "Attack 1 · Shield 1 · Hull 200 · Cargo No cargo",
-      detailSections: expect.arrayContaining([
-        {
-          title: "Logistics",
-          stats: [
-            { label: "Cargo", value: "No cargo" },
-            { label: "Base speed", value: "Stationary energy platform" },
-            { label: "Fuel use", value: "No fuel" },
-          ],
-        },
-      ]),
-      notes: [
-        expect.stringContaining("energy platform"),
-        expect.stringContaining("cannot move, haul cargo, or spend fuel"),
-      ],
+      detailNote: "Attack 1 · Shield 1 · Hull 200 · Cargo 0",
     });
+    expect(items.find((item) => item.key === "solarSatellite")?.detailSections).toBeUndefined();
+    expect(items.find((item) => item.key === "solarSatellite")?.notes).toBeUndefined();
   });
 
   test("keeps catalog context while selected item drives the build panel model", () => {
@@ -249,6 +216,60 @@ describe("Shipyard page display helpers", () => {
     expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
       blockedReason: "Requires 500 more Metal, 100 more Crystal (affordable in 1h)",
       disabled: true,
+    });
+  });
+
+  test("allows adding ships behind active shipyard production", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: { lightFighter: 2 },
+      queue: {
+        active: true,
+        kind: "ship",
+        itemId: 0,
+        quantity: 3,
+        readyAt: "1770000060",
+        cost: {
+          metal: "6000",
+          crystal: "6000",
+          deuterium: "0",
+        },
+      },
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState({
+        ships: [
+          ...shipyardState().ships,
+          {
+            id: 1,
+            count: 0,
+            cost: {
+              metal: "3000",
+              crystal: "1000",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+    });
+
+    expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+      blockedReason: undefined,
+      disabled: false,
+      queued: 3,
+      status: "queued",
+    });
+    expect(items.find((item) => item.key === "lightFighter")).toMatchObject({
+      blockedReason: undefined,
+      disabled: false,
+      quantity: 2,
+      status: "ready",
     });
   });
 });
