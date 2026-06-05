@@ -1540,6 +1540,7 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
     expect(body.profile.totalMemberScore).toBe("15");
     expect(body.directory[0].totalMemberScore).toBe("15");
+    expect(body.members[0].totalScore).toBe("15");
   });
 
   test("falls back to compact settlement reads when configured contract is not VeydriftGame", async () => {

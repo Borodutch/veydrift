@@ -457,6 +457,7 @@ export type AllianceState = {
     displayName?: string | null;
     role: AllianceRoleName;
     joinedAt: string;
+    totalScore?: string;
   }>;
 };
 
