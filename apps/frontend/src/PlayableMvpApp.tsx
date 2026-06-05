@@ -139,6 +139,7 @@ import {
   sendAcceptAllianceInviteTransaction,
   sendAllianceJoinRequestTransaction,
   sendAllianceKickTransaction,
+  sendAllianceLeaveTransaction,
   sendAllianceInviteTransaction,
   sendAllianceProfileTransaction,
   sendAllianceRoleTransaction,
@@ -3345,6 +3346,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleLeaveAlliance = useCallback(() => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    const label = allianceState.membership.role === "owner" ? "Alliance deletion" : "Alliance leave";
+    void runAllianceTransaction(label, () => sendAllianceLeaveTransaction(
+      provider,
+      account,
+      allianceContract,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, allianceState?.membership.role, provider, runAllianceTransaction]);
+
   const handleSetAllianceRole = useCallback((playerAddress: string, role: "member" | "officer") => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
@@ -4256,6 +4271,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onJoinRequest={handleRequestAllianceJoin}
           onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
+          onLeaveAlliance={handleLeaveAlliance}
           onOpenAlliance={handleSelectAlliance}
           onOpenPlayer={handleSelectPlayer}
           onRefresh={refreshAllianceState}
@@ -4278,6 +4294,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onDismissJoinRequest={handleDismissAllianceJoinRequest}
           onInvite={handleInviteAllianceMember}
           onKick={handleKickAllianceMember}
+          onLeaveAlliance={handleLeaveAlliance}
           onOpenPlayer={handleSelectPlayer}
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}

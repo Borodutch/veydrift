@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   allianceRosterPageSize,
+  allianceExitActionState,
   allianceInviteAcceptanceState,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
@@ -183,6 +184,69 @@ describe("AlliancePage loading display", () => {
     }), invite)).toEqual({
       canAccept: false,
       reason: "You are already in an alliance.",
+    });
+  });
+
+  test("enables leave for non-owner members and delete only for solo owners", () => {
+    expect(allianceExitActionState(unaffiliatedAllianceState())).toEqual({
+      canSubmit: false,
+      label: "Leave Alliance",
+      reason: "You are not in an alliance.",
+    });
+
+    expect(allianceExitActionState(memberAllianceState())).toEqual({
+      canSubmit: true,
+      label: "Leave Alliance",
+      reason: null,
+    });
+
+    expect(allianceExitActionState(memberAllianceState({
+      membership: {
+        allianceId: "7",
+        joinedAt: "1770000000",
+        role: "owner",
+      },
+      profile: {
+        active: true,
+        createdAt: "1770000000",
+        description: "Outer-rim coordination",
+        memberCount: 2,
+        name: "Veydrift Union",
+        owner: "0x1111111111111111111111111111111111111111",
+        tag: "VDFT",
+      },
+    }))).toEqual({
+      canSubmit: false,
+      label: "Delete Alliance",
+      reason: "Remove every other member before deleting this alliance.",
+    });
+
+    expect(allianceExitActionState(memberAllianceState({
+      members: [
+        {
+          address: "0x1111111111111111111111111111111111111111",
+          joinedAt: "1770000000",
+          role: "owner",
+        },
+      ],
+      membership: {
+        allianceId: "7",
+        joinedAt: "1770000000",
+        role: "owner",
+      },
+      profile: {
+        active: true,
+        createdAt: "1770000000",
+        description: "Outer-rim coordination",
+        memberCount: 1,
+        name: "Veydrift Union",
+        owner: "0x1111111111111111111111111111111111111111",
+        tag: "VDFT",
+      },
+    }))).toEqual({
+      canSubmit: true,
+      label: "Delete Alliance",
+      reason: null,
     });
   });
 

@@ -14,6 +14,7 @@ import {
 import {
   allianceRosterPageSize,
   allianceDisplayName,
+  allianceExitActionState,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
   buildAllianceRoster,
@@ -167,6 +168,7 @@ export function AllianceInspectPage({
   onDismissJoinRequest,
   onInvite,
   onKick,
+  onLeaveAlliance,
   onOpenPlayer,
   onRefresh,
   onSetRole,
@@ -181,6 +183,7 @@ export function AllianceInspectPage({
   onDismissJoinRequest: (playerAddress: string) => void;
   onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
+  onLeaveAlliance: () => void;
   onOpenPlayer: (wallet: string) => void;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
@@ -210,6 +213,7 @@ export function AllianceInspectPage({
   const canManageMembers = isCurrentAlliance && (role === "owner" || role === "officer");
   const isOwner = isCurrentAlliance && role === "owner";
   const busy = disabled || actionBusy || !canTransact;
+  const exitAction = allianceExitActionState(isCurrentAlliance ? allianceState : null);
 
   return (
     <InspectShell
@@ -228,10 +232,9 @@ export function AllianceInspectPage({
       {alliance ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <section className="grid gap-4">
-            <div className="grid gap-2 sm:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-3">
               <MiniStat label="Tag" value={alliance.tag} />
               <MiniStat label="Members" value={String(alliance.memberCount)} />
-              <MiniStat label="Owner" value={shortAddress(alliance.owner)} />
               <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
             </div>
 
@@ -272,6 +275,21 @@ export function AllianceInspectPage({
                     Invite
                   </button>
                 </div>
+              </Panel>
+            ) : null}
+            {isCurrentAlliance ? (
+              <Panel title="Alliance Actions">
+                {exitAction.reason ? (
+                  <p className="mb-3 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{exitAction.reason}</p>
+                ) : null}
+                <button
+                  className="rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:opacity-50"
+                  disabled={busy || !exitAction.canSubmit}
+                  onClick={onLeaveAlliance}
+                  type="button"
+                >
+                  {exitAction.label}
+                </button>
               </Panel>
             ) : null}
             {canManageMembers ? (
