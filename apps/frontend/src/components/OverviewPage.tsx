@@ -12,6 +12,7 @@ import {
   overviewQueueItemRemainingClassName,
   queueProgressBarState,
   queueProgressFillState,
+  shipQueuePreview,
   usedFieldsFromBuildings,
   type ChainLoadStatus,
 } from "../overviewData";
@@ -180,8 +181,9 @@ export function OverviewPage({
     .map((queue) => defenseQueuePreview(queue)) ?? [];
   const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
   const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt);
-  const defenseHasCanonicalTimeline =
-    defenseReadyAt !== undefined && defenseStartedAt !== undefined && defenseStartedAt < defenseReadyAt;
+  const onChainShipQueue = shipQueuePreview(onChainQueues?.ship);
+  const shipReadyAt = queueTimestampMs(onChainQueues?.ship?.readyAt);
+  const shipStartedAt = queueTimestampMs(onChainQueues?.ship?.startedAt);
   const defenseFinishAction = overviewDefenseFinishAction({
     actionPending: isDefenseActionPending,
     now,
@@ -634,9 +636,8 @@ export function OverviewPage({
               <QueueItemDisplay
                 label={onChainDefenseQueue.label}
                 remaining={queueRemaining(onChainQueues.defense.readyAt, now)}
-                progress={defenseHasCanonicalTimeline ? 0 : undefined}
                 readyAt={defenseReadyAt}
-                startedAt={defenseHasCanonicalTimeline ? defenseStartedAt : undefined}
+                startedAt={defenseStartedAt}
                 thumbnailSrc={onChainDefenseQueue.asset}
                 color="bg-rose-300"
                 now={now}
@@ -722,10 +723,13 @@ export function OverviewPage({
           {onChainQueues?.ship?.active ? (
             <QueuePanelContent>
               <QueueItemDisplay
-                label={`${onChainQueues.ship.kind === "ship" ? "Ship" : onChainQueues.ship.kind}${onChainQueues.ship.quantity ? ` ×${onChainQueues.ship.quantity}` : ""}`}
+                label={onChainShipQueue.label}
                 remaining={queueRemaining(onChainQueues.ship.readyAt, now)}
-                indeterminate
+                readyAt={shipReadyAt}
+                startedAt={shipStartedAt}
+                thumbnailSrc={onChainShipQueue.asset}
                 color="bg-emerald-300"
+                now={now}
               />
             </QueuePanelContent>
           ) : settledState.queue?.kind === "ship" ? (
@@ -1166,9 +1170,16 @@ function QueueItemDisplay({
   now?: number | undefined;
   startedAt?: number | undefined;
 }) {
-  const progressBar = queueProgressBarState({ indeterminate, progress, remaining });
+  const hasCanonicalTimeline =
+    typeof readyAt === "number" && typeof startedAt === "number" && startedAt < readyAt;
+  const shouldIndeterminate = indeterminate ?? (!hasCanonicalTimeline && progress === undefined);
+  const progressBar = queueProgressBarState({
+    indeterminate: shouldIndeterminate,
+    progress,
+    remaining,
+  });
   const progressFill = queueProgressFillState({
-    indeterminate,
+    indeterminate: shouldIndeterminate,
     now: now ?? Date.now(),
     progress,
     readyAt,

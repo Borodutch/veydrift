@@ -4,6 +4,7 @@ import {
   buildingContractIds,
   defenseCatalog,
   queueProgressPercent,
+  shipCatalog,
   type BuildingKey,
   type EnergyBalance,
   type Resources,
@@ -189,6 +190,26 @@ export function defenseQueuePreview(queue: QueueStateResponse | null | undefined
   }
 
   const kind = queue?.kind === "defense" || !queue?.kind ? "Defense" : queue.kind;
+  return { label: `${kind}${quantity}` };
+}
+
+export function shipQueuePreview(queue: QueueStateResponse | null | undefined): {
+  asset?: string | undefined;
+  label: string;
+} {
+  const ship = queue?.itemId === undefined
+    ? undefined
+    : shipCatalog.find((item) => item.id === queue.itemId);
+  const quantity = queue?.quantity ? ` x${queue.quantity}` : "";
+
+  if (ship) {
+    return {
+      asset: ship.asset,
+      label: `${ship.label}${quantity}`,
+    };
+  }
+
+  const kind = queue?.kind === "ship" || !queue?.kind ? "Ship" : queue.kind;
   return { label: `${kind}${quantity}` };
 }
 
