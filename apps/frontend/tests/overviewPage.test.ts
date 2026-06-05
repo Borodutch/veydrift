@@ -121,7 +121,7 @@ describe("overview queue progress display", () => {
     expect(overviewSource).toContain("const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt)");
     expect(overviewSource).toContain("startedAt={defenseStartedAt}");
     expect(overviewSource).toContain("const shipStartedAt = queueTimestampMs(onChainQueues?.ship?.startedAt)");
-    expect(overviewSource).toContain("startedAt={shipStartedAt}");
+    expect(overviewSource).toContain("startedAt={shipHasCanonicalTimeline ? shipStartedAt : undefined}");
     expect(overviewSource).toContain("const shouldIndeterminate = indeterminate ?? (!hasCanonicalTimeline && progress === undefined)");
     expect(overviewSource).toContain("label={onChainShipQueue.label}");
   });

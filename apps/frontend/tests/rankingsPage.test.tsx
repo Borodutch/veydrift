@@ -3,8 +3,8 @@ import type { ComponentChildren, VNode } from "preact";
 import type { Coordinates } from "../src/types";
 import {
   primaryRankingEntries,
-  rankingsPageSize,
   rankingsColumnLabels,
+  rankingsPageSize,
   rankingsPaginationLabel,
   RankingsPagination,
   RankingsTable,
@@ -193,7 +193,7 @@ describe("RankingsPage", () => {
     const pagination = {
       page: 2,
       pageSize: rankingsPageSize,
-      totalEntries: 120,
+      totalEntries: 125,
       totalPages: 3,
       hasPreviousPage: true,
       hasNextPage: true,
@@ -211,9 +211,9 @@ describe("RankingsPage", () => {
     const previous = buttonWithTitle(controls, "Previous page");
     const next = buttonWithTitle(controls, "Next page");
 
-    expect(rankingsPaginationLabel(pagination)).toBe("Page 2 of 3");
     expect(rankingsPageSize).toBe(50);
-    expect(text).toContain("Page 2 of 3 51 - 100 of 120 # 42");
+    expect(rankingsPaginationLabel(pagination)).toBe("Page 2 of 3");
+    expect(text).toContain("Page 2 of 3 51 - 100 of 125 # 42");
     expect(current?.props?.disabled).toBe(true);
     expect(previous?.props?.disabled).toBe(false);
     expect(next?.props?.disabled).toBe(false);
@@ -225,16 +225,16 @@ describe("RankingsPage", () => {
   test("jumps directly to the current player's ranking page when available", () => {
     const visited: number[] = [];
     const controls = RankingsPagination({
-      currentPlayerPage: { rank: 87, page: 4 },
+      currentPlayerPage: { rank: 87, page: 2 },
       loading: false,
-      onCurrentPlayer: () => visited.push(4),
+      onCurrentPlayer: () => visited.push(2),
       onNext: () => undefined,
       onPrevious: () => undefined,
       pagination: {
         page: 1,
         pageSize: rankingsPageSize,
-        totalEntries: 200,
-        totalPages: 4,
+        totalEntries: 100,
+        totalPages: 2,
         hasPreviousPage: false,
         hasNextPage: true,
       },
@@ -244,7 +244,7 @@ describe("RankingsPage", () => {
     expect(visibleText(controls)).toContain("# 87");
     expect(current?.props?.disabled).toBe(false);
     current?.props?.onClick?.();
-    expect(visited).toEqual([4]);
+    expect(visited).toEqual([2]);
   });
 
   test("disables unavailable pagination directions", () => {
