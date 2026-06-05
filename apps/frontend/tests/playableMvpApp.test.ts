@@ -3,6 +3,7 @@ import {
   buildingCompletionUnavailableReasonFor,
   buildingCompletionUnavailableReasonAfterBackendRevalidation,
   buildingCompletionReadyToFinishFlag,
+  buildingUpgradeActionErrorLabel,
   buildingFinishUnavailableReasonForDisplay,
   buildingFinishActionErrorLabel,
   canLoadIndexedPageState,
@@ -1435,6 +1436,31 @@ describe("Playable MVP app display helpers", () => {
       onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
       runtimeConfigStatus: "ready",
     })).toContain("Requires");
+  });
+
+  test("blocks Shipyard upgrades while refreshed backend infrastructure is stale", () => {
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "shipyard",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: infrastructureState({
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toBe(infrastructureBackendSyncPausedLabel);
+  });
+
+  test("keeps Shipyard upgrade backend read failures out of wallet reconnect copy", () => {
+    const label = buildingUpgradeActionErrorLabel(
+      new Error("Infrastructure API failed: 400: RPC 3: execution reverted")
+    );
+
+    expect(label).toBe(infrastructureBackendSyncPausedLabel);
+    expect(label).not.toContain("wallet");
+    expect(label).not.toContain("Base Sepolia");
   });
 
   test("blocks building transactions when refreshed backend infrastructure has an active building queue", () => {

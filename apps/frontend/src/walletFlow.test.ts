@@ -161,6 +161,7 @@ describe("walletFlow", () => {
       ...mockProvider(async ({ method, params }) => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [account];
+        if (method === "eth_estimateGas") return "0x5208";
         if (method === "eth_sendTransaction") return "0xabc";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -171,6 +172,14 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
+      {
+        method: "eth_estimateGas",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -188,6 +197,7 @@ describe("walletFlow", () => {
       ...mockProvider(async ({ method, params }) => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [account];
+        if (method === "eth_estimateGas") return "0x5208";
         if (method === "eth_sendTransaction") return "0xdef";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -198,6 +208,14 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
+      {
+        method: "eth_estimateGas",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -245,6 +263,7 @@ describe("walletFlow", () => {
         requests.push({ method, params });
         if (method === "eth_accounts") return [];
         if (method === "eth_requestAccounts") return [account];
+        if (method === "eth_estimateGas") return "0x5208";
         if (method === "eth_sendTransaction") return "0xbuild";
         throw new Error(`Unexpected method ${method}`);
       }),
@@ -256,6 +275,14 @@ describe("walletFlow", () => {
     expect(requests).toEqual([
       { method: "eth_accounts", params: undefined },
       { method: "eth_requestAccounts", params: undefined },
+      {
+        method: "eth_estimateGas",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0x165715e3", [7, 0]),
+        }],
+      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -1034,6 +1061,16 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 0])
+          }
+        ]
+      },
+      {
         method: "eth_sendTransaction",
         params: [
           {
@@ -1100,6 +1137,34 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: "0xa5a0d5970000000000000000000000000000000000000000000000000000000000000007"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("blocks invalid start building upgrade transactions before opening the wallet", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_estimateGas") {
+        throw new Error("execution reverted: MissingDependency");
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(
+      sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 5)
+    ).rejects.toThrow("Building upgrade cannot be confirmed by the game contract yet");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_estimateGas",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x165715e3", [7, 5])
           }
         ]
       }
