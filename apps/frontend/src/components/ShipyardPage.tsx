@@ -6,8 +6,10 @@ import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
 import {
   Notice,
+  parseProductionQuantity,
   ProductionCatalog,
   type ProductionCatalogItem,
+  type ProductionQuantityInput,
   type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
@@ -61,7 +63,7 @@ export function ShipyardPage({
   shipyardState,
   spendableResources,
 }: ShipyardPageProps) {
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<ShipKey>("smallCargo");
   const selectedKey = selectedShipKey ?? localSelectedKey;
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
@@ -214,7 +216,7 @@ export function shipProductionItems({
   canTransact: boolean;
   productionAvailable: boolean;
   productionRates?: Resources | undefined;
-  quantities: Record<string, number>;
+  quantities: Record<string, ProductionQuantityInput>;
   queue?: ChainShipyardState["queue"] | undefined;
   resources: Resources | undefined;
   shipyardLevel: number;
@@ -225,7 +227,9 @@ export function shipProductionItems({
     const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
     const owned = productionAvailable && chainShip ? chainShip.count : undefined;
     const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
-    const quantity = quantities[ship.key] ?? 1;
+    const quantityInput = quantities[ship.key] ?? 1;
+    const parsedQuantity = parseProductionQuantity(quantityInput);
+    const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
     const durationSeconds = baseCost
       ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
@@ -266,6 +270,8 @@ export function shipProductionItems({
       label: ship.label,
       missing,
       quantity,
+      quantityInput,
+      quantityValid: parsedQuantity !== undefined,
       queued,
       requirements,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",

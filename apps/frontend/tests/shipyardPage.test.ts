@@ -115,6 +115,77 @@ describe("Shipyard page display helpers", () => {
     });
   });
 
+  test("uses a typed shipyard quantity when building the item model", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: { smallCargo: "22" },
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState(),
+    });
+
+    expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+      quantity: 22,
+      quantityInput: "22",
+      quantityValid: true,
+    });
+  });
+
+  test("marks invalid shipyard quantity drafts as non-submittable", () => {
+    for (const input of ["", "0", "-1", "2.5", "abc", "9007199254740993"]) {
+      const items = shipProductionItems({
+        actionPending: false,
+        canTransact: true,
+        productionAvailable: true,
+        quantities: { smallCargo: input },
+        queue: undefined,
+        resources: {
+          metal: 100000,
+          crystal: 100000,
+          deuterium: 100000,
+        },
+        shipyardLevel: 5,
+        shipyardState: shipyardState(),
+      });
+
+      expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+        quantity: 1,
+        quantityInput: input,
+        quantityValid: false,
+      });
+    }
+  });
+
+  test("preserves an empty shipyard quantity edit separately from build quantity", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: { smallCargo: "" },
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState(),
+    });
+
+    expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+      quantity: 1,
+      quantityInput: "",
+      quantityValid: false,
+    });
+  });
+
   test("keeps Solar Satellite compact ship stats in selected-panel subtext", () => {
     const baseState = shipyardState();
     const items = shipProductionItems({

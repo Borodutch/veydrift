@@ -117,6 +117,113 @@ describe("Defense page display helpers", () => {
     });
   });
 
+  test("uses a typed defense quantity when building the item model", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 1,
+        defenses: [
+          {
+            id: 0,
+            count: 12,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+      productionAvailable: true,
+      quantities: { rocketLauncher: "22" },
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+    });
+
+    expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      quantity: 22,
+      quantityInput: "22",
+      quantityValid: true,
+    });
+  });
+
+  test("marks invalid defense quantity drafts as non-submittable", () => {
+    for (const input of ["", "0", "-1", "2.5", "abc", "9007199254740993"]) {
+      const items = defenseProductionItems({
+        actionPending: false,
+        canTransact: true,
+        defenseState: defenseState({
+          shipyardLevel: 1,
+          defenses: [
+            {
+              id: 0,
+              count: 12,
+              cost: {
+                metal: "2000",
+                crystal: "0",
+                deuterium: "0",
+              },
+            },
+          ],
+        }),
+        productionAvailable: true,
+        quantities: { rocketLauncher: input },
+        queue: undefined,
+        resources: {
+          metal: 100000,
+          crystal: 100000,
+          deuterium: 100000,
+        },
+      });
+
+      expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+        quantity: 1,
+        quantityInput: input,
+        quantityValid: false,
+      });
+    }
+  });
+
+  test("preserves an empty defense quantity edit separately from build quantity", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 1,
+        defenses: [
+          {
+            id: 0,
+            count: 12,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+      productionAvailable: true,
+      quantities: { rocketLauncher: "" },
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+    });
+
+    expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      quantity: 1,
+      quantityInput: "",
+      quantityValid: false,
+    });
+  });
+
   test("marks matching active defense queues as selectable add targets", () => {
     const queue = {
       active: true,

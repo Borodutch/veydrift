@@ -1,29 +1,80 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { ProductionCatalog, type ProductionCatalogItem } from "../src/components/ProductionCatalog";
+import {
+  parseProductionQuantity,
+  ProductionCatalog,
+  productionQuantityValidationMessage,
+  type ProductionCatalogItem,
+  type ProductionQuantityInput,
+} from "../src/components/ProductionCatalog";
 
 describe("ProductionCatalog selected panel", () => {
+  test("allows the selected quantity input to be cleared while editing and restores it on blur", () => {
+    const item: ProductionCatalogItem<"rocketLauncher"> = catalogItem({
+      quantity: 7,
+      quantityInput: "",
+      quantityValid: false,
+    });
+    const quantities: ProductionQuantityInput[] = [];
+    const catalog = ProductionCatalog({
+      actionPending: false,
+      canTransact: true,
+      emptyLabel: "Select an item.",
+      items: [item],
+      onBuild: () => undefined,
+      onQuantity: (_key, quantity) => quantities.push(quantity),
+      onSelect: () => undefined,
+      selectedKey: "rocketLauncher",
+    });
+
+    const input = elementNodes(catalog).find((node) => node.type === "input");
+    const button = elementNodes(catalog).find((node) => node.type === "button" && visibleText(node) === "Build");
+
+    expect(input?.props.value).toBe("");
+    expect(button?.props.disabled).toBe(true);
+    expect(visibleText(catalog)).toContain(productionQuantityValidationMessage);
+
+    input?.props.onInput({ currentTarget: { value: "" } });
+    input?.props.onBlur();
+
+    expect(quantities).toEqual(["", 1]);
+  });
+
+  test("keeps finite selected quantity edits raw until the page model validates them", () => {
+    const item = catalogItem({ quantity: 1 });
+    const quantities: ProductionQuantityInput[] = [];
+    const catalog = ProductionCatalog({
+      actionPending: false,
+      canTransact: true,
+      emptyLabel: "Select an item.",
+      items: [item],
+      onBuild: () => undefined,
+      onQuantity: (_key, quantity) => quantities.push(quantity),
+      onSelect: () => undefined,
+      selectedKey: "rocketLauncher",
+    });
+
+    const input = elementNodes(catalog).find((node) => node.type === "input");
+    input?.props.onInput({ currentTarget: { value: "2.9" } });
+
+    expect(quantities).toEqual(["2.9"]);
+  });
+
+  for (const [label, input] of [
+    ["empty", ""],
+    ["zero", "0"],
+    ["negative", "-1"],
+    ["decimal", "2.5"],
+    ["non-numeric", "abc"],
+    ["over-limit", "9007199254740993"],
+  ] as const) {
+    test(`rejects ${label} quantity drafts`, () => {
+      expect(parseProductionQuantity(input)).toBeUndefined();
+    });
+  }
+
   test("renders compact selected details as price, count, and build time only", () => {
-    const item: ProductionCatalogItem<"rocketLauncher"> = {
-      actionLabel: "Build",
-      asset: "/assets/game/defenses/rocket-launcher.webp",
-      cost: { metal: 2_000, crystal: 0, deuterium: 0 },
-      countLabel: "Deployed",
-      countValue: 12,
-      detailNote: "Attack 80 · Shield 20 · Hull 200",
-      disabled: false,
-      group: "kinetic",
-      groupLabel: "Kinetic batteries",
-      id: 0,
-      key: "rocketLauncher",
-      label: "Rocket Launcher",
-      missing: [],
-      quantity: 1,
-      requirements: [],
-      status: "ready",
-      statusLabel: "Ready",
-      durationSeconds: 960,
-    };
+    const item = catalogItem();
     const catalog = ProductionCatalog({
       actionPending: false,
       canTransact: true,
@@ -45,6 +96,30 @@ describe("ProductionCatalog selected panel", () => {
     expect(visibleText(catalog)).not.toContain("Logistics");
   });
 });
+
+function catalogItem(overrides: Partial<ProductionCatalogItem<"rocketLauncher">> = {}): ProductionCatalogItem<"rocketLauncher"> {
+  return {
+    actionLabel: "Build",
+    asset: "/assets/game/defenses/rocket-launcher.webp",
+    cost: { metal: 2_000, crystal: 0, deuterium: 0 },
+    countLabel: "Deployed",
+    countValue: 12,
+    detailNote: "Attack 80 · Shield 20 · Hull 200",
+    disabled: false,
+    group: "kinetic",
+    groupLabel: "Kinetic batteries",
+    id: 0,
+    key: "rocketLauncher",
+    label: "Rocket Launcher",
+    missing: [],
+    quantity: 1,
+    requirements: [],
+    status: "ready",
+    statusLabel: "Ready",
+    durationSeconds: 960,
+    ...overrides,
+  };
+}
 
 function visibleText(node: ComponentChildren): string {
   if (node === null || node === undefined || typeof node === "boolean") return "";
