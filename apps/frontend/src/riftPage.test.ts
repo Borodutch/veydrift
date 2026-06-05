@@ -55,6 +55,20 @@ describe("RiftPage helpers", () => {
     ]);
   });
 
+  test("keeps locked Rift technology requirements unmet below the required level", () => {
+    expect(riftRequirementFlairs([
+      {
+        kind: "technology",
+        key: "hyperspace",
+        label: "Hyperspace Technology",
+        currentLevel: 0,
+        requiredLevel: 1,
+      },
+    ])).toEqual([
+      { label: "Hyperspace Technology 1", met: false, target: { kind: "research", key: "hyperspace" } },
+    ]);
+  });
+
   test("formats locked requirement status", () => {
     expect(riftRequirementStatus({ currentLevel: null, requiredLevel: 1 })).toBe("Requires Level 1; not available on this deployment");
     expect(riftRequirementStatus({ currentLevel: 0, requiredLevel: 1 })).toBe("Level 0 / 1 required");

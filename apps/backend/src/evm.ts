@@ -3328,7 +3328,7 @@ export function riftRequirements(
       kind: "technology",
       key: "hyperspace",
       label: "Hyperspace Technology",
-      currentLevel: technologyLevels["9"] ?? 0,
+      currentLevel: technologyLevels["8"] ?? 0,
       requiredLevel: 1
     },
   ];

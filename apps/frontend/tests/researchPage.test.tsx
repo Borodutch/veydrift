@@ -102,6 +102,42 @@ describe("Research page load-error display", () => {
     ]);
   });
 
+  test("keeps advanced research prerequisites unmet until actual levels reach the requirement", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        researchLab: 6,
+      },
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        energy: 3,
+        shielding: 4,
+      },
+    };
+
+    expect(getResearchRequirementStates(state, "hyperspace")).toEqual([
+      { label: "Research Lab 7", met: false, target: { kind: "building", key: "researchLab" } },
+      { label: "Energy Technology 5", met: false, target: { kind: "research", key: "energy" } },
+      { label: "Shielding Technology 5", met: false, target: { kind: "research", key: "shielding" } },
+    ]);
+  });
+
+  test("renders unmet and met requirement chips with distinct tone classes", () => {
+    const flairs = RequirementFlairs({
+      requirements: [
+        { label: "Energy Technology 5", met: false, target: { kind: "research", key: "energy" } },
+        { label: "Research Lab 7", met: true, target: { kind: "building", key: "researchLab" } },
+      ],
+    }) as VNode;
+    const children = flairs.props.children as VNode[];
+    const unmetChip = (children[0]!.type as (props: Record<string, unknown>) => VNode)(children[0]!.props);
+    const metChip = (children[1]!.type as (props: Record<string, unknown>) => VNode)(children[1]!.props);
+
+    expect(unmetChip.props.className).toContain("bg-amber-300/10");
+    expect(metChip.props.className).toContain("bg-emerald-300/10");
+  });
+
   test("routes energy production requirements to Solar Satellite production", () => {
     const state = {
       ...createInitialPlayableState(1_000),
