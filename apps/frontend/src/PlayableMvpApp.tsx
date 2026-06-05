@@ -235,6 +235,62 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
   return page === "alliance" || page === "rankings";
 }
 
+type PlayableRoute = {
+  page: Page;
+  selectedAllianceId: string | null;
+};
+
+const routablePages: Page[] = [
+  "overview",
+  "infrastructure",
+  "defenses",
+  "research",
+  "shipyard",
+  "mission-control",
+  "moon",
+  "alliance",
+  "rift",
+  "rankings",
+  "galaxy",
+  "planet",
+];
+
+export function allianceInspectPath(allianceId: string): string {
+  return `/alliance/${encodeURIComponent(allianceId)}`;
+}
+
+export function playablePathForPage(page: Page, selectedAllianceId: string | null = null): string {
+  if (page === "overview") return "/";
+  if (page === "alliance" && selectedAllianceId) return allianceInspectPath(selectedAllianceId);
+  if (routablePages.includes(page)) return `/${page}`;
+  return "/";
+}
+
+export function playableRouteFromPath(pathname: string): PlayableRoute {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] === "alliance" && segments[1]) {
+    return { page: "alliance", selectedAllianceId: decodeURIComponent(segments[1]) };
+  }
+
+  const page = segments[0] as Page | undefined;
+  if (page && routablePages.includes(page)) {
+    return { page, selectedAllianceId: null };
+  }
+
+  return { page: "overview", selectedAllianceId: null };
+}
+
+function initialPlayableRoute(): PlayableRoute {
+  if (typeof window === "undefined") return { page: "overview", selectedAllianceId: null };
+  return playableRouteFromPath(window.location.pathname);
+}
+
+function pushPlayablePath(path: string): void {
+  if (typeof window === "undefined" || !window.history?.pushState) return;
+  if (window.location.pathname === path) return;
+  window.history.pushState(null, "", path);
+}
+
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {
     return "Finish building upgrade transaction failed.";
@@ -1291,9 +1347,10 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
 
 export function PlayableMvpApp({ provider, account, miniAppMode = false, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
+  const initialRoute = initialPlayableRoute();
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>(() => initialRoute.page);
   const [selectedBuildingKey, setSelectedBuildingKey] = useState<BuildingKey>("metalMine");
   const [selectedResearchKey, setSelectedResearchKey] = useState<ResearchKey>("energy");
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
@@ -1323,7 +1380,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [allianceLoading, setAllianceLoading] = useState(false);
   const [allianceError, setAllianceError] = useState<string | undefined>();
   const [allianceAction, setAllianceAction] = useState<AllianceActionState>({ status: "idle" });
-  const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(null);
+  const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(() => initialRoute.selectedAllianceId);
   const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
@@ -1410,6 +1467,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handlePopState = () => {
+      const route = playableRouteFromPath(window.location.pathname);
+      setPage(route.page);
+      setSelectedAllianceId(route.selectedAllianceId);
+      setSelectedCoords(undefined);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const pageStateHydrationReady = canLoadIndexedPageState({
     account,
     apiBaseUrl,
@@ -3678,24 +3750,30 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleNavigate = useCallback((target: Page) => {
     setPage(target);
+    setSelectedAllianceId(null);
     setSelectedCoords(undefined);
+    pushPlayablePath(playablePathForPage(target));
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
     setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
     setPage("planet");
+    pushPlayablePath(playablePathForPage("planet"));
   }, []);
 
   const handleSelectAlliance = useCallback((allianceId: string) => {
     setSelectedAllianceId(allianceId);
     setSelectedCoords(undefined);
     setPage("alliance");
+    pushPlayablePath(allianceInspectPath(allianceId));
   }, []);
 
   const handleNavigateSystem = useCallback((g: number, s: number) => {
     setGalaxyNav({ galaxy: g, system: s });
     setPage("galaxy");
+    setSelectedAllianceId(null);
+    pushPlayablePath(playablePathForPage("galaxy"));
   }, []);
 
   const handleOpenRequirement = useCallback((target: RequirementTarget) => {

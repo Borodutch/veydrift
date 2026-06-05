@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allianceInspectPath,
   beginRefreshRequest,
   canApplyRefreshRequest,
   markFreshStateWrite,
+  playablePathForPage,
+  playableRouteFromPath,
   shouldRefreshAllianceStateForPage,
 } from "../src/PlayableMvpApp";
 
@@ -51,6 +54,14 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshAllianceStateForPage("rankings")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("alliance")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("overview")).toBe(false);
+  });
+
+  test("routes rankings alliance tags to reloadable alliance inspect paths", () => {
+    expect(allianceInspectPath("3")).toBe("/alliance/3");
+    expect(playablePathForPage("alliance", "3")).toBe("/alliance/3");
+    expect(playableRouteFromPath("/alliance/3")).toEqual({ page: "alliance", selectedAllianceId: "3" });
+    expect(playableRouteFromPath("/rankings")).toEqual({ page: "rankings", selectedAllianceId: null });
+    expect(playableRouteFromPath("/unknown")).toEqual({ page: "overview", selectedAllianceId: null });
   });
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
