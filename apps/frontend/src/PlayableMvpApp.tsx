@@ -1160,6 +1160,18 @@ export function defenseCompletionPlanetIdFor({
   return activePlanetId ?? defenseState?.homePlanetId ?? walletQueues?.homePlanetId ?? undefined;
 }
 
+export function shipCompletionPlanetIdFor({
+  activePlanetId,
+  shipyardState,
+  walletQueues,
+}: {
+  activePlanetId: string | undefined;
+  shipyardState: ChainShipyardState | null;
+  walletQueues: PlayerQueuesResponse | undefined;
+}): string | undefined {
+  return activePlanetId ?? shipyardState?.planetId ?? shipyardState?.homePlanetId ?? walletQueues?.homePlanetId ?? undefined;
+}
+
 function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
   return {
     wallet,
@@ -2776,7 +2788,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   ]);
 
   const handleFinishShipProduction = useCallback(() => {
-    const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
+    const planetId = shipCompletionPlanetIdFor({
+      activePlanetId,
+      shipyardState,
+      walletQueues: onChainQueues,
+    });
     if (!provider || !account || !gameContract || !planetId) {
       setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
@@ -2788,7 +2804,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       gameContract,
       planetId,
     ));
-  }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId, shipyardState?.planetId]);
+  }, [account, activePlanetId, gameContract, onChainQueues, provider, runShipyardTransaction, shipyardState]);
 
   const handleBuildDefense = useCallback((defenseId: number, _key: DefenseKey, quantity: number) => {
     if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
@@ -4003,9 +4019,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         buildingActionNotice={infrastructureActionNotice}
         buildingActionPendingLabel={infrastructureActionPendingLabel}
         isDefenseActionPending={defenseAction.status === "pending"}
+        isShipyardActionPending={shipyardAction.status === "pending"}
         isResearchActionPending={researchAction.status === "pending"}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onFinishDefense={handleFinishDefenseProduction}
+        onFinishShipProduction={handleFinishShipProduction}
         onFinishResearch={handleFinishResearch}
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}

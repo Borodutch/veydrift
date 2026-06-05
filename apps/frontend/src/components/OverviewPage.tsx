@@ -12,6 +12,7 @@ import {
   overviewQueueItemRemainingClassName,
   queueProgressBarState,
   queueProgressFillState,
+  shipQueuePreview,
   usedFieldsFromBuildings,
   type ChainLoadStatus,
 } from "../overviewData";
@@ -80,6 +81,8 @@ interface OverviewPageProps {
   onFinishBuilding?: (() => void) | undefined;
   isDefenseActionPending?: boolean | undefined;
   onFinishDefense?: (() => void) | undefined;
+  isShipyardActionPending?: boolean | undefined;
+  onFinishShipProduction?: (() => void) | undefined;
   isResearchActionPending?: boolean | undefined;
   onFinishResearch?: (() => void) | undefined;
   researchAction?: OverviewResearchActionState | undefined;
@@ -124,6 +127,8 @@ export function OverviewPage({
   onFinishBuilding,
   isDefenseActionPending = false,
   onFinishDefense,
+  isShipyardActionPending = false,
+  onFinishShipProduction,
   isResearchActionPending = false,
   onFinishResearch,
   researchAction = { status: "idle" },
@@ -187,6 +192,21 @@ export function OverviewPage({
     now,
     onFinishDefense,
     queue: onChainQueues?.defense,
+  });
+  const onChainShipQueue = shipQueuePreview(onChainQueues?.ship);
+  const onChainShipBacklog = onChainQueues?.ship?.backlog
+    ?.filter((queue) => queue.active)
+    .map((queue) => shipQueuePreview(queue)) ?? [];
+  const shipReadyAt = queueTimestampMs(onChainQueues?.ship?.readyAt);
+  const shipStartedAt = queueTimestampMs(onChainQueues?.ship?.startedAt);
+  const shipHasCanonicalTimeline =
+    shipReadyAt !== undefined && shipStartedAt !== undefined && shipStartedAt < shipReadyAt;
+  const shipyardFinishAction = overviewShipyardFinishAction({
+    actionPending: isShipyardActionPending,
+    chainStatus: onChainStatus,
+    now,
+    onFinishShipProduction,
+    queue: onChainQueues?.ship,
   });
   const researchFinishAction = overviewResearchFinishAction({
     actionPending: isResearchActionPending,
@@ -722,11 +742,24 @@ export function OverviewPage({
           {onChainQueues?.ship?.active ? (
             <QueuePanelContent>
               <QueueItemDisplay
-                label={`${onChainQueues.ship.kind === "ship" ? "Ship" : onChainQueues.ship.kind}${onChainQueues.ship.quantity ? ` ×${onChainQueues.ship.quantity}` : ""}`}
+                label={onChainShipQueue.label}
                 remaining={queueRemaining(onChainQueues.ship.readyAt, now)}
-                indeterminate
+                progress={shipHasCanonicalTimeline ? 0 : undefined}
+                readyAt={shipReadyAt}
+                startedAt={shipHasCanonicalTimeline ? shipStartedAt : undefined}
+                thumbnailSrc={onChainShipQueue.asset}
                 color="bg-emerald-300"
+                now={now}
               />
+              <OverviewShipyardFinishButton action={shipyardFinishAction} />
+              {onChainShipBacklog.length > 0 ? (
+                <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-400">
+                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
+                  {onChainShipBacklog.map((queue, index) => (
+                    <span className="truncate" key={`${queue.label}-${index}`}>{queue.label}</span>
+                  ))}
+                </div>
+              ) : null}
             </QueuePanelContent>
           ) : settledState.queue?.kind === "ship" ? (
             <QueuePanelContent>
@@ -869,6 +902,38 @@ export function overviewDefenseFinishAction({
   };
 }
 
+export function overviewShipyardFinishAction({
+  actionPending,
+  chainStatus = "ready",
+  now,
+  onFinishShipProduction,
+  queue,
+}: {
+  actionPending?: boolean | undefined;
+  chainStatus?: ChainLoadStatus | undefined;
+  now: number;
+  onFinishShipProduction?: (() => void) | undefined;
+  queue?: PlayerQueuesResponse["ship"] | undefined;
+}): {
+  disabled: boolean;
+  onFinish?: (() => void) | undefined;
+  reason?: string | undefined;
+  visible: boolean;
+} {
+  const ready = Boolean(queue?.active && queue.readyAt && Number(queue.readyAt) * 1_000 <= now);
+  const visible = Boolean(ready && onFinishShipProduction);
+  const reason = visible && chainStatus !== "ready"
+    ? "Shipyard state is syncing. Refresh and retry once backend state is ready."
+    : undefined;
+  const disabled = Boolean(actionPending || reason);
+  return {
+    disabled,
+    onFinish: visible && !disabled ? onFinishShipProduction : undefined,
+    reason,
+    visible,
+  };
+}
+
 export function isOverviewResearchReadyToFinish(
   queue: PlayerQueuesResponse["research"] | undefined,
   now: number,
@@ -954,6 +1019,27 @@ function OverviewDefenseFinishButton({
       className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-rose-300/40 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
       disabled={action.disabled}
       onClick={action.onFinish}
+      type="button"
+    >
+      Complete queue
+    </button>
+  );
+}
+
+function OverviewShipyardFinishButton({
+  action,
+}: {
+  action: ReturnType<typeof overviewShipyardFinishAction>;
+}) {
+  if (!action.visible) return null;
+
+  return (
+    <button
+      aria-label={action.reason ?? "Complete Shipyard queue"}
+      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-emerald-300/40 bg-emerald-300/10 px-3 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      disabled={action.disabled}
+      onClick={action.onFinish}
+      title={action.reason ?? "Complete Shipyard queue"}
       type="button"
     >
       Complete queue
