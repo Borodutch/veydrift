@@ -415,6 +415,7 @@ export type AllianceState = {
     ownerDisplayName?: string | null;
     createdAt: string;
     memberCount: number;
+    totalMemberScore?: string;
   } | null;
   directory: Array<{
     allianceId: string;
@@ -426,6 +427,7 @@ export type AllianceState = {
     ownerDisplayName?: string | null;
     createdAt: string;
     memberCount: number;
+    totalMemberScore?: string;
   }>;
   pendingInvites: Array<{
     allianceId: string;
