@@ -3132,6 +3132,57 @@ describe("Veydrift backend", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
   });
 
+  test("paginates highscore rankings while preserving absolute ranks", async () => {
+    const owners = [
+      "0x3333333333333333333333333333333333333333",
+      "0x4444444444444444444444444444444444444444",
+      "0x5555555555555555555555555555555555555555"
+    ] as Address[];
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => owners.map((owner, index) => ({
+      ...planet,
+      eventName: "PlanetStarted",
+      owner,
+      planetId: String(index + 10),
+      transactionHash: `0xabc${index}`,
+      blockNumber: String(123 + index)
+    }));
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/highscores?page=2&pageSize=1&currentWallet=${owners[2]}`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.pagination).toEqual({
+      page: 2,
+      pageSize: 1,
+      totalEntries: 3,
+      totalPages: 3,
+      hasPreviousPage: true,
+      hasNextPage: true
+    });
+    expect(body.rankings.total).toHaveLength(1);
+    expect(body.rankings.total[0]).toMatchObject({
+      rank: 2,
+      wallet: owners[1]
+    });
+    expect(body.currentPlayer).toMatchObject({
+      wallet: owners[2],
+      rankings: {
+        total: {
+          rank: 3,
+          page: 3
+        }
+      }
+    });
+  });
+
   test("adds canonical alliance identity to highscore rows when available", async () => {
     const chainReader = new class extends MockChainReader {
       async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
