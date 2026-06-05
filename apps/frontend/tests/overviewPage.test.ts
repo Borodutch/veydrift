@@ -10,6 +10,7 @@ import {
   overviewBuildingFinishAction,
   overviewBuildingNoticeForFinishAction,
   overviewDefenseFinishAction,
+  overviewShipyardFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
   shouldShowOverviewBuildingFinishAction,
@@ -322,6 +323,20 @@ describe("overview queue progress display", () => {
     expect(overviewSource).toContain("thumbnailSrc={settledResearchAsset}");
   });
 
+  test("resolves active Shipyard queues to catalog names and thumbnails", () => {
+    const preview = shipQueuePreview({
+      active: true,
+      cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+      itemId: 1,
+      kind: "ship",
+      quantity: 2,
+      readyAt: "1700000600",
+    });
+
+    expect(preview.label).toBe("Light Fighter x2");
+    expect(preview.asset).toContain("light-fighter");
+  });
+
   test("shows the ready building finish action for infrastructure-backed queues", () => {
     const onFinishBuilding = () => undefined;
 
@@ -546,8 +561,10 @@ describe("overview queue progress display", () => {
       },
     });
 
-    expect(action.visible).toBe(true);
-    expect(action.disabled).toBe(false);
+    expect(action).toMatchObject({
+      disabled: false,
+      visible: true,
+    });
     action.onFinish?.();
     expect(calls).toBe(1);
   });
@@ -588,6 +605,88 @@ describe("overview queue progress display", () => {
     expect(action.visible).toBe(true);
     expect(action.disabled).toBe(true);
     expect(action.onFinish).toBeUndefined();
+  });
+
+  test("shows and invokes the ready Shipyard completion action on Overview", () => {
+    let calls = 0;
+    const action = overviewShipyardFinishAction({
+      now: 1_700_000_000_000,
+      onFinishShipProduction: () => {
+        calls += 1;
+      },
+      queue: {
+        active: true,
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        itemId: 1,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(false);
+    action.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("keeps not-ready Shipyard queues passive on Overview", () => {
+    const action = overviewShipyardFinishAction({
+      now: 1_699_999_000_000,
+      onFinishShipProduction: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        itemId: 1,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(false);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("disables ready Shipyard completion while a Shipyard transaction is pending", () => {
+    const action = overviewShipyardFinishAction({
+      actionPending: true,
+      now: 1_700_000_000_000,
+      onFinishShipProduction: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        itemId: 1,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("keeps ready Shipyard completion visible but disabled while backend state is syncing", () => {
+    const action = overviewShipyardFinishAction({
+      chainStatus: "loading",
+      now: 1_700_000_000_000,
+      onFinishShipProduction: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
+        itemId: 1,
+        kind: "ship",
+        quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+    expect(action.reason).toBe("Shipyard state is syncing. Refresh and retry once backend state is ready.");
   });
 
   test("shows and invokes the ready research completion action on Overview", () => {
