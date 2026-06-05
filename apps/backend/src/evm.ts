@@ -1009,7 +1009,7 @@ export class VeydriftGameReader implements ChainReader {
     const [building, defense, ship, research] = await Promise.all([
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
       this.readDefenseQueue(planetId),
-      this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
+      this.readShipQueue(planetId),
       this.readResearchQueue(wallet)
     ]);
 
@@ -1272,7 +1272,7 @@ export class VeydriftGameReader implements ChainReader {
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
-      this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
+      this.readShipQueue(planetId),
       this.readTechnologyLevels(wallet),
       this.readShipRows(planetId, settlement.planet?.temperature),
       this.readOptionalUintCall("0x423f9f10", [encodeAddress(wallet)])
@@ -1973,16 +1973,29 @@ export class VeydriftGameReader implements ChainReader {
 
   private async readDefenseQueue(planetId: bigint): Promise<QueueState> {
     const queue = await this.readPlanetQueue("0x5758361d", planetId, "defense");
-    const backlog = await this.readDefenseQueueBacklog(planetId);
+    const backlog = await this.readProductionQueueBacklog("0x4f5ed437", planetId, "defense");
     if (backlog.length > 0) {
       queue.backlog = backlog;
     }
     return queue;
   }
 
-  private async readDefenseQueueBacklog(planetId: bigint): Promise<QueueState[]> {
+  private async readShipQueue(planetId: bigint): Promise<QueueState> {
+    const queue = await this.readPlanetQueue("0xb6f4b7b7", planetId, "ship");
+    const backlog = await this.readProductionQueueBacklog("0x52b55205", planetId, "ship");
+    if (backlog.length > 0) {
+      queue.backlog = backlog;
+    }
+    return queue;
+  }
+
+  private async readProductionQueueBacklog(
+    selector: string,
+    planetId: bigint,
+    kind: "defense" | "ship"
+  ): Promise<QueueState[]> {
     try {
-      const words = splitWords(await this.call("0x4f5ed437", [encodeUint(planetId)]));
+      const words = splitWords(await this.call(selector, [encodeUint(planetId)]));
       const length = Number(decodeUintWord(wordAt(words, 1)));
       const backlog: QueueState[] = [];
       for (let index = 0; index < length; index += 1) {
@@ -1990,7 +2003,7 @@ export class VeydriftGameReader implements ChainReader {
         const active = decodeBoolWord(wordAt(words, offset));
         backlog.push({
           active,
-          kind: active ? "defense" : null,
+          kind: active ? kind : null,
           ...(active ? { itemId: Number(decodeUintWord(wordAt(words, offset + 1))) } : {}),
           quantity: Number(decodeUintWord(wordAt(words, offset + 2))),
           readyAt: active ? decodeUintWord(wordAt(words, offset + 3)).toString() : null,
@@ -2504,7 +2517,7 @@ export class VeydriftGameReader implements ChainReader {
       this.readBuildingRows(planetId),
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
       this.readPlanetQueue("0x5758361d", planetId, "defense"),
-      this.readPlanetQueue("0xb6f4b7b7", planetId, "ship"),
+      this.readShipQueue(planetId),
       this.readMoonSummary(planetId)
     ]);
     const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
