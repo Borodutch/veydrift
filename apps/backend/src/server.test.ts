@@ -3356,7 +3356,24 @@ describe("Veydrift backend", () => {
             system: 44,
             position: 9
           },
-          archetype: "temperate-ocean"
+          archetype: "temperate-ocean",
+          tactical: {
+            raidableResources: {
+              metal: "5000",
+              crystal: "4900",
+              deuterium: "4800"
+            },
+            raidableResourceTotal: "14700",
+            ships: {
+              count: expect.any(Number),
+              power: expect.any(String)
+            },
+            defenses: {
+              count: expect.any(Number),
+              power: expect.any(String)
+            },
+            combatPower: expect.any(String)
+          }
         }
       ],
       planetCount: 1,
@@ -3488,7 +3505,7 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(body.rankings.total[0].planets).toEqual([
-      {
+      expect.objectContaining({
         planetId: "7",
         name: "Eos",
         coordinates: {
@@ -3496,9 +3513,16 @@ describe("Veydrift backend", () => {
           system: 44,
           position: 9
         },
-        archetype: "temperate-ocean"
-      },
-      {
+        archetype: "temperate-ocean",
+        tactical: expect.objectContaining({
+          raidableResources: expect.any(Object),
+          raidableResourceTotal: expect.any(String),
+          ships: expect.objectContaining({ count: expect.any(Number), power: expect.any(String) }),
+          defenses: expect.objectContaining({ count: expect.any(Number), power: expect.any(String) }),
+          combatPower: expect.any(String)
+        })
+      }),
+      expect.objectContaining({
         planetId: "8",
         name: "Borealis",
         coordinates: {
@@ -3506,8 +3530,15 @@ describe("Veydrift backend", () => {
           system: 12,
           position: 4
         },
-        archetype: "frozen-ice"
-      }
+        archetype: "frozen-ice",
+        tactical: expect.objectContaining({
+          raidableResources: expect.any(Object),
+          raidableResourceTotal: expect.any(String),
+          ships: expect.objectContaining({ count: expect.any(Number), power: expect.any(String) }),
+          defenses: expect.objectContaining({ count: expect.any(Number), power: expect.any(String) }),
+          combatPower: expect.any(String)
+        })
+      })
     ]);
   });
 

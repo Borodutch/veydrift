@@ -4569,6 +4569,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onSelectAlliance={handleSelectAlliance}
           onSelectPlayer={handleSelectPlayer}
           onSelectPlanet={handleSelectPlanet}
+          originCoordinates={activePlanetCoords}
         />
       );
     }

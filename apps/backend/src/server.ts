@@ -674,7 +674,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           entries,
           planetsByOwner,
           profiles,
-          allianceIntel
+          allianceIntel,
+          indexer
         );
         const rankings = highscoreRankings(
           entries,
@@ -1843,6 +1844,19 @@ type RankedHighscorePlanet = {
     position: number;
   };
   archetype: ReturnType<typeof planetArchetypeForTemperature>;
+  tactical: {
+    raidableResources: Resources;
+    raidableResourceTotal: string;
+    ships: {
+      count: number;
+      power: string;
+    };
+    defenses: {
+      count: number;
+      power: string;
+    };
+    combatPower: string;
+  };
 };
 
 type HighscoreCategory = keyof ScoreBreakdown;
@@ -1950,11 +1964,12 @@ function highscoreRows(
   entries: HighscoreEntry[],
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
   profiles: ReadonlyMap<string, PlayerProfile> = new Map(),
-  allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map()
+  allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map(),
+  indexer?: SettlementIndexer | undefined
 ): Map<string, RankedHighscoreEntry> {
   return new Map(
     entries.map((entry) => {
-      const planets = rankedHighscorePlanets(entry, planetsByOwner);
+      const planets = rankedHighscorePlanets(entry, planetsByOwner, indexer);
       const homePlanet = rankedHighscoreHomePlanet(entry, planets);
       return [
         entry.wallet.toLowerCase(),
@@ -2135,18 +2150,74 @@ function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory
 
 function rankedHighscorePlanets(
   entry: HighscoreEntry,
-  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
+  indexer?: SettlementIndexer | undefined
 ): RankedHighscorePlanet[] {
-  return (planetsByOwner.get(entry.wallet.toLowerCase()) ?? []).map((planet) => ({
-    planetId: planet.planetId,
-    name: planet.name,
-    coordinates: {
-      galaxy: planet.galaxy,
-      system: planet.system,
-      position: planet.position
-    },
-    archetype: planetArchetypeForTemperature(planet.temperature)
-  }));
+  const technologyLevels = indexer ? indexer.technologyLevels(entry.wallet) : {};
+  return (planetsByOwner.get(entry.wallet.toLowerCase()) ?? []).map((planet) => {
+    const ships = indexer?.shipRows(planet.planetId) ?? [];
+    const defenses = indexer?.defenseRows(planet.planetId) ?? [];
+    const buildings = indexer?.infrastructureRows(planet.planetId) ?? [];
+    const tactical = indexedPlanetTacticalSummary(planet, buildings, ships, defenses, technologyLevels);
+
+    return {
+      planetId: planet.planetId,
+      name: planet.name,
+      coordinates: {
+        galaxy: planet.galaxy,
+        system: planet.system,
+        position: planet.position
+      },
+      archetype: planetArchetypeForTemperature(planet.temperature),
+      tactical
+    };
+  });
+}
+
+function indexedPlanetTacticalSummary(
+  planet: SettledPlanetEvent,
+  buildings: InfrastructureState["buildings"],
+  ships: ShipyardState["ships"],
+  defenses: DefenseState["defenses"],
+  technologyLevels: Record<string, number>
+): RankedHighscorePlanet["tactical"] {
+  const fallbackResources = planet.resources ?? { metal: "0", crystal: "0", deuterium: "0" };
+  const raidableResources = buildings.length > 0
+    ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels).raidableResources ?? fallbackResources
+    : fallbackResources;
+  const shipSummary = tacticalUnitSummary(ships);
+  const defenseSummary = tacticalUnitSummary(defenses);
+
+  return {
+    raidableResources,
+    raidableResourceTotal: resourceTotal(raidableResources).toString(),
+    ships: shipSummary,
+    defenses: defenseSummary,
+    combatPower: (BigInt(shipSummary.power) + BigInt(defenseSummary.power)).toString()
+  };
+}
+
+function tacticalUnitSummary(units: Array<{ count: number; cost?: Resources | null | undefined }>): { count: number; power: string } {
+  return units.reduce((summary, unit) => {
+    const count = Math.max(0, unit.count);
+    return {
+      count: summary.count + count,
+      power: (BigInt(summary.power) + resourceTotal(unit.cost ?? null) * BigInt(count)).toString()
+    };
+  }, { count: 0, power: "0" } as { count: number; power: string });
+}
+
+function resourceTotal(resources: Resources | null | undefined): bigint {
+  if (!resources) return 0n;
+  return safeBigInt(resources.metal) + safeBigInt(resources.crystal) + safeBigInt(resources.deuterium);
+}
+
+function safeBigInt(value: string | number | bigint | null | undefined): bigint {
+  try {
+    return BigInt(value ?? 0);
+  } catch {
+    return 0n;
+  }
 }
 
 function rankedHighscoreHomePlanet(

@@ -543,6 +543,19 @@ export type HighscorePlanet = {
     position: number;
   };
   archetype: PlanetType;
+  tactical?: {
+    raidableResources: OnChainResources;
+    raidableResourceTotal: string;
+    ships: {
+      count: number;
+      power: string;
+    };
+    defenses: {
+      count: number;
+      power: string;
+    };
+    combatPower: string;
+  };
 };
 
 export type HighscoreResponse = {
