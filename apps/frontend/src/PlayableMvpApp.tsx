@@ -4061,16 +4061,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     writeInspectHash({ kind: "player", wallet });
   }, []);
 
-  const handleNavigateSystem = useCallback((g: number, s: number) => {
-    setGalaxyNav({ galaxy: g, system: s });
-    setInspectedPlayerWallet(null);
-    setInspectedAllianceId(null);
-    setBattleReportMissionId(null);
-    setMissionReportId(null);
-    setPage("galaxy");
-    writeInspectHash({ kind: "page", page: "galaxy" });
-  }, []);
-
   const handleOpenBattleReport = useCallback((missionId: string) => {
     setBattleReportMissionId(missionId);
     setInspectedPlayerWallet(null);
@@ -4191,7 +4181,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           homeCoords={homeCoords}
           homePlanet={homePlanetIdentity}
           onBack={() => setPage("galaxy")}
-          onNavigateSystem={handleNavigateSystem}
         />
       );
     }

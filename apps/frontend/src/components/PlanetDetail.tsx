@@ -14,7 +14,6 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanet?: Planet | undefined;
   onBack: () => void;
-  onNavigateSystem: (galaxy: number, system: number) => void;
 }
 
 export type PlanetRecordRow = {
@@ -23,7 +22,7 @@ export type PlanetRecordRow = {
   tone?: "default" | "accent" | "muted";
 };
 
-export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack, onNavigateSystem }: Props) {
+export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, homePlanet, onBack }: Props) {
   const trustedHomePlanet = useMemo(
     () => sameCoordinates(homeCoords, coords) && homePlanet
       ? homePlanet
@@ -251,16 +250,6 @@ export function PlanetDetail({ coords, apiBaseUrl = playableApiUrl, homeCoords, 
               </h3>
               <PublicRecordRows rows={publicQueueRows(planet)} columns />
             </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => onNavigateSystem(planet.galaxy, planet.system)}
-              className="rounded border border-white/15 bg-white/8 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-            >
-              View System
-            </button>
           </div>
         </div>
       </div>
