@@ -167,7 +167,7 @@ describe("Infrastructure page display helpers", () => {
       },
       {
         delta: "(+11/h)",
-        label: "Deuterium consumed",
+        label: "Deuterium use",
         next: "11/h",
         tone: "warning",
         value: "0/h",
@@ -240,7 +240,7 @@ describe("Infrastructure page display helpers", () => {
     expect(warningDelta.props.className).not.toMatch(/border|rounded|bg-/);
   });
 
-  test("keeps Solar Plant and Fusion Reactor energy output deltas visible without cross-labeling fuel use", () => {
+  test("keeps Solar Plant and Fusion Reactor energy output deltas source-specific", () => {
     const state = createInitialPlayableState(1_000);
     const buildings = {
       ...state.buildings,
@@ -258,7 +258,8 @@ describe("Infrastructure page display helpers", () => {
       next: "753 produced",
       value: "627 produced",
     });
-    expect(solarRows.some((row) => row.label === "Deuterium consumed")).toBe(false);
+    expect(solarRows.some((row) => row.value === "659 produced" || row.next === "785 produced")).toBe(false);
+    expect(solarRows.some((row) => row.label === "Deuterium use")).toBe(false);
 
     const fusionRows = detailEffectRows(
       buildingEffectMetrics(buildings, "fusionReactor", undefined, 3),
@@ -271,9 +272,10 @@ describe("Infrastructure page display helpers", () => {
       next: "69 produced",
       value: "32 produced",
     });
+    expect(fusionRows.some((row) => row.value === "659 produced" || row.next === "696 produced")).toBe(false);
     expect(fusionRows).toContainEqual({
       delta: "(+14/h)",
-      label: "Deuterium consumed",
+      label: "Deuterium use",
       next: "25/h",
       tone: "warning",
       value: "11/h",

@@ -390,6 +390,36 @@ describe("building detail helpers", () => {
     });
   });
 
+  test("keeps energy building level rows source-specific when multiple producers exist", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 1,
+      solarPlant: 11,
+    };
+    const solarRows = buildingLevelInfoRows(buildings, "solarPlant", undefined, 12, 3);
+    const fusionRows = buildingLevelInfoRows(buildings, "fusionReactor", undefined, 2, 3);
+
+    expect(solarRows[10]).toMatchObject({
+      energyProduced: 627,
+      level: 11,
+    });
+    expect(solarRows[11]).toMatchObject({
+      energyProduced: 753,
+      level: 12,
+    });
+    expect(fusionRows[0]).toMatchObject({
+      deuteriumConsumed: 11,
+      energyProduced: 32,
+      level: 1,
+    });
+    expect(fusionRows[1]).toMatchObject({
+      deuteriumConsumed: 25,
+      energyProduced: 69,
+      level: 2,
+    });
+  });
+
   test("builds Fusion Reactor level table rows with energy output and deuterium use", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "fusionReactor", undefined, 2, 3);
 

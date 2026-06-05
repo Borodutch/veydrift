@@ -5,7 +5,6 @@ import {
   buildingDurationEstimate,
   buildingRequirementsFor,
   canAfford,
-  energyBalance,
   allianceDepotSupportCapacity,
   isBinaryBuilding,
   fusionReactorDeuteriumConsumption,
