@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 const playableSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 const navSource = await Bun.file(new URL("../src/components/NavBar.tsx", import.meta.url)).text();
 const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
+const galaxySource = await Bun.file(new URL("../src/components/GalaxyView.tsx", import.meta.url)).text();
+const missionCreationSource = await Bun.file(new URL("../src/components/MissionCreationPage.tsx", import.meta.url)).text();
 const planetDetailSource = await Bun.file(new URL("../src/components/PlanetDetail.tsx", import.meta.url)).text();
 const topBarSource = await Bun.file(new URL("../src/components/TopBar.tsx", import.meta.url)).text();
 
@@ -61,5 +63,14 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(planetDetailSource).toContain("onClick={onBack}");
     expect(planetDetailSource).not.toContain("View System");
     expect(planetDetailSource).not.toContain("onNavigateSystem");
+  });
+
+  test("keeps mission speed selection inside mission creation only", () => {
+    expect(missionCreationSource).toContain("MISSION_SPEED_OPTIONS.map");
+    expect(galaxySource).not.toContain("Mission speed");
+    expect(galaxySource).not.toContain("MISSION_SPEED_OPTIONS.map");
+    expect(planetDetailSource).not.toContain("MISSION_SPEED_OPTIONS.map");
+    expect(playableSource).toContain("pendingGalaxyMission");
+    expect(playableSource).toContain("<MissionCreationPage");
   });
 });
