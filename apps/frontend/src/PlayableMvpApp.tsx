@@ -3842,7 +3842,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MissionControlPage
           actionState={missionAction}
           canTransact={Boolean(provider && account && gameContract)}
-          currentResources={infrastructureChainState?.resources}
           fleetVisibility={fleetVisibility}
           loading={isWalletConnected && onChainStatus === "loading"}
           now={now}
@@ -3852,8 +3851,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onRecall={handleRecallMission}
           onRefresh={() => void refreshOnChainState()}
           onResolve={handleResolveMission}
-          protectedResources={infrastructureChainState?.protectedResources}
-          raidableResources={infrastructureChainState?.raidableResources}
         />
       );
     }
