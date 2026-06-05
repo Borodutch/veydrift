@@ -1920,8 +1920,8 @@ describe("walletFlow", () => {
       },
       pagination: {
         page: 2,
-        pageSize: 25,
-        totalEntries: 60,
+        pageSize: 50,
+        totalEntries: 125,
         totalPages: 3,
         hasPreviousPage: true,
         hasNextPage: true
@@ -1939,7 +1939,7 @@ describe("walletFlow", () => {
     };
 
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      expect(String(input)).toBe(`https://api.example.test/highscores?limit=25&currentWallet=${account}&page=2&pageSize=25`);
+      expect(String(input)).toBe(`https://api.example.test/highscores?limit=50&currentWallet=${account}&page=2&pageSize=50`);
       expect(init).toEqual({
         headers: { accept: "application/json" },
       });
@@ -1950,7 +1950,7 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await expect(fetchHighscores("https://api.example.test", { currentWallet: account, page: 2, pageSize: 25 })).resolves.toEqual(rankings);
+      await expect(fetchHighscores("https://api.example.test", { currentWallet: account, page: 2, pageSize: 50 })).resolves.toEqual(rankings);
     } finally {
       globalThis.fetch = originalFetch;
     }
