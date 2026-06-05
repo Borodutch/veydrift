@@ -189,13 +189,15 @@ export function researchQueueForDisplay(
   const research = researchCatalog.find((item) => item.id === queue.itemId);
   if (!research) return undefined;
 
-  const readyAt = queueTimestampMs(queue.readyAt) ?? now;
+  const readyAt = queueTimestampMs(queue.readyAt);
+  if (readyAt === undefined) return undefined;
   const chainStartedAt = queueTimestampMs(queue.startedAt);
   const estimatedStartedAt = estimateResearchStartedAt(queue, research.key, readyAt, options);
   const startedAt = chainStartedAt !== undefined && chainStartedAt < readyAt
     ? chainStartedAt
-    : estimatedStartedAt;
-  if (startedAt === undefined || startedAt >= readyAt) return undefined;
+    : estimatedStartedAt !== undefined && estimatedStartedAt < readyAt
+      ? estimatedStartedAt
+      : fallbackResearchStartedAt(readyAt, now);
 
   return {
     kind: "research",
@@ -205,6 +207,10 @@ export function researchQueueForDisplay(
     startedAt,
     targetLevel: queue.targetLevel ?? 0,
   };
+}
+
+function fallbackResearchStartedAt(readyAt: number, now: number): number {
+  return Math.min(now, readyAt - 1);
 }
 
 function estimateResearchStartedAt(

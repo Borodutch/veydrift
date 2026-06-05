@@ -19,7 +19,7 @@ import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatMissingResources } from "../buildingDetails";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
-import { formatUserTimestamp } from "../timestampFormat";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   InspectCatalogTile,
   InspectDetailHero,
@@ -956,14 +956,22 @@ export function researchActionStatus({
 }) {
   const cost = chainCost;
   const currentLevel = state.research[key];
+  const activeQueue = researchState?.queue?.active ? researchState.queue : undefined;
+  const activeQueueResearch = activeQueue?.itemId === undefined
+    ? undefined
+    : researchCatalog.find((research) => research.id === activeQueue.itemId);
   const missingRequirement = unmetResearchRequirement(state, key);
   const resourcesAvailable = Boolean(researchState?.resources);
   const spendable = spendableResources ?? state.resources;
   const affordable = cost ? canAfford(spendable, cost) : false;
-  const active = state.researchQueue?.key === key;
-  const targetLevel = active ? state.researchQueue?.targetLevel ?? currentLevel + 1 : currentLevel + 1;
-  const activeReady = active && Boolean(state.researchQueue?.readyAt && state.researchQueue.readyAt <= now);
-  const queueOccupied = Boolean(state.researchQueue) && !active;
+  const displayedActive = state.researchQueue?.key === key;
+  const active = displayedActive || activeQueueResearch?.key === key;
+  const activeTargetLevel = state.researchQueue?.targetLevel ?? activeQueue?.targetLevel;
+  const targetLevel = active ? activeTargetLevel ?? currentLevel + 1 : currentLevel + 1;
+  const activeReadyAt = displayedActive ? state.researchQueue?.readyAt : timestampToMs(activeQueue?.readyAt);
+  const activeReady = active && Boolean(activeReadyAt && activeReadyAt <= now);
+  const queueOccupied = (Boolean(state.researchQueue) || Boolean(activeQueue)) && !active;
+  const occupiedQueueLabel = state.researchQueue?.label ?? activeQueueResearch?.label;
   const labMissing = state.buildings.researchLab === 0;
   const durationSeconds = !labMissing && cost
     ? researchDurationEstimate(state.buildings, cost, {
@@ -991,14 +999,14 @@ export function researchActionStatus({
                 ? `Ready to complete Level ${targetLevel}`
               : active
                 ? `Research to Level ${state.researchQueue?.targetLevel ?? targetLevel} in progress`
-                : queueOccupied
-                  ? `Research queue occupied by ${state.researchQueue?.label ?? "another technology"}`
-                  : missingRequirement
-                    ? "Locked by unmet prerequisites"
-                    : !resourcesAvailable
-                      ? "Resources unavailable"
-                      : !cost
-                        ? "Research cost unavailable"
+              : queueOccupied
+                ? `Research queue occupied by ${occupiedQueueLabel ?? "another technology"}`
+                : missingRequirement
+                  ? "Locked by unmet prerequisites"
+                  : !resourcesAvailable
+                    ? "Resources unavailable"
+                    : !cost
+                      ? "Research cost unavailable"
                       : !affordable
                         ? formatMissingResources(spendable, cost, productionRates)
                         : `Ready for Level ${targetLevel}`;
