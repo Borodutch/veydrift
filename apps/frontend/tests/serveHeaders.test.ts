@@ -6,7 +6,7 @@ describe("frontend static server headers", () => {
     const headers = responseHeadersFor("/assets/game/sizes/64/style-pass/generated/ships/small-cargo.webp");
 
     expect(headers["content-type"]).toBe("image/webp");
-    expect(headers["cache-control"]).toBe("public, max-age=604800");
+    expect(headers["cache-control"]).toBe("public, max-age=31536000, immutable");
   });
 
   test("keeps HTML revalidating and hashed app assets immutable", () => {
