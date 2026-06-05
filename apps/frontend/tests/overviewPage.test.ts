@@ -9,6 +9,7 @@ import {
   overviewBuildingActionNoticeFor,
   overviewBuildingFinishAction,
   overviewBuildingNoticeForFinishAction,
+  overviewBuildingNoticeForReadyFinishAction,
   overviewDefenseFinishAction,
   overviewShipyardFinishAction,
   overviewResearchActionNoticeFor,
@@ -29,7 +30,7 @@ import type { Planet } from "../src/types";
 
 const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
 const buildingCompletionWalletPrompt =
-  "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
+  "Building completion: confirm the game-state update in your wallet; token balance changes are not expected.";
 
 const homePlanet: Planet = {
   alliance: null,
@@ -542,6 +543,36 @@ describe("overview queue progress display", () => {
       label: longReason,
       tone: "error",
     });
+  });
+
+  test("keeps stale building-start success copy from disabling ready Overview completion", () => {
+    const staleStartedNotice = {
+      buildingKey: "crystalMine" as const,
+      label: "Building upgrade started.",
+      tone: "success" as "success" | "error",
+    };
+    let calls = 0;
+    const action = overviewBuildingFinishAction({
+      actionUnavailableReason: staleStartedNotice.tone === "error" ? staleStartedNotice.label : undefined,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding: () => {
+        calls += 1;
+      },
+      queue: {
+        kind: "building" as const,
+        key: "crystalMine" as const,
+        label: "Crystal Mine",
+        readyAt: 1_700_000_000_000,
+        startedAt: 1_699_999_000_000,
+        targetLevel: 9,
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(false);
+    action.onFinish?.();
+    expect(calls).toBe(1);
+    expect(overviewBuildingNoticeForReadyFinishAction(staleStartedNotice, action)).toBeUndefined();
   });
 
   test("shows and invokes the ready defense completion action on Overview", () => {

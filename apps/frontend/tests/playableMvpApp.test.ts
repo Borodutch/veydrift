@@ -53,7 +53,7 @@ describe("Playable MVP app display helpers", () => {
   const buildingFinishLiveStateRequiredLabel =
     "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
   const buildingCompletionWalletPrompt =
-    "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
+    "Building completion: confirm the game-state update in your wallet; token balance changes are not expected.";
 
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
@@ -267,7 +267,7 @@ describe("Playable MVP app display helpers", () => {
       .toBe(buildingFinishStateReadFailureLabel);
   });
 
-  test("keeps actionable building finish preflight errors specific", () => {
+  test("keeps actionable building finish errors specific", () => {
     expect(buildingFinishActionErrorLabel(
       new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry."),
     )).toBe("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
@@ -735,10 +735,11 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Research is not ready to complete yet.");
   });
 
-  test("lets Overview derive building readiness only when no canonical active building queue is available", () => {
+  test("lets Overview derive building readiness from the displayed active queue", () => {
     expect(overviewBuildingReadyToFinishFlag({
       activeBuildingQueue: null,
       isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
     })).toBeUndefined();
 
     expect(overviewBuildingReadyToFinishFlag({
@@ -746,17 +747,27 @@ describe("Playable MVP app display helpers", () => {
         readyAt: "1700000600",
       }),
       isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
     })).toBe(false);
 
     expect(overviewBuildingReadyToFinishFlag({
       activeBuildingQueue: buildingQueue({
         readyAt: "1700000000",
       }),
+      isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
+    })).toBe(true);
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000600",
+      }),
       isBuildingReadyToFinish: true,
+      now: 1_700_000_000_000,
     })).toBe(true);
   });
 
-  test("keeps Overview finish disabled when ready wallet queues lack canonical infrastructure verification", () => {
+  test("lets Overview expose ready building queues while wallet submission still requires canonical verification", () => {
     const readyWalletQueue = buildingQueue({
       readyAt: "1700000000",
     });
@@ -777,7 +788,14 @@ describe("Playable MVP app display helpers", () => {
         infrastructureState: unverifiedInfrastructure,
         now: 1_700_000_000_000,
       }),
-    })).toBe(false);
+      now: 1_700_000_000_000,
+    })).toBe(true);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyWalletQueue,
+      infrastructureState: unverifiedInfrastructure,
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
 
     const canonicalInfrastructure = infrastructureState({
       queue: readyWalletQueue,
