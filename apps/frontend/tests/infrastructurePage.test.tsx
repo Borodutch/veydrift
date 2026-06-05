@@ -7,6 +7,7 @@ import {
   BuildingLevelInfoModal,
   InfrastructureLoadErrorPanel,
   InfrastructureRefreshErrorPanel,
+  MetricDeltaSubtext,
   detailEffectRows,
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
@@ -218,6 +219,24 @@ describe("Infrastructure page display helpers", () => {
       value: "11 required",
     });
     expect(mineRows.some((row) => row.delta?.includes("required"))).toBe(false);
+  });
+
+  test("renders infrastructure deltas as quiet subtext instead of badges", () => {
+    const positiveDelta = MetricDeltaSubtext({
+      children: "+126",
+    });
+    const warningDelta = MetricDeltaSubtext({
+      children: "(+14/h)",
+      tone: "warning",
+    });
+
+    expect(visibleText(positiveDelta)).toBe("+126");
+    expect(positiveDelta.props.className).toContain("block");
+    expect(positiveDelta.props.className).toContain("text-xs");
+    expect(positiveDelta.props.className).toContain("text-signal");
+    expect(positiveDelta.props.className).not.toMatch(/border|rounded|bg-/);
+    expect(warningDelta.props.className).toContain("text-amber-200");
+    expect(warningDelta.props.className).not.toMatch(/border|rounded|bg-/);
   });
 
   test("keeps Solar Plant and Fusion Reactor energy output deltas visible without cross-labeling fuel use", () => {

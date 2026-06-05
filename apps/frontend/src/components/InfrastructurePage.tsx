@@ -776,9 +776,11 @@ function ComparisonMetric({
   return (
     <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
       <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
-      <dd className="mt-1 flex min-w-0 flex-wrap items-baseline gap-2 text-sm font-semibold">
-        <span className="min-w-0 break-words text-slate-200">{value}</span>
-        {delta && <MetricDelta tone={tone}>{delta}</MetricDelta>}
+      <dd className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 text-sm font-semibold">
+        <span className="min-w-0">
+          <span className="break-words text-slate-200">{value}</span>
+          {delta && <MetricDeltaSubtext tone={tone}>{delta}</MetricDeltaSubtext>}
+        </span>
         <span aria-hidden="true" className="text-slate-500">→</span>
         <span className="min-w-0 break-words text-signal">{next}</span>
       </dd>
@@ -786,7 +788,7 @@ function ComparisonMetric({
   );
 }
 
-function MetricDelta({
+export function MetricDeltaSubtext({
   children,
   tone = "positive",
 }: {
@@ -794,13 +796,13 @@ function MetricDelta({
   tone?: "neutral" | "positive" | "warning" | undefined;
 }) {
   const deltaClass = tone === "warning"
-    ? "border-amber-300/30 bg-amber-300/10 text-amber-100"
+    ? "text-amber-200"
     : tone === "neutral"
-      ? "border-slate-300/20 bg-white/5 text-slate-200"
-      : "border-signal/30 bg-signal/10 text-signal";
+      ? "text-slate-300"
+      : "text-signal";
 
   return (
-    <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-xs font-semibold ${deltaClass}`}>
+    <span className={`mt-0.5 block text-xs font-medium leading-4 ${deltaClass}`}>
       {children}
     </span>
   );
