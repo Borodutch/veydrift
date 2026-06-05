@@ -12,6 +12,7 @@ type RankingsPageProps = {
   currentWallet?: string | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
 };
 
 const categories: Array<{ key: HighscoreCategory; label: string }> = [
@@ -41,7 +42,7 @@ export function shouldShowRankingsInitialLoader({
   return loading && !hasLoadedData;
 }
 
-export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlanet }: RankingsPageProps) {
+export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlanet, onSelectPlayer }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -126,6 +127,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         loading={loading}
         onSelectAlliance={onSelectAlliance}
         onSelectPlanet={onSelectPlanet}
+        onSelectPlayer={onSelectPlayer}
       />
 
       {data ? (
@@ -146,6 +148,7 @@ export function RankingsTable({
   loading,
   onSelectAlliance,
   onSelectPlanet,
+  onSelectPlayer,
 }: {
   active?: HighscoreCategory;
   currentAllianceId?: string | null | undefined;
@@ -155,6 +158,7 @@ export function RankingsTable({
   loading: boolean;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
 }) {
   return (
     <div className="overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
@@ -181,6 +185,7 @@ export function RankingsTable({
             key={`${active}-${entry.wallet}`}
             onSelectAlliance={onSelectAlliance}
             onSelectPlanet={onSelectPlanet}
+            onSelectPlayer={onSelectPlayer}
           />
         ))
       )}
@@ -195,6 +200,7 @@ function RankingRow({
   entry,
   onSelectAlliance,
   onSelectPlanet,
+  onSelectPlayer,
 }: {
   active: HighscoreCategory;
   currentAllianceId?: string | null | undefined;
@@ -202,9 +208,11 @@ function RankingRow({
   entry: HighscoreEntry;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
 }) {
   const homePlanet = entry.homePlanet ?? null;
   const canOpenHomePlanet = Boolean(homePlanet && onSelectPlanet);
+  const canOpenPlayer = Boolean(onSelectPlayer);
   const commanderLabel = entry.displayName?.trim() || shortAddress(entry.wallet);
   const normalizedWallet = entry.wallet.toLowerCase();
   const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
@@ -230,6 +238,11 @@ function RankingRow({
   const openAlliance = () => {
     if (!alliance || !onSelectAlliance) return;
     onSelectAlliance(alliance.allianceId);
+  };
+
+  const openPlayer = () => {
+    if (!onSelectPlayer) return;
+    onSelectPlayer(entry.wallet);
   };
 
   return (
@@ -271,12 +284,13 @@ function RankingRow({
               </button>
             ) : null}
             <button
-              className={`min-w-0 text-left ${canOpenHomePlanet ? "cursor-pointer" : "cursor-default"}`}
-              disabled={!canOpenHomePlanet}
-              onClick={openHomePlanet}
+              className={`min-w-0 text-left ${canOpenPlayer ? "cursor-pointer" : "cursor-default"}`}
+              disabled={!canOpenPlayer}
+              onClick={openPlayer}
+              title={`Open player ${commanderLabel}`}
               type="button"
             >
-              <span className={`block truncate font-mono ${canOpenHomePlanet ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
+              <span className={`block truncate font-mono ${canOpenPlayer ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
                 {commanderLabel}
               </span>
             </button>

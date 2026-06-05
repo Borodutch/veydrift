@@ -1878,6 +1878,16 @@ export async function fetchPlayerProfile(apiUrl: string, wallet: string): Promis
   return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile");
 }
 
+export async function fetchPlayerHighscore(apiUrl: string, wallet: string): Promise<HighscoreEntry | null> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/highscore`, {
+    cache: "no-store",
+    headers: { accept: "application/json" }
+  });
+  if (!response.ok) throw new Error(`Highscore request failed with ${response.status}`);
+  const body = await response.json() as { entry?: HighscoreEntry | null };
+  return body.entry ?? null;
+}
+
 export async function updatePlayerDisplayName(
   apiUrl: string,
   provider: Eip1193Provider,

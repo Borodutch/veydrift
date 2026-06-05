@@ -14,8 +14,10 @@ export type Page =
   | "mission-control"
   | "moon"
   | "alliance"
+  | "alliance-inspect"
   | "rift"
   | "rankings"
+  | "player-inspect"
   | "galaxy"
   | "planet";
 
@@ -74,7 +76,7 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
             {pages.map((page) => (
               <NavItem
-                active={active === page.key || (active === "planet" && page.key === "galaxy")}
+                active={navItemActive(active, page.key)}
                 icon={page.icon}
                 key={page.key}
                 label={page.label}
@@ -134,7 +136,7 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
             <nav aria-label="Mobile app sections" className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
               {pages.map((page) => (
                 <MobileTab
-                  active={active === page.key || (active === "planet" && page.key === "galaxy")}
+                  active={navItemActive(active, page.key)}
                   key={page.key}
                   icon={page.icon}
                   label={page.mobileLabel}
@@ -147,6 +149,14 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
       </div>
     </>
   );
+}
+
+function navItemActive(active: Page, key: Page): boolean {
+  if (active === key) return true;
+  if (active === "planet" && key === "galaxy") return true;
+  if (active === "alliance-inspect" && key === "alliance") return true;
+  if (active === "player-inspect" && key === "rankings") return true;
+  return false;
 }
 
 function NavItem({

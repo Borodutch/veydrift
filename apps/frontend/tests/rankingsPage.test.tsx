@@ -116,6 +116,21 @@ describe("RankingsPage", () => {
     expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
   });
 
+  test("opens the ranked commander's dedicated player inspect page", () => {
+    const selected: string[] = [];
+    const table = RankingsTable({
+      entries: [rankingEntry({ displayName: "Nova Prime" })],
+      loading: false,
+      onSelectPlayer: (wallet) => selected.push(wallet),
+    });
+    const commanderButton = buttonWithTitle(table, "Open player Nova Prime");
+
+    expect(commanderButton).toBeTruthy();
+    commanderButton?.props?.onClick?.();
+
+    expect(selected).toEqual(["0x1111111111111111111111111111111111111111"]);
+  });
+
   test("serves ranked home planet thumbnails through responsive variants", () => {
     const table = RankingsTable({ entries: [rankingEntry()], loading: false });
     const image = elementNodes(table).find((item) => item.type === "img" && item.props?.alt === "");

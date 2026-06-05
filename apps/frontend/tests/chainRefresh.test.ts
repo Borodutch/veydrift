@@ -50,6 +50,7 @@ describe("playable chain refresh", () => {
   test("refreshes alliance state for rankings so same-alliance rows can highlight", () => {
     expect(shouldRefreshAllianceStateForPage("rankings")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("alliance")).toBe(true);
+    expect(shouldRefreshAllianceStateForPage("alliance-inspect")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("overview")).toBe(false);
   });
 

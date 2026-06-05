@@ -1,10 +1,10 @@
-import { Crown, Info, RefreshCw, Shield, UserRound, Users, X } from "lucide-preact";
+import { Crown, Info, RefreshCw, Shield, UserRound, Users } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { formatUserTimestamp } from "../timestampFormat";
-import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
-import { fetchWalletPlanets, shortAddress } from "../walletFlow";
+import type { AllianceRole, ChainAllianceState } from "../walletFlow";
+import { shortAddress } from "../walletFlow";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type AllianceActionState =
@@ -28,16 +28,9 @@ type RosterGroups = {
   members: RosterMember[];
 };
 
-type PlayerProfileState =
-  | { status: "idle" }
-  | { status: "loading"; wallet: string }
-  | { status: "loaded"; wallet: string; planets: WalletPlanetsResponse | null; highscore: HighscoreEntry | null }
-  | { status: "error"; wallet: string; label: string };
-
 interface AlliancePageProps {
   actionState: AllianceActionState;
   allianceState: ChainAllianceState | null;
-  apiBaseUrl?: string | undefined;
   canTransact: boolean;
   error?: string | undefined;
   loading: boolean;
@@ -50,6 +43,8 @@ interface AlliancePageProps {
   onInvite: (playerAddress: string) => void;
   onJoinRequest: (allianceId: string) => void;
   onKick: (playerAddress: string) => void;
+  onInspectAlliance: (allianceId: string) => void;
+  onOpenPlayer: (playerAddress: string) => void;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
@@ -58,7 +53,6 @@ interface AlliancePageProps {
 export function AlliancePage({
   actionState,
   allianceState,
-  apiBaseUrl,
   canTransact,
   error,
   loading,
@@ -69,8 +63,10 @@ export function AlliancePage({
   onCreate,
   onDismissJoinRequest,
   onInvite,
+  onInspectAlliance,
   onJoinRequest,
   onKick,
+  onOpenPlayer,
   onRefresh,
   onSetRole,
   onUpdateProfile,
@@ -84,8 +80,6 @@ export function AlliancePage({
   const [inviteAddress, setInviteAddress] = useState("");
   const [roleInfoOpen, setRoleInfoOpen] = useState(false);
   const [activeAllianceId, setActiveAllianceId] = useState<string | null>(selectedAllianceId ?? null);
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
-  const [playerProfile, setPlayerProfile] = useState<PlayerProfileState>({ status: "idle" });
 
   const profile = allianceState?.profile;
   const role = allianceState?.membership.role ?? "none";
@@ -116,36 +110,6 @@ export function AlliancePage({
   useEffect(() => {
     if (selectedAllianceId) setActiveAllianceId(selectedAllianceId);
   }, [selectedAllianceId]);
-
-  useEffect(() => {
-    if (!selectedPlayer || !apiBaseUrl) {
-      setPlayerProfile(selectedPlayer ? { status: "loaded", wallet: selectedPlayer, planets: null, highscore: null } : { status: "idle" });
-      return;
-    }
-
-    let disposed = false;
-    setPlayerProfile({ status: "loading", wallet: selectedPlayer });
-    Promise.allSettled([
-      fetchWalletPlanets(apiBaseUrl, selectedPlayer),
-      fetchPlayerHighscore(apiBaseUrl, selectedPlayer),
-    ]).then(([planetsResult, highscoreResult]) => {
-      if (disposed) return;
-      const planets = planetsResult.status === "fulfilled" ? planetsResult.value : null;
-      const highscore = highscoreResult.status === "fulfilled" ? highscoreResult.value : null;
-      if (!planets && !highscore) {
-        const reason = planetsResult.status === "rejected" && planetsResult.reason instanceof Error
-          ? planetsResult.reason.message
-          : "Player profile could not be loaded.";
-        setPlayerProfile({ status: "error", wallet: selectedPlayer, label: reason });
-        return;
-      }
-      setPlayerProfile({ status: "loaded", wallet: selectedPlayer, planets, highscore });
-    });
-
-    return () => {
-      disposed = true;
-    };
-  }, [apiBaseUrl, selectedPlayer]);
 
   return (
     <section className="min-h-0 overflow-auto bg-[#080d16]">
@@ -196,7 +160,7 @@ export function AlliancePage({
                 onCreate={onCreate}
                 onInvite={onInvite}
                 onKick={onKick}
-                onOpenPlayer={setSelectedPlayer}
+                onOpenPlayer={onOpenPlayer}
                 onSetDescription={setDescription}
                 onSetInviteAddress={setInviteAddress}
                 onSetName={setName}
@@ -216,6 +180,7 @@ export function AlliancePage({
                 pendingJoinRequests={allianceState?.pendingJoinRequests ?? []}
                 selectedAllianceId={selectedAlliance?.allianceId ?? null}
                 onCancelJoinRequest={onCancelJoinRequest}
+                onInspectAlliance={onInspectAlliance}
                 onJoinRequest={onJoinRequest}
                 onSelectAlliance={setActiveAllianceId}
               />
@@ -226,7 +191,7 @@ export function AlliancePage({
                 alliance={selectedAlliance}
                 isCurrentAlliance={Boolean(selectedAlliance && selectedAlliance.allianceId === currentAllianceId)}
                 roster={selectedAlliance?.allianceId === currentAllianceId ? roster : undefined}
-                onOpenPlayer={setSelectedPlayer}
+                onOpenPlayer={onOpenPlayer}
               />
               <PendingInvites
                 allianceState={allianceState}
@@ -242,13 +207,9 @@ export function AlliancePage({
                   requests={allianceState?.allianceJoinRequests ?? []}
                   onApproveJoinRequest={onApproveJoinRequest}
                   onDismissJoinRequest={onDismissJoinRequest}
-                  onOpenPlayer={setSelectedPlayer}
+                  onOpenPlayer={onOpenPlayer}
                 />
               ) : null}
-              <PlayerProfilePanel
-                profile={playerProfile}
-                onClose={() => setSelectedPlayer(null)}
-              />
             </aside>
           </div>
         )}
@@ -551,6 +512,7 @@ function DirectorySection({
   pendingJoinRequests,
   selectedAllianceId,
   onCancelJoinRequest,
+  onInspectAlliance,
   onJoinRequest,
   onSelectAlliance,
 }: {
@@ -560,6 +522,7 @@ function DirectorySection({
   pendingJoinRequests: ChainAllianceState["pendingJoinRequests"];
   selectedAllianceId: string | null;
   onCancelJoinRequest: (allianceId: string) => void;
+  onInspectAlliance: (allianceId: string) => void;
   onJoinRequest: (allianceId: string) => void;
   onSelectAlliance: (allianceId: string) => void;
 }) {
@@ -604,7 +567,7 @@ function DirectorySection({
                 <div className="flex flex-wrap gap-2 md:justify-end">
                   <button
                     className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
-                    onClick={() => onSelectAlliance(alliance.allianceId)}
+                    onClick={() => onInspectAlliance(alliance.allianceId)}
                     type="button"
                   >
                     Details
@@ -957,63 +920,6 @@ function MemberRow({
   );
 }
 
-function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState; onClose: () => void }) {
-  if (profile.status === "idle") {
-    return (
-      <Panel title="Player Profile" action={<SectionIcon icon={UserRound} />}>
-        <p className="text-sm text-slate-400">Select a roster member or owner to inspect public player state.</p>
-      </Panel>
-    );
-  }
-
-  const wallet = profile.wallet;
-
-  return (
-    <Panel
-      title="Player Profile"
-      action={(
-        <button className="rounded border border-white/10 p-1 text-slate-300 hover:bg-white/10" onClick={onClose} type="button" title="Close profile">
-          <X size={15} />
-        </button>
-      )}
-    >
-      <div className="grid gap-3">
-        <div>
-          <p className="font-mono text-sm text-white">{shortAddress(wallet)}</p>
-          <p className="mt-1 break-all text-xs text-slate-500">{wallet}</p>
-        </div>
-        {profile.status === "loading" ? <VeydriftLoader label="Loading player profile" variant="inline" /> : null}
-        {profile.status === "error" ? <Notice tone="error">{profile.label}</Notice> : null}
-        {profile.status === "loaded" ? (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <MiniStat label="Planets" value={String(profile.planets?.planets.length ?? 0)} />
-              <MiniStat label="Total Score" value={formatScore(profile.highscore?.score.total)} />
-            </div>
-            {profile.planets?.planets.length ? (
-              <div className="grid gap-2">
-                <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Planets</h4>
-                {profile.planets.planets.slice(0, 5).map((planet) => (
-                  <div className="rounded border border-white/10 bg-black/20 px-3 py-2" key={planet.planetId}>
-                    <p className="text-sm font-semibold text-white">{planet.name || `Planet #${planet.planetId}`}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      [{planet.galaxy}:{planet.system}:{planet.position}] / {planet.fieldsUsed}/{planet.fieldsCapacity} fields
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-400">
-                No indexed planets are available for this wallet yet.
-              </p>
-            )}
-          </>
-        ) : null}
-      </div>
-    </Panel>
-  );
-}
-
 function RoleInfo({ role }: { role: AllianceRole }) {
   return (
     <div className="rounded border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-sm text-cyan-50">
@@ -1139,7 +1045,7 @@ export function findAllianceEntry(
   return entry ? { ...entry, rosterAvailable: false } : null;
 }
 
-function currentAllianceEntry(allianceState: ChainAllianceState | null, rosterCount: number): AllianceEntry | null {
+export function currentAllianceEntry(allianceState: ChainAllianceState | null, rosterCount: number): AllianceEntry | null {
   const profile = allianceState?.profile;
   const allianceId = allianceState?.membership.allianceId;
   if (!profile || !allianceId || allianceId === "0") return null;
@@ -1176,22 +1082,6 @@ function roleLabel(role: AllianceRole): string {
   return "none";
 }
 
-function playerLabel(displayName: string | null | undefined, wallet: string): string {
+export function playerLabel(displayName: string | null | undefined, wallet: string): string {
   return displayName?.trim() || shortAddress(wallet);
-}
-
-function formatScore(value: string | undefined): string {
-  if (!value) return "0";
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric.toLocaleString() : value;
-}
-
-async function fetchPlayerHighscore(apiBaseUrl: string, wallet: string): Promise<HighscoreEntry | null> {
-  const response = await fetch(`${apiBaseUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/highscore`, {
-    cache: "no-store",
-    headers: { accept: "application/json" },
-  });
-  if (!response.ok) throw new Error(`Highscore request failed with ${response.status}`);
-  const body = await response.json() as { entry?: HighscoreEntry | null };
-  return body.entry ?? null;
 }
