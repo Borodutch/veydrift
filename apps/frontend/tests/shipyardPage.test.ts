@@ -105,11 +105,31 @@ describe("Shipyard page display helpers", () => {
       countLabel: "Owned",
       countValue: 4,
       detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
+      detailSections: [
+        {
+          title: "Combat",
+          stats: [
+            { label: "Structure", value: "400" },
+            { label: "Shield", value: "10" },
+            { label: "Attack", value: "5" },
+          ],
+        },
+        {
+          title: "Logistics",
+          stats: [
+            { label: "Cargo", value: "5,000" },
+            { label: "Base speed", value: "5,000" },
+            { label: "Fuel use", value: "10" },
+          ],
+        },
+        expect.objectContaining({ title: "Build" }),
+        expect.objectContaining({ title: "Requirements" }),
+      ],
+      notes: [expect.stringContaining("freighter")],
       quantity: 3,
       status: "ready",
     });
     expect(items.find((item) => item.key === "smallCargo")).not.toHaveProperty("description");
-    expect(items.find((item) => item.key === "smallCargo")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
       status: "locked",
       statusLabel: "Locked",
@@ -148,7 +168,21 @@ describe("Shipyard page display helpers", () => {
     });
 
     expect(items.find((item) => item.key === "solarSatellite")).toMatchObject({
-      detailNote: "Attack 1 · Shield 1 · Hull 200 · Cargo 0",
+      detailNote: "Attack 1 · Shield 1 · Hull 200 · Cargo No cargo",
+      detailSections: expect.arrayContaining([
+        {
+          title: "Logistics",
+          stats: [
+            { label: "Cargo", value: "No cargo" },
+            { label: "Base speed", value: "Stationary energy platform" },
+            { label: "Fuel use", value: "No fuel" },
+          ],
+        },
+      ]),
+      notes: [
+        expect.stringContaining("energy platform"),
+        expect.stringContaining("cannot move, haul cargo, or spend fuel"),
+      ],
     });
   });
 
