@@ -50,6 +50,7 @@ import {
   type PlayerQueues,
   type QueueState,
   type ResearchState,
+  type Resources,
   riftRequirements,
   type RiftState,
   type RpcLog,
@@ -1238,7 +1239,9 @@ export class SettlementIndexer {
           activeEventQueues.delete(queueKey(event));
           continue;
         }
-        this.applyQueueStartedEvent(event, { settleResources: false });
+        this.applyQueueStartedEvent(event, {
+          settleResources: !this.hasCanonicalResourcesForQueue(event, canonicalState)
+        });
         activeEventQueues.add(queueKey(event));
       } else if (isIndexedQueueCompletedLog(log)) {
         const event = decodeIndexedQueueCompletedLog(log);
@@ -1274,6 +1277,7 @@ export class SettlementIndexer {
 
   private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
     const state: CanonicalReconciliationState = {
+      resources: new Map(),
       planetQueues: new Map(),
       buildings: new Map(),
       defenses: new Map(),
@@ -1300,6 +1304,7 @@ export class SettlementIndexer {
       ]);
 
       if (infrastructure) {
+        this.addCanonicalResources(state, planetId, infrastructure.resources);
         state.buildings.set(planetId, infrastructure.buildings);
         if (infrastructure.queue?.active) {
           state.planetQueues.set(`building:${planetId}`, infrastructure.queue);
@@ -1309,6 +1314,7 @@ export class SettlementIndexer {
         }
       }
       if (defenses) {
+        this.addCanonicalResources(state, planetId, defenses.resources);
         state.defenses.set(planetId, defenses.defenses);
         if (defenses.queue?.active) {
           state.planetQueues.set(`defense:${planetId}`, defenses.queue);
@@ -1318,6 +1324,7 @@ export class SettlementIndexer {
         }
       }
       if (shipyard) {
+        this.addCanonicalResources(state, planetId, shipyard.resources);
         state.ships.set(planetId, shipyard.ships);
         if (shipyard.queue?.active) {
           state.planetQueues.set(`ship:${planetId}`, shipyard.queue);
@@ -1341,6 +1348,9 @@ export class SettlementIndexer {
     await Promise.all([...owners].map(async (owner) => {
       const research = await this.chainReader.getResearchState?.(owner);
       if (!research) return;
+      if (research.homePlanetId) {
+        this.addCanonicalResources(state, research.homePlanetId, research.resources);
+      }
       state.research.set(owner, research.technologies);
       if (research.queue?.active) {
         this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
@@ -1373,6 +1383,11 @@ export class SettlementIndexer {
   }
 
   private applyCanonicalState(state: CanonicalReconciliationState): void {
+    const reconciledAt = Math.floor(Date.now() / 1_000).toString();
+    const blockNumber = this.metadata("lastReconciledBlock") ?? "0";
+    for (const [planetId, resources] of state.resources) {
+      this.upsertPlanetResourceSnapshot(planetId, resources, reconciledAt, "0x", blockNumber);
+    }
     for (const [planetId, buildings] of state.buildings) {
       for (const building of buildings) {
         this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", planetId, building.id, building.level);
@@ -1425,6 +1440,21 @@ export class SettlementIndexer {
     if (queue?.active) {
       queues.set(owner, queue);
     }
+  }
+
+  private addCanonicalResources(state: CanonicalReconciliationState, planetId: string, resources: Resources | null | undefined): void {
+    if (resources && !state.resources.has(planetId)) {
+      state.resources.set(planetId, resources);
+    }
+  }
+
+  private hasCanonicalResourcesForQueue(event: IndexedQueueStartedEvent, state?: CanonicalReconciliationState): boolean {
+    if (!state) return false;
+    if (event.planetId) return state.resources.has(event.planetId);
+    if (event.queueKind !== "research" || !event.owner) return false;
+
+    const settlement = this.walletSettlement(event.owner);
+    return Boolean(settlement.homePlanetId && state.resources.has(settlement.homePlanetId));
   }
 
   private upsertCanonicalQueue(
@@ -2249,6 +2279,7 @@ export class SettlementIndexer {
 }
 
 type CanonicalReconciliationState = {
+  resources: Map<string, Resources>;
   planetQueues: Map<string, QueueState>;
   buildings: Map<string, InfrastructureState["buildings"]>;
   defenses: Map<string, DefenseState["defenses"]>;

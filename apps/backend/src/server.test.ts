@@ -1920,6 +1920,15 @@ describe("Veydrift backend", () => {
 
   test("rebuilds the cache and marks occupied system coordinates", async () => {
     const chainReader = new MockChainReader();
+    const getInfrastructureState = chainReader.getInfrastructureState.bind(chainReader);
+    chainReader.getInfrastructureState = async (...args) => ({
+      ...(await getInfrastructureState(...args)),
+      resources: {
+        metal: "5064",
+        crystal: "4900",
+        deuterium: "4800"
+      }
+    });
     chainReader.listSettledPlanetEvents = async () => {
       chainReader.rebuildCalls += 1;
       return [{
