@@ -52,6 +52,7 @@ interface AlliancePageProps {
   onInvite: (playerAddress: string) => void;
   onJoinRequest: (allianceId: string) => void;
   onKick: (playerAddress: string) => void;
+  onLeaveAlliance: () => void;
   onOpenAlliance?: ((allianceId: string) => void) | undefined;
   onOpenPlayer?: ((playerAddress: string) => void) | undefined;
   onRefresh: () => void;
@@ -75,6 +76,7 @@ export function AlliancePage({
   onInvite,
   onJoinRequest,
   onKick,
+  onLeaveAlliance,
   onOpenAlliance,
   onOpenPlayer,
   onRefresh,
@@ -114,6 +116,7 @@ export function AlliancePage({
   const backgroundRefresh = shouldShowAllianceRefreshIndicator({ allianceState, loading });
   const openPlayer = onOpenPlayer ?? setSelectedPlayer;
   const openAlliance = onOpenAlliance ?? setActiveAllianceId;
+  const exitAction = allianceExitActionState(allianceState);
 
   useEffect(() => {
     setProfileTag(profile?.tag ?? "");
@@ -188,6 +191,7 @@ export function AlliancePage({
                 canManageMembers={canManageMembers}
                 currentAlliance={currentAlliance}
                 disabled={disabled}
+                exitAction={exitAction}
                 inviteAddress={inviteAddress}
                 isMember={isMember}
                 isOwner={isOwner}
@@ -204,6 +208,7 @@ export function AlliancePage({
                 onCreate={onCreate}
                 onInvite={onInvite}
                 onKick={onKick}
+                onLeaveAlliance={onLeaveAlliance}
                 onOpenAlliance={onOpenAlliance}
                 onOpenPlayer={openPlayer}
                 onSetDescription={setDescription}
@@ -371,10 +376,40 @@ export function allianceInviteAcceptanceState(
   return { canAccept: true, reason: null };
 }
 
+export function allianceExitActionState(
+  allianceState: ChainAllianceState | null
+): { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null } {
+  const role = allianceState?.membership.role ?? "none";
+  const label = role === "owner" ? "Delete Alliance" : "Leave Alliance";
+
+  if (!allianceState) {
+    return { canSubmit: false, label, reason: "Alliance state is still loading." };
+  }
+
+  if (!hasAllianceMembership(allianceState)) {
+    return { canSubmit: false, label, reason: "You are not in an alliance." };
+  }
+
+  if (role === "owner") {
+    const rosterCount = buildAllianceRoster(allianceState.members, allianceState.profile?.owner).all.length;
+    const memberCount = Math.max(allianceState.profile?.memberCount ?? 0, rosterCount);
+    if (memberCount > 1) {
+      return {
+        canSubmit: false,
+        label,
+        reason: "Remove every other member before deleting this alliance.",
+      };
+    }
+  }
+
+  return { canSubmit: true, label, reason: null };
+}
+
 function MyAllianceSection({
   canManageMembers,
   currentAlliance,
   disabled,
+  exitAction,
   inviteAddress,
   isMember,
   isOwner,
@@ -391,6 +426,7 @@ function MyAllianceSection({
   onCreate,
   onInvite,
   onKick,
+  onLeaveAlliance,
   onOpenAlliance,
   onOpenPlayer,
   onSetDescription,
@@ -407,6 +443,7 @@ function MyAllianceSection({
   canManageMembers: boolean;
   currentAlliance: AllianceEntry | null;
   disabled: boolean;
+  exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
   inviteAddress: string;
   isMember: boolean;
   isOwner: boolean;
@@ -423,6 +460,7 @@ function MyAllianceSection({
   onCreate: (tag: string, name: string, description: string) => void;
   onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
+  onLeaveAlliance: () => void;
   onOpenAlliance?: ((allianceId: string) => void) | undefined;
   onOpenPlayer: (playerAddress: string) => void;
   onSetDescription: (value: string) => void;
@@ -548,6 +586,12 @@ function MyAllianceSection({
             </div>
           </div>
         ) : null}
+
+        <AllianceExitActionPanel
+          disabled={disabled}
+          exitAction={exitAction}
+          onSubmit={onLeaveAlliance}
+        />
 
         <RosterSection
           canManageMembers={canManageMembers}
@@ -681,13 +725,6 @@ function AllianceDetailsPanel({
             <MiniStat label="Members" value={String(alliance.memberCount)} />
             <MiniStat label="Alliance ID" value={alliance.allianceId} />
           </div>
-          <button
-            className="rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
-            onClick={() => onOpenPlayer(alliance.owner)}
-            type="button"
-          >
-            Owner <span className="font-mono text-cyan-100">{playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
-          </button>
           {isCurrentAlliance && roster ? (
             <div className="grid gap-2">
               <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Roster Preview</h4>
@@ -706,9 +743,18 @@ function AllianceDetailsPanel({
               ))}
             </div>
           ) : (
-            <p className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-400">
-              Full roster is available after joining or from a current-alliance view.
-            </p>
+            <>
+              <button
+                className="rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
+                onClick={() => onOpenPlayer(alliance.owner)}
+                type="button"
+              >
+                Owner <span className="font-mono text-cyan-100">{playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
+              </button>
+              <p className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-400">
+                Full roster is available after joining or from a current-alliance view.
+              </p>
+            </>
           )}
         </div>
       ) : (
@@ -817,6 +863,67 @@ function JoinRequests({
         <p className="text-sm text-slate-400">No pending applications.</p>
       )}
     </Panel>
+  );
+}
+
+export function AllianceExitActionPanel({
+  disabled,
+  exitAction,
+  onSubmit,
+}: {
+  disabled: boolean;
+  exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
+  onSubmit: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const blocked = disabled || !exitAction.canSubmit;
+  const isDelete = exitAction.label === "Delete Alliance";
+  const confirmLabel = isDelete ? "Confirm Delete" : "Confirm Leave";
+
+  return (
+    <div className="rounded border border-red-300/20 bg-red-950/20 p-3">
+      <h3 className="text-sm font-semibold text-red-50">Alliance Actions</h3>
+      {exitAction.reason ? (
+        <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{exitAction.reason}</p>
+      ) : null}
+      {confirming && !blocked ? (
+        <div className="mt-3 rounded border border-red-300/25 bg-black/20 p-3">
+          <p className="text-sm font-semibold text-red-50">{exitAction.label}?</p>
+          <p className="mt-1 text-xs text-red-100/80">
+            {isDelete ? "This removes the alliance after the wallet transaction confirms." : "This removes your wallet from the alliance after the wallet transaction confirms."}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              className="rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={disabled}
+              onClick={() => {
+                setConfirming(false);
+                onSubmit();
+              }}
+              type="button"
+            >
+              {confirmLabel}
+            </button>
+            <button
+              className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
+              onClick={() => setConfirming(false)}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          className="mt-3 rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={blocked}
+          onClick={() => setConfirming(true)}
+          type="button"
+        >
+          {exitAction.label}
+        </button>
+      )}
+    </div>
   );
 }
 

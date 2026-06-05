@@ -612,6 +612,7 @@ const ALLIANCE_SELECTORS = {
   dismissJoinRequest: "0xcd844a18",
   approveJoinRequest: "0x8ff388c7",
   kickMember: "0xbd0e667c",
+  leaveAlliance: "0xdabd761d",
   setMemberRole: "0xbfbb73f1"
 } as const;
 const ERC20_SELECTORS = {
@@ -1470,6 +1471,18 @@ export async function sendAllianceKickTransaction(
     from: account,
     to: contractAddress,
     data: encodeUintAddressCall(ALLIANCE_SELECTORS.kickMember, allianceId, playerAddress)
+  });
+}
+
+export async function sendAllianceLeaveTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: ALLIANCE_SELECTORS.leaveAlliance
   });
 }
 

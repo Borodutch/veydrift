@@ -14,6 +14,8 @@ import {
 import {
   allianceRosterPageSize,
   allianceDisplayName,
+  allianceExitActionState,
+  AllianceExitActionPanel,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
   buildAllianceRoster,
@@ -167,6 +169,7 @@ export function AllianceInspectPage({
   onDismissJoinRequest,
   onInvite,
   onKick,
+  onLeaveAlliance,
   onOpenPlayer,
   onRefresh,
   onSetRole,
@@ -181,6 +184,7 @@ export function AllianceInspectPage({
   onDismissJoinRequest: (playerAddress: string) => void;
   onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
+  onLeaveAlliance: () => void;
   onOpenPlayer: (wallet: string) => void;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
@@ -210,6 +214,7 @@ export function AllianceInspectPage({
   const canManageMembers = isCurrentAlliance && (role === "owner" || role === "officer");
   const isOwner = isCurrentAlliance && role === "owner";
   const busy = disabled || actionBusy || !canTransact;
+  const exitAction = allianceExitActionState(isCurrentAlliance ? allianceState : null);
 
   return (
     <InspectShell
@@ -228,10 +233,9 @@ export function AllianceInspectPage({
       {alliance ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <section className="grid gap-4">
-            <div className="grid gap-2 sm:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-3">
               <MiniStat label="Tag" value={alliance.tag} />
               <MiniStat label="Members" value={String(alliance.memberCount)} />
-              <MiniStat label="Owner" value={shortAddress(alliance.owner)} />
               <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
             </div>
 
@@ -273,6 +277,13 @@ export function AllianceInspectPage({
                   </button>
                 </div>
               </Panel>
+            ) : null}
+            {isCurrentAlliance ? (
+              <AllianceExitActionPanel
+                disabled={busy}
+                exitAction={exitAction}
+                onSubmit={onLeaveAlliance}
+              />
             ) : null}
             {canManageMembers ? (
               <Panel title="Applications">
