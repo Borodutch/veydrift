@@ -4294,6 +4294,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           finishUnavailableReason={buildingFinishUnavailableReason}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
+          loading={infrastructureLoading}
           loadError={infrastructureLoadErrorFor({
             activeBuildingQueue,
             infrastructureChainState,
@@ -4303,6 +4304,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onOpenRequirement={handleOpenRequirement}
+          onRefresh={refreshInfrastructureState}
           onSelectBuilding={setSelectedBuildingKey}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}

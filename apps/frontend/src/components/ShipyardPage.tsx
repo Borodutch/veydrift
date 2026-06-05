@@ -14,7 +14,7 @@ import {
   productionQueueViewModel,
 } from "./ProductionCatalog";
 import type { RequirementTarget } from "./RequirementFlairs";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { VeydriftLoader } from "./VeydriftLoader";
 
 type ShipyardActionState =
   | { status: "idle" }
@@ -46,6 +46,23 @@ const groupLabels = {
   special: "Satellites and specials",
 } as const;
 
+export function shipyardRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
+  return {
+    disabled: loading,
+    label: loading ? "Refreshing" : "Refresh",
+  };
+}
+
+export function shouldShowShipyardInitialLoader({
+  loading,
+  shipyardState,
+}: {
+  loading: boolean;
+  shipyardState?: ChainShipyardState | null | undefined;
+}): boolean {
+  return loading && !shipyardState;
+}
+
 export function ShipyardPage({
   actionState,
   canTransact,
@@ -70,7 +87,8 @@ export function ShipyardPage({
   const resources = toResources(shipyardState?.resources);
   const queue = activeProductionQueue(shipyardState?.queue, overviewQueue, "ship");
   const productionAvailable = shipyardState?.productionAvailable !== false;
-  const initialLoading = loading && !shipyardState;
+  const initialLoading = shouldShowShipyardInitialLoader({ loading, shipyardState });
+  const refreshButton = shipyardRefreshButtonState(loading);
 
   return (
     <div className="grid gap-4">
@@ -87,11 +105,12 @@ export function ShipyardPage({
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={refreshButton.disabled}
             onClick={onRefresh}
             type="button"
           >
-            Refresh
+            {refreshButton.label}
           </button>
         </div>
       </div>
@@ -149,10 +168,6 @@ function StatusPanel({
   loading: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
 }) {
-  if (loading && shipyardState) {
-    return <InlineSyncIndicator label="Refreshing shipyard" />;
-  }
-
   if (loading) {
     return null;
   }
