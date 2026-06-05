@@ -30,7 +30,7 @@ import {
   useInspectDetailSelection,
 } from "./InspectProgressLayout";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { VeydriftLoader } from "./VeydriftLoader";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const researchGroups = ["Basic", "Drive", "Advanced", "Combat"];
@@ -58,6 +58,13 @@ const researchDescriptions: Partial<Record<ResearchKey, string>> = {
   shielding: "Improves defensive shield systems and related energy barriers.",
   armor: "Improves hull materials and structural resilience.",
 };
+
+export function researchRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
+  return {
+    disabled: loading,
+    label: loading ? "Refreshing" : "Refresh",
+  };
+}
 
 interface ResearchPageProps {
   actionState: ResearchActionState;
@@ -115,6 +122,7 @@ export function ResearchPage({
     now,
     queue,
   });
+  const refreshButton = researchRefreshButtonState(loading);
   const { detailPanelRef, selectInspectItem: handleSelectResearch } = useInspectDetailSelection<ResearchKey>((key) => {
     setLocalSelectedKey(key);
     onSelectResearch?.(key);
@@ -136,11 +144,12 @@ export function ResearchPage({
             </button>
           )}
           <button
-            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={refreshButton.disabled}
             onClick={onRefresh}
             type="button"
           >
-            Refresh
+            {refreshButton.label}
           </button>
           </>
         )}
@@ -322,10 +331,6 @@ function ResearchStatusPanel({
   queue: ReturnType<typeof researchQueueForDisplay>;
   researchState: ChainResearchState | null;
 }) {
-  if (loading && researchState) {
-    return <InlineSyncIndicator label="Refreshing research" />;
-  }
-
   if (loading) {
     return null;
   }

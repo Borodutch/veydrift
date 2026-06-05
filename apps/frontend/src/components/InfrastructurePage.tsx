@@ -83,9 +83,11 @@ interface InfrastructurePageProps {
   hasLoadedInfrastructureState?: boolean | undefined;
   isActionPending?: boolean | undefined;
   isBuildingReadyToFinish?: boolean | undefined;
+  loading?: boolean | undefined;
   loadError?: string | undefined;
   onFinishBuilding?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
+  onRefresh?: (() => void) | undefined;
   onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
@@ -106,10 +108,12 @@ export function InfrastructurePage({
   hasLoadedInfrastructureState = false,
   isActionPending = false,
   isBuildingReadyToFinish,
+  loading = false,
   loadError,
   now = Date.now(),
   onFinishBuilding,
   onOpenRequirement,
+  onRefresh,
   onSelectBuilding,
   planetProductionProfile,
   productionRates,
@@ -136,6 +140,7 @@ export function InfrastructurePage({
     queue: activeBuildingQueue,
   });
   const headerFinishAction = infrastructureHeaderFinishAction(finishAction);
+  const refreshButton = infrastructureRefreshButtonState(loading);
 
   const { detailPanelRef, selectInspectItem: handleSelectBuilding } = useInspectDetailSelection<BuildingKey>((key) => {
     setLocalSelectedKey(key);
@@ -146,6 +151,16 @@ export function InfrastructurePage({
     return (
       <div className="grid gap-4">
         <InspectPageHeader
+          actions={onRefresh ? (
+            <button
+              className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={refreshButton.disabled}
+              onClick={onRefresh}
+              type="button"
+            >
+              {refreshButton.label}
+            </button>
+          ) : undefined}
           description="Building levels and production are hidden until live infrastructure state loads."
           title="Infrastructure"
         />
@@ -174,6 +189,16 @@ export function InfrastructurePage({
               type="button"
             >
               {headerFinishAction.label}
+            </button>
+          ) : null}
+          {onRefresh ? (
+            <button
+              className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={refreshButton.disabled}
+              onClick={onRefresh}
+              type="button"
+            >
+              {refreshButton.label}
             </button>
           ) : null}
           </>
@@ -239,6 +264,13 @@ export function shouldShowInfrastructureInitialLoadError({
   loadError?: string | undefined;
 }): boolean {
   return Boolean(loadError && !hasLoadedInfrastructureState);
+}
+
+export function infrastructureRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
+  return {
+    disabled: loading,
+    label: loading ? "Refreshing" : "Refresh",
+  };
 }
 
 export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
