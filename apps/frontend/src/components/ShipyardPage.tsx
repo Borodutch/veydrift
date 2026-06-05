@@ -233,14 +233,13 @@ export function shipProductionItems({
     const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
     const requirements = getShipRequirementStates(ship, shipyardState);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
-    const queued = queue?.active && queue.itemId === ship.id ? queue.quantity ?? 0 : 0;
+    const queued = queuedShipCount(ship.id, queue);
     const blockedReason = getBlockedReason({
       affordable,
       canTransact,
       hasPlanet: Boolean(shipyardState?.homePlanetId),
       missing,
       productionRates,
-      queueActive: Boolean(queue),
       resources,
       shipUnavailable,
       shipyardState,
@@ -258,7 +257,6 @@ export function shipProductionItems({
       countLabel: "Owned",
       countValue: owned,
       detailNote: stats || "Production unit",
-      description: ship.description,
       disabled,
       durationSeconds,
       group: ship.group,
@@ -332,7 +330,6 @@ export function getBlockedReason({
   hasPlanet,
   missing,
   productionRates,
-  queueActive,
   resources,
   shipUnavailable,
   shipyardState,
@@ -343,7 +340,6 @@ export function getBlockedReason({
   hasPlanet: boolean;
   missing: string[];
   productionRates?: Resources | undefined;
-  queueActive: boolean;
   resources: Resources | undefined;
   shipUnavailable: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
@@ -354,12 +350,21 @@ export function getBlockedReason({
   if (shipyardState.productionAvailable === false) return "Ship production unavailable";
   if (shipUnavailable) return "Ship unavailable on current deployment";
   if (!hasPlanet) return "No game planet";
-  if (queueActive) return "Queue active";
   if (missing.length > 0) return missing[0];
   if (!resources) return "Resources unavailable";
   if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;
+}
+
+function queuedShipCount(shipId: number, queue?: ChainShipyardState["queue"] | undefined): number {
+  let quantity = queue?.active && queue.itemId === shipId ? queue.quantity ?? 0 : 0;
+  for (const backlog of queue?.backlog ?? []) {
+    if (backlog.active && backlog.itemId === shipId) {
+      quantity += backlog.quantity ?? 0;
+    }
+  }
+  return quantity;
 }
 
 function toResources(resources: ChainShipyardState["resources"] | ChainShipyardState["ships"][number]["cost"] | null | undefined): Resources | undefined {

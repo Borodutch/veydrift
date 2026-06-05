@@ -1257,6 +1257,7 @@ describe("Veydrift backend", () => {
         if (selector === "0x7938100c") return abiWords(60n, 100n, 6_000n) as T;
         if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
         if (selector === "0x4f5ed437") return abiWords(32n, 0n) as T;
+        if (selector === "0x52b55205") return abiWords(32n, 0n) as T;
         if (selector === "0xe512884c") return abiWords(0n) as T;
 
         throw new Error(`Unexpected individual call ${selector}`);
@@ -1411,6 +1412,7 @@ describe("Veydrift backend", () => {
       description: "Discord: https://discord.gg/vdft",
       memberCount: 1
     });
+    expect(body.dismissJoinRequestAvailable).toBe(true);
     expect(body.members).toEqual([{ address: player, role: "owner", joinedAt: "1770000000" }]);
   });
 
@@ -1554,6 +1556,7 @@ describe("Veydrift backend", () => {
         if (selector === "0xd9b24865") return abiWords(1n) as T;
         if (selector === "0xb6f4b7b7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
         if (selector === "0x4f5ed437") return abiWords(32n, 0n) as T;
+        if (selector === "0x52b55205") return abiWords(32n, 0n) as T;
         if (selector === "0xe512884c") return abiWords(0n) as T;
         if (selector === "0x423f9f10") throw new Error("RPC 3: execution reverted");
         if (selector === "0x57686701" || selector === "0xc4222030") {
@@ -1628,6 +1631,7 @@ describe("Veydrift backend", () => {
             call.data.startsWith("0x5758361d")
             || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
+            || call.data.startsWith("0x52b55205")
             || call.data.startsWith("0x2b98afc7")
           )
         ) {
@@ -1713,6 +1717,7 @@ describe("Veydrift backend", () => {
           && (
             call.data.startsWith("0xb8e835ab")
             || call.data.startsWith("0xb6f4b7b7")
+            || call.data.startsWith("0x52b55205")
             || call.data.startsWith("0x2b98afc7")
           )
         ) {
@@ -1806,6 +1811,7 @@ describe("Veydrift backend", () => {
             call.data.startsWith("0x5758361d")
             || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
+            || call.data.startsWith("0x52b55205")
             || call.data.startsWith("0x2b98afc7")
           )
         ) {
@@ -1887,6 +1893,7 @@ describe("Veydrift backend", () => {
             || call.data.startsWith("0x5758361d")
             || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
+            || call.data.startsWith("0x52b55205")
           )
         ) {
           return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;

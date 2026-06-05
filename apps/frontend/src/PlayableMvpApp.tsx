@@ -205,10 +205,14 @@ const buildingFinishSubmittedSyncLabel =
   "Building completion submitted. Waiting for backend state to clear this completed queue before another finish attempt.";
 const buildingFinishFailedSyncLabel =
   "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.";
+const buildingFinishRejectedLabel =
+  "Building completion was cancelled in the wallet. The ready queue is still available; retry when you are ready to confirm the game-state update.";
 export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 const buildingWalletConfirmationLabel = (label: string) =>
-  `${label}: unlock your wallet if needed, then confirm in your wallet.`;
+  label === "Building completion"
+    ? "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected."
+    : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 
 type RefreshFreshnessGate = { current: number };
@@ -225,6 +229,10 @@ export function markFreshStateWrite(gate: RefreshFreshnessGate): number {
 
 export function canApplyRefreshRequest(gate: RefreshFreshnessGate, requestId: number): boolean {
   return requestId === gate.current;
+}
+
+export function shouldRefreshAllianceStateForPage(page: Page): boolean {
+  return page === "alliance" || page === "rankings";
 }
 
 export function buildingFinishActionErrorLabel(error: unknown): string {
@@ -1988,7 +1996,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       refreshInfrastructureState();
       if (page === "shipyard" || page === "galaxy") refreshShipyardState();
       if (page === "defenses" || page === "galaxy") refreshDefenseState();
-      if (page === "alliance") refreshAllianceState();
+      if (shouldRefreshAllianceStateForPage(page)) refreshAllianceState();
       if (page === "research") refreshResearchState();
       if (page === "rift") refreshRiftState();
       if (page === "moon") refreshInfrastructureState();
@@ -2289,7 +2297,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
-    if (page === "alliance") {
+    if (shouldRefreshAllianceStateForPage(page)) {
       refreshAllianceState();
     }
   }, [page, pageStateHydrationReady, refreshAllianceState]);
@@ -2514,7 +2522,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setBuildingAction({
           status: "error",
           buildingKey: completionBuildingKey,
-          label: failedSyncReason ?? label,
+          label: isRejectedByUser ? buildingFinishRejectedLabel : failedSyncReason ?? label,
         });
       }
     });
@@ -3382,7 +3390,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           console.error(error);
         }
         setPlayerProfileAction({ status: "success", label: "Display name saved." });
-        if (page === "alliance") refreshAllianceState();
+        if (shouldRefreshAllianceStateForPage(page)) refreshAllianceState();
       })
       .catch((error) => {
         console.error(error);
@@ -3699,8 +3707,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setSelectedResearchKey(target.key);
-    setPage("research");
+    if (target.kind === "research") {
+      setSelectedResearchKey(target.key);
+      setPage("research");
+      return;
+    }
+
+    setSelectedShipKey(target.key);
+    setPage("shipyard");
   }, []);
 
   const topBar = (
@@ -3838,7 +3852,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MissionControlPage
           actionState={missionAction}
           canTransact={Boolean(provider && account && gameContract)}
-          currentResources={infrastructureChainState?.resources}
           fleetVisibility={fleetVisibility}
           loading={isWalletConnected && onChainStatus === "loading"}
           now={now}
@@ -3848,8 +3861,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onRecall={handleRecallMission}
           onRefresh={() => void refreshOnChainState()}
           onResolve={handleResolveMission}
-          protectedResources={infrastructureChainState?.protectedResources}
-          raidableResources={infrastructureChainState?.raidableResources}
         />
       );
     }
@@ -3957,6 +3968,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onApprove={handleApproveRiftResource}
           onDeposit={handleDepositRiftResource}
           onFinishWithdrawal={handleFinishRiftWithdrawal}
+          onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshRiftState}
           onRequestWithdrawal={handleRequestRiftWithdrawal}
           riftState={riftState}

@@ -599,6 +599,35 @@ describe("playable MVP contract display helpers", () => {
     }
   });
 
+  test("reports individual energy building output instead of aggregate planet production", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      fusionReactor: 1,
+      solarPlant: 11,
+    };
+    const solarEffect = buildingEffectMetrics(buildings, "solarPlant", undefined, 3);
+    const fusionEffect = buildingEffectMetrics(buildings, "fusionReactor", undefined, 3);
+
+    expect(energyBalance(buildings, 3)).toMatchObject({
+      produced: 659,
+      sources: {
+        fusionReactor: 32,
+        solarPlant: 627,
+      },
+    });
+    expect(solarEffect).toMatchObject({
+      currentProduced: 627,
+      deltaProduced: 126,
+      nextProduced: 753,
+    });
+    expect(fusionEffect).toMatchObject({
+      currentProduced: 32,
+      deltaProduced: 37,
+      nextProduced: 69,
+    });
+  });
+
   test("surfaces loaded top-bar energy even when production and usage are zero", () => {
     const state = createInitialPlayableState(1_000);
 

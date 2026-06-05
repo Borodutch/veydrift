@@ -1567,6 +1567,16 @@ export function energyBalance(
   };
 }
 
+export function buildingEnergyProduction(
+  buildings: Record<BuildingKey, number>,
+  key: Extract<BuildingKey, "solarPlant" | "fusionReactor">,
+  energyTechnologyLevel = 0,
+  profile: PlanetProductionProfile = PLANET,
+): number {
+  const sources = energyBalance(buildings, energyTechnologyLevel, 0, profile).sources;
+  return key === "solarPlant" ? sources?.solarPlant ?? 0 : sources?.fusionReactor ?? 0;
+}
+
 export function storageCaps(buildings: Record<BuildingKey, number>): Resources {
   return {
     metal: storageCap(buildings.metalStorage),
@@ -1613,18 +1623,20 @@ export function buildingEffectMetrics(
   }
 
   if (key === "solarPlant" || key === "fusionReactor") {
-    const current = energyBalance(buildings, energyTechnologyLevel);
-    const next = energyBalance(nextBuildings, energyTechnologyLevel);
+    const currentProduced = buildingEnergyProduction(buildings, key, energyTechnologyLevel, profile);
+    const nextProduced = buildingEnergyProduction(nextBuildings, key, energyTechnologyLevel, profile);
+    const currentDeuteriumConsumed = fusionReactorDeuteriumConsumption(buildings.fusionReactor);
+    const nextDeuteriumConsumed = fusionReactorDeuteriumConsumption(nextBuildings.fusionReactor);
 
     return {
       kind: "energy",
-      currentDeuteriumConsumed: current.deuteriumConsumed,
-      currentProduced: current.produced,
-      deltaDeuteriumConsumed: next.deuteriumConsumed - current.deuteriumConsumed,
-      deltaProduced: next.produced - current.produced,
-      nextDeuteriumConsumed: next.deuteriumConsumed,
-      nextProduced: next.produced,
-      required: current.required,
+      currentDeuteriumConsumed,
+      currentProduced,
+      deltaDeuteriumConsumed: nextDeuteriumConsumed - currentDeuteriumConsumed,
+      deltaProduced: nextProduced - currentProduced,
+      nextDeuteriumConsumed,
+      nextProduced,
+      required: energyBalance(buildings, energyTechnologyLevel, 0, profile).required,
       showsDeuteriumConsumption: key === "fusionReactor",
     };
   }

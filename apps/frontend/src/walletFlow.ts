@@ -26,6 +26,7 @@ export type InjectedWindow = {
 };
 
 const WALLET_READ_TIMEOUT_MS = 10_000;
+const FARCASTER_WALLET_PROVIDER_TIMEOUT_MS = 1_200;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
 export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock your wallet and try again.";
 export const WALLET_ACCOUNT_UNAVAILABLE_MESSAGE = "Wallet account is unavailable. Reconnect your wallet, then retry.";
@@ -56,6 +57,8 @@ type TransactionRequest = {
   data: string;
   value?: string;
 };
+
+type GasEstimateResult = string | number | bigint;
 
 export type OnChainResources = {
   metal: string;
@@ -558,6 +561,7 @@ const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"
 
 export type FarcasterWalletClient = {
   wallet?: {
+    ethProvider?: Eip1193Provider | undefined;
     getEthereumProvider?: () => Promise<Eip1193Provider | undefined> | Eip1193Provider | undefined;
   };
 };
@@ -611,11 +615,19 @@ async function getFarcasterEthereumProvider(
   farcasterClient: FarcasterWalletClient,
 ): Promise<Eip1193Provider | undefined> {
   try {
-    const provider = await farcasterClient.wallet?.getEthereumProvider?.();
-    return isEip1193Provider(provider) ? provider : undefined;
+    const providerRequest = farcasterClient.wallet?.getEthereumProvider?.();
+    const provider = providerRequest
+      ? await timeoutPromise(Promise.resolve(providerRequest), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "Farcaster wallet provider")
+      : undefined;
+    if (isEip1193Provider(provider)) {
+      return provider;
+    }
   } catch {
-    return undefined;
+    // Fall through to the legacy SDK provider below.
   }
+
+  const legacyProvider = farcasterClient.wallet?.ethProvider;
+  return isEip1193Provider(legacyProvider) ? legacyProvider : undefined;
 }
 
 function isEip1193Provider(provider: unknown): provider is Eip1193Provider {
@@ -770,6 +782,33 @@ async function sendWalletTransaction(
     method: "eth_sendTransaction",
     params: [transaction]
   });
+}
+
+async function assertWalletTransactionEstimated(
+  provider: Eip1193Provider,
+  transaction: TransactionRequest,
+  label: string,
+): Promise<void> {
+  try {
+    const estimate = await readWalletRequest<GasEstimateResult>(provider, {
+      method: "eth_estimateGas",
+      params: [transaction],
+    }, `${label.toLowerCase()} gas estimate`);
+    if (gasEstimateIsPositive(estimate)) return;
+  } catch (error) {
+    if (isUserRejected(error)) throw error;
+  }
+
+  throw new Error(`${label} cannot be confirmed by the game contract yet. Refresh infrastructure state and retry before opening your wallet.`);
+}
+
+function gasEstimateIsPositive(estimate: GasEstimateResult | null | undefined): boolean {
+  if (estimate === null || estimate === undefined) return false;
+  try {
+    return BigInt(estimate) > 0n;
+  } catch {
+    return false;
+  }
 }
 
 function isAccountProbeWallet(provider: Eip1193Provider): boolean {
@@ -1079,9 +1118,14 @@ export async function getCurrentAccounts(provider: Eip1193Provider): Promise<str
 }
 
 export async function requestAccounts(provider: Eip1193Provider): Promise<string[]> {
-  return provider.request<string[]>({
+  const accounts = await readWalletRequest<string[]>(provider, {
     method: "eth_requestAccounts"
-  });
+  }, "wallet account authorization");
+  if (!accounts[0]) {
+    throw new Error(WALLET_ACCOUNT_UNAVAILABLE_MESSAGE);
+  }
+
+  return accounts;
 }
 
 export async function getChainId(provider: Eip1193Provider): Promise<string> {
@@ -1491,6 +1535,7 @@ export async function sendFinishBuildingUpgradeTransaction(
   if (!accountProbeReadyChecked) {
     await assertWalletUnlocked(provider);
   }
+  await assertWalletTransactionEstimated(provider, transaction, "Building completion");
 
   return sendWalletTransaction(provider, account, transaction, {
     accountProbeReadyChecked
