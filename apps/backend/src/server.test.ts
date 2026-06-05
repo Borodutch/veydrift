@@ -3432,7 +3432,12 @@ describe("Veydrift backend", () => {
       rank: 2,
       wallet: owners[1]
     });
-    expect(requestedTargets).toEqual(["11"]);
+    expect(requestedTargets).toEqual([]);
+    expect(body.rankings.total[0].attackProtection).toEqual({
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null
+    });
     expect(body.currentPlayer).toMatchObject({
       wallet: owners[2],
       rankings: {
@@ -3569,28 +3574,44 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("adds current wallet attack protection to highscore rows", async () => {
+  test("adds indexed score protection to highscore rows without live protection reads", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
-    const requestedTargets: string[] = [];
     const chainReader = new class extends MockChainReader {
-      override async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
-        expect(wallet).toBe(attacker);
-        requestedTargets.push(targetPlanetId.toString());
-        return {
-          wallet,
-          targetPlanetId: targetPlanetId.toString(),
-          allowed: false,
-          blockedReason: "score_protection",
-          blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
-          relation: "weaker",
-          defenderHonorStatus: "neutral",
-          plunderBps: 0,
-          defenderInactive: false
-        };
+      override async getAttackProtectionStatus(): Promise<AttackProtectionStatus> {
+        throw new Error("indexed rankings should not call live attack protection");
       }
     }();
+    chainReader.listSettledPlanetEvents = async () => [
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "7",
+        owner: player,
+        transactionHash: "0xabc1",
+        blockNumber: "123"
+      },
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "8",
+        owner: attacker,
+        transactionHash: "0xabc2",
+        blockNumber: "124"
+      }
+    ];
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xdefenseattacker",
+      logIndex: "0x0",
+      topics: [
+        defenseCompletedTopic,
+        topic(8n),
+        topic(0n)
+      ],
+      data: abiWords(9n, 1000n)
+    });
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -3601,11 +3622,77 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(requestedTargets).toContain(planet.planetId);
-    expect(body.rankings.total[0].attackProtection).toEqual({
+    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "score_protection",
       blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
+    });
+  });
+
+  test("keeps indexed same-alliance protection separate from score protection", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const chainReader = new class extends MockChainReader {
+      override async getAttackProtectionStatus(): Promise<AttackProtectionStatus> {
+        throw new Error("indexed rankings should not call live attack protection");
+      }
+
+      async getAllianceIntelForPlayers(): Promise<Map<Address, AllianceIdentity>> {
+        const alliance = {
+          allianceId: "3",
+          name: "Veydrift Union",
+          tag: "VDFT"
+        };
+        return new Map([
+          [player, alliance],
+          [attacker, alliance]
+        ]);
+      }
+    }();
+    chainReader.listSettledPlanetEvents = async () => [
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "7",
+        owner: player,
+        transactionHash: "0xabc1",
+        blockNumber: "123"
+      },
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "8",
+        owner: attacker,
+        transactionHash: "0xabc2",
+        blockNumber: "124"
+      }
+    ];
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xdefenseattacker",
+      logIndex: "0x0",
+      topics: [
+        defenseCompletedTopic,
+        topic(8n),
+        topic(0n)
+      ],
+      data: abiWords(9n, 1000n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
+      allowed: false,
+      blockedReason: "same_alliance",
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance."
     });
   });
 
