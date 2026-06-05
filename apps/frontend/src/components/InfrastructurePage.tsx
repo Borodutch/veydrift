@@ -187,7 +187,6 @@ export function InfrastructurePage({
       <InspectTwoColumnLayout
         catalog={buildingCatalog.map((building) => {
           const currentLevel = settledState.buildings[building.key];
-          const effect = buildingEffectMetrics(settledState.buildings, building.key, planetProductionProfile);
           const isSelected = building.key === selectedBuilding.key;
           const missingRequirement = unmetBuildingRequirement(settledState, building.key);
           const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
@@ -200,7 +199,7 @@ export function InfrastructurePage({
               isSelected={isSelected}
               key={building.key}
               label={building.label}
-              statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : compactEffect(effect)}
+              statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile)}
               statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
               onClick={() => handleSelectBuilding(building.key)}
             />
@@ -963,6 +962,19 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
   }
 
   return rows;
+}
+
+export function infrastructureCatalogStatusText(
+  state: PlayableState,
+  key: BuildingKey,
+  profile?: PlanetProductionProfile | undefined,
+): string {
+  return compactEffect(buildingEffectMetrics(
+    state.buildings,
+    key,
+    profile,
+    state.research.energy,
+  ));
 }
 
 function compactEffect(effect: BuildingEffectMetrics): string {

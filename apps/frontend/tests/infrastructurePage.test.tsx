@@ -9,6 +9,7 @@ import {
   InfrastructureRefreshErrorPanel,
   MetricDeltaSubtext,
   detailEffectRows,
+  infrastructureCatalogStatusText,
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
 import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
@@ -306,6 +307,24 @@ describe("Infrastructure page display helpers", () => {
       throw new Error("Expected Solar Plant and Fusion Reactor to be energy effects");
     }
     expect(solarEffect.currentProduced).not.toBe(fusionEffect.currentProduced);
+  });
+
+  test("uses energy research when formatting energy building catalog summaries", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        fusionReactor: 1,
+        solarPlant: 11,
+      },
+      research: {
+        ...createInitialPlayableState(1_000).research,
+        energy: 3,
+      },
+    };
+
+    expect(infrastructureCatalogStatusText(state, "solarPlant")).toBe("627 energy");
+    expect(infrastructureCatalogStatusText(state, "fusionReactor")).toBe("32 energy");
   });
 
   test("keeps build-level production capacity positive when current power would throttle output", () => {
