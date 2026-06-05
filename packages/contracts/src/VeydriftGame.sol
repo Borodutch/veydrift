@@ -385,6 +385,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         return shipQueues[planetId];
     }
 
+    function shipQueueBacklog(uint256 planetId) external view returns (ShipQueue[] memory) {
+        return _shipQueueBacklogs[planetId];
+    }
+
     function researchQueue(address player) external view returns (ResearchQueue memory) {
         return researchQueues[player];
     }
