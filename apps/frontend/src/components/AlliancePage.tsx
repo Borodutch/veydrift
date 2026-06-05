@@ -50,6 +50,8 @@ interface AlliancePageProps {
   onInvite: (playerAddress: string) => void;
   onJoinRequest: (allianceId: string) => void;
   onKick: (playerAddress: string) => void;
+  onOpenAlliance?: ((allianceId: string) => void) | undefined;
+  onOpenPlayer?: ((playerAddress: string) => void) | undefined;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
@@ -71,6 +73,8 @@ export function AlliancePage({
   onInvite,
   onJoinRequest,
   onKick,
+  onOpenAlliance,
+  onOpenPlayer,
   onRefresh,
   onSetRole,
   onUpdateProfile,
@@ -106,6 +110,8 @@ export function AlliancePage({
   const selectedAlliance = findAllianceEntry(directory, activeAllianceId, currentAlliance);
   const initialLoading = shouldShowAllianceInitialLoader({ allianceState, loading });
   const backgroundRefresh = shouldShowAllianceRefreshIndicator({ allianceState, loading });
+  const openPlayer = onOpenPlayer ?? setSelectedPlayer;
+  const openAlliance = onOpenAlliance ?? setActiveAllianceId;
 
   useEffect(() => {
     setProfileTag(profile?.tag ?? "");
@@ -196,7 +202,7 @@ export function AlliancePage({
                 onCreate={onCreate}
                 onInvite={onInvite}
                 onKick={onKick}
-                onOpenPlayer={setSelectedPlayer}
+                onOpenPlayer={openPlayer}
                 onSetDescription={setDescription}
                 onSetInviteAddress={setInviteAddress}
                 onSetName={setName}
@@ -217,6 +223,7 @@ export function AlliancePage({
                 selectedAllianceId={selectedAlliance?.allianceId ?? null}
                 onCancelJoinRequest={onCancelJoinRequest}
                 onJoinRequest={onJoinRequest}
+                onOpenAlliance={openAlliance}
                 onSelectAlliance={setActiveAllianceId}
               />
             </div>
@@ -226,7 +233,7 @@ export function AlliancePage({
                 alliance={selectedAlliance}
                 isCurrentAlliance={Boolean(selectedAlliance && selectedAlliance.allianceId === currentAllianceId)}
                 roster={selectedAlliance?.allianceId === currentAllianceId ? roster : undefined}
-                onOpenPlayer={setSelectedPlayer}
+                onOpenPlayer={openPlayer}
               />
               <PendingInvites
                 allianceState={allianceState}
@@ -242,7 +249,7 @@ export function AlliancePage({
                   requests={allianceState?.allianceJoinRequests ?? []}
                   onApproveJoinRequest={onApproveJoinRequest}
                   onDismissJoinRequest={onDismissJoinRequest}
-                  onOpenPlayer={setSelectedPlayer}
+                  onOpenPlayer={openPlayer}
                 />
               ) : null}
               <PlayerProfilePanel
@@ -552,6 +559,7 @@ function DirectorySection({
   selectedAllianceId,
   onCancelJoinRequest,
   onJoinRequest,
+  onOpenAlliance,
   onSelectAlliance,
 }: {
   alliances: DirectoryEntry[];
@@ -561,6 +569,7 @@ function DirectorySection({
   selectedAllianceId: string | null;
   onCancelJoinRequest: (allianceId: string) => void;
   onJoinRequest: (allianceId: string) => void;
+  onOpenAlliance?: ((allianceId: string) => void) | undefined;
   onSelectAlliance: (allianceId: string) => void;
 }) {
   const pendingIds = new Set(pendingJoinRequests.map((request) => request.allianceId));
@@ -584,7 +593,7 @@ function DirectorySection({
               >
                 <button
                   className="min-w-0 text-left"
-                  onClick={() => onSelectAlliance(alliance.allianceId)}
+                  onClick={() => onOpenAlliance ? onOpenAlliance(alliance.allianceId) : onSelectAlliance(alliance.allianceId)}
                   type="button"
                 >
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -604,7 +613,7 @@ function DirectorySection({
                 <div className="flex flex-wrap gap-2 md:justify-end">
                   <button
                     className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
-                    onClick={() => onSelectAlliance(alliance.allianceId)}
+                    onClick={() => onOpenAlliance ? onOpenAlliance(alliance.allianceId) : onSelectAlliance(alliance.allianceId)}
                     type="button"
                   >
                     Details

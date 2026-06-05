@@ -11,6 +11,7 @@ type RankingsPageProps = {
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 };
 
@@ -46,7 +47,7 @@ export function shouldShowRankingsInitialLoader({
   return loading && !hasLoadedData;
 }
 
-export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlanet }: RankingsPageProps) {
+export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlayer, onSelectPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -137,6 +138,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         hasLoadedData={Boolean(data)}
         loading={loading}
         onSelectAlliance={onSelectAlliance}
+        onSelectPlayer={onSelectPlayer}
         onSelectPlanet={onSelectPlanet}
       />
 
@@ -233,6 +235,7 @@ export function RankingsTable({
   hasLoadedData = entries.length > 0,
   loading,
   onSelectAlliance,
+  onSelectPlayer,
   onSelectPlanet,
 }: {
   active?: HighscoreCategory;
@@ -242,6 +245,7 @@ export function RankingsTable({
   hasLoadedData?: boolean | undefined;
   loading: boolean;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   return (
@@ -268,6 +272,7 @@ export function RankingsTable({
             entry={entry}
             key={`${active}-${entry.wallet}`}
             onSelectAlliance={onSelectAlliance}
+            onSelectPlayer={onSelectPlayer}
             onSelectPlanet={onSelectPlanet}
           />
         ))
@@ -282,6 +287,7 @@ function RankingRow({
   currentWallet,
   entry,
   onSelectAlliance,
+  onSelectPlayer,
   onSelectPlanet,
 }: {
   active: HighscoreCategory;
@@ -289,10 +295,12 @@ function RankingRow({
   currentWallet?: string | undefined;
   entry: HighscoreEntry;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   const homePlanet = entry.homePlanet ?? null;
   const canOpenHomePlanet = Boolean(homePlanet && onSelectPlanet);
+  const canOpenPlayer = Boolean(onSelectPlayer);
   const commanderLabel = entry.displayName?.trim() || shortAddress(entry.wallet);
   const normalizedWallet = entry.wallet.toLowerCase();
   const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
@@ -318,6 +326,10 @@ function RankingRow({
   const openAlliance = () => {
     if (!alliance || !onSelectAlliance) return;
     onSelectAlliance(alliance.allianceId);
+  };
+  const openPlayer = () => {
+    if (!onSelectPlayer) return;
+    onSelectPlayer(entry.wallet);
   };
 
   return (
@@ -359,12 +371,13 @@ function RankingRow({
               </button>
             ) : null}
             <button
-              className={`min-w-0 text-left ${canOpenHomePlanet ? "cursor-pointer" : "cursor-default"}`}
-              disabled={!canOpenHomePlanet}
-              onClick={openHomePlanet}
+              className={`min-w-0 text-left ${canOpenPlayer ? "cursor-pointer" : "cursor-default"}`}
+              disabled={!canOpenPlayer}
+              onClick={openPlayer}
+              title={`Open player ${commanderLabel}`}
               type="button"
             >
-              <span className={`block truncate font-mono ${canOpenHomePlanet ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
+              <span className={`block truncate font-mono ${canOpenPlayer ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
                 {commanderLabel}
               </span>
             </button>
