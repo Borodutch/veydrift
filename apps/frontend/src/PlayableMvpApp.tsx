@@ -4178,17 +4178,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     writeInspectHash({ kind: "battle-report", missionId });
   }, []);
 
-  const handleOpenBattleReports = useCallback(() => {
-    setPendingGalaxyMission(null);
-    setBattleReportMissionId(null);
-    setInspectedPlayerWallet(null);
-    setInspectedAllianceId(null);
-    setMissionReportId(null);
-    setSelectedCoords(undefined);
-    setPage("battle-reports");
-    writeInspectHash({ kind: "page", page: "battle-reports" });
-  }, []);
-
   const handleOpenRequirement = useCallback((target: RequirementTarget) => {
     setSelectedCoords(undefined);
 
@@ -4360,6 +4349,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           finishUnavailableReason={buildingFinishUnavailableReason}
           isActionPending={buildingAction.status === "pending"}
           isBuildingReadyToFinish={isBuildingReadyToFinish}
+          loading={infrastructureLoading}
           loadError={infrastructureLoadErrorFor({
             activeBuildingQueue,
             infrastructureChainState,
@@ -4369,6 +4359,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onFinishBuilding={handleFinishBuildingUpgrade}
           onOpenRequirement={handleOpenRequirement}
+          onRefresh={refreshInfrastructureState}
           onSelectBuilding={setSelectedBuildingKey}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}
@@ -4410,7 +4401,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenBattleReport={handleOpenBattleReport}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
-          onOpenBattleReports={handleOpenBattleReports}
           onRecall={handleRecallMission}
           onRefresh={() => void refreshOnChainState()}
           onResolve={handleResolveMission}

@@ -30,6 +30,32 @@ export type PlanetRecordRow = {
   tone?: "default" | "accent" | "muted";
 };
 
+export function planetDetailRefreshStartPlanet({
+  coords,
+  currentPlanet,
+  trustedHomePlanet,
+}: {
+  coords: Coordinates;
+  currentPlanet: Planet | null;
+  trustedHomePlanet: Planet | null;
+}): Planet | null {
+  return trustedHomePlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
+}
+
+export function planetDetailRefreshResultPlanet({
+  apiPlanet,
+  coords,
+  currentPlanet,
+  trustedHomePlanet,
+}: {
+  apiPlanet: Planet | null;
+  coords: Coordinates;
+  currentPlanet: Planet | null;
+  trustedHomePlanet: Planet | null;
+}): Planet | null {
+  return trustedHomePlanet ?? apiPlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
+}
+
 export function PlanetDetail({
   account,
   actionState = { status: "idle" },
@@ -54,14 +80,15 @@ export function PlanetDetail({
   const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
-  const loadedDetailKeyRef = useRef<string | undefined>();
-  const detailKey = `${apiBaseUrl.replace(/\/+$/, "")}:${coords.galaxy}:${coords.system}:${coords.position}`;
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
 
   useEffect(() => {
     const abortController = new AbortController();
-    const canPreservePlanet = loadedDetailKeyRef.current === detailKey;
-    setPlanet((current) => canPreservePlanet ? current ?? trustedHomePlanet : trustedHomePlanet);
+    setPlanet((current) => planetDetailRefreshStartPlanet({
+      coords,
+      currentPlanet: current,
+      trustedHomePlanet,
+    }));
     setSource("loading");
 
     fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
@@ -74,10 +101,12 @@ export function PlanetDetail({
       })
       .then((payload) => {
         const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
-        setPlanet((current) => sameCoordinates(homeCoords, coords) && homePlanet
-          ? homePlanet
-          : apiPlanet ?? (canPreservePlanet ? current : null));
-        loadedDetailKeyRef.current = detailKey;
+        setPlanet((current) => planetDetailRefreshResultPlanet({
+          apiPlanet,
+          coords,
+          currentPlanet: current,
+          trustedHomePlanet,
+        }));
         setSource("api");
       })
       .catch((error) => {
@@ -93,11 +122,6 @@ export function PlanetDetail({
     coords.galaxy,
     coords.position,
     coords.system,
-    detailKey,
-    homeCoords?.galaxy,
-    homeCoords?.position,
-    homeCoords?.system,
-    homePlanet,
     trustedHomePlanet,
   ]);
 
