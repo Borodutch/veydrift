@@ -75,7 +75,7 @@ describe("RankingsPage", () => {
     expect(selectedAlliances).toEqual(["3"]);
   });
 
-  test("uses a softer same-alliance treatment without overriding the current player highlight", () => {
+  test("uses a blue same-alliance treatment without overriding the current player highlight", () => {
     const self = rankingEntry({
       alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
       wallet: "0x1111111111111111111111111111111111111111",
@@ -98,7 +98,9 @@ describe("RankingsPage", () => {
     });
 
     expect(rowWithWallet(table, self.wallet)?.props?.className).toContain("bg-cyan-300");
-    expect(rowWithWallet(table, ally.wallet)?.props?.className).toContain("bg-emerald-300");
+    expect(rowWithWallet(table, ally.wallet)?.props?.className).toContain("bg-sky-300");
+    expect(visibleText(rowWithWallet(table, ally.wallet))).toContain("[VDFT]");
+    expect(visibleText(rowWithWallet(table, ally.wallet))).not.toContain("Protected");
     expect(rowWithWallet(table, other.wallet)?.props?.className).toContain("border-white/5");
   });
 
@@ -162,12 +164,35 @@ describe("RankingsPage", () => {
     expect(selected).toEqual([{ galaxy: 3, system: 12, position: 4 }]);
   });
 
-  test("tints unattackable ranking rows", () => {
-    const protectedEntry = rankingEntry({
+  test("renders same-alliance blocking as ally styling instead of protected styling", () => {
+    const allyEntry = rankingEntry({
+      alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
       attackProtection: {
         allowed: false,
         blockedReason: "same_alliance",
         blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+      },
+    });
+    const table = RankingsTable({
+      currentAllianceId: "3",
+      currentWallet: "0x2222222222222222222222222222222222222222",
+      entries: [allyEntry],
+      loading: false,
+    });
+    const row = rowWithWallet(table, allyEntry.wallet);
+
+    expect(row?.props?.className).toContain("bg-sky-300");
+    expect(row?.props?.className).not.toContain("bg-red-300");
+    expect(visibleText(row)).toContain("[VDFT]");
+    expect(visibleText(row)).not.toContain("Protected");
+  });
+
+  test("tints score-protected ranking rows red", () => {
+    const protectedEntry = rankingEntry({
+      attackProtection: {
+        allowed: false,
+        blockedReason: "score_protection",
+        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
       },
     });
     const table = RankingsTable({

@@ -5,6 +5,7 @@ import { ChainSyncService } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import {
   assertAddress,
+  attackBlockReasonLabel,
   type Address,
   type AllianceIdentity,
   type AllianceState,
@@ -681,12 +682,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           offset,
           rankedRows
         );
-        const protection = await rankedHighscoreProtectionLookup(
-          highscoreRankingRows(rankings),
-          chainReader,
-          url.searchParams.get("currentWallet"),
-          highscoreAttackProtectionRequested(url)
-        );
+        const protection = indexer
+          ? rankedHighscoreIndexedProtectionLookup(
+            highscoreRankingRows(rankings),
+            entries,
+            url.searchParams.get("currentWallet"),
+            highscoreAttackProtectionRequested(url)
+          )
+          : await rankedHighscoreProtectionLookup(
+            highscoreRankingRows(rankings),
+            chainReader,
+            url.searchParams.get("currentWallet"),
+            highscoreAttackProtectionRequested(url)
+          );
         const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
         const currentPlayer = highscoreCurrentPlayerPages(entries, pagination.pageSize, url.searchParams.get("currentWallet"));
 
@@ -1966,6 +1974,63 @@ async function rankedHighscoreProtectionLookup(
   );
 
   return new Map(statuses);
+}
+
+function rankedHighscoreIndexedProtectionLookup(
+  rows: Iterable<RankedHighscoreEntry>,
+  entries: readonly HighscoreEntry[],
+  currentWallet: string | null | undefined,
+  includeAttackProtection: boolean
+): Map<string, RankedHighscoreAttackProtection | null> {
+  if (!includeAttackProtection || !currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return new Map();
+
+  const attacker = entries.find((entry) => entry.wallet.toLowerCase() === currentWallet.toLowerCase());
+  if (!attacker) return new Map();
+
+  const statuses = new Map<string, RankedHighscoreAttackProtection | null>();
+  const attackerScore = BigInt(attacker.score.total);
+  for (const row of rows) {
+    const status = indexedScoreProtectionStatus(attackerScore, BigInt(row.score.total));
+    for (const planet of row.planets) {
+      statuses.set(planet.planetId, status);
+    }
+  }
+
+  return statuses;
+}
+
+function indexedScoreProtectionStatus(
+  attackerScore: bigint,
+  defenderScore: bigint
+): RankedHighscoreAttackProtection | null {
+  if (!isIndexedScoreProtected(attackerScore, defenderScore)) {
+    return {
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null
+    };
+  }
+
+  return {
+    allowed: false,
+    blockedReason: "score_protection",
+    blockedReasonLabel: attackBlockReasonLabel("score_protection")
+  };
+}
+
+function isIndexedScoreProtected(attackerScore: bigint, defenderScore: bigint): boolean {
+  const attackerRatio = indexedNewbieProtectionRatioBps(attackerScore);
+  const defenderRatio = indexedNewbieProtectionRatioBps(defenderScore);
+  if (attackerRatio === 0n && defenderRatio === 0n) return false;
+  if (defenderRatio !== 0n && attackerScore * 10_000n > defenderScore * defenderRatio) return true;
+  if (attackerRatio !== 0n && defenderScore * 10_000n > attackerScore * attackerRatio) return true;
+  return false;
+}
+
+function indexedNewbieProtectionRatioBps(score: bigint): bigint {
+  if (score < 50_000n) return 50_000n;
+  if (score < 500_000n) return 100_000n;
+  return 0n;
 }
 
 async function rankedHighscoreAttackProtection(
