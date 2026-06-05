@@ -4335,7 +4335,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
-          onNavigateGalaxy={() => handleNavigate("galaxy")}
           onOpenBattleReport={handleOpenBattleReport}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}

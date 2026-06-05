@@ -73,7 +73,6 @@ describe("MissionControlPage", () => {
       now: 1_770_000_700_000,
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
-      onNavigateGalaxy: () => undefined,
       onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
@@ -106,6 +105,9 @@ describe("MissionControlPage", () => {
     expect(text).toContain("0x3333...3333");
     expect(text).toContain("Report 0xabc...");
     expect(text).not.toContain("Fleet Operations");
+    expect(text).not.toContain("MISSION CONTROL");
+    expect(text).not.toContain("Galaxy");
+    expect(text).not.toContain("Reports");
     expect(text).not.toContain("Contract-indexed");
     expect(text).not.toContain("contract-supported");
     expect(text).not.toContain("game contract");
@@ -208,7 +210,6 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
     now: 1_770_000_700_000,
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
-    onNavigateGalaxy: () => undefined,
     onOpenBattleReport: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,

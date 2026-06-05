@@ -1,4 +1,4 @@
-import { Clipboard, ExternalLink, List, RefreshCw, Route, Swords } from "lucide-preact";
+import { Clipboard, ExternalLink, List, RefreshCw, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -28,7 +28,6 @@ interface MissionControlPageProps {
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onNavigateGalaxy: () => void;
   onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
@@ -49,7 +48,6 @@ export function MissionControlPage({
   now,
   onCompleteReturn,
   onCounterplay,
-  onNavigateGalaxy,
   onOpenBattleReport,
   onOpenReport,
   onOpenReportList,
@@ -76,31 +74,12 @@ export function MissionControlPage({
     <section className="grid gap-4">
       <header className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300/80">
-            Mission Control
-          </p>
-          <h2 className="mt-1 text-lg font-semibold text-white">Mission Control</h2>
+          <h2 className="text-lg font-semibold text-white">Mission Control</h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
             Watch inbound attacks, active launches, returning fleets, and time-critical battle actions from one command table.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
-            onClick={onNavigateGalaxy}
-            type="button"
-          >
-            <Route aria-hidden="true" size={15} />
-            Galaxy
-          </button>
-          <button
-            className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
-            onClick={onOpenReportList}
-            type="button"
-          >
-            <List aria-hidden="true" size={15} />
-            Reports
-          </button>
           <button
             className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
             onClick={onRefresh}
