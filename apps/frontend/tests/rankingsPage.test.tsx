@@ -4,6 +4,8 @@ import type { Coordinates } from "../src/types";
 import {
   primaryRankingEntries,
   rankingsColumnLabels,
+  rankingsPaginationLabel,
+  RankingsPagination,
   RankingsTable,
   shouldShowRankingsInitialLoader,
 } from "../src/components/RankingsPage";
@@ -184,6 +186,84 @@ describe("RankingsPage", () => {
     expect(text).toContain("No settled commanders indexed yet");
     expect(text).not.toContain("Loading rankings");
   });
+
+  test("renders compact pagination controls from highscore metadata", () => {
+    const visited: string[] = [];
+    const pagination = {
+      page: 2,
+      pageSize: 25,
+      totalEntries: 60,
+      totalPages: 3,
+      hasPreviousPage: true,
+      hasNextPage: true,
+    };
+    const controls = RankingsPagination({
+      currentPlayerPage: { rank: 42, page: 2 },
+      loading: false,
+      onCurrentPlayer: () => visited.push("current"),
+      onNext: () => visited.push("next"),
+      onPrevious: () => visited.push("previous"),
+      pagination,
+    });
+    const text = visibleText(controls);
+    const current = buttonWithTitle(controls, "Go to your rank");
+    const previous = buttonWithTitle(controls, "Previous page");
+    const next = buttonWithTitle(controls, "Next page");
+
+    expect(rankingsPaginationLabel(pagination)).toBe("Page 2 of 3");
+    expect(text).toContain("Page 2 of 3 26 - 50 of 60 # 42");
+    expect(current?.props?.disabled).toBe(true);
+    expect(previous?.props?.disabled).toBe(false);
+    expect(next?.props?.disabled).toBe(false);
+    previous?.props?.onClick?.();
+    next?.props?.onClick?.();
+    expect(visited).toEqual(["previous", "next"]);
+  });
+
+  test("jumps directly to the current player's ranking page when available", () => {
+    const visited: number[] = [];
+    const controls = RankingsPagination({
+      currentPlayerPage: { rank: 87, page: 4 },
+      loading: false,
+      onCurrentPlayer: () => visited.push(4),
+      onNext: () => undefined,
+      onPrevious: () => undefined,
+      pagination: {
+        page: 1,
+        pageSize: 25,
+        totalEntries: 100,
+        totalPages: 4,
+        hasPreviousPage: false,
+        hasNextPage: true,
+      },
+    });
+    const current = buttonWithTitle(controls, "Go to your rank");
+
+    expect(visibleText(controls)).toContain("# 87");
+    expect(current?.props?.disabled).toBe(false);
+    current?.props?.onClick?.();
+    expect(visited).toEqual([4]);
+  });
+
+  test("disables unavailable pagination directions", () => {
+    const controls = RankingsPagination({
+      loading: false,
+      onNext: () => undefined,
+      onPrevious: () => undefined,
+      pagination: {
+        page: 1,
+        pageSize: 25,
+        totalEntries: 0,
+        totalPages: 1,
+        hasPreviousPage: false,
+        hasNextPage: false,
+      },
+    });
+
+    expect(buttonWithTitle(controls, "Previous page")?.props?.disabled).toBe(true);
+    expect(buttonWithTitle(controls, "Next page")?.props?.disabled).toBe(true);
+    expect(visibleText(controls)).toContain("0 - 0 of 0");
+  });
 });
 
 function rankingEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
@@ -263,6 +343,9 @@ function elementNodes(node: ComponentChildren): VNode[] {
 
   const vnode = node as VNode;
   if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
+      return [];
+    }
     return elementNodes(vnode.type(vnode.props));
   }
 
