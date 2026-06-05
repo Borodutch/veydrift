@@ -1383,13 +1383,30 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
   };
 }
 
-function initialInspectPageState(): { page: Page; playerWallet: string | null; allianceId: string | null; battleReportMissionId: string | null } {
-  if (typeof window === "undefined") return { page: "overview", playerWallet: null, allianceId: null, battleReportMissionId: null };
+function initialInspectPageState(): {
+  page: Page;
+  playerWallet: string | null;
+  allianceId: string | null;
+  battleReportMissionId: string | null;
+  missionReportId: string | null;
+} {
+  if (typeof window === "undefined") {
+    return { page: "overview", playerWallet: null, allianceId: null, battleReportMissionId: null, missionReportId: null };
+  }
   const route = parseInspectRoute(window.location.hash);
-  if (route.kind === "player") return { page: "player-inspect", playerWallet: route.wallet, allianceId: null, battleReportMissionId: null };
-  if (route.kind === "alliance") return { page: "alliance-inspect", playerWallet: null, allianceId: route.allianceId, battleReportMissionId: null };
-  if (route.kind === "battle-report") return { page: "battle-report", playerWallet: null, allianceId: null, battleReportMissionId: route.missionId };
-  return { page: route.page, playerWallet: null, allianceId: null, battleReportMissionId: null };
+  if (route.kind === "player") {
+    return { page: "player-inspect", playerWallet: route.wallet, allianceId: null, battleReportMissionId: null, missionReportId: null };
+  }
+  if (route.kind === "alliance") {
+    return { page: "alliance-inspect", playerWallet: null, allianceId: route.allianceId, battleReportMissionId: null, missionReportId: null };
+  }
+  if (route.kind === "battle-report") {
+    return { page: "battle-report", playerWallet: null, allianceId: null, battleReportMissionId: route.missionId, missionReportId: null };
+  }
+  if (route.kind === "mission-report") {
+    return { page: "mission-control", playerWallet: null, allianceId: null, battleReportMissionId: null, missionReportId: route.missionId };
+  }
+  return { page: route.page, playerWallet: null, allianceId: null, battleReportMissionId: null, missionReportId: null };
 }
 
 function writeInspectHash(route: InspectRoute): void {
@@ -1408,6 +1425,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [inspectedPlayerWallet, setInspectedPlayerWallet] = useState<string | null>(() => initialInspectPageState().playerWallet);
   const [inspectedAllianceId, setInspectedAllianceId] = useState<string | null>(() => initialInspectPageState().allianceId);
   const [battleReportMissionId, setBattleReportMissionId] = useState<string | null>(() => initialInspectPageState().battleReportMissionId);
+  const [missionReportId, setMissionReportId] = useState<string | null>(() => initialInspectPageState().missionReportId);
   const [selectedBuildingKey, setSelectedBuildingKey] = useState<BuildingKey>("metalMine");
   const [selectedResearchKey, setSelectedResearchKey] = useState<ResearchKey>("energy");
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
@@ -1546,6 +1564,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setInspectedPlayerWallet(route.wallet);
         setInspectedAllianceId(null);
         setBattleReportMissionId(null);
+        setMissionReportId(null);
         setSelectedCoords(undefined);
         setPage("player-inspect");
         return;
@@ -1555,6 +1574,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setSelectedAllianceId(route.allianceId);
         setInspectedPlayerWallet(null);
         setBattleReportMissionId(null);
+        setMissionReportId(null);
         setSelectedCoords(undefined);
         setPage("alliance-inspect");
         return;
@@ -1563,13 +1583,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setBattleReportMissionId(route.missionId);
         setInspectedAllianceId(null);
         setInspectedPlayerWallet(null);
+        setMissionReportId(null);
         setSelectedCoords(undefined);
         setPage("battle-report");
+        return;
+      }
+      if (route.kind === "mission-report") {
+        setInspectedPlayerWallet(null);
+        setInspectedAllianceId(null);
+        setBattleReportMissionId(null);
+        setMissionReportId(route.missionId);
+        setSelectedCoords(undefined);
+        setPage("mission-control");
         return;
       }
       setInspectedPlayerWallet(null);
       setInspectedAllianceId(null);
       setBattleReportMissionId(null);
+      setMissionReportId(null);
       setPage(route.page);
       if (route.page !== "planet") setSelectedCoords(undefined);
     }
@@ -3969,9 +4000,33 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setBattleReportMissionId(null);
+    setMissionReportId(null);
     setPage(target);
     setSelectedCoords(undefined);
     writeInspectHash({ kind: "page", page: target });
+  }, []);
+
+  const handleOpenMissionReport = useCallback((missionId: string) => {
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
+    setBattleReportMissionId(null);
+    setMissionReportId(missionId);
+    setSelectedCoords(undefined);
+    setPage("mission-control");
+    writeInspectHash({ kind: "mission-report", missionId });
+  }, []);
+
+  const handleOpenMissionReportList = useCallback(() => {
+    setMissionReportId(null);
+    setPage("mission-control");
+    setSelectedCoords(undefined);
+    writeInspectHash({ kind: "page", page: "mission-control" });
+  }, []);
+
+  const missionReportUrlForMission = useCallback((missionId: string) => {
+    const hash = buildInspectHash({ kind: "mission-report", missionId });
+    if (typeof window === "undefined") return hash;
+    return `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`;
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
@@ -3980,6 +4035,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setBattleReportMissionId(null);
+    setMissionReportId(null);
     setPage("planet");
     writeInspectHash({ kind: "page", page: "planet" });
   }, []);
@@ -3989,6 +4045,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setInspectedAllianceId(allianceId);
     setInspectedPlayerWallet(null);
     setBattleReportMissionId(null);
+    setMissionReportId(null);
     setSelectedCoords(undefined);
     setPage("alliance-inspect");
     writeInspectHash({ kind: "alliance", allianceId });
@@ -3998,6 +4055,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setInspectedPlayerWallet(wallet);
     setInspectedAllianceId(null);
     setBattleReportMissionId(null);
+    setMissionReportId(null);
     setSelectedCoords(undefined);
     setPage("player-inspect");
     writeInspectHash({ kind: "player", wallet });
@@ -4008,6 +4066,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setBattleReportMissionId(null);
+    setMissionReportId(null);
     setPage("galaxy");
     writeInspectHash({ kind: "page", page: "galaxy" });
   }, []);
@@ -4016,6 +4075,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setBattleReportMissionId(missionId);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
+    setMissionReportId(null);
     setSelectedCoords(undefined);
     setPage("battle-report");
     writeInspectHash({ kind: "battle-report", missionId });
@@ -4201,9 +4261,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onCounterplay={handleMissionCounterplay}
           onNavigateGalaxy={() => handleNavigate("galaxy")}
           onOpenBattleReport={handleOpenBattleReport}
+          onOpenReport={handleOpenMissionReport}
+          onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}
           onRefresh={() => void refreshOnChainState()}
           onResolve={handleResolveMission}
+          reportMissionId={missionReportId ?? undefined}
+          reportUrlForMission={missionReportUrlForMission}
+          walletPlanets={walletPlanets}
         />
       );
     }
