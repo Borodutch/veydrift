@@ -259,7 +259,7 @@ export function FirstPlanetSettlementApp() {
   }, []);
 
   useEffect(() => {
-    if (!miniAppMode || provider || wallet.kind !== "no-wallet") {
+    if (!miniAppMode || walletProviderSource === "farcaster") {
       return;
     }
 
@@ -267,7 +267,7 @@ export function FirstPlanetSettlementApp() {
 
     void (async () => {
       const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: true });
-      if (disposed || !walletProvider?.provider) return;
+      if (disposed || !walletProvider?.provider || walletProvider.source !== "farcaster") return;
 
       bindWalletProviderDetails(walletProvider);
       setWallet({ kind: "disconnected" });
@@ -309,7 +309,7 @@ export function FirstPlanetSettlementApp() {
       await signalFarcasterReadyOnce();
     }
 
-    const providerOptions = { preferFarcaster: waitForFarcasterProvider };
+    const providerOptions = { preferFarcasterProvider: waitForFarcasterProvider };
     let walletProvider = await getAvailableWalletProviderDetails(
       window as typeof window & { ethereum?: Eip1193Provider },
       undefined,

@@ -340,24 +340,28 @@ describe("walletFlow", () => {
     expect(getInjectedProvider({})).toBeUndefined();
   });
 
-  test("prefers Farcaster SDK wallet over injected providers in Mini App mode only", async () => {
+  test("prefers the Farcaster SDK wallet provider when Mini App mode requests it", async () => {
     const provider = mockProvider(async () => null);
     const miniAppProvider = mockProvider(async () => null);
 
+    await expect(getAvailableWalletProvider({ ethereum: provider }, {
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { preferFarcasterProvider: true })).resolves.toBe(miniAppProvider);
     await expect(getAvailableWalletProviderDetails({ ethereum: provider }, {
       wallet: {
         getEthereumProvider: () => miniAppProvider,
       },
-    }, { preferFarcaster: true })).resolves.toEqual({
+    }, { preferFarcasterProvider: true })).resolves.toEqual({
       provider: miniAppProvider,
       source: "farcaster",
     });
-
     await expect(getAvailableWalletProviderDetails({ ethereum: provider }, {
       wallet: {
-        getEthereumProvider: () => ({ notAProvider: true }) as unknown as Eip1193Provider,
+        getEthereumProvider: () => undefined,
       },
-    }, { preferFarcaster: true })).resolves.toEqual({
+    }, { preferFarcasterProvider: true })).resolves.toEqual({
       provider,
       source: "injected",
     });
