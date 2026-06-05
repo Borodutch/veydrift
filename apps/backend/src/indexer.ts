@@ -1828,9 +1828,13 @@ export class SettlementIndexer {
   }
 
   private upsertQueue(event: QueueUpsertEvent): void {
-    if (this.appendDefenseBacklogQueue(event)) {
+    if (this.appendProductionBacklogQueue(event)) {
       return;
     }
+
+    const backlogJson = event.backlog?.length
+      ? JSON.stringify(event.backlog)
+      : this.existingBacklogJsonForSameItem(event);
 
     this.db.query(`
       INSERT INTO indexed_planet_queues (
@@ -1894,7 +1898,7 @@ export class SettlementIndexer {
       event.cost.metal,
       event.cost.crystal,
       event.cost.deuterium,
-      event.backlog?.length ? JSON.stringify(event.backlog) : null,
+      backlogJson,
       JSON.stringify(event)
     );
 
@@ -1926,8 +1930,8 @@ export class SettlementIndexer {
     }
   }
 
-  private appendDefenseBacklogQueue(event: QueueUpsertEvent): boolean {
-    if (event.queueKind !== "defense" || !event.planetId) {
+  private appendProductionBacklogQueue(event: QueueUpsertEvent): boolean {
+    if ((event.queueKind !== "defense" && event.queueKind !== "ship") || !event.planetId) {
       return false;
     }
 
@@ -1949,6 +1953,20 @@ export class SettlementIndexer {
       WHERE queue_key = ?
     `).run(JSON.stringify(nextBacklog), queueKey(event));
     return true;
+  }
+
+  private existingBacklogJsonForSameItem(event: QueueUpsertEvent): string | null {
+    if ((event.queueKind !== "defense" && event.queueKind !== "ship") || !event.planetId) {
+      return null;
+    }
+
+    const row = this.db.query(`
+      SELECT item_id, backlog_json
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(queueKey(event)) as Pick<QueueRow, "item_id" | "backlog_json"> | null;
+
+    return row?.item_id === event.itemId ? row.backlog_json : null;
   }
 
   private subtractPlanetResources(
