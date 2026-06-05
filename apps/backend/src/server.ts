@@ -663,18 +663,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           profiles,
           allianceIntel
         );
-        const protection = await rankedHighscoreProtectionLookup(
-          rankedRows,
-          chainReader,
-          url.searchParams.get("currentWallet")
-        );
         const rankings = highscoreRankings(
           entries,
           pagination.pageSize,
           offset,
-          rankedRows,
-          protection
+          rankedRows
         );
+        const protection = await rankedHighscoreProtectionLookup(
+          highscoreRankingRows(rankings),
+          chainReader,
+          url.searchParams.get("currentWallet")
+        );
+        const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
         const currentPlayer = highscoreCurrentPlayerPages(entries, pagination.pageSize, url.searchParams.get("currentWallet"));
 
         return Response.json(
@@ -691,7 +691,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               hasNextPage: page < totalPages
             },
             currentPlayer,
-            rankings,
+            rankings: protectedRankings,
             source
           },
           {
@@ -1837,13 +1837,31 @@ function highscoreRankings(
   entries: HighscoreEntry[],
   limit: number,
   offset: number,
-  rows: Map<string, RankedHighscoreEntry>,
+  rows: Map<string, RankedHighscoreEntry>
+): Record<HighscoreCategory, RankedHighscoreEntry[]> {
+  return Object.fromEntries(
+    highscoreCategories.map((category) => [
+      category,
+      rankHighscores(entries, category, limit, offset, rows)
+    ])
+  ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
+}
+
+function highscoreRankingRows(rankings: Record<HighscoreCategory, RankedHighscoreEntry[]>): RankedHighscoreEntry[] {
+  return Object.values(rankings).flat();
+}
+
+function highscoreRankingsWithProtection(
+  rankings: Record<HighscoreCategory, RankedHighscoreEntry[]>,
   protection: ReadonlyMap<string, RankedHighscoreAttackProtection | null>
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
   return Object.fromEntries(
     highscoreCategories.map((category) => [
       category,
-      rankHighscores(entries, category, limit, offset, rows, protection)
+      rankings[category].map((row) => ({
+        ...row,
+        attackProtection: row.homePlanet ? protection.get(row.homePlanet.planetId) ?? null : null
+      }))
     ])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
@@ -1877,8 +1895,7 @@ function rankHighscores(
   category: HighscoreCategory,
   limit: number,
   offset: number,
-  rows: ReadonlyMap<string, RankedHighscoreEntry>,
-  protection: ReadonlyMap<string, RankedHighscoreAttackProtection | null>
+  rows: ReadonlyMap<string, RankedHighscoreEntry>
 ): RankedHighscoreEntry[] {
   return sortedHighscores(entries, category)
     .slice(offset, offset + limit)
@@ -1886,19 +1903,18 @@ function rankHighscores(
       const row = rows.get(entry.wallet.toLowerCase())!;
       return {
         ...row,
-        attackProtection: row.homePlanet ? protection.get(row.homePlanet.planetId) ?? null : null,
         rank: offset + index + 1
       };
     });
 }
 
 async function rankedHighscoreProtectionLookup(
-  rows: ReadonlyMap<string, RankedHighscoreEntry>,
+  rows: Iterable<RankedHighscoreEntry>,
   chainReader: ChainReader | undefined,
   currentWallet: string | null | undefined
 ): Promise<Map<string, RankedHighscoreAttackProtection | null>> {
   const uniquePlanets = new Map<string, RankedHighscorePlanet>();
-  for (const row of rows.values()) {
+  for (const row of rows) {
     if (row.homePlanet) uniquePlanets.set(row.homePlanet.planetId, row.homePlanet);
   }
 

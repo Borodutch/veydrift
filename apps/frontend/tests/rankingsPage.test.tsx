@@ -133,6 +133,7 @@ describe("RankingsPage", () => {
 
     expect(homeButton).toBeTruthy();
     expect(visibleText(table)).toContain("Eos");
+    expect(visibleText(table)).toContain("[2:44:9]");
   });
 
   test("tints score-protected ranking rows", () => {
@@ -149,7 +150,7 @@ describe("RankingsPage", () => {
     });
     const row = rowWithWallet(table, protectedEntry.wallet);
 
-    expect(row?.props?.className).toContain("bg-amber-300");
+    expect(row?.props?.className).toContain("bg-red-300");
     expect(visibleText(row)).toContain("Protected");
   });
 

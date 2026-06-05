@@ -318,7 +318,7 @@ function RankingRow({
     : isSameAlliance
       ? "border-emerald-300/20 bg-emerald-300/[0.055] shadow-[inset_3px_0_0_rgba(110,231,183,0.55)]"
       : isScoreProtected
-        ? "border-amber-300/20 bg-amber-300/[0.07] shadow-[inset_3px_0_0_rgba(252,211,77,0.55)]"
+        ? "border-red-300/20 bg-red-300/[0.06] shadow-[inset_3px_0_0_rgba(248,113,113,0.5)]"
         : "border-white/5";
 
   const openHomePlanet = () => {
@@ -391,7 +391,7 @@ function RankingRow({
             ) : null}
             {isScoreProtected ? (
               <span
-                className="shrink-0 rounded border border-amber-200/30 bg-amber-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-amber-100"
+                className="shrink-0 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-red-100"
                 title={entry.attackProtection?.blockedReasonLabel ?? "Protected by newbie or score-ratio protection"}
               >
                 Protected
@@ -399,8 +399,13 @@ function RankingRow({
             ) : null}
           </span>
           {homePlanet ? (
-            <span className="block truncate text-xs text-slate-500" title={homePlanetHoverLabel(homePlanet)}>
-              {homePlanetLabel(homePlanet)}
+            <span className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500" title={homePlanetHoverLabel(homePlanet)}>
+              <span className="truncate">{homePlanetLabel(homePlanet)}</span>
+              {homePlanet.name?.trim() ? (
+                <span className="shrink-0 font-mono text-slate-400" aria-label={`Home planet coordinates ${homePlanetCoordinatesLabel(homePlanet)}`}>
+                  {homePlanetCoordinatesLabel(homePlanet)}
+                </span>
+              ) : null}
             </span>
           ) : null}
         </span>
