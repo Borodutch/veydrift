@@ -13,7 +13,22 @@ import {
 } from "../src/components/AlliancePage";
 import type { ChainAllianceState } from "../src/walletFlow";
 
+const alliancePageSource = await Bun.file(new URL("../src/components/AlliancePage.tsx", import.meta.url)).text();
+
 describe("AlliancePage loading display", () => {
+  test("uses the shared app shell instead of an extra Alliance page wrapper", () => {
+    expect(alliancePageSource).toContain('<section className="grid gap-4">');
+    expect(alliancePageSource).not.toContain('className="min-h-0 overflow-auto bg-[#080d16]"');
+    expect(alliancePageSource).not.toContain('className="mx-auto grid w-full max-w-7xl gap-4 p-4"');
+  });
+
+  test("uses the shared labeled refresh button treatment", () => {
+    expect(alliancePageSource).toContain("inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200");
+    expect(alliancePageSource).toContain('<RefreshCw aria-hidden="true" size={14} />');
+    expect(alliancePageSource).toContain("Refresh");
+    expect(alliancePageSource).not.toContain('className="icon-button" onClick={onRefresh}');
+  });
+
   test("uses the shared loader for initial alliance state loading", () => {
     expect(shouldShowAllianceInitialLoader({
       allianceState: null,
