@@ -6,6 +6,7 @@ import type {
   AllianceIdentity,
   AllianceState,
   AttackProtectionStatus,
+  BattleReport,
   ChainReader,
   DebrisFieldEvent,
   DefenseState,
@@ -222,6 +223,10 @@ class MockChainReader implements ChainReader {
 
   async getBattleReport() {
     return null;
+  }
+
+  async listBattleReports(): Promise<BattleReport[]> {
+    return [];
   }
 
   async getInfrastructureState(wallet: Address): Promise<InfrastructureState> {
@@ -974,6 +979,41 @@ describe("Veydrift backend", () => {
         position: 9
       }
     });
+    expect(response.status).toBe(200);
+  });
+
+  test("answers public battle report lists from the chain reader", async () => {
+    const chainReader = new class extends MockChainReader {
+      override async listBattleReports(): Promise<BattleReport[]> {
+        return [{
+          missionId: "42",
+          attacker: player,
+          targetPlanetId: planet.planetId,
+          outcome: "AttackerWin" as const,
+          rounds: 3,
+          randomSeed: "99",
+          loot: { metal: "1200", crystal: "300", deuterium: "0" },
+          attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
+          defenderLosses: { metal: "900", crystal: "250", deuterium: "0" },
+          debris: { metal: "600", crystal: "150" },
+          roundReports: [],
+          transactionHash: "0xabc",
+          blockNumber: "1234"
+        }];
+      }
+    }();
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader
+    })(new Request("http://localhost/battle-reports"));
+
+    await expect(response.json()).resolves.toMatchObject([
+      {
+        missionId: "42",
+        outcome: "AttackerWin",
+        targetPlanetId: "7"
+      }
+    ]);
     expect(response.status).toBe(200);
   });
 

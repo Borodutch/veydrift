@@ -85,7 +85,7 @@ export function BattleReportPage({
             <Panel title="Combatants">
               <Datum label="Attacker" value={shortHash(report.attacker)} />
               <Datum label="Target planet" value={`#${report.targetPlanetId}`} />
-              <Datum label="Resolver transaction" value={shortHash(report.transactionHash)} />
+              <Datum label="Combat transaction" value={shortHash(report.transactionHash)} />
               <Datum label="Block" value={report.blockNumber} />
             </Panel>
             <Panel title="Total Losses">

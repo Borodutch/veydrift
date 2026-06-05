@@ -20,6 +20,7 @@ const pageNames = new Set<Page>([
   "rankings",
   "galaxy",
   "planet",
+  "battle-reports",
 ]);
 
 export function parseInspectRoute(hash: string): InspectRoute {

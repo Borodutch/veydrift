@@ -1158,7 +1158,7 @@ function MissionPanel({
                     onClick={() => onCounterplay(mission.missionId, "acsDefend")}
                     type="button"
                   >
-                    ACS defend
+                    Group defend
                   </button>
                   <button
                     className="rounded border border-amber-200/20 bg-amber-300/10 px-2 py-1 text-[11px] font-medium text-amber-100 hover:bg-amber-300/15"

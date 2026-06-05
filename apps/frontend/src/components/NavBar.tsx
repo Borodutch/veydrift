@@ -18,6 +18,7 @@ export type Page =
   | "rankings"
   | "galaxy"
   | "planet"
+  | "battle-reports"
   | "battle-report"
   | "player-inspect"
   | "alliance-inspect";
