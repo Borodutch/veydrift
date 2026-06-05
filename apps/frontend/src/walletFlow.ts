@@ -58,8 +58,6 @@ type TransactionRequest = {
   value?: string;
 };
 
-type GasEstimateResult = string | number | bigint;
-
 type TransactionReceipt = {
   status?: string | number | bigint | null;
   transactionHash?: string;
@@ -841,33 +839,6 @@ async function sendWalletTransaction(
   });
 }
 
-async function assertWalletTransactionEstimated(
-  provider: Eip1193Provider,
-  transaction: TransactionRequest,
-  label: string,
-): Promise<void> {
-  try {
-    const estimate = await readWalletRequest<GasEstimateResult>(provider, {
-      method: "eth_estimateGas",
-      params: [transaction],
-    }, `${label.toLowerCase()} gas estimate`);
-    if (gasEstimateIsPositive(estimate)) return;
-  } catch (error) {
-    if (isUserRejected(error)) throw error;
-  }
-
-  throw new Error(`${label} cannot be confirmed by the game contract yet. Refresh infrastructure state and retry before opening your wallet.`);
-}
-
-function gasEstimateIsPositive(estimate: GasEstimateResult | null | undefined): boolean {
-  if (estimate === null || estimate === undefined) return false;
-  try {
-    return BigInt(estimate) > 0n;
-  } catch {
-    return false;
-  }
-}
-
 function isAccountProbeWallet(provider: Eip1193Provider): boolean {
   return Boolean(provider.isRabby || provider.isOkxWallet || provider.isOKExWallet);
 }
@@ -1528,7 +1499,6 @@ export async function sendStartBuildingUpgradeTransaction(
 
   const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
   if (!accountProbeReadyChecked) await assertWalletUnlocked(provider);
-  await assertWalletTransactionEstimated(provider, transaction, "Building upgrade");
 
   return sendWalletTransaction(provider, account, transaction, {
     accountProbeReadyChecked
@@ -1593,7 +1563,6 @@ export async function sendFinishBuildingUpgradeTransaction(
   if (!accountProbeReadyChecked) {
     await assertWalletUnlocked(provider);
   }
-  await assertWalletTransactionEstimated(provider, transaction, "Building completion");
 
   return sendWalletTransaction(provider, account, transaction, {
     accountProbeReadyChecked

@@ -53,7 +53,7 @@ describe("Playable MVP app display helpers", () => {
   const buildingFinishLiveStateRequiredLabel =
     "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
   const buildingCompletionWalletPrompt =
-    "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
+    "Building completion: confirm the game-state update in your wallet; token balance changes are not expected.";
 
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
@@ -156,7 +156,7 @@ describe("Playable MVP app display helpers", () => {
       queue,
     })).toEqual({
       disabled: true,
-      label: "Building upgrade is not ready to finish yet.",
+      label: "Finish upgrade",
       onFinish: undefined,
       reason: "Building upgrade is not ready to finish yet.",
       visible: true,
@@ -170,7 +170,7 @@ describe("Playable MVP app display helpers", () => {
       queue,
     })).toEqual({
       disabled: true,
-      label: buildingCompletionWalletPrompt,
+      label: "Finish upgrade",
       onFinish: undefined,
       reason: buildingCompletionWalletPrompt,
       visible: true,
@@ -185,6 +185,33 @@ describe("Playable MVP app display helpers", () => {
     expect(ready.label).toBe("Finish upgrade");
     ready.onFinish?.();
     expect(calls).toBe(1);
+  });
+
+  test("keeps infrastructure finish button copy compact on disabled mobile states", async () => {
+    const source = await Bun.file(new URL("../src/components/InfrastructurePage.tsx", import.meta.url)).text();
+    const longReason = "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
+    const action = infrastructureFinishAction({
+      actionUnavailableReason: longReason,
+      isBuildingReadyToFinish: true,
+      onFinishBuilding: () => undefined,
+      queue: {
+        kind: "building",
+        key: "solarPlant",
+        label: "Solar Plant",
+        readyAt: 1_700_000_000_000,
+        startedAt: 1_699_999_000_000,
+        targetLevel: 2,
+      },
+    });
+
+    expect(action).toMatchObject({
+      disabled: true,
+      label: "Finish upgrade",
+      reason: longReason,
+      visible: true,
+    });
+    expect(source).toContain("flex h-10 w-full min-w-0 items-center justify-center overflow-hidden");
+    expect(source).toContain("max-w-full overflow-hidden text-ellipsis whitespace-nowrap");
   });
 
   test("keeps disabled infrastructure finish reasons out of the page header", () => {
@@ -240,7 +267,7 @@ describe("Playable MVP app display helpers", () => {
       .toBe(buildingFinishStateReadFailureLabel);
   });
 
-  test("keeps actionable building finish preflight errors specific", () => {
+  test("keeps actionable building finish errors specific", () => {
     expect(buildingFinishActionErrorLabel(
       new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry."),
     )).toBe("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
@@ -708,10 +735,11 @@ describe("Playable MVP app display helpers", () => {
     })).toBe("Research is not ready to complete yet.");
   });
 
-  test("lets Overview derive building readiness only when no canonical active building queue is available", () => {
+  test("lets Overview derive building readiness from the displayed active queue", () => {
     expect(overviewBuildingReadyToFinishFlag({
       activeBuildingQueue: null,
       isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
     })).toBeUndefined();
 
     expect(overviewBuildingReadyToFinishFlag({
@@ -719,17 +747,27 @@ describe("Playable MVP app display helpers", () => {
         readyAt: "1700000600",
       }),
       isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
     })).toBe(false);
 
     expect(overviewBuildingReadyToFinishFlag({
       activeBuildingQueue: buildingQueue({
         readyAt: "1700000000",
       }),
+      isBuildingReadyToFinish: false,
+      now: 1_700_000_000_000,
+    })).toBe(true);
+
+    expect(overviewBuildingReadyToFinishFlag({
+      activeBuildingQueue: buildingQueue({
+        readyAt: "1700000600",
+      }),
       isBuildingReadyToFinish: true,
+      now: 1_700_000_000_000,
     })).toBe(true);
   });
 
-  test("keeps Overview finish disabled when ready wallet queues lack canonical infrastructure verification", () => {
+  test("lets Overview expose ready building queues while wallet submission still requires canonical verification", () => {
     const readyWalletQueue = buildingQueue({
       readyAt: "1700000000",
     });
@@ -750,7 +788,14 @@ describe("Playable MVP app display helpers", () => {
         infrastructureState: unverifiedInfrastructure,
         now: 1_700_000_000_000,
       }),
-    })).toBe(false);
+      now: 1_700_000_000_000,
+    })).toBe(true);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyWalletQueue,
+      infrastructureState: unverifiedInfrastructure,
+      now: 1_700_000_000_000,
+    })).toBe(infrastructureBackendSyncPausedLabel);
 
     const canonicalInfrastructure = infrastructureState({
       queue: readyWalletQueue,
@@ -1100,7 +1145,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBeUndefined();
   });
 
-  test("blocks failed finish attempts while the same stale building queue is still visible", () => {
+  test("keeps failed finish attempts recoverable after backend revalidation catches up", () => {
     const readyQueue = readyBuildingQueue();
 
     expect(failedBuildingFinishSyncReasonFor({
@@ -1114,10 +1159,6 @@ describe("Playable MVP app display helpers", () => {
     expect(buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue: readyQueue,
       canTransact: true,
-      failedBuildingFinishExpectation: {
-        itemId: readyQueue.itemId,
-        targetLevel: readyQueue.targetLevel,
-      },
       infrastructureState: infrastructureState({
         queue: readyQueue,
         source: "contract-state-indexer",
@@ -1126,7 +1167,21 @@ describe("Playable MVP app display helpers", () => {
       isBuildingReadyToFinish: true,
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
-    })).toContain("Building completion failed for this ready queue");
+    })).toBe(infrastructureBackendSyncPausedLabel);
+
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      canTransact: true,
+      completedBuildingFinishExpectation: undefined,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "live-rpc",
+        stale: false,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_000_000,
+    })).toBeUndefined();
   });
 
   test("keeps wallet cancellation copy retryable for ready building completion", async () => {
@@ -1135,6 +1190,8 @@ describe("Playable MVP app display helpers", () => {
     expect(source).toContain("Building completion was cancelled in the wallet. The ready queue is still available");
     expect(source).toContain("label: isRejectedByUser ? buildingFinishRejectedLabel : failedSyncReason ?? label");
     expect(source).toContain("if (!isRejectedByUser && failedSyncReason)");
+    expect(source).toContain("setFailedBuildingFinishExpectation(undefined);");
+    expect(source).not.toContain("}) ?? failedBuildingFinishSyncReasonFor({");
   });
 
   test("clears failed finish blocking when the active building queue changes", () => {
@@ -1511,7 +1568,7 @@ describe("Playable MVP app display helpers", () => {
     expect(label).not.toContain("Base Sepolia");
   });
 
-  test("blocks building transactions when refreshed backend infrastructure has an active building queue", () => {
+  test("blocks building transactions with ready-to-finish copy when refreshed backend infrastructure has a ready active queue", () => {
     expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
       buildingKey: "metalMine",
       gameContract: "0x3333333333333333333333333333333333333333",
@@ -1529,7 +1586,7 @@ describe("Playable MVP app display helpers", () => {
       isWalletConnected: true,
       onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
       runtimeConfigStatus: "ready",
-    })).toContain("currently upgrading");
+    })).toContain("ready to finish");
   });
 
   test("hydrates indexed planet state before requesting canonical settlement state", async () => {

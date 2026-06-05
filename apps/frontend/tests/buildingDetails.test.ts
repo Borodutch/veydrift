@@ -228,7 +228,7 @@ describe("building detail helpers", () => {
       },
     };
 
-    expect(buildingUpgradeStatus(queued, "solarPlant")).toMatchObject({
+    expect(buildingUpgradeStatus(queued, "solarPlant", { now: 1_000 })).toMatchObject({
       disabled: true,
       reason: "Another building is currently upgrading: Metal Mine Level 1",
     });
@@ -265,15 +265,20 @@ describe("building detail helpers", () => {
       },
     };
 
-    expect(buildingUpgradeStatus(queued, "researchLab")).toMatchObject({
+    expect(buildingUpgradeStatus(queued, "researchLab", { now: 1_000 })).toMatchObject({
       disabled: true,
       reason: "Another building is currently upgrading: Metal Mine Level 2",
       targetLevel: 1,
     });
-    expect(buildingUpgradeStatus(queued, "metalMine")).toMatchObject({
+    expect(buildingUpgradeStatus(queued, "metalMine", { now: 1_000 })).toMatchObject({
       disabled: true,
       reason: "Metal Mine Level 2 upgrade in progress",
       targetLevel: 2,
+    });
+    expect(buildingUpgradeStatus(queued, "researchLab", { now: 61_000 })).toMatchObject({
+      disabled: true,
+      reason: "Metal Mine Level 2 is ready to finish",
+      targetLevel: 1,
     });
   });
 
@@ -319,7 +324,7 @@ describe("building detail helpers", () => {
         startedAt: 1_000,
         targetLevel: 1,
       },
-    }, "metalMine")).toMatchObject({
+    }, "metalMine", { now: 1_000 })).toMatchObject({
       disabled: true,
       reason: "Another building is currently upgrading: Interdimensional Rift Stabilizer",
     });
