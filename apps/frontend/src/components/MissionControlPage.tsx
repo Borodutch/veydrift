@@ -1,4 +1,4 @@
-import { Clipboard, ExternalLink, List, RefreshCw, Swords } from "lucide-preact";
+import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List, RefreshCw, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -31,7 +31,6 @@ interface MissionControlPageProps {
   onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
-  onOpenBattleReports: () => void;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
   onResolve: (missionId: string) => void;
@@ -51,7 +50,6 @@ export function MissionControlPage({
   onOpenBattleReport,
   onOpenReport,
   onOpenReportList,
-  onOpenBattleReports,
   onRecall,
   onRefresh,
   onResolve,
@@ -117,15 +115,7 @@ export function MissionControlPage({
               planetLookup={planetLookup}
               reportUrl={selectedReport ? reportUrlForMission?.(selectedReport.missionId) : undefined}
             />
-          ) : (
-            <MissionReportList
-              missions={allMissions}
-              now={now}
-              onOpenReport={onOpenReport}
-              planetLookup={planetLookup}
-              reportUrlForMission={reportUrlForMission}
-            />
-          )}
+          ) : null}
 
           {activeCount === 0 ? (
             <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
@@ -207,7 +197,6 @@ export function MissionControlPage({
           </div>
 
           <ResolvedBattleReportSection
-            onOpenBattleReports={onOpenBattleReports}
             onOpenBattleReport={onOpenBattleReport}
             reports={battleReports}
           />
@@ -455,59 +444,6 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
   );
 }
 
-function MissionReportList({
-  missions,
-  now,
-  onOpenReport,
-  planetLookup,
-  reportUrlForMission,
-}: {
-  missions: FleetMissionSummary[];
-  now: number;
-  onOpenReport: (missionId: string) => void;
-  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
-  reportUrlForMission?: ((missionId: string) => string) | undefined;
-}) {
-  return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-3">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-white">Battle reports</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            Shareable mission records for visible combat, transport, harvest, return, and counterplay operations.
-          </p>
-        </div>
-        <span className="text-xs tabular-nums text-slate-400">{missions.length}</span>
-      </div>
-      {missions.length === 0 ? (
-        <p className="text-xs text-slate-500">No visible mission reports yet.</p>
-      ) : (
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {missions.map((mission) => {
-            const report = missionReport(mission, now, planetLookup);
-            const href = reportUrlForMission?.(mission.missionId);
-            return (
-              <a
-                className="rounded-md border border-white/10 bg-black/20 p-3 text-left transition hover:border-cyan-300/35 hover:bg-cyan-300/10"
-                href={href}
-                key={`report:${mission.missionId}`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  onOpenReport(mission.missionId);
-                }}
-              >
-                <p className="text-sm font-semibold text-white">{report.title}</p>
-                <p className="mt-1 text-xs text-slate-500">{report.routeSummary}</p>
-                <p className="mt-2 whitespace-pre-line text-xs text-slate-300">{report.battleTime}</p>
-              </a>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function MissionReportDetail({
   mission,
   now,
@@ -606,15 +542,17 @@ function MissionReportDetail({
 
 function ResolvedBattleReportSection({
   onOpenBattleReport,
-  onOpenBattleReports,
   reports,
 }: {
   onOpenBattleReport: (missionId: string) => void;
-  onOpenBattleReports: () => void;
   reports: BattleReport[];
 }) {
+  const pageSize = 6;
+  const pages = reportPages(reports, pageSize);
+  const hasPages = pages.length > 1;
+
   return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-3">
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-3" data-report-page-current="0">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
@@ -622,52 +560,140 @@ function ResolvedBattleReportSection({
           </span>
           <h3 className="text-sm font-semibold text-white">Resolved battle reports</h3>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs tabular-nums text-slate-400">{reports.length}</span>
-          <button
-            className="rounded border border-white/10 bg-white/5 px-2 py-1 text-xs font-medium text-slate-200 transition hover:bg-white/10"
-            onClick={onOpenBattleReports}
-            type="button"
-          >
-            Open list
-          </button>
-        </div>
+        <span className="text-xs tabular-nums text-slate-400">{reports.length}</span>
       </div>
       {reports.length === 0 ? (
         <p className="text-xs text-slate-500">No resolved attack reports for this wallet yet.</p>
       ) : (
-        <div className="grid gap-2 lg:grid-cols-2">
-          {reports.slice(0, 6).map((report) => (
-            <article className="min-w-0 rounded-md border border-white/10 bg-black/20 p-3" key={report.missionId}>
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h4 className="truncate text-sm font-semibold text-white">
-                    Mission #{report.missionId} / {battleOutcomeLabel(report.outcome)}
-                  </h4>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
-                  </p>
-                </div>
+        <>
+          {pages.map((pageReports, pageIndex) => (
+            <div
+              className="grid gap-2 lg:grid-cols-2"
+              data-report-page={pageIndex}
+              hidden={pageIndex !== 0}
+              key={`resolved-report-page:${pageIndex}`}
+            >
+              {pageReports.map((report) => (
+                <article className="min-w-0 rounded-md border border-white/10 bg-black/20 p-3" key={report.missionId}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h4 className="truncate text-sm font-semibold text-white">
+                        Mission #{report.missionId} / {battleOutcomeLabel(report.outcome)}
+                      </h4>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
+                      </p>
+                    </div>
+                    <button
+                      className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+                      onClick={() => onOpenBattleReport(report.missionId)}
+                      type="button"
+                    >
+                      Open report
+                    </button>
+                  </div>
+                  <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <MissionDatum label="Rounds" value={report.rounds.toString()} />
+                    <MissionDatum label="Loot" value={formatCargo(report.loot)} />
+                    <MissionDatum label="Attacker losses" value={formatCargo(report.attackerLosses)} />
+                    <MissionDatum label="Defender losses" value={formatCargo(report.defenderLosses)} />
+                  </dl>
+                </article>
+              ))}
+            </div>
+          ))}
+          {hasPages ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+              <span className="text-xs tabular-nums text-slate-400" data-report-page-label>Page 1 of {pages.length}</span>
+              <div className="flex flex-wrap gap-2">
                 <button
-                  className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
-                  onClick={() => onOpenBattleReport(report.missionId)}
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 disabled:hover:bg-white/5"
+                  data-report-page-prev
+                  disabled
+                  onClick={(event) => showResolvedReportPage(event, "previous")}
                   type="button"
                 >
-                  Open report
+                  <ChevronLeft aria-hidden="true" size={13} />
+                  Previous
+                </button>
+                {pages.map((_, pageIndex) => (
+                  <button
+                    aria-current={pageIndex === 0 ? "page" : undefined}
+                    className="h-8 min-w-8 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 aria-[current=page]:border-cyan-300/35 aria-[current=page]:bg-cyan-300/10 aria-[current=page]:text-cyan-100"
+                    data-report-page-button={pageIndex}
+                    key={`resolved-report-page-button:${pageIndex}`}
+                    onClick={(event) => showResolvedReportPage(event, pageIndex)}
+                    type="button"
+                  >
+                    {pageIndex + 1}
+                  </button>
+                ))}
+                <button
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 disabled:hover:bg-white/5"
+                  data-report-page-next
+                  onClick={(event) => showResolvedReportPage(event, "next")}
+                  type="button"
+                >
+                  Next
+                  <ChevronRight aria-hidden="true" size={13} />
                 </button>
               </div>
-              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <MissionDatum label="Rounds" value={report.rounds.toString()} />
-                <MissionDatum label="Loot" value={formatCargo(report.loot)} />
-                <MissionDatum label="Attacker losses" value={formatCargo(report.attackerLosses)} />
-                <MissionDatum label="Defender losses" value={formatCargo(report.defenderLosses)} />
-              </dl>
-            </article>
-          ))}
-        </div>
+            </div>
+          ) : null}
+        </>
       )}
     </section>
   );
+}
+
+function reportPages(reports: BattleReport[], pageSize: number): BattleReport[][] {
+  const pages: BattleReport[][] = [];
+  for (let index = 0; index < reports.length; index += pageSize) {
+    pages.push(reports.slice(index, index + pageSize));
+  }
+  return pages;
+}
+
+function showResolvedReportPage(event: Event, target: number | "next" | "previous") {
+  const button = event.currentTarget;
+  if (!(button instanceof HTMLElement)) return;
+
+  const section = button.closest<HTMLElement>("[data-report-page-current]");
+  if (!section) return;
+
+  const pages = Array.from(section.querySelectorAll<HTMLElement>("[data-report-page]"));
+  if (pages.length === 0) return;
+
+  const current = Number(section.dataset.reportPageCurrent ?? "0");
+  const nextPage = target === "next"
+    ? current + 1
+    : target === "previous"
+      ? current - 1
+      : target;
+  const clamped = Math.max(0, Math.min(pages.length - 1, nextPage));
+  section.dataset.reportPageCurrent = clamped.toString();
+
+  pages.forEach((page, pageIndex) => {
+    page.hidden = pageIndex !== clamped;
+  });
+
+  const label = section.querySelector<HTMLElement>("[data-report-page-label]");
+  if (label) label.textContent = `Page ${clamped + 1} of ${pages.length}`;
+
+  const previous = section.querySelector<HTMLButtonElement>("[data-report-page-prev]");
+  if (previous) previous.disabled = clamped === 0;
+
+  const next = section.querySelector<HTMLButtonElement>("[data-report-page-next]");
+  if (next) next.disabled = clamped === pages.length - 1;
+
+  section.querySelectorAll<HTMLButtonElement>("[data-report-page-button]").forEach((pageButton) => {
+    const pageIndex = Number(pageButton.dataset.reportPageButton ?? "0");
+    if (pageIndex === clamped) {
+      pageButton.setAttribute("aria-current", "page");
+    } else {
+      pageButton.removeAttribute("aria-current");
+    }
+  });
 }
 
 function ReportPanel({ children, title }: { children: preact.ComponentChildren; title: string }) {

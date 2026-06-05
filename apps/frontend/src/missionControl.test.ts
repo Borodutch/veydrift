@@ -53,7 +53,6 @@ describe("Mission Control battle reports", () => {
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
       onOpenBattleReport: () => undefined,
-      onOpenBattleReports: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
       onRecall: () => undefined,
@@ -72,8 +71,9 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Ships Small Cargo x3");
     expect(text).toContain("Group defend");
     expect(text).toContain("Intercept");
-    expect(text).toContain("Open list");
     expect(text).toContain("Open report");
+    expect(text).not.toContain("Open list");
+    expect(text).not.toContain("Battle reports");
     expect(text).not.toContain("Fleet Operations");
     expect(text).not.toContain("contract-supported");
     expect(text).not.toContain("Contract-indexed");

@@ -76,6 +76,7 @@ describe("RankingsPage", () => {
   });
 
   test("uses a blue same-alliance treatment without overriding the current player highlight", () => {
+    const selectedAlliances: string[] = [];
     const self = rankingEntry({
       alliance: { allianceId: "3", name: "Veydrift Union", tag: "VDFT" },
       wallet: "0x1111111111111111111111111111111111111111",
@@ -95,6 +96,7 @@ describe("RankingsPage", () => {
       currentWallet: self.wallet,
       entries: [self, ally, other],
       loading: false,
+      onSelectAlliance: (allianceId) => selectedAlliances.push(allianceId),
     });
 
     expect(rowWithWallet(table, self.wallet)?.props?.className).toContain("bg-cyan-300");
@@ -102,6 +104,10 @@ describe("RankingsPage", () => {
     expect(visibleText(rowWithWallet(table, ally.wallet))).toContain("[VDFT]");
     expect(visibleText(rowWithWallet(table, ally.wallet))).not.toContain("Protected");
     expect(rowWithWallet(table, other.wallet)?.props?.className).toContain("border-white/5");
+    expect(visibleText(rowWithWallet(table, other.wallet))).toContain("[OTHR]");
+    buttonWithTitle(rowWithWallet(table, ally.wallet), "Open alliance VDFT")?.props?.onClick?.();
+    buttonWithTitle(rowWithWallet(table, other.wallet), "Open alliance OTHR")?.props?.onClick?.();
+    expect(selectedAlliances).toEqual(["3", "4"]);
   });
 
   test("opens the ranked commander's public home planet when available", () => {

@@ -210,7 +210,7 @@ describe("chainState", () => {
     expect(progress(queue, now)).toBe(0.5);
   });
 
-  test("does not synthesize active research progress without enough timeline context", () => {
+  test("keeps active research visible even without enough timeline context", () => {
     const queue = researchQueueForDisplay({
       active: true,
       kind: "research",
@@ -220,7 +220,15 @@ describe("chainState", () => {
       cost: { metal: "0", crystal: "1600", deuterium: "800" },
     }, 1_700_000_300_000);
 
-    expect(queue).toBeUndefined();
+    expect(queue).toMatchObject({
+      kind: "research",
+      key: "energy",
+      label: "Energy Technology",
+      readyAt: 1_700_000_600_000,
+      startedAt: 1_700_000_300_000,
+      targetLevel: 2,
+    });
+    expect(progress(queue, 1_700_000_300_000)).toBe(0);
   });
 
   test("uses Nanite Factory level when estimating active building queue progress without startedAt", () => {

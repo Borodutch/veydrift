@@ -9,6 +9,7 @@ import {
   InfrastructureRefreshErrorPanel,
   MetricDeltaSubtext,
   detailEffectRows,
+  infrastructureRefreshButtonState,
   infrastructureCatalogStatusText,
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
@@ -33,6 +34,8 @@ describe("Infrastructure page display helpers", () => {
       hasLoadedInfrastructureState: true,
       loadError: "Infrastructure request failed with 503",
     })).toBe(false);
+    expect(infrastructureRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
+    expect(infrastructureRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
 
     const panel = InfrastructureRefreshErrorPanel({
       reason: "Infrastructure request failed with 503",

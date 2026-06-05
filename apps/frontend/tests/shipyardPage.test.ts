@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { formatProductionPrice, productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
-import { getBlockedReason, getShipRequirementStates, shipProductionItems, shipyardRefreshErrorLabel } from "../src/components/ShipyardPage";
+import {
+  getBlockedReason,
+  getShipRequirementStates,
+  shipProductionItems,
+  shipyardRefreshButtonState,
+  shipyardRefreshErrorLabel,
+  shouldShowShipyardInitialLoader,
+} from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
 import { shipCatalog } from "../src/playableMvp";
 
@@ -64,6 +71,15 @@ describe("Shipyard page display helpers", () => {
       error: "Shipyard request failed with 503",
       shipyardState: null,
     })).toBeUndefined();
+  });
+
+  test("keeps loaded shipyard visible during background refreshes", () => {
+    const loadedState = shipyardState();
+
+    expect(shouldShowShipyardInitialLoader({ loading: true, shipyardState: null })).toBe(true);
+    expect(shouldShowShipyardInitialLoader({ loading: true, shipyardState: loadedState })).toBe(false);
+    expect(shipyardRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
+    expect(shipyardRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
   });
 
   test("returns visible met and unmet ship requirement states", () => {
