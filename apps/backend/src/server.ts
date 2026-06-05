@@ -1781,6 +1781,7 @@ type RankedHighscoreEntry = HighscoreEntry & {
   attackProtection: RankedHighscoreAttackProtection | null;
   displayName: string | null;
   homePlanet: RankedHighscorePlanet | null;
+  planets: RankedHighscorePlanet[];
   rank: number;
 };
 
@@ -1878,10 +1879,24 @@ function highscoreRankingsWithProtection(
       category,
       rankings[category].map((row) => ({
         ...row,
-        attackProtection: row.homePlanet ? protection.get(row.homePlanet.planetId) ?? null : null
+        attackProtection: rankedHighscoreRowProtection(row, protection)
       }))
     ])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
+}
+
+function rankedHighscoreRowProtection(
+  row: RankedHighscoreEntry,
+  protection: ReadonlyMap<string, RankedHighscoreAttackProtection | null>
+): RankedHighscoreAttackProtection | null {
+  const statuses = row.planets
+    .map((planet) => protection.get(planet.planetId) ?? null)
+    .filter((status): status is RankedHighscoreAttackProtection => Boolean(status));
+
+  return statuses.find((status) => status.blockedReason === "score_protection")
+    ?? statuses.find((status) => !status.allowed)
+    ?? statuses[0]
+    ?? null;
 }
 
 function highscoreRows(
@@ -1892,6 +1907,7 @@ function highscoreRows(
 ): Map<string, RankedHighscoreEntry> {
   return new Map(
     entries.map((entry) => {
+      const planets = rankedHighscorePlanets(entry, planetsByOwner);
       const homePlanet = rankedHighscoreHomePlanet(entry, planetsByOwner);
       return [
         entry.wallet.toLowerCase(),
@@ -1901,6 +1917,7 @@ function highscoreRows(
           attackProtection: null,
           displayName: profiles.get(entry.wallet.toLowerCase())?.displayName ?? null,
           homePlanet,
+          planets,
           rank: 0
         }
       ];
@@ -1936,7 +1953,9 @@ async function rankedHighscoreProtectionLookup(
 
   const uniquePlanets = new Map<string, RankedHighscorePlanet>();
   for (const row of rows) {
-    if (row.homePlanet) uniquePlanets.set(row.homePlanet.planetId, row.homePlanet);
+    for (const planet of row.planets) {
+      uniquePlanets.set(planet.planetId, planet);
+    }
   }
 
   const statuses = await Promise.all(
@@ -1998,6 +2017,32 @@ function rankedHighscoreHomePlanet(
     },
     archetype: planetArchetypeForTemperature(planet.temperature)
   };
+}
+
+function rankedHighscorePlanets(
+  entry: HighscoreEntry,
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
+): RankedHighscorePlanet[] {
+  return [...(planetsByOwner.get(entry.wallet.toLowerCase()) ?? [])]
+    .sort((left, right) => {
+      const homePlanetDelta = Number(right.planetId === entry.homePlanetId) - Number(left.planetId === entry.homePlanetId);
+      if (homePlanetDelta !== 0) return homePlanetDelta;
+      if (left.galaxy !== right.galaxy) return left.galaxy - right.galaxy;
+      if (left.system !== right.system) return left.system - right.system;
+      if (left.position !== right.position) return left.position - right.position;
+      if (left.planetId === right.planetId) return 0;
+      return BigInt(left.planetId) < BigInt(right.planetId) ? -1 : 1;
+    })
+    .map((planet) => ({
+      planetId: planet.planetId,
+      name: planet.name,
+      coordinates: {
+        galaxy: planet.galaxy,
+        system: planet.system,
+        position: planet.position
+      },
+      archetype: planetArchetypeForTemperature(planet.temperature)
+    }));
 }
 
 function unavailableResponse(problems: ConfigProblem[]): Response {

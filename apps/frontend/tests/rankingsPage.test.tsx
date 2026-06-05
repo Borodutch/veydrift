@@ -13,32 +13,31 @@ import {
 import type { HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
 describe("RankingsPage", () => {
-  test("uses one ranking table with the active category score and total context", () => {
-    expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Planets", "Score", "Total"]);
+  test("uses one ranking table without duplicate planet count or total score columns", () => {
+    expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Score"]);
   });
 
-  test("renders rank, commander, planet count, canonical score, and public home coordinates", () => {
+  test("renders rank, commander, canonical score, and public unnamed home coordinates", () => {
     const table = RankingsTable({ entries: [rankingEntry()], loading: false });
     const text = visibleText(table);
 
     expect(text).toContain("Rank");
     expect(text).toContain("Commander");
-    expect(text).toContain("Planets");
     expect(text).toContain("Score");
     expect(text).toContain("# 1");
     expect(text).toContain("[2:44:9]");
-    expect(text).toContain("3");
     expect(text).toContain("1,500");
     expect(text).not.toContain("Planet 7");
-    expect(text).toContain("Total");
+    expect(text).not.toContain("Planets");
+    expect(text).not.toContain("Total");
   });
 
-  test("renders the selected category score while keeping total visible", () => {
+  test("renders only the selected category score", () => {
     const table = RankingsTable({ active: "fleetCount", entries: [rankingEntry()], loading: false });
     const text = visibleText(table);
 
     expect(text).toContain("42");
-    expect(text).toContain("1,500");
+    expect(text).not.toContain("1,500");
   });
 
   test("highlights the current wallet row with a non-color-only marker", () => {
@@ -119,7 +118,7 @@ describe("RankingsPage", () => {
     expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
   });
 
-  test("shows ranked home coordinates on hover even for named planets", () => {
+  test("shows named ranked planet coordinates on icon hover without inline duplication", () => {
     const table = RankingsTable({
       entries: [rankingEntry({
         homePlanet: {
@@ -133,7 +132,59 @@ describe("RankingsPage", () => {
 
     expect(homeButton).toBeTruthy();
     expect(visibleText(table)).toContain("Eos");
-    expect(visibleText(table)).toContain("[2:44:9]");
+    expect(visibleText(table)).not.toContain("[2:44:9]");
+  });
+
+  test("renders multiple ranked planets as compact coordinate-hover icons", () => {
+    const selected: Coordinates[] = [];
+    const table = RankingsTable({
+      entries: [rankingEntry({
+        homePlanet: {
+          archetype: "temperate-ocean",
+          coordinates: {
+            galaxy: 2,
+            system: 44,
+            position: 9,
+          },
+          name: "Eos",
+          planetId: "7",
+        },
+        planets: [
+          {
+            archetype: "temperate-ocean",
+            coordinates: {
+              galaxy: 2,
+              system: 44,
+              position: 9,
+            },
+            name: "Eos",
+            planetId: "7",
+          },
+          {
+            archetype: "frozen-ice",
+            coordinates: {
+              galaxy: 6,
+              system: 490,
+              position: 11,
+            },
+            name: "Aster",
+            planetId: "8",
+          },
+        ],
+      })],
+      loading: false,
+      onSelectPlanet: (coords) => selected.push(coords),
+    });
+    const first = buttonWithTitle(table, "Open Eos [2:44:9]");
+    const second = buttonWithTitle(table, "Open Aster [6:490:11]");
+
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    expect(visibleText(table)).toContain("Eos");
+    expect(visibleText(table)).not.toContain("[2:44:9]");
+    expect(visibleText(table)).not.toContain("[6:490:11]");
+    second?.props?.onClick?.();
+    expect(selected).toEqual([{ galaxy: 6, system: 490, position: 11 }]);
   });
 
   test("tints score-protected ranking rows", () => {
@@ -304,7 +355,7 @@ describe("RankingsPage", () => {
 });
 
 function rankingEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
-  return {
+  const entry: HighscoreEntry = {
     alliance: null,
     homePlanet: {
       archetype: "temperate-ocean",
@@ -318,6 +369,7 @@ function rankingEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
     },
     homePlanetId: "7",
     planetCount: 3,
+    planets: [],
     rank: 1,
     score: {
       defense: "100",
@@ -332,6 +384,10 @@ function rankingEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
     wallet: "0x1111111111111111111111111111111111111111",
     ...overrides,
   };
+  if (!overrides.planets) {
+    entry.planets = entry.homePlanet ? [entry.homePlanet] : [];
+  }
+  return entry;
 }
 
 function visibleText(node: ComponentChildren): string {

@@ -3274,6 +3274,16 @@ describe("Veydrift backend", () => {
         },
         archetype: "temperate-ocean"
       },
+      planets: [{
+        planetId: planet.planetId,
+        name: "Eos",
+        coordinates: {
+          galaxy: 2,
+          system: 44,
+          position: 9
+        },
+        archetype: "temperate-ocean"
+      }],
       planetCount: 1,
       score: {
         total: "15",
@@ -3357,6 +3367,70 @@ describe("Veydrift backend", () => {
           page: 3
         }
       }
+    });
+  });
+
+  test("adds all ranked commander planets to highscore rows", async () => {
+    const secondPlanet = {
+      ...planet,
+      galaxy: 3,
+      name: "Aster",
+      planetId: "8",
+      position: 11,
+      system: 12,
+      temperature: -80,
+      transactionHash: "0xplanet8"
+    };
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => [
+      {
+        ...secondPlanet,
+        eventName: "PlanetStarted",
+        blockNumber: "124"
+      },
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        blockNumber: "123",
+        transactionHash: "0xplanet7"
+      }
+    ];
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total[0]).toMatchObject({
+      planetCount: 2,
+      homePlanet: {
+        planetId: planet.planetId
+      },
+      planets: [
+        {
+          planetId: planet.planetId,
+          coordinates: {
+            galaxy: 2,
+            system: 44,
+            position: 9
+          }
+        },
+        {
+          planetId: "8",
+          name: "Aster",
+          coordinates: {
+            galaxy: 3,
+            system: 12,
+            position: 11
+          }
+        }
+      ]
     });
   });
 

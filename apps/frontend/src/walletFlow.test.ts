@@ -1881,7 +1881,7 @@ describe("walletFlow", () => {
     };
 
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      expect(String(input)).toBe(`https://api.example.test/highscores?limit=50&currentWallet=${account}&page=2&pageSize=50`);
+      expect(String(input)).toBe(`https://api.example.test/highscores?limit=50&currentWallet=${account}&includeAttackProtection=true&page=2&pageSize=50`);
       expect(init).toEqual({
         headers: { accept: "application/json" },
       });

@@ -26,7 +26,7 @@ const categories: Array<{ key: HighscoreCategory; label: string }> = [
   { key: "defense", label: "Defense" },
 ];
 
-export const rankingsColumnLabels = ["Rank", "Commander", "Planets", "Score", "Total"] as const;
+export const rankingsColumnLabels = ["Rank", "Commander", "Score"] as const;
 export const rankingsPageSize = 50;
 
 export function primaryRankingEntries(data: HighscoreResponse | null): HighscoreEntry[] {
@@ -250,9 +250,9 @@ export function RankingsTable({
 }) {
   return (
     <div className="overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
-      <div className="grid grid-cols-[52px_minmax(0,1fr)_72px_88px] border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px_120px]">
+      <div className="grid grid-cols-[52px_minmax(0,1fr)_88px] border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_minmax(0,1fr)_120px]">
         {rankingsColumnLabels.map((label) => (
-          <span className={`${label === "Total" ? "hidden sm:block " : ""}${label === "Rank" || label === "Commander" ? "" : "text-right"}`} key={label}>
+          <span className={`${label === "Rank" || label === "Commander" ? "" : "text-right"}`} key={label}>
             {label}
           </span>
         ))}
@@ -299,7 +299,7 @@ function RankingRow({
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
 }) {
   const homePlanet = entry.homePlanet ?? null;
-  const canOpenHomePlanet = Boolean(homePlanet && onSelectPlanet);
+  const planets = rankingPlanets(entry);
   const canOpenPlayer = Boolean(onSelectPlayer);
   const commanderLabel = entry.displayName?.trim() || shortAddress(entry.wallet);
   const normalizedWallet = entry.wallet.toLowerCase();
@@ -321,11 +321,6 @@ function RankingRow({
         ? "border-red-300/20 bg-red-300/[0.06] shadow-[inset_3px_0_0_rgba(248,113,113,0.5)]"
         : "border-white/5";
 
-  const openHomePlanet = () => {
-    if (!homePlanet || !onSelectPlanet) return;
-    onSelectPlanet(homePlanet.coordinates);
-  };
-
   const openAlliance = () => {
     if (!alliance || !onSelectAlliance) return;
     onSelectAlliance(alliance.allianceId);
@@ -338,29 +333,12 @@ function RankingRow({
   return (
     <div
       aria-current={isCurrentPlayer ? "true" : undefined}
-      className={`grid grid-cols-[52px_minmax(0,1fr)_72px_88px] items-center border-b px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_100px_120px_120px] ${rowTone}`}
+      className={`grid grid-cols-[52px_minmax(0,1fr)_88px] items-center border-b px-3 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_120px] ${rowTone}`}
       data-ranking-wallet={normalizedWallet}
     >
       <span className={`font-mono ${isCurrentPlayer ? "text-cyan-100" : isSameAlliance ? "text-emerald-100" : "text-slate-400"}`}>#{entry.rank}</span>
-      <span className="flex min-w-0 items-center gap-2">
-        {homePlanet ? (
-          <button
-            aria-label={`Open home planet at ${homePlanetCoordinatesLabel(homePlanet)}`}
-            className="relative h-9 w-9 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 transition hover:border-cyan-200/50 focus:outline-none focus:ring-2 focus:ring-cyan-300/40"
-            onClick={openHomePlanet}
-            title={`Open ${homePlanetHoverLabel(homePlanet)}`}
-            type="button"
-          >
-            <OptimizedImage
-              alt=""
-              className="h-full w-full object-cover"
-              loading="lazy"
-              sizes="icon"
-              src={planetImageForType(homePlanet.archetype)}
-            />
-          </button>
-        ) : null}
-        <span className="min-w-0 text-left">
+      <span className="flex min-w-0 flex-col gap-2 text-left">
+        <span className="flex min-w-0 items-center gap-2">
           <span className="flex min-w-0 items-center gap-1.5">
             {alliance ? (
               <button
@@ -398,22 +376,60 @@ function RankingRow({
               </span>
             ) : null}
           </span>
-          {homePlanet ? (
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500" title={homePlanetHoverLabel(homePlanet)}>
-              <span className="truncate">{homePlanetLabel(homePlanet)}</span>
-              {homePlanet.name?.trim() ? (
-                <span className="shrink-0 font-mono text-slate-400" aria-label={`Home planet coordinates ${homePlanetCoordinatesLabel(homePlanet)}`}>
-                  {homePlanetCoordinatesLabel(homePlanet)}
-                </span>
-              ) : null}
-            </span>
-          ) : null}
         </span>
+        {planets.length > 0 ? (
+          <span className="flex min-w-0 items-center gap-2">
+            {homePlanet ? (
+              <span className="min-w-0 truncate text-xs text-slate-500" title={homePlanet.name?.trim() || homePlanetCoordinatesLabel(homePlanet)}>
+                {homePlanetLabel(homePlanet)}
+              </span>
+            ) : null}
+            <span className="flex min-w-0 flex-wrap items-center gap-1.5" aria-label={`Ranked planets: ${planets.map(homePlanetCoordinatesLabel).join(", ")}`}>
+              {planets.map((planet) => (
+                <RankingPlanetIcon
+                  key={planet.planetId}
+                  onSelectPlanet={onSelectPlanet}
+                  planet={planet}
+                />
+              ))}
+            </span>
+          </span>
+        ) : null}
       </span>
-      <span className="text-right font-mono text-slate-300">{entry.planetCount}</span>
       <span className="text-right font-mono font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
-      <span className="hidden text-right font-mono text-slate-400 sm:block">{formatScore(entry.score.total)}</span>
     </div>
+  );
+}
+
+function RankingPlanetIcon({
+  onSelectPlanet,
+  planet,
+}: {
+  onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  planet: HighscorePlanet;
+}) {
+  const openPlanet = () => {
+    if (!onSelectPlanet) return;
+    onSelectPlanet(planet.coordinates);
+  };
+
+  return (
+    <button
+      aria-label={`Open planet at ${homePlanetCoordinatesLabel(planet)}`}
+      aria-disabled={onSelectPlanet ? undefined : "true"}
+      className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 transition hover:border-cyan-200/50 focus:outline-none focus:ring-2 focus:ring-cyan-300/40"
+      onClick={openPlanet}
+      title={`Open ${homePlanetHoverLabel(planet)}`}
+      type="button"
+    >
+      <OptimizedImage
+        alt=""
+        className="h-full w-full object-cover"
+        loading="lazy"
+        sizes="icon"
+        src={planetImageForType(planet.archetype)}
+      />
+    </button>
   );
 }
 
@@ -435,6 +451,10 @@ function formatScore(value: string): string {
 
 function homePlanetLabel(planet: HighscorePlanet): string {
   return planet.name?.trim() || homePlanetCoordinatesLabel(planet);
+}
+
+function rankingPlanets(entry: HighscoreEntry): HighscorePlanet[] {
+  return entry.planets?.length ? entry.planets : entry.homePlanet ? [entry.homePlanet] : [];
 }
 
 function homePlanetCoordinatesLabel(planet: HighscorePlanet): string {
