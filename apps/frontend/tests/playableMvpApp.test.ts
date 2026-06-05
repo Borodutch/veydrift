@@ -53,7 +53,7 @@ describe("Playable MVP app display helpers", () => {
   const buildingFinishLiveStateRequiredLabel =
     "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
   const buildingCompletionWalletPrompt =
-    "Building completion: wallet preflight passed. Confirm the game-state update in your wallet; token balance changes are not expected.";
+    "Building completion: confirm the game-state update in your wallet; token balance changes are not expected.";
 
   test("does not duplicate pending infrastructure action messages", () => {
     expect(infrastructureActionNoticeFor({
@@ -240,7 +240,7 @@ describe("Playable MVP app display helpers", () => {
       .toBe(buildingFinishStateReadFailureLabel);
   });
 
-  test("keeps actionable building finish preflight errors specific", () => {
+  test("keeps actionable building finish errors specific", () => {
     expect(buildingFinishActionErrorLabel(
       new Error("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry."),
     )).toBe("No active building upgrade is waiting to be finished. Refresh infrastructure state and retry.");
