@@ -330,6 +330,7 @@ function BuildingDetailPanel({
   const status = buildingUpgradeStatus(state, building.key, {
     actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
     chainCost,
+    now,
     productionRates,
     spendableResources,
   });
@@ -458,13 +459,15 @@ function BuildingDetailPanel({
       {finishAction.visible && (
         <button
           aria-label={finishAction.reason ?? "Finish building upgrade"}
-          className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          className="mt-3 flex h-10 w-full min-w-0 items-center justify-center overflow-hidden rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
           disabled={finishAction.disabled}
           onClick={finishAction.onFinish}
           title={finishAction.reason ?? "Finish building upgrade"}
           type="button"
         >
-          {finishAction.label}
+          <span className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+            {finishAction.label}
+          </span>
         </button>
       )}
 
@@ -545,7 +548,7 @@ export function infrastructureFinishAction({
 
   return {
     disabled: Boolean(reason),
-    label: reason ?? infrastructureFinishButtonLabel(undefined, binary),
+    label: infrastructureFinishButtonLabel(undefined, binary),
     onFinish: visible && !reason ? onFinishBuilding : undefined,
     reason,
     visible,

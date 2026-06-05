@@ -93,6 +93,7 @@ export function buildingUpgradeStatus(
   options: {
     actionUnavailableReason?: string | undefined;
     chainCost?: Resources | undefined;
+    now?: number | undefined;
     productionRates?: Resources | undefined;
     spendableResources?: Resources | undefined;
   } = {},
@@ -126,12 +127,15 @@ export function buildingUpgradeStatus(
 
   if (state.queue?.kind === "building") {
     const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.key, state.queue.label, state.queue.targetLevel);
+    const queueReady = state.queue.readyAt <= (options.now ?? Date.now());
 
     return {
       cost,
       disabled: true,
       durationSeconds,
-      reason: state.queue.key === key
+      reason: queueReady
+        ? `${queuedBuildingLabel} is ready to finish`
+        : state.queue.key === key
         ? `${queuedBuildingLabel} upgrade in progress`
         : `Another building is currently upgrading: ${queuedBuildingLabel}`,
       targetLevel,
