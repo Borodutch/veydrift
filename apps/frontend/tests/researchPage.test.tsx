@@ -10,6 +10,7 @@ import {
   researchRefreshErrorLabel,
   researchActionStatus,
   researchCompletionButtonState,
+  researchRefreshButtonState,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
 import { RequirementFlairs } from "../src/components/RequirementFlairs";
@@ -48,6 +49,8 @@ describe("Research page load-error display", () => {
       researchState: researchState(),
       useLocalStateFallback: false,
     })).toBe(false);
+    expect(researchRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
+    expect(researchRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
   });
 
   test("labels refresh errors as stale-data notices when research state remains loaded", () => {

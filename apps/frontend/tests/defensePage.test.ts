@@ -1,12 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import { formatProductionPrice, selectedProductionItem } from "../src/components/ProductionCatalog";
-import { defenseProductionItems, getDefenseRequirementStates, getQueueBlocker } from "../src/components/DefensePage";
+import {
+  defenseProductionItems,
+  defenseRefreshButtonState,
+  getDefenseRequirementStates,
+  getQueueBlocker,
+  shouldShowDefenseInitialLoader,
+} from "../src/components/DefensePage";
 import { defenseCatalog } from "../src/playableMvp";
 import type { ChainDefenseState } from "../src/walletFlow";
 
 describe("Defense page display helpers", () => {
   test("formats defense prices like building cost rows", () => {
     expect(formatProductionPrice({ metal: 2_000, crystal: 6_000, deuterium: 0 })).toBe("Metal 2,000, Crystal 6,000");
+  });
+
+  test("keeps loaded defenses visible during background refreshes", () => {
+    const loadedState = defenseState();
+
+    expect(shouldShowDefenseInitialLoader({ defenseState: null, loading: true })).toBe(true);
+    expect(shouldShowDefenseInitialLoader({ defenseState: loadedState, loading: true })).toBe(false);
+    expect(defenseRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
+    expect(defenseRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
   });
 
   test("allows additions to the matching active defense queue", () => {
