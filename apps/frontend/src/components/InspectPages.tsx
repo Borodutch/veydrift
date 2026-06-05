@@ -12,14 +12,16 @@ import {
   type WalletPlanetsResponse,
 } from "../walletFlow";
 import {
+  AllianceMemberActions,
+  AllianceSummary,
   allianceRosterPageSize,
   allianceDisplayName,
   allianceExitActionState,
-  AllianceExitActionPanel,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
   buildAllianceRoster,
   findAllianceEntry,
+  memberCountLabel,
   rosterPageCount,
   rosterPageRows,
 } from "./AlliancePage";
@@ -190,6 +192,7 @@ export function AllianceInspectPage({
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
 }) {
   const [inviteAddress, setInviteAddress] = useState("");
+  const [inviteFormOpen, setInviteFormOpen] = useState(false);
   const currentAllianceId = allianceState?.membership.allianceId ?? "0";
   const isCurrentAlliance = currentAllianceId === allianceId && currentAllianceId !== "0";
   const profile = allianceState?.profile;
@@ -218,7 +221,6 @@ export function AllianceInspectPage({
 
   return (
     <InspectShell
-      eyebrow="Alliance Inspect"
       title={alliance ? allianceDisplayName(alliance) : `Alliance #${allianceId}`}
       subtitle={alliance?.description || "Public alliance details"}
       onBack={onBack}
@@ -231,88 +233,75 @@ export function AllianceInspectPage({
       {!allianceState ? <VeydriftLoader label="Loading alliance" /> : null}
       {allianceState && !alliance ? <Notice tone="error">Alliance details are not indexed for this id yet.</Notice> : null}
       {alliance ? (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <section className="grid gap-4">
-            <div className="grid gap-2 sm:grid-cols-3">
-              <MiniStat label="Tag" value={alliance.tag} />
-              <MiniStat label="Members" value={String(alliance.memberCount)} />
-              <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
-            </div>
+        <div className="grid gap-4">
+          <Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>
+            <AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />
+          </Panel>
 
-            {isCurrentAlliance ? (
-              <Panel title="Roster">
-                <RosterGroup title="Officers" members={roster.officers} isOwner={isOwner} disabled={busy} viewer={allianceState?.wallet} onKick={onKick} onOpenPlayer={onOpenPlayer} onSetRole={onSetRole} />
-                <RosterGroup title="Members" members={roster.members} isOwner={isOwner} disabled={busy} viewer={allianceState?.wallet} onKick={onKick} onOpenPlayer={onOpenPlayer} onSetRole={onSetRole} />
-              </Panel>
-            ) : (
-              <Panel title="Public Roster">
-                <p className="text-sm text-slate-400">Full member roster is only available for your current alliance. Public directory data exposes owner and member count.</p>
-                <button className="mt-3 rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10" onClick={() => onOpenPlayer(alliance.owner)} type="button">
-                  Owner <span className="font-mono text-cyan-100">{alliance.ownerDisplayName?.trim() || shortAddress(alliance.owner)}</span>
-                </button>
-              </Panel>
-            )}
-          </section>
-
-          <aside className="grid content-start gap-4">
-            <Panel title="Description">
-              <p className="text-sm leading-6 text-slate-300">{alliance.description || "No public alliance description."}</p>
-            </Panel>
-            {canManageMembers ? (
-              <Panel title="Invite">
-                <div className="grid gap-2">
-                  <input
-                    className="w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
-                    onInput={(event) => setInviteAddress(event.currentTarget.value)}
-                    placeholder="0x..."
-                    value={inviteAddress}
-                  />
-                  <button
-                    className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={busy || !inviteAddress.trim()}
-                    onClick={() => onInvite(inviteAddress.trim())}
-                    type="button"
-                  >
-                    Invite
-                  </button>
-                </div>
-              </Panel>
-            ) : null}
-            {isCurrentAlliance ? (
-              <AllianceExitActionPanel
+          {isCurrentAlliance ? (
+            <Panel title="Members">
+              <RosterGroup
+                canManageMembers={canManageMembers}
+                disabled={busy}
+                isOwner={isOwner}
+                members={roster.all}
+                onKick={onKick}
+                onOpenPlayer={onOpenPlayer}
+                onSetRole={onSetRole}
+                viewer={allianceState?.wallet}
+              />
+              <AllianceMemberActions
+                canManageMembers={canManageMembers}
                 disabled={busy}
                 exitAction={exitAction}
-                onSubmit={onLeaveAlliance}
+                inviteAddress={inviteAddress}
+                inviteFormOpen={inviteFormOpen}
+                onInvite={onInvite}
+                onLeaveAlliance={onLeaveAlliance}
+                onSetInviteAddress={setInviteAddress}
+                onSetInviteFormOpen={setInviteFormOpen}
               />
-            ) : null}
-            {canManageMembers ? (
-              <Panel title="Applications">
-                {(allianceState?.allianceJoinRequests ?? []).length ? (
-                  <div className="grid gap-2">
-                    {(allianceState?.allianceJoinRequests ?? []).map((request) => {
-                      const approval = allianceJoinRequestApprovalState(allianceState, request);
-                      const dismissal = allianceJoinRequestDismissalState(allianceState, request);
-                      return (
-                        <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
-                          <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
-                            {request.requesterDisplayName?.trim() || shortAddress(request.requester)}
-                          </button>
-                          <p className="mt-1 text-xs text-slate-500">Requested {formatUserTimestamp(request.requestedAt)}</p>
-                          {approval.reason ? <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{approval.reason}</p> : null}
-                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                            <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50" disabled={busy || !approval.canApprove} onClick={() => onApproveJoinRequest(request.requester)} type="button">Approve</button>
-                            <button className="rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:opacity-50" disabled={busy || !dismissal.canDismiss} onClick={() => onDismissJoinRequest(request.requester)} type="button">Dismiss</button>
-                          </div>
+            </Panel>
+          ) : (
+            <Panel title="Members">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <MiniStat label="Members" value={memberCountLabel(alliance.memberCount)} />
+                <MiniStat label="Total Score" value={formatScore(alliance.totalMemberScore)} />
+                <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
+              </div>
+              <p className="mt-3 text-sm text-slate-400">
+                Public directory data exposes the owner, member count, total score, and profile metadata for this alliance.
+              </p>
+            </Panel>
+          )}
+
+          {canManageMembers ? (
+            <Panel title="Join Applications">
+              {(allianceState?.allianceJoinRequests ?? []).length ? (
+                <div className="grid gap-2">
+                  {(allianceState?.allianceJoinRequests ?? []).map((request) => {
+                    const approval = allianceJoinRequestApprovalState(allianceState, request);
+                    const dismissal = allianceJoinRequestDismissalState(allianceState, request);
+                    return (
+                      <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
+                        <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
+                          {request.requesterDisplayName?.trim() || shortAddress(request.requester)}
+                        </button>
+                        <p className="mt-1 text-xs text-slate-500">Requested {formatUserTimestamp(request.requestedAt)}</p>
+                        {approval.reason ? <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{approval.reason}</p> : null}
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50" disabled={busy || !approval.canApprove} onClick={() => onApproveJoinRequest(request.requester)} type="button">Approve</button>
+                          <button className="rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:opacity-50" disabled={busy || !dismissal.canDismiss} onClick={() => onDismissJoinRequest(request.requester)} type="button">Dismiss</button>
                         </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-400">No pending applications.</p>
-                )}
-              </Panel>
-            ) : null}
-          </aside>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">No pending applications.</p>
+              )}
+            </Panel>
+          ) : null}
         </div>
       ) : null}
     </InspectShell>
@@ -322,7 +311,7 @@ export function AllianceInspectPage({
 function InspectShell({ action, children, eyebrow, onBack, subtitle, title }: {
   action?: ComponentChildren;
   children: ComponentChildren;
-  eyebrow: string;
+  eyebrow?: string | undefined;
   onBack: () => void;
   subtitle: string;
   title: string;
@@ -335,7 +324,7 @@ function InspectShell({ action, children, eyebrow, onBack, subtitle, title }: {
             <button className="mb-3 inline-flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-cyan-100" onClick={onBack} type="button">
               <ArrowLeft size={14} /> Back
             </button>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-200/70">{eyebrow}</p>
+            {eyebrow ? <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-200/70">{eyebrow}</p> : null}
             <h1 className="mt-1 truncate text-2xl font-semibold text-white">{title}</h1>
             <p className="mt-1 break-all text-sm text-slate-400">{subtitle}</p>
           </div>
@@ -356,14 +345,14 @@ function Panel({ children, title }: { children: ComponentChildren; title: string
   );
 }
 
-function RosterGroup({ disabled, isOwner, members, onKick, onOpenPlayer, onSetRole, title, viewer }: {
+function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onOpenPlayer, onSetRole, viewer }: {
+  canManageMembers: boolean;
   disabled: boolean;
   isOwner: boolean;
   members: RosterMember[];
   onKick: (playerAddress: string) => void;
   onOpenPlayer: (wallet: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
-  title: string;
   viewer?: string | undefined;
 }) {
   const [page, setPage] = useState(1);
@@ -378,30 +367,33 @@ function RosterGroup({ disabled, isOwner, members, onKick, onOpenPlayer, onSetRo
   return (
     <div className="mb-3 last:mb-0">
       <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-        <span>{title}</span>
+        <span>Members</span>
         <span>{members.length}</span>
       </div>
       {members.length ? (
         <div className="grid gap-1.5">
           {visibleMembers.map((member) => {
             const isViewer = viewer?.toLowerCase() === member.address.toLowerCase();
+            const canKick = canManageMembers && member.role === "member";
             const ownerCanChangeRole = isOwner && member.role !== "owner";
+            const rowTone = memberRowTone(member, isViewer);
             return (
-              <div className="grid gap-2 rounded border border-white/10 bg-black/20 px-2 py-2 md:grid-cols-[minmax(0,1fr)_auto]" key={member.address}>
+              <div className={`grid gap-2 rounded border px-2 py-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${rowTone}`} key={member.address}>
                 <button className="min-w-0 text-left" onClick={() => onOpenPlayer(member.address)} type="button">
                   <span className="flex min-w-0 flex-wrap items-center gap-2">
                     {member.role === "owner" ? <Crown size={14} className="text-amber-200" /> : <UserRound size={14} className="text-slate-500" />}
                     <span className="font-mono text-sm text-white">{member.displayName?.trim() || shortAddress(member.address)}</span>
                     <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-300">{member.role}</span>
-                    {isViewer ? <span className="text-xs text-cyan-100">You</span> : null}
                   </span>
-                  <span className="mt-1 block text-xs text-slate-500">Joined {formatUserTimestamp(member.joinedAt)}</span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Score {formatScore(member.totalScore)} / Joined {formatUserTimestamp(member.joinedAt)}
+                  </span>
                 </button>
-                {ownerCanChangeRole || (member.role !== "owner" && !isViewer) ? (
+                {canManageMembers ? (
                   <div className="flex flex-wrap gap-2 md:justify-end">
                     {ownerCanChangeRole && member.role === "member" ? <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "officer")} type="button">Make Officer</button> : null}
                     {ownerCanChangeRole && member.role === "officer" ? <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "member")} type="button">Make Member</button> : null}
-                    {member.role !== "owner" && !isViewer ? <button className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50" disabled={disabled} onClick={() => onKick(member.address)} type="button">Remove</button> : null}
+                    {(canKick || (isOwner && member.role === "officer")) && !isViewer ? <button className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50" disabled={disabled} onClick={() => onKick(member.address)} type="button">Remove</button> : null}
                   </div>
                 ) : null}
               </div>
@@ -421,7 +413,7 @@ function RosterGroup({ disabled, isOwner, members, onKick, onOpenPlayer, onSetRo
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-slate-400">No {title.toLowerCase()} found.</p>
+        <p className="text-sm text-slate-400">No members found.</p>
       )}
     </div>
   );
@@ -434,6 +426,13 @@ function MiniStat({ label, value }: { label: string; value: string }) {
       <p className="mt-1 truncate text-sm font-semibold text-white">{value}</p>
     </div>
   );
+}
+
+function memberRowTone(member: RosterMember, isViewer: boolean): string {
+  if (isViewer) return "border-emerald-300/35 bg-emerald-300/[0.10]";
+  if (member.role === "owner") return "border-amber-300/35 bg-amber-300/[0.10]";
+  if (member.role === "officer") return "border-emerald-300/25 bg-emerald-300/[0.07]";
+  return "border-white/10 bg-white/[0.03]";
 }
 
 function Notice({ children, tone = "info" }: { children: ComponentChildren; tone?: "error" | "info" }) {

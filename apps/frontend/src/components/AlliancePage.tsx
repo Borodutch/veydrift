@@ -113,7 +113,7 @@ export function AlliancePage({
   );
   const directory = allianceState?.directory ?? [];
   const selectedAlliance = findAllianceEntry(directory, activeAllianceId, currentAlliance);
-  const selectedDirectoryAlliance = selectedAlliance?.allianceId === currentAllianceId ? null : selectedAlliance;
+  const inspectedAlliance = selectedAlliance?.allianceId === currentAllianceId ? null : selectedAlliance;
   const initialLoading = shouldShowAllianceInitialLoader({ allianceState, loading });
   const backgroundRefresh = shouldShowAllianceRefreshIndicator({ allianceState, loading });
   const openPlayer = onOpenPlayer ?? setSelectedPlayer;
@@ -193,7 +193,7 @@ export function AlliancePage({
       {initialLoading ? (
         <VeydriftLoader label="Loading alliance data" />
       ) : (
-        <div className={`grid min-w-0 gap-4 ${selectedDirectoryAlliance || (!onOpenPlayer && playerProfile.status !== "idle") ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
+        <div className={`grid min-w-0 gap-4 ${!onOpenPlayer && playerProfile.status !== "idle" ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
           <div className="grid gap-4">
             <MyAllianceSection
               canManageMembers={canManageMembers}
@@ -231,6 +231,13 @@ export function AlliancePage({
               onUpdateProfile={onUpdateProfile}
             />
 
+            {inspectedAlliance && !onOpenAlliance ? (
+              <PublicAllianceSection
+                alliance={inspectedAlliance}
+                onOpenPlayer={openPlayer}
+              />
+            ) : null}
+
             <PendingInvites
               allianceState={allianceState}
               disabled={disabled}
@@ -263,20 +270,12 @@ export function AlliancePage({
             />
           </div>
 
-          {selectedDirectoryAlliance || (!onOpenPlayer && playerProfile.status !== "idle") ? (
+          {!onOpenPlayer && playerProfile.status !== "idle" ? (
             <aside className="grid min-w-0 gap-4 content-start">
-              {selectedDirectoryAlliance ? (
-                <AllianceDetailsPanel
-                  alliance={selectedDirectoryAlliance}
-                  onOpenPlayer={openPlayer}
-                />
-              ) : null}
-              {!onOpenPlayer ? (
-                <PlayerProfilePanel
-                  profile={playerProfile}
-                  onClose={() => setSelectedPlayer(null)}
-                />
-              ) : null}
+              <PlayerProfilePanel
+                profile={playerProfile}
+                onClose={() => setSelectedPlayer(null)}
+              />
             </aside>
           ) : null}
         </div>
@@ -519,7 +518,7 @@ function MyAllianceSection({
   }
 
   return (
-    <Panel title="My Alliance">
+    <Panel title="My Alliance" action={<RolePill role={role} />}>
       <div className="grid gap-4">
         <div className="grid gap-3">
           <div className="min-w-0">
@@ -569,7 +568,6 @@ function MyAllianceSection({
           inviteAddress={inviteAddress}
           inviteFormOpen={inviteFormOpen}
           roster={roster}
-          role={role}
           viewer={viewer}
           exitAction={exitAction}
           onInvite={onInvite}
@@ -607,9 +605,7 @@ function DirectorySection({
   onSelectAlliance: (allianceId: string) => void;
 }) {
   const pendingIds = new Set(pendingJoinRequests.map((request) => request.allianceId));
-  const visibleAlliances = sortedAllianceDirectory(currentAllianceId
-    ? alliances.filter((alliance) => alliance.allianceId !== currentAllianceId)
-    : alliances);
+  const visibleAlliances = sortedAllianceDirectory(alliances);
   const [page, setPage] = useState(1);
   const pageCount = directoryPageCount(visibleAlliances.length);
   const clampedPage = Math.min(page, pageCount);
@@ -620,7 +616,7 @@ function DirectorySection({
   }, [alliances, currentAllianceId]);
 
   return (
-    <Panel title="Other Alliances">
+    <Panel title="Alliances">
       {visibleAlliances.length ? (
         <div className="grid gap-2">
           {pageRows.map((alliance) => {
@@ -647,7 +643,7 @@ function DirectorySection({
                   </div>
                   <p className="mt-2 line-clamp-2 text-sm text-slate-400">{alliance.description || "No public description."}</p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                    <span>{alliance.memberCount} members</span>
+                    <span>{memberCountLabel(alliance.memberCount)}</span>
                     <span>Total score {formatScore(alliance.totalMemberScore)}</span>
                     <span>Owner {playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
                     <span>Created {formatUserTimestamp(alliance.createdAt)}</span>
@@ -686,51 +682,60 @@ function DirectorySection({
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-slate-400">No other public alliances found yet.</p>
+        <p className="text-sm text-slate-400">No public alliances found yet.</p>
       )}
     </Panel>
   );
 }
 
-function AllianceDetailsPanel({
+function PublicAllianceSection({
   alliance,
   onOpenPlayer,
 }: {
-  alliance: AllianceEntry | null;
+  alliance: AllianceEntry;
   onOpenPlayer: (playerAddress: string) => void;
 }) {
   return (
-    <Panel title="Alliance Details" action={<SectionIcon icon={Shield} />}>
-      {alliance ? (
-        <div className="grid gap-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold text-cyan-100">
-                {alliance.tag}
-              </span>
-              <h3 className="text-sm font-semibold text-white">{alliance.name}</h3>
-            </div>
-            <p className="mt-2 text-sm text-slate-400">{alliance.description || "No public alliance description."}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <MiniStat label="Members" value={String(alliance.memberCount)} />
-            <MiniStat label="Total Score" value={formatScore(alliance.totalMemberScore)} />
-          </div>
-          <button
-            className="rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
-            onClick={() => onOpenPlayer(alliance.owner)}
-            type="button"
-          >
-            Owner <span className="font-mono text-cyan-100">{playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
-          </button>
-          <p className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-400">
-            Full roster is available after joining or from a current-alliance view.
-          </p>
-        </div>
-      ) : (
-        <p className="text-sm text-slate-400">Select an alliance from the directory to inspect its public profile.</p>
-      )}
+    <Panel title="Alliance" action={<SectionIcon icon={Shield} />}>
+      <AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />
     </Panel>
+  );
+}
+
+export function AllianceSummary({
+  alliance,
+  onOpenPlayer,
+}: {
+  alliance: Pick<AllianceEntry, "allianceId" | "createdAt" | "description" | "memberCount" | "name" | "owner" | "ownerDisplayName" | "tag" | "totalMemberScore">;
+  onOpenPlayer: (playerAddress: string) => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold text-cyan-100">
+            {alliance.tag}
+          </span>
+          <h3 className="min-w-0 text-base font-semibold text-white">{alliance.name}</h3>
+          <span className="text-xs text-slate-500">#{alliance.allianceId}</span>
+        </div>
+        <p className="mt-2 max-w-3xl text-sm text-slate-400">
+          {alliance.description || "No public alliance description."}
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <MiniStat label="Members" value={memberCountLabel(alliance.memberCount)} />
+        <MiniStat label="Total Score" value={formatScore(alliance.totalMemberScore)} />
+        <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
+      </div>
+      <button
+        className="rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
+        onClick={() => onOpenPlayer(alliance.owner)}
+        type="button"
+      >
+        Owner <span className="font-mono text-cyan-100">{playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
+      </button>
+    </div>
   );
 }
 
@@ -907,7 +912,6 @@ function RosterSection({
   inviteFormOpen,
   isOwner,
   roster,
-  role,
   viewer,
   onInvite,
   onKick,
@@ -924,7 +928,6 @@ function RosterSection({
   inviteFormOpen: boolean;
   isOwner: boolean;
   roster: RosterGroups;
-  role: AllianceRole;
   viewer?: string | undefined;
   onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
@@ -943,7 +946,6 @@ function RosterSection({
         inviteAddress={inviteAddress}
         inviteFormOpen={inviteFormOpen}
         isOwner={isOwner}
-        role={role}
         rows={roster.all}
         title="Members"
         viewer={viewer}
@@ -966,7 +968,6 @@ function RosterList({
   inviteAddress,
   inviteFormOpen,
   isOwner,
-  role,
   rows,
   title,
   viewer,
@@ -984,7 +985,6 @@ function RosterList({
   inviteAddress: string;
   inviteFormOpen: boolean;
   isOwner: boolean;
-  role: AllianceRole;
   rows: RosterMember[];
   title: string;
   viewer?: string | undefined;
@@ -1042,7 +1042,6 @@ function RosterList({
             exitAction={exitAction}
             inviteAddress={inviteAddress}
             inviteFormOpen={inviteFormOpen}
-            role={role}
             onInvite={onInvite}
             onLeaveAlliance={onLeaveAlliance}
             onSetInviteAddress={onSetInviteAddress}
@@ -1058,7 +1057,6 @@ function RosterList({
             exitAction={exitAction}
             inviteAddress={inviteAddress}
             inviteFormOpen={inviteFormOpen}
-            role={role}
             onInvite={onInvite}
             onLeaveAlliance={onLeaveAlliance}
             onSetInviteAddress={onSetInviteAddress}
@@ -1070,13 +1068,12 @@ function RosterList({
   );
 }
 
-function AllianceMemberActions({
+export function AllianceMemberActions({
   canManageMembers,
   disabled,
   exitAction,
   inviteAddress,
   inviteFormOpen,
-  role,
   onInvite,
   onLeaveAlliance,
   onSetInviteAddress,
@@ -1087,7 +1084,6 @@ function AllianceMemberActions({
   exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
   inviteAddress: string;
   inviteFormOpen: boolean;
-  role: AllianceRole;
   onInvite: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
   onSetInviteAddress: (value: string) => void;
@@ -1096,7 +1092,6 @@ function AllianceMemberActions({
   return (
     <div className="mt-2 border-t border-white/10 pt-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded border border-white/10 px-2 py-1 text-xs font-semibold capitalize text-slate-300">{roleLabel(role)}</span>
         {canManageMembers ? (
           <button
             className="rounded border border-cyan-300/25 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1387,6 +1382,14 @@ function SectionIcon({ icon: Icon }: { icon: LucideIcon }) {
   );
 }
 
+function RolePill({ role }: { role: AllianceRole }) {
+  return (
+    <span className="rounded border border-white/10 px-2 py-1 text-xs font-semibold capitalize text-slate-300">
+      {roleLabel(role)}
+    </span>
+  );
+}
+
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-white/10 bg-black/20 px-3 py-2">
@@ -1444,6 +1447,10 @@ function Notice({ children, tone = "info" }: { children: ComponentChildren; tone
 
 export function allianceDisplayName(alliance: Pick<DirectoryEntry, "tag" | "name">): string {
   return `${alliance.tag} - ${alliance.name}`;
+}
+
+export function memberCountLabel(count: number): string {
+  return count === 1 ? "1 member" : `${count} members`;
 }
 
 export function buildAllianceRoster(members: RosterMember[], owner?: string | undefined): RosterGroups {

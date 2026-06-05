@@ -9,6 +9,7 @@ import {
   directoryPageCount,
   directoryPageRows,
   hasAllianceMembership,
+  memberCountLabel,
   rosterPageCount,
   rosterPageRows,
   shouldShowAllianceInitialLoader,
@@ -19,6 +20,7 @@ import {
 import type { ChainAllianceState } from "../src/walletFlow";
 
 const alliancePageSource = await Bun.file(new URL("../src/components/AlliancePage.tsx", import.meta.url)).text();
+const inspectPagesSource = await Bun.file(new URL("../src/components/InspectPages.tsx", import.meta.url)).text();
 
 describe("AlliancePage loading display", () => {
   test("uses the shared app shell instead of an extra Alliance page wrapper", () => {
@@ -344,6 +346,25 @@ describe("AlliancePage loading display", () => {
     expect(directoryPageCount(rows.length)).toBe(3);
     expect(directoryPageRows(rows, 1)).toEqual(rows.slice(0, 10));
     expect(directoryPageRows(rows, 3)).toEqual(rows.slice(20, 24));
+  });
+
+  test("uses all-alliance directory copy and keeps inspected alliances out of a separate details panel", () => {
+    expect(alliancePageSource).toContain('<Panel title="Alliances">');
+    expect(alliancePageSource).not.toContain('<Panel title="Other Alliances">');
+    expect(alliancePageSource).not.toContain('filter((alliance) => alliance.allianceId !== currentAllianceId)');
+    expect(alliancePageSource).not.toContain("Alliance Details");
+  });
+
+  test("removes alliance inspect labeling from the dedicated alliance route", () => {
+    expect(inspectPagesSource).not.toContain('eyebrow="Alliance Inspect"');
+    expect(inspectPagesSource).toContain('<Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>');
+    expect(inspectPagesSource).toContain("<AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />");
+  });
+
+  test("pluralizes alliance member counts", () => {
+    expect(memberCountLabel(0)).toBe("0 members");
+    expect(memberCountLabel(1)).toBe("1 member");
+    expect(memberCountLabel(2)).toBe("2 members");
   });
 });
 
