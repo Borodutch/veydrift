@@ -17,7 +17,7 @@ const alliancePageSource = await Bun.file(new URL("../src/components/AlliancePag
 
 describe("AlliancePage loading display", () => {
   test("uses the shared app shell instead of an extra Alliance page wrapper", () => {
-    expect(alliancePageSource).toContain('<section className="grid gap-4">');
+    expect(alliancePageSource).toContain('<section className="grid min-h-0 gap-4">');
     expect(alliancePageSource).not.toContain('className="min-h-0 overflow-auto bg-[#080d16]"');
     expect(alliancePageSource).not.toContain('className="mx-auto grid w-full max-w-7xl gap-4 p-4"');
   });

@@ -159,7 +159,7 @@ export function AlliancePage({
   }, [apiBaseUrl, selectedPlayer]);
 
   return (
-    <section className="grid gap-4">
+    <section className="grid min-h-0 gap-4">
       <header className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-white">Alliance</h1>
