@@ -215,7 +215,7 @@ export function OverviewPage({
   const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
   const scopedBuildingNotice = overviewBuildingActionNoticeFor(buildingActionNotice, buildingNoticeKey);
   const buildingFinishAction = overviewBuildingFinishAction({
-    actionUnavailableReason: scopedBuildingNotice?.label,
+    actionUnavailableReason: scopedBuildingNotice?.tone === "error" ? scopedBuildingNotice.label : undefined,
     actionPending: isBuildingActionPending,
     actionPendingLabel: buildingActionPendingLabel,
     isBuildingReadyToFinish,
@@ -235,7 +235,7 @@ export function OverviewPage({
     buildingNoticeKey,
   );
   const overviewBuildingNoticeToRender = overviewBuildingNoticeForFinishAction(
-    overviewBuildingNotice,
+    overviewBuildingNoticeForReadyFinishAction(overviewBuildingNotice, buildingFinishAction),
     buildingFinishAction,
   );
 
@@ -873,6 +873,14 @@ export function overviewBuildingNoticeForFinishAction(
     label: action.reason,
     tone: action.reasonTone,
   };
+}
+
+export function overviewBuildingNoticeForReadyFinishAction(
+  notice: InfrastructureActionNotice | undefined,
+  action: Pick<ReturnType<typeof overviewBuildingFinishAction>, "reason" | "visible">,
+): InfrastructureActionNotice | undefined {
+  if (action.visible && !action.reason && notice?.tone === "success") return undefined;
+  return notice;
 }
 
 export function overviewDefenseFinishAction({
