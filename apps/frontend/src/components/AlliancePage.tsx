@@ -162,15 +162,22 @@ export function AlliancePage({
     <section className="grid min-h-0 gap-4">
       <header className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold text-white">Alliance</h1>
+          <h1 className="text-2xl font-semibold text-white">Alliance</h1>
           <p className="mt-1 text-sm text-slate-400">
             {isMember && profile ? allianceDisplayName(profile) : "Create an alliance or scan the public directory."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {backgroundRefresh ? <InlineSyncIndicator label="Refreshing alliance" /> : null}
-          <button className="icon-button" onClick={onRefresh} type="button" disabled={loading} title="Refresh alliance state">
-            <RefreshCw size={16} />
+          <button
+            className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={onRefresh}
+            type="button"
+            disabled={loading}
+            title="Refresh alliance state"
+          >
+            <RefreshCw aria-hidden="true" size={14} />
+            Refresh
           </button>
         </div>
       </header>
@@ -184,7 +191,7 @@ export function AlliancePage({
       {initialLoading ? (
         <VeydriftLoader label="Loading alliance data" />
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="grid gap-4">
             <MyAllianceSection
               canManageMembers={canManageMembers}
@@ -235,7 +242,7 @@ export function AlliancePage({
             />
           </div>
 
-          <aside className="grid content-start gap-4">
+          <aside className="grid min-w-0 gap-4 content-start">
             <AllianceDetailsPanel
               alliance={selectedAlliance}
               isCurrentAlliance={Boolean(selectedAlliance && selectedAlliance.allianceId === currentAllianceId)}
@@ -475,8 +482,8 @@ function MyAllianceSection({
   if (!isMember || !currentAlliance) {
     return (
       <Panel title="My Alliance" action={<SectionIcon icon={Users} />}>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
-          <div className="rounded border border-white/10 bg-black/20 p-3">
+        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+          <div className="min-w-0 rounded border border-white/10 bg-black/20 p-3">
             <h3 className="text-sm font-semibold text-white">Create Alliance</h3>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <TextField label="Tag" value={tag} onInput={onSetTag} placeholder="VDFT" />
@@ -494,7 +501,7 @@ function MyAllianceSection({
               Create Alliance
             </button>
           </div>
-          <div className="rounded border border-white/10 bg-white/[0.03] p-3">
+          <div className="min-w-0 break-words rounded border border-white/10 bg-white/[0.03] p-3">
             <h3 className="text-sm font-semibold text-white">Discover Alliances</h3>
             <p className="mt-2 text-sm text-slate-400">
               Browse public alliances below, open details, then request to join from the directory row.
@@ -1224,7 +1231,7 @@ function RoleInfo({ role }: { role: AllianceRole }) {
 
 function Panel({ action, children, title }: { action?: ComponentChildren; children: ComponentChildren; title: string }) {
   return (
-    <section className="rounded border border-white/10 bg-white/[0.03] p-4">
+    <section className="min-w-0 break-words rounded border border-white/10 bg-white/[0.03] p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold text-white">{title}</h2>
         {action}
