@@ -4268,12 +4268,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           apiBaseUrl={apiBaseUrl}
           coords={selectedCoords}
           defenseState={defenseState}
-          homeCoords={activePlanetCoords}
+          homeCoords={homeCoords}
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
-          shipyardState={shipyardState}
           onAction={handleGalaxyAction}
           onBack={() => setPage("galaxy")}
+          shipyardState={shipyardState}
         />
       );
     }

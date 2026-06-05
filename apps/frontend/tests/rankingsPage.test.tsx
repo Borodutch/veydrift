@@ -14,31 +14,29 @@ import type { HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
 describe("RankingsPage", () => {
   test("uses one ranking table with the active category score and total context", () => {
-    expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Planets", "Score", "Total"]);
+    expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Score"]);
   });
 
-  test("renders rank, commander, planet count, canonical score, and public home coordinates", () => {
+  test("renders rank, commander, planet icons, and the active score without duplicate totals", () => {
     const table = RankingsTable({ entries: [rankingEntry()], loading: false });
     const text = visibleText(table);
 
     expect(text).toContain("Rank");
     expect(text).toContain("Commander");
-    expect(text).toContain("Planets");
     expect(text).toContain("Score");
     expect(text).toContain("# 1");
-    expect(text).toContain("[2:44:9]");
-    expect(text).toContain("3");
     expect(text).toContain("1,500");
     expect(text).not.toContain("Planet 7");
-    expect(text).toContain("Total");
+    expect(text).not.toContain("Total");
+    expect(buttonWithTitle(table, "Open [2:44:9]")).toBeTruthy();
   });
 
-  test("renders the selected category score while keeping total visible", () => {
+  test("renders only the selected category score", () => {
     const table = RankingsTable({ active: "fleetCount", entries: [rankingEntry()], loading: false });
     const text = visibleText(table);
 
     expect(text).toContain("42");
-    expect(text).toContain("1,500");
+    expect(text).not.toContain("1,500");
   });
 
   test("highlights the current wallet row with a non-color-only marker", () => {
@@ -133,15 +131,43 @@ describe("RankingsPage", () => {
 
     expect(homeButton).toBeTruthy();
     expect(visibleText(table)).toContain("Eos");
-    expect(visibleText(table)).toContain("[2:44:9]");
+    expect(visibleText(table)).not.toContain("[2:44:9]");
   });
 
-  test("tints score-protected ranking rows", () => {
+  test("renders multiple planet icons with coordinate hover affordances", () => {
+    const selected: Coordinates[] = [];
+    const table = RankingsTable({
+      entries: [rankingEntry({
+        planets: [
+          rankingEntry().homePlanet!,
+          {
+            archetype: "frozen-ice",
+            coordinates: { galaxy: 3, system: 12, position: 4 },
+            name: "Borealis",
+            planetId: "8",
+          },
+        ],
+      })],
+      loading: false,
+      onSelectPlanet: (coords) => selected.push(coords),
+    });
+
+    const homeButton = buttonWithTitle(table, "Open [2:44:9]");
+    const colonyButton = buttonWithTitle(table, "Open Borealis [3:12:4]");
+
+    expect(homeButton).toBeTruthy();
+    expect(colonyButton).toBeTruthy();
+    expect(visibleText(table)).not.toContain("[3:12:4]");
+    colonyButton?.props?.onClick?.();
+    expect(selected).toEqual([{ galaxy: 3, system: 12, position: 4 }]);
+  });
+
+  test("tints unattackable ranking rows", () => {
     const protectedEntry = rankingEntry({
       attackProtection: {
         allowed: false,
-        blockedReason: "score_protection",
-        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+        blockedReason: "same_alliance",
+        blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
       },
     });
     const table = RankingsTable({

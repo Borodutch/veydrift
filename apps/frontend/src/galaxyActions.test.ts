@@ -59,10 +59,52 @@ describe("galaxyActions", () => {
     });
   });
 
-  test("planet detail reuses galaxy mission actions for occupied, owned, and empty targets", () => {
+  test("uses canonical attack protection to block attack actions", () => {
+    const attack = galaxyActionsForSlot({
+      account,
+      attackProtection: {
+        allowed: false,
+        blockedReason: "score_protection",
+        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      },
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    }).find((action) => action.kind === "attack");
+
+    expect(attack).toMatchObject({
+      enabled: false,
+      reason: "Attack blocked: target is protected by newbie or score-ratio protection.",
+    });
+  });
+
+  test("keeps transport and deploy available for owned non-origin planets", () => {
+    const ownColony = planet({
+      ownerId: account,
+      occupiedBy: {
+        owner: account,
+        planetId: "9",
+      },
+    });
+    const actions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      isOrigin: false,
+      planet: ownColony,
+      shipyardState: shipyardState([{ id: 0, count: 1 }]),
+    });
+
+    expect(actions.map((action) => [action.kind, action.enabled])).toEqual([
+      ["transport", true],
+      ["deploy", true],
+    ]);
+  });
+
+  test("planet detail reuses galaxy mission actions for occupied, owned, origin, and empty targets", () => {
     const homeCoords = { galaxy: 2, system: 44, position: 7 };
     const enemyActions = planetDetailGalaxyActions({
       account,
+      attackProtection: null,
       coords: { galaxy: 2, system: 44, position: 8 },
       defenseState: defenseState([{ id: 9, count: 1 }]),
       homeCoords,
@@ -75,6 +117,7 @@ describe("galaxyActions", () => {
     });
     const ownActions = planetDetailGalaxyActions({
       account,
+      attackProtection: null,
       coords: { galaxy: 2, system: 44, position: 9 },
       defenseState: null,
       homeCoords,
@@ -91,6 +134,7 @@ describe("galaxyActions", () => {
     });
     const originActions = planetDetailGalaxyActions({
       account,
+      attackProtection: null,
       coords: homeCoords,
       defenseState: null,
       homeCoords,
@@ -107,6 +151,7 @@ describe("galaxyActions", () => {
     });
     const emptyActions = planetDetailGalaxyActions({
       account,
+      attackProtection: null,
       coords: { galaxy: 2, system: 44, position: 12 },
       defenseState: null,
       homeCoords,
