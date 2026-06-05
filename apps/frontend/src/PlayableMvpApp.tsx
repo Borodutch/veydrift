@@ -406,7 +406,7 @@ export function failedBuildingFinishSyncReasonFor({
 export function canonicalInfrastructureBuildingCompletionQueue(
   infrastructureState: ChainInfrastructureState | null,
 ): QueueStateResponse | null {
-  if (!infrastructureState || backendCanonicalStatePaused(infrastructureState)) {
+  if (!infrastructureState || isInfrastructureBackendSyncPaused(infrastructureState)) {
     return null;
   }
 
@@ -422,6 +422,10 @@ export function buildingCompletionReadyToFinishFlag({
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): boolean {
+  if (isInfrastructureBackendSyncPaused(infrastructureState)) {
+    return false;
+  }
+
   return isBuildingQueueReadyToFinish(
     buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue),
     now,
@@ -443,11 +447,16 @@ export function buildingCompletionUnavailableReasonFor({
     return "Wallet or game contract is unavailable.";
   }
 
-  if (!infrastructureState) {
-    return buildingFinishLiveStateRequiredLabel;
+  const syncPausedReason = infrastructureBackendSyncPausedReasonFor({ infrastructureChainState: infrastructureState });
+  if (syncPausedReason) {
+    return syncPausedReason;
   }
 
   const queue = buildingCompletionQueueForVerification(infrastructureState, fallbackBuildingQueue);
+  if (!queue?.active && !infrastructureState) {
+    return buildingFinishLiveStateRequiredLabel;
+  }
+
   if (!queue?.active) {
     const backendPausedReason = infrastructureBackendSyncPausedReasonFor({
       infrastructureChainState: infrastructureState,
@@ -473,25 +482,9 @@ export function buildingCompletionUnavailableReasonFor({
 
 function buildingCompletionQueueForVerification(
   infrastructureState: ChainInfrastructureState | null,
-  fallbackBuildingQueue?: QueueStateResponse | null | undefined,
+  _fallbackBuildingQueue?: QueueStateResponse | null | undefined,
 ): QueueStateResponse | null {
-  const canonicalQueue = canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
-  if (canonicalQueue?.active) return canonicalQueue;
-  if (canUseFallbackBuildingCompletionQueue(infrastructureState, fallbackBuildingQueue)) {
-    return fallbackBuildingQueue;
-  }
-  return canonicalQueue;
-}
-
-function canUseFallbackBuildingCompletionQueue(
-  infrastructureState: ChainInfrastructureState | null,
-  fallbackBuildingQueue?: QueueStateResponse | null | undefined,
-): fallbackBuildingQueue is QueueStateResponse {
-  return Boolean(
-    fallbackBuildingQueue?.active
-    && infrastructureState?.stale === true
-    && infrastructureState.degraded !== true
-  );
+  return canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
 }
 
 export function buildingFinishUnavailableReasonForDisplay({
@@ -539,10 +532,7 @@ export function buildingFinishUnavailableReasonForDisplay({
     return failedQueueSyncReason;
   }
 
-  const canRecoverFromStaleBackendQueue = isBuildingReadyToFinish
-    && infrastructureState?.stale === true
-    && infrastructureState.degraded !== true;
-  if (backendSyncPausedReason && !canRecoverFromStaleBackendQueue) {
+  if (backendSyncPausedReason) {
     return backendSyncPausedReason;
   }
 
@@ -555,7 +545,7 @@ export function buildingFinishUnavailableReasonForDisplay({
     });
   }
 
-  if (isBuildingReadyToFinish) {
+  if (isBuildingReadyToFinish && !isInfrastructureBackendSyncPaused(infrastructureState)) {
     return undefined;
   }
 
@@ -870,10 +860,23 @@ export function infrastructureBackendSyncPausedReasonFor({
   infrastructureChainState: ChainInfrastructureState | null;
   infrastructureError?: string | undefined;
 }): string | undefined {
-  if (infrastructureError || backendCanonicalStatePaused(infrastructureChainState)) {
+  if (infrastructureError || isInfrastructureBackendSyncPaused(infrastructureChainState)) {
     return infrastructureBackendSyncPausedLabel;
   }
   return undefined;
+}
+
+function isInfrastructureBackendSyncPaused(
+  infrastructureChainState: ChainInfrastructureState | null,
+): boolean {
+  if (!infrastructureChainState) return false;
+  if (infrastructureChainState.degraded === true || infrastructureChainState.stale === true) return true;
+
+  const indexer = infrastructureChainState.indexer;
+  if (!indexer) return false;
+  return indexer.safeToServeIndexedState === false
+    || indexer.indexedState === "reconciling"
+    || indexer.indexedState === "stale";
 }
 
 export function buildingUpgradeActionErrorLabel(error: unknown): string {
@@ -887,10 +890,6 @@ export function buildingUpgradeActionErrorLabel(error: unknown): string {
   }
 
   return walletRequestErrorMessage(error);
-}
-
-function backendCanonicalStatePaused(state: ChainInfrastructureState | null): boolean {
-  return state?.degraded === true || state?.stale === true;
 }
 
 export function infrastructureLoadErrorFor({
