@@ -4,7 +4,8 @@ export type InspectRoute =
   | { kind: "page"; page: Page }
   | { kind: "battle-report"; missionId: string }
   | { kind: "player"; wallet: string }
-  | { kind: "alliance"; allianceId: string };
+  | { kind: "alliance"; allianceId: string }
+  | { kind: "mission-report"; missionId: string };
 
 const pageNames = new Set<Page>([
   "overview",
@@ -25,7 +26,7 @@ export function parseInspectRoute(hash: string): InspectRoute {
   const route = hash.replace(/^#/, "").replace(/^\/+/, "");
   if (!route) return { kind: "page", page: "overview" };
 
-  const [kind, value] = route.split("/");
+  const [kind, value, detailId] = route.split("/");
   if (kind === "player" && value) {
     return { kind: "player", wallet: decodeURIComponent(value) };
   }
@@ -34,6 +35,9 @@ export function parseInspectRoute(hash: string): InspectRoute {
   }
   if (kind === "battle-report" && value && /^[0-9]+$/.test(decodeURIComponent(value))) {
     return { kind: "battle-report", missionId: decodeURIComponent(value) };
+  }
+  if (kind === "mission-control" && value === "report" && detailId) {
+    return { kind: "mission-report", missionId: decodeURIComponent(detailId) };
   }
   if (pageNames.has(kind as Page)) {
     return { kind: "page", page: kind as Page };
@@ -45,5 +49,6 @@ export function buildInspectHash(route: InspectRoute): string {
   if (route.kind === "player") return `#/player/${encodeURIComponent(route.wallet)}`;
   if (route.kind === "alliance") return `#/alliance/${encodeURIComponent(route.allianceId)}`;
   if (route.kind === "battle-report") return `#/battle-report/${encodeURIComponent(route.missionId)}`;
+  if (route.kind === "mission-report") return `#/mission-control/report/${encodeURIComponent(route.missionId)}`;
   return route.page === "overview" ? "#/" : `#/${route.page}`;
 }

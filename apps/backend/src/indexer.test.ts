@@ -1302,7 +1302,17 @@ describe("SettlementIndexer", () => {
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents() { return []; }
     }, 100n);
+    const attackerPlanet: SettledPlanetEvent = {
+      ...planet,
+      planetId: "99",
+      owner: attacker,
+      name: "Spearhead",
+      galaxy: 3,
+      system: 12,
+      position: 4
+    };
     indexer.applyEvent(planet);
+    indexer.applyEvent(attackerPlanet);
     indexer.applyLog({
       blockNumber: "0x90",
       transactionHash: "0xfleet",
@@ -1344,6 +1354,24 @@ describe("SettlementIndexer", () => {
       owner: attacker,
       originPlanetId: "99",
       targetPlanetId: "7",
+      originPlanet: {
+        planetId: "99",
+        owner: attacker,
+        name: "Spearhead",
+        galaxy: 3,
+        system: 12,
+        position: 4,
+        coordinates: "3:12:4"
+      },
+      targetPlanet: {
+        planetId: "7",
+        owner: player,
+        name: null,
+        galaxy: 2,
+        system: 44,
+        position: 9,
+        coordinates: "2:44:9"
+      },
       ships: {
         smallCargo: "1",
         lightFighter: "2"

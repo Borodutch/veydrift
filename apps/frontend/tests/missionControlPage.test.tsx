@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionControlPage, formatMissionTime, missionLifecycleActions } from "../src/components/MissionControlPage";
-import type { FleetMissionSummary } from "../src/walletFlow";
+import type { FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
   test("renders mission timing with relative and exact local timestamps", () => {
@@ -66,15 +66,22 @@ describe("MissionControlPage", () => {
         incoming: [mission({ missionId: "8", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333" })],
         outgoing: [mission({ missionId: "9", missionType: "Transport" })],
         returning: [mission({ missionId: "10", status: "Returning" })],
+        joinableAttacks: [],
+        battleReports: [],
       },
       loading: false,
       now: 1_770_000_700_000,
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
       onNavigateGalaxy: () => undefined,
+      onOpenBattleReport: () => undefined,
+      onOpenReport: () => undefined,
+      onOpenReportList: () => undefined,
       onRecall: () => undefined,
       onRefresh: () => undefined,
       onResolve: () => undefined,
+      reportUrlForMission: (missionId) => `#/mission-control/report/${missionId}`,
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
     });
     const text = visibleText(page);
 
@@ -84,10 +91,14 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Incoming attacks 1");
     expect(text).toContain("Outgoing fleets 1");
     expect(text).toContain("Returning fleets 1");
+    expect(text).toContain("Battle reports");
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Transport # 9");
     expect(text).toContain("Land fleet");
+    expect(text).toContain("View report");
     expect(text).toContain("Copy report");
+    expect(text).toContain("New Eos [2:44:9]");
+    expect(text).toContain("External coordinates unavailable");
     expect(text).toContain("0x3333...3333");
     expect(text).toContain("Report 0xabc...");
     expect(text).not.toContain("Fleet Operations");
@@ -106,6 +117,53 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Contract raid protection");
   });
 
+  test("renders a shareable battle report detail with OGame-style operational fields", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({
+          attackGroupId: "42",
+          missionId: "12",
+          missionType: "AcsAttack",
+          targetPlanet: {
+            planetId: "9",
+            owner: "0x9999999999999999999999999999999999999999",
+            ownerDisplayName: "Orion",
+            name: "Red Haven",
+            galaxy: 4,
+            system: 55,
+            position: 11,
+            coordinates: "4:55:11",
+          },
+        })],
+        returning: [],
+        joinableAttacks: [],
+        battleReports: [],
+      },
+      reportMissionId: "12",
+      reportUrlForMission: (missionId) => `https://test.veydrift.com/#/mission-control/report/${missionId}`,
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Shareable battle report");
+    expect(text).toContain("Alliance Combat System (ACS) attack # 12");
+    expect(text).toContain("Battle time");
+    expect(text).toContain("Commanders");
+    expect(text).toContain("Coordinates");
+    expect(text).toContain("Fleets and cargo");
+    expect(text).toContain("Losses and debris");
+    expect(text).toContain("Public proof");
+    expect(text).toContain("New Eos [2:44:9]");
+    expect(text).toContain("Red Haven [4:55:11]");
+    expect(text).toContain("Orion (0x9999...9999)");
+    expect(text).toContain("Group 42");
+    expect(text).toContain("https://test.veydrift.com/#/mission-control/report/12");
+    expect(text).not.toContain("ACS group");
+  });
+
   test("surfaces due missions as urgent playable orders", () => {
     const page = missionControlPage({
       fleetVisibility: {
@@ -115,6 +173,7 @@ describe("MissionControlPage", () => {
         outgoing: [mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Attack" })],
         returning: [],
         joinableAttacks: [],
+        battleReports: [],
       },
       now: 1_770_000_700_000,
     });
@@ -137,12 +196,17 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
       incoming: [],
       outgoing: [],
       returning: [],
+      joinableAttacks: [],
+      battleReports: [],
     },
     loading: false,
     now: 1_770_000_700_000,
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
     onNavigateGalaxy: () => undefined,
+    onOpenBattleReport: () => undefined,
+    onOpenReport: () => undefined,
+    onOpenReportList: () => undefined,
     onRecall: () => undefined,
     onRefresh: () => undefined,
     onResolve: () => undefined,
@@ -171,6 +235,45 @@ function mission(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSumm
     },
     transactionHash: "0xabc",
     blockNumber: "1",
+    ...overrides,
+  };
+}
+
+function managedPlanet(overrides: Partial<ManagedPlanetResponse> = {}): ManagedPlanetResponse {
+  return {
+    planetId: "7",
+    owner: "0x1111111111111111111111111111111111111111",
+    name: null,
+    galaxy: 2,
+    system: 44,
+    position: 9,
+    fields: 200,
+    temperature: 20,
+    metalMultiplierBps: 10_000,
+    crystalMultiplierBps: 10_000,
+    deuteriumMultiplierBps: 10_000,
+    lastSettledAt: "1770000000",
+    resources: { metal: "0", crystal: "0", deuterium: "0" },
+    coordinates: "2:44:9",
+    isHomePlanet: true,
+    fieldsUsed: 0,
+    fieldsCapacity: 200,
+    keyLevels: {
+      metalMine: 0,
+      crystalMine: 0,
+      deuteriumSynthesizer: 0,
+      solarPlant: 0,
+      roboticsFactory: 0,
+      shipyard: 0,
+      researchLab: 0,
+      terraformer: 0,
+    },
+    queues: {
+      building: null,
+      defense: null,
+      ship: null,
+    },
+    moon: null,
     ...overrides,
   };
 }

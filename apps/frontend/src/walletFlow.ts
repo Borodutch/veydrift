@@ -202,6 +202,8 @@ export type FleetMissionSummary = {
   owner: string;
   originPlanetId: string;
   targetPlanetId: string;
+  originPlanet?: FleetMissionPlanetReference | null;
+  targetPlanet?: FleetMissionPlanetReference | null;
   arrivalAt: string;
   returnAt: string;
   fuelCost: string;
@@ -213,6 +215,17 @@ export type FleetMissionSummary = {
   transactionHash: string;
   blockNumber: string;
   needsResolution?: boolean;
+};
+
+export type FleetMissionPlanetReference = {
+  planetId: string;
+  owner: string;
+  ownerDisplayName?: string | null;
+  name: string | null;
+  galaxy: number;
+  system: number;
+  position: number;
+  coordinates: string;
 };
 
 export type FleetMissionVisibilityResponse = {

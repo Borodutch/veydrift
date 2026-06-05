@@ -34,6 +34,7 @@ import {
   type Address,
   type DebrisFieldEvent,
   type DefenseState,
+  type FleetMissionPlanetReference,
   type FleetMissionVisibility,
   type FleetMissionSummary,
   type IndexedQueueCompletedEvent,
@@ -423,7 +424,7 @@ export class SettlementIndexer {
         .filter((planet) => planet.owner.toLowerCase() === walletLower)
         .map((planet) => planet.planetId)
     );
-    const summaries = this.indexedFleetMissionSummaries();
+    const summaries = this.indexedFleetMissionSummaries().map((mission) => this.withFleetMissionPlanetReferences(mission));
 
     return {
       wallet,
@@ -2285,6 +2286,29 @@ export class SettlementIndexer {
       .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
       .filter(isFleetMissionLog);
     return decodeCompleteFleetMissionLogs(logs);
+  }
+
+  private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {
+    return {
+      ...mission,
+      originPlanet: this.fleetMissionPlanetReference(mission.originPlanetId),
+      targetPlanet: this.fleetMissionPlanetReference(mission.targetPlanetId)
+    };
+  }
+
+  private fleetMissionPlanetReference(planetId: string): FleetMissionPlanetReference | null {
+    const planet = this.planet(planetId);
+    if (!planet) return null;
+    return {
+      planetId: planet.planetId,
+      owner: planet.owner,
+      ownerDisplayName: this.playerProfile(planet.owner).displayName,
+      name: planet.name,
+      galaxy: planet.galaxy,
+      system: planet.system,
+      position: planet.position,
+      coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`
+    };
   }
 
   private count(table:
