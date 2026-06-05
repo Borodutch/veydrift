@@ -49,6 +49,7 @@ const player = "0x2222222222222222222222222222222222222222" as Address;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
+const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
 const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
@@ -2237,6 +2238,93 @@ describe("Veydrift backend", () => {
     expect(planetsBody.planets[0].resources.metal).toBe("5064");
     expect(infrastructureBody.resources.metal).toBe("5064");
     expect(infrastructureBody.raidableResources.metal).toBe("5064");
+  });
+
+  test("serves post-spend indexed resources after multiple active queued spends", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getWalletSettlement = async () => {
+      throw new Error("settlement should not call live RPC");
+    };
+    chainReader.getWalletPlanets = async () => {
+      throw new Error("planets should not call live RPC");
+    };
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("infrastructure should not call live RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm queued-spend index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: Math.floor(Date.now() / 1_000).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xqueued-building",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(3n)],
+      data: abiWords(12n, 1770002000n, 648n, 259n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xqueued-defense",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, 1770002100n, 200n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xqueued-ship",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(1n, 1770002200n, 300n, 100n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xqueued-research",
+      logIndex: "0x0",
+      topics: [researchQueuedTopic, addressTopic(player), topic(9n)],
+      data: abiWords(1n, 1770002300n, 200n, 400n, 60n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const settlementResponse = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+    const settlementBody = await settlementResponse.json();
+    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
+    const planetsBody = await planetsResponse.json();
+    const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const infrastructureBody = await infrastructureResponse.json();
+
+    const expectedResources = {
+      metal: "3652",
+      crystal: "4141",
+      deuterium: "4740"
+    };
+    expect(settlementResponse.status).toBe(200);
+    expect(planetsResponse.status).toBe(200);
+    expect(infrastructureResponse.status).toBe(200);
+    expect(settlementBody.planet.resources).toEqual(expectedResources);
+    expect(planetsBody.planets[0].resources).toEqual(expectedResources);
+    expect(infrastructureBody.resources).toEqual(expectedResources);
+    expect(infrastructureBody.raidableResources).toEqual(expectedResources);
+    expect(planetsBody.planets[0].queues).toMatchObject({
+      building: { kind: "building", itemId: 3, targetLevel: 12 },
+      defense: { kind: "defense", itemId: 0, quantity: 1 },
+      ship: { kind: "ship", itemId: 1, quantity: 1 }
+    });
+    expect(planetsBody.queues.research).toMatchObject({
+      kind: "research",
+      itemId: 9,
+      targetLevel: 1
+    });
   });
 
   test("does not rebuild a cold planet index during wallet settlement requests", async () => {
