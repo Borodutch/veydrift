@@ -3283,7 +3283,7 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const response = await handler(new Request(`http://localhost/highscores?page=2&pageSize=1&currentWallet=${currentWallet}`));
+    const response = await handler(new Request(`http://localhost/highscores?page=2&pageSize=1&currentWallet=${currentWallet}&includeAttackProtection=true`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -3310,6 +3310,35 @@ describe("Veydrift backend", () => {
         }
       }
     });
+  });
+
+  test("does not block indexed highscore rankings on attack-protection reads by default", async () => {
+    const currentWallet = "0x9999999999999999999999999999999999999999" as Address;
+    const chainReader = new class extends MockChainReader {
+      override async getAttackProtectionStatus(): Promise<AttackProtectionStatus> {
+        throw new Error("rankings should not fetch per-row attack protection before rendering");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${currentWallet}`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.source).toBe("contract-state-indexer");
+    expect(body.currentPlayer).toMatchObject({
+      wallet: currentWallet,
+      rankings: {
+        total: null
+      }
+    });
+    expect(body.rankings.total[0].attackProtection).toBeNull();
   });
 
   test("adds canonical alliance identity to highscore rows when available", async () => {
@@ -3375,7 +3404,7 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}`));
+    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
