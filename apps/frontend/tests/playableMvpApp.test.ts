@@ -32,6 +32,7 @@ import {
   researchStateForCompletionRevalidation,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
+  shipCompletionPlanetIdFor,
   topBarEnergyFor,
   walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
@@ -43,7 +44,7 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
+import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, PlayerQueuesResponse, QueueStateResponse, WalletSettlementResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
@@ -627,6 +628,57 @@ describe("Playable MVP app display helpers", () => {
       defenseState: defenseState({ homePlanetId: "11" }),
       walletQueues: undefined,
     })).toBe("11");
+  });
+
+  test("lets Overview shipyard completion use the selected wallet queue planet before Shipyard state is loaded", () => {
+    expect(shipCompletionPlanetIdFor({
+      activePlanetId: "9",
+      shipyardState: null,
+      walletQueues: playerQueues({
+        homePlanetId: "7",
+        ship: {
+          active: true,
+          cost: { metal: "2000", crystal: "2000", deuterium: "0" },
+          itemId: 0,
+          kind: "ship",
+          quantity: 2,
+          readyAt: "1700000000",
+        },
+      }),
+      walletSettlement: walletSettlement({ homePlanetId: "5" }),
+    })).toBe("9");
+  });
+
+  test("falls back to wallet queue and settlement home planets for Overview shipyard completion", () => {
+    expect(shipCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      shipyardState: null,
+      walletQueues: playerQueues({ homePlanetId: "7" }),
+      walletSettlement: walletSettlement({ homePlanetId: "5" }),
+    })).toBe("7");
+
+    expect(shipCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      shipyardState: null,
+      walletQueues: undefined,
+      walletSettlement: walletSettlement({ homePlanetId: "5" }),
+    })).toBe("5");
+  });
+
+  test("keeps loaded Shipyard state as the ship completion fallback", () => {
+    expect(shipCompletionPlanetIdFor({
+      activePlanetId: undefined,
+      shipyardState: shipyardState({ homePlanetId: "11" }),
+      walletQueues: undefined,
+      walletSettlement: undefined,
+    })).toBe("11");
+
+    expect(shipCompletionPlanetIdFor({
+      activePlanetId: "9",
+      shipyardState: shipyardState({ homePlanetId: "11", planetId: "12" }),
+      walletQueues: undefined,
+      walletSettlement: undefined,
+    })).toBe("12");
   });
 
   test("preserves active research queues when a background wallet poll returns an empty research queue", () => {
@@ -1877,13 +1929,14 @@ function playerQueues({
   defense,
   homePlanetId,
   research,
-}: Partial<Pick<PlayerQueuesResponse, "defense" | "homePlanetId" | "research">> = {}): PlayerQueuesResponse {
+  ship,
+}: Partial<Pick<PlayerQueuesResponse, "defense" | "homePlanetId" | "research" | "ship">> = {}): PlayerQueuesResponse {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: homePlanetId ?? "7",
     building: null,
     defense: defense ?? null,
-    ship: null,
+    ship: ship ?? null,
     research: research ?? null,
   };
 }
@@ -1902,6 +1955,35 @@ function defenseState({
     technologyLevels: {},
     defenses: [],
     queue: null,
+  };
+}
+
+function shipyardState({
+  homePlanetId,
+  planetId,
+}: Partial<Pick<ChainShipyardState, "homePlanetId" | "planetId">> = {}): ChainShipyardState {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: homePlanetId ?? "7",
+    planetId,
+    productionAvailable: true,
+    resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
+    shipyardLevel: 1,
+    naniteLevel: 0,
+    technologyLevels: {},
+    ships: [],
+    queue: null,
+  };
+}
+
+function walletSettlement({
+  homePlanetId,
+}: Partial<Pick<WalletSettlementResponse, "homePlanetId">> = {}): WalletSettlementResponse {
+  return {
+    wallet: "0x2222222222222222222222222222222222222222",
+    hasFirstPlanet: true,
+    homePlanetId: homePlanetId ?? "7",
+    planet: null,
   };
 }
 

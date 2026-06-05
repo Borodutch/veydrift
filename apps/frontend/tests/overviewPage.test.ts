@@ -4,6 +4,7 @@ import {
   overviewHeroImage,
 } from "../src/overviewHeroImage";
 import {
+  isOverviewShipReadyToFinish,
   isOverviewResearchReadyToFinish,
   overviewBuildingActionNoticeFor,
   overviewBuildingFinishAction,
@@ -11,6 +12,7 @@ import {
   overviewDefenseFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
+  overviewShipFinishAction,
   shouldShowOverviewBuildingFinishAction,
 } from "../src/components/OverviewPage";
 import {
@@ -502,6 +504,71 @@ describe("overview queue progress display", () => {
         itemId: 0,
         kind: "defense",
         quantity: 1,
+        readyAt: "1700000000",
+      },
+    });
+
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(true);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("shows and invokes the ready shipyard completion action on Overview", () => {
+    let calls = 0;
+    const queue = {
+      active: true,
+      cost: { metal: "2000", crystal: "2000", deuterium: "0" },
+      itemId: 0,
+      kind: "ship",
+      quantity: 2,
+      readyAt: "1700000000",
+    };
+    const action = overviewShipFinishAction({
+      now: 1_700_000_000_000,
+      onFinishShip: () => {
+        calls += 1;
+      },
+      queue,
+    });
+
+    expect(isOverviewShipReadyToFinish(queue, 1_700_000_000_000)).toBe(true);
+    expect(action.visible).toBe(true);
+    expect(action.disabled).toBe(false);
+    action.onFinish?.();
+    expect(calls).toBe(1);
+  });
+
+  test("keeps not-ready shipyard queues passive on Overview", () => {
+    const queue = {
+      active: true,
+      cost: { metal: "2000", crystal: "2000", deuterium: "0" },
+      itemId: 0,
+      kind: "ship",
+      quantity: 2,
+      readyAt: "1700000000",
+    };
+    const action = overviewShipFinishAction({
+      now: 1_699_999_000_000,
+      onFinishShip: () => undefined,
+      queue,
+    });
+
+    expect(isOverviewShipReadyToFinish(queue, 1_699_999_000_000)).toBe(false);
+    expect(action.visible).toBe(false);
+    expect(action.onFinish).toBeUndefined();
+  });
+
+  test("disables ready shipyard completion while a shipyard transaction is pending", () => {
+    const action = overviewShipFinishAction({
+      actionPending: true,
+      now: 1_700_000_000_000,
+      onFinishShip: () => undefined,
+      queue: {
+        active: true,
+        cost: { metal: "2000", crystal: "2000", deuterium: "0" },
+        itemId: 0,
+        kind: "ship",
+        quantity: 2,
         readyAt: "1700000000",
       },
     });

@@ -1,4 +1,4 @@
-import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
+import { queueProgress as queueProgressValue, researchCatalog, shipCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ArrowRight, Check, Pencil, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
@@ -80,6 +80,8 @@ interface OverviewPageProps {
   onFinishBuilding?: (() => void) | undefined;
   isDefenseActionPending?: boolean | undefined;
   onFinishDefense?: (() => void) | undefined;
+  isShipyardActionPending?: boolean | undefined;
+  onFinishShip?: (() => void) | undefined;
   isResearchActionPending?: boolean | undefined;
   onFinishResearch?: (() => void) | undefined;
   researchAction?: OverviewResearchActionState | undefined;
@@ -124,6 +126,8 @@ export function OverviewPage({
   onFinishBuilding,
   isDefenseActionPending = false,
   onFinishDefense,
+  isShipyardActionPending = false,
+  onFinishShip,
   isResearchActionPending = false,
   onFinishResearch,
   researchAction = { status: "idle" },
@@ -187,6 +191,18 @@ export function OverviewPage({
     now,
     onFinishDefense,
     queue: onChainQueues?.defense,
+  });
+  const onChainShip = onChainQueues?.ship;
+  const onChainShipCatalogItem = onChainShip?.itemId === undefined
+    ? undefined
+    : shipCatalog.find((ship) => ship.id === onChainShip.itemId);
+  const onChainShipLabel =
+    `${onChainShipCatalogItem?.label ?? (onChainShip?.kind === "ship" ? "Ship" : onChainShip?.kind ?? "Ship")}${onChainShip?.quantity ? ` x${onChainShip.quantity}` : ""}`;
+  const shipFinishAction = overviewShipFinishAction({
+    actionPending: isShipyardActionPending,
+    now,
+    onFinishShip,
+    queue: onChainShip,
   });
   const researchFinishAction = overviewResearchFinishAction({
     actionPending: isResearchActionPending,
@@ -722,11 +738,13 @@ export function OverviewPage({
           {onChainQueues?.ship?.active ? (
             <QueuePanelContent>
               <QueueItemDisplay
-                label={`${onChainQueues.ship.kind === "ship" ? "Ship" : onChainQueues.ship.kind}${onChainQueues.ship.quantity ? ` ×${onChainQueues.ship.quantity}` : ""}`}
+                label={onChainShipLabel}
                 remaining={queueRemaining(onChainQueues.ship.readyAt, now)}
                 indeterminate
+                thumbnailSrc={onChainShipCatalogItem?.asset}
                 color="bg-emerald-300"
               />
+              <OverviewShipFinishButton action={shipFinishAction} />
             </QueuePanelContent>
           ) : settledState.queue?.kind === "ship" ? (
             <QueuePanelContent>
@@ -869,6 +887,36 @@ export function overviewDefenseFinishAction({
   };
 }
 
+export function isOverviewShipReadyToFinish(
+  queue: PlayerQueuesResponse["ship"] | undefined,
+  now: number,
+): boolean {
+  return Boolean(queue?.active && queue.readyAt && Number(queue.readyAt) * 1_000 <= now);
+}
+
+export function overviewShipFinishAction({
+  actionPending,
+  now,
+  onFinishShip,
+  queue,
+}: {
+  actionPending?: boolean | undefined;
+  now: number;
+  onFinishShip?: (() => void) | undefined;
+  queue?: PlayerQueuesResponse["ship"] | undefined;
+}): {
+  disabled: boolean;
+  onFinish?: (() => void) | undefined;
+  visible: boolean;
+} {
+  const visible = Boolean(isOverviewShipReadyToFinish(queue, now) && onFinishShip);
+  return {
+    disabled: Boolean(actionPending),
+    onFinish: visible && !actionPending ? onFinishShip : undefined,
+    visible,
+  };
+}
+
 export function isOverviewResearchReadyToFinish(
   queue: PlayerQueuesResponse["research"] | undefined,
   now: number,
@@ -976,6 +1024,25 @@ function OverviewResearchFinishButton({
       type="button"
     >
       Complete research
+    </button>
+  );
+}
+
+function OverviewShipFinishButton({
+  action,
+}: {
+  action: ReturnType<typeof overviewShipFinishAction>;
+}) {
+  if (!action.visible) return null;
+
+  return (
+    <button
+      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-emerald-300/40 bg-emerald-300/10 px-3 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+      disabled={action.disabled}
+      onClick={action.onFinish}
+      type="button"
+    >
+      Complete queue
     </button>
   );
 }

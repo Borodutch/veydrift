@@ -1160,6 +1160,25 @@ export function defenseCompletionPlanetIdFor({
   return activePlanetId ?? defenseState?.homePlanetId ?? walletQueues?.homePlanetId ?? undefined;
 }
 
+export function shipCompletionPlanetIdFor({
+  activePlanetId,
+  shipyardState,
+  walletQueues,
+  walletSettlement,
+}: {
+  activePlanetId: string | undefined;
+  shipyardState: ChainShipyardState | null;
+  walletQueues: PlayerQueuesResponse | undefined;
+  walletSettlement: WalletSettlementResponse | undefined;
+}): string | undefined {
+  return shipyardState?.planetId
+    ?? shipyardState?.homePlanetId
+    ?? activePlanetId
+    ?? walletQueues?.homePlanetId
+    ?? walletSettlement?.homePlanetId
+    ?? undefined;
+}
+
 function emptyPlayerQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
   return {
     wallet,
@@ -2776,7 +2795,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   ]);
 
   const handleFinishShipProduction = useCallback(() => {
-    const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
+    const planetId = shipCompletionPlanetIdFor({
+      activePlanetId,
+      shipyardState,
+      walletQueues: onChainQueues,
+      walletSettlement: onChainSettlement,
+    });
     if (!provider || !account || !gameContract || !planetId) {
       setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
@@ -2788,7 +2812,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       gameContract,
       planetId,
     ));
-  }, [account, gameContract, provider, runShipyardTransaction, shipyardState?.homePlanetId, shipyardState?.planetId]);
+  }, [
+    account,
+    activePlanetId,
+    gameContract,
+    onChainQueues?.homePlanetId,
+    onChainSettlement?.homePlanetId,
+    provider,
+    runShipyardTransaction,
+    shipyardState,
+  ]);
 
   const handleBuildDefense = useCallback((defenseId: number, _key: DefenseKey, quantity: number) => {
     if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
@@ -4004,9 +4037,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         buildingActionPendingLabel={infrastructureActionPendingLabel}
         isDefenseActionPending={defenseAction.status === "pending"}
         isResearchActionPending={researchAction.status === "pending"}
+        isShipyardActionPending={shipyardAction.status === "pending"}
         onFinishBuilding={handleFinishBuildingUpgrade}
         onFinishDefense={handleFinishDefenseProduction}
         onFinishResearch={handleFinishResearch}
+        onFinishShip={handleFinishShipProduction}
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
         onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
