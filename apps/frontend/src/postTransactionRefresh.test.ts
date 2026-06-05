@@ -145,7 +145,7 @@ describe("post-transaction refresh reconciliation", () => {
     )).rejects.toThrow("completed building queue is still syncing");
   });
 
-  test("polls until started defense production is visible on Defense and Overview state", async () => {
+  test("polls until started defense production is visible on Defense or Overview state", async () => {
     expect(isStartedDefenseProductionVisible(staleDefenseProductionSnapshot(), {
       itemId: 0,
       planetId: "7",
@@ -175,6 +175,38 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.queues.defense?.quantity).toBe(2);
   });
 
+  test("accepts started defense production while the Overview queue endpoint catches up", () => {
+    const snapshot = startedDefenseProductionSnapshot();
+
+    expect(isStartedDefenseProductionVisible({
+      ...snapshot,
+      queues: {
+        ...snapshot.queues,
+        defense: null,
+      },
+    }, {
+      itemId: 0,
+      planetId: "7",
+      quantity: 2,
+    })).toBe(true);
+  });
+
+  test("accepts started defense production while the Defense page endpoint catches up", () => {
+    const snapshot = startedDefenseProductionSnapshot();
+
+    expect(isStartedDefenseProductionVisible({
+      ...snapshot,
+      defense: {
+        ...snapshot.defense,
+        queue: null,
+      },
+    }, {
+      itemId: 0,
+      planetId: "7",
+      quantity: 2,
+    })).toBe(true);
+  });
+
   test("accepts started defense production when the expected item is in the backlog", () => {
     expect(isStartedDefenseProductionVisible(startedDefenseBacklogProductionSnapshot(), {
       itemId: 1,
@@ -183,7 +215,7 @@ describe("post-transaction refresh reconciliation", () => {
     })).toBe(true);
   });
 
-  test("polls until started ship production is visible on Shipyard and Overview state", async () => {
+  test("polls until started ship production is visible on Shipyard or Overview state", async () => {
     expect(isStartedShipProductionVisible(staleShipProductionSnapshot(), {
       itemId: 0,
       planetId: "7",
@@ -211,6 +243,38 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.shipyard.queue?.quantity).toBe(3);
     expect(result.queues.ship?.itemId).toBe(0);
     expect(result.queues.ship?.quantity).toBe(3);
+  });
+
+  test("accepts started ship production while the Overview queue endpoint catches up", () => {
+    const snapshot = startedShipProductionSnapshot();
+
+    expect(isStartedShipProductionVisible({
+      ...snapshot,
+      queues: {
+        ...snapshot.queues,
+        ship: null,
+      },
+    }, {
+      itemId: 0,
+      planetId: "7",
+      quantity: 3,
+    })).toBe(true);
+  });
+
+  test("accepts started ship production while the Shipyard page endpoint catches up", () => {
+    const snapshot = startedShipProductionSnapshot();
+
+    expect(isStartedShipProductionVisible({
+      ...snapshot,
+      shipyard: {
+        ...snapshot.shipyard,
+        queue: null,
+      },
+    }, {
+      itemId: 0,
+      planetId: "7",
+      quantity: 3,
+    })).toBe(true);
   });
 
   test("accepts started ship production when the expected item is in the backlog", () => {
