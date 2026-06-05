@@ -224,6 +224,36 @@ export type FleetMissionVisibilityResponse = {
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
   joinableAttacks: FleetMissionSummary[];
+  battleReports: BattleReport[];
+};
+
+export type BattleOutcomeName = "Draw" | "AttackerWin" | "DefenderWin";
+
+export type CombatRoundReport = {
+  round: number;
+  attackerUnits: string;
+  defenderUnits: string;
+  attackerLosses: OnChainResources;
+  defenderLosses: OnChainResources;
+};
+
+export type BattleReport = {
+  missionId: string;
+  attacker: string;
+  targetPlanetId: string;
+  outcome: BattleOutcomeName;
+  rounds: number;
+  randomSeed: string;
+  loot: OnChainResources;
+  attackerLosses: OnChainResources;
+  defenderLosses: OnChainResources;
+  debris: {
+    metal: string;
+    crystal: string;
+  };
+  roundReports: CombatRoundReport[];
+  transactionHash: string;
+  blockNumber: string;
 };
 
 export type ChainShipyardState = {
@@ -1872,6 +1902,12 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId
 
 export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<FleetMissionVisibilityResponse> {
   return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, withWalletReadOptions("fleet-visibility", undefined, options), "Fleet visibility");
+}
+
+export async function fetchBattleReport(apiUrl: string, missionId: string): Promise<BattleReport> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/battle-report/${encodeURIComponent(missionId)}`);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Battle report"));
+  return response.json() as Promise<BattleReport>;
 }
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {

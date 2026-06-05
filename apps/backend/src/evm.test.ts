@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import type { BackendConfig } from "./config";
 import {
+  decodeBattleReportLogs,
   decodePlanetRenamedLog,
   decodeMoonChanceReportLog,
   HttpJsonRpcTransport,
+  isBattleReportLog,
   isPlanetRenamedLog,
   isMoonChanceReportLog,
   VeydriftGameReader,
@@ -21,6 +23,10 @@ const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
+const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
+const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
 
 describe("HTTP JSON-RPC transport", () => {
   test("coalesces concurrent identical cacheable RPC reads", async () => {
@@ -672,6 +678,76 @@ describe("fleet mission visibility", () => {
     expect(visibility.homePlanetId).toBe("1");
     expect(visibility.incoming.map((mission) => mission.missionId)).toEqual(["10", "11"]);
     expect(visibility.outgoing.map((mission) => mission.missionId)).toEqual(["12"]);
+  });
+});
+
+describe("battle reports", () => {
+  test("decodes shareable combat report logs", () => {
+    const attacker = "0x0000000000000000000000000000000000000abc" as Address;
+    const logs: RpcLog[] = [
+      makeLog({
+        topics: [attackBattleResolvedTopic, topic(77n), addressTopic(attacker), topic(9n)],
+        data: dataWords([word(1n), word(3n), word(12345n), word(100n), word(50n), word(10n)])
+      }),
+      makeLog({
+        topics: [combatRoundResolvedTopic, topic(77n), topic(1n)],
+        data: dataWords([word(12n), word(8n), word(20n), word(5n), word(40n), word(10n)])
+      }),
+      makeLog({
+        topics: [combatLossesTopic, topic(77n)],
+        data: dataWords([word(200n), word(50n), word(0n), word(400n), word(100n), word(0n)])
+      }),
+      makeLog({
+        topics: [combatDebrisSignaledTopic, topic(77n), topic(9n)],
+        data: dataWords([word(180n), word(45n)])
+      })
+    ];
+
+    expect(logs.every(isBattleReportLog)).toBe(true);
+    expect(decodeBattleReportLogs(logs, "77")).toMatchObject({
+      missionId: "77",
+      attacker,
+      targetPlanetId: "9",
+      outcome: "AttackerWin",
+      rounds: 3,
+      randomSeed: "12345",
+      loot: {
+        metal: "100",
+        crystal: "50",
+        deuterium: "10"
+      },
+      attackerLosses: {
+        metal: "200",
+        crystal: "50",
+        deuterium: "0"
+      },
+      defenderLosses: {
+        metal: "400",
+        crystal: "100",
+        deuterium: "0"
+      },
+      debris: {
+        metal: "180",
+        crystal: "45"
+      },
+      roundReports: [
+        {
+          round: 1,
+          attackerUnits: "12",
+          defenderUnits: "8",
+          attackerLosses: {
+            metal: "20",
+            crystal: "5",
+            deuterium: "0"
+          },
+          defenderLosses: {
+            metal: "40",
+            crystal: "10",
+            deuterium: "0"
+          }
+        }
+      ]
+    });
   });
 });
 

@@ -446,7 +446,8 @@ export class SettlementIndexer {
           && !ownedPlanetIds.has(mission.targetPlanetId)
           && mission.missionType === "Attack"
           && mission.status === "Outbound"
-      )
+      ),
+      battleReports: []
     };
   }
 

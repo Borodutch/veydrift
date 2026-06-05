@@ -207,8 +207,13 @@ class MockChainReader implements ChainReader {
       incoming: [],
       outgoing: [],
       returning: [],
-      joinableAttacks: []
+      joinableAttacks: [],
+      battleReports: []
     };
+  }
+
+  async getBattleReport() {
+    return null;
   }
 
   async getInfrastructureState(wallet: Address): Promise<InfrastructureState> {

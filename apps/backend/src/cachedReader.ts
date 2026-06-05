@@ -2,6 +2,7 @@ import type {
   Address,
   AllianceState,
   AttackProtectionStatus,
+  BattleReport,
   ChainReader,
   DebrisFieldEvent,
   DefenseState,
@@ -65,6 +66,10 @@ export class CachedChainReader implements ChainReader {
 
   getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
     return this.cached(`fleet-visibility:${wallet.toLowerCase()}`, () => this.inner.getFleetMissionVisibility(wallet));
+  }
+
+  getBattleReport(missionId: bigint): Promise<BattleReport | null> {
+    return this.cached(`battle-report:${missionId.toString()}`, () => this.inner.getBattleReport(missionId));
   }
 
   getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState> {

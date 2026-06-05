@@ -178,6 +178,7 @@ export type FleetMissionVisibility = {
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
   joinableAttacks: FleetMissionSummary[];
+  battleReports: BattleReport[];
 };
 
 export type FleetMissionSummary = {
@@ -204,6 +205,35 @@ export type ResolvableFleetMission = Pick<
   FleetMissionSummary,
   "arrivalAt" | "missionId" | "missionType" | "originPlanetId" | "targetPlanetId"
 >;
+
+export type BattleOutcomeName = "Draw" | "AttackerWin" | "DefenderWin";
+
+export type CombatRoundReport = {
+  round: number;
+  attackerUnits: string;
+  defenderUnits: string;
+  attackerLosses: Resources;
+  defenderLosses: Resources;
+};
+
+export type BattleReport = {
+  missionId: string;
+  attacker: Address;
+  targetPlanetId: string;
+  outcome: BattleOutcomeName;
+  rounds: number;
+  randomSeed: string;
+  loot: Resources;
+  attackerLosses: Resources;
+  defenderLosses: Resources;
+  debris: {
+    metal: string;
+    crystal: string;
+  };
+  roundReports: CombatRoundReport[];
+  transactionHash: string;
+  blockNumber: string;
+};
 
 export type ShipyardState = {
   wallet: Address;
@@ -511,6 +541,7 @@ export interface ChainReader {
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
   getPlayerQueues(wallet: Address, planetId?: bigint): Promise<PlayerQueues>;
   getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility>;
+  getBattleReport(missionId: bigint): Promise<BattleReport | null>;
   getInfrastructureState(wallet: Address, planetId?: bigint): Promise<InfrastructureState>;
   getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState>;
   getDefenseState(wallet: Address, planetId?: bigint): Promise<DefenseState>;
@@ -1028,12 +1059,15 @@ export class VeydriftGameReader implements ChainReader {
   async getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
     const planets = await this.getWalletPlanets(wallet);
     if (!planets.homePlanetId) {
-      return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [], joinableAttacks: [] };
+      return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [], joinableAttacks: [], battleReports: [] };
     }
 
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(planets.planets.map((planet) => planet.planetId));
-    const summaries = await this.readFleetMissionSummaries();
+    const [summaries, battleReports] = await Promise.all([
+      this.readFleetMissionSummaries(),
+      this.readBattleReports()
+    ]);
 
     return {
       wallet,
@@ -1056,8 +1090,27 @@ export class VeydriftGameReader implements ChainReader {
           && !ownedPlanetIds.has(mission.targetPlanetId)
           && mission.missionType === "Attack"
           && mission.status === "Outbound"
+      ),
+      battleReports: battleReports.filter((report) =>
+        report.attacker.toLowerCase() === walletLower || ownedPlanetIds.has(report.targetPlanetId)
       )
     };
+  }
+
+  async getBattleReport(missionId: bigint): Promise<BattleReport | null> {
+    const logs = await this.getLogs({
+      address: this.gameContractAddress,
+      fromBlock: toQuantity(this.indexFromBlock),
+      toBlock: "latest",
+      topics: [[
+        attackBattleResolvedTopic,
+        combatRoundResolvedTopic,
+        combatLossesTopic,
+        combatDebrisSignaledTopic
+      ], toTopic(missionId)]
+    });
+
+    return decodeBattleReportLogs(logs, missionId.toString());
   }
 
   async listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
@@ -2780,6 +2833,21 @@ export class VeydriftGameReader implements ChainReader {
       }));
   }
 
+  private async readBattleReports(): Promise<BattleReport[]> {
+    const logs = await this.getLogs({
+      address: this.gameContractAddress,
+      fromBlock: toQuantity(this.indexFromBlock),
+      toBlock: "latest",
+      topics: [[
+        attackBattleResolvedTopic,
+        combatRoundResolvedTopic,
+        combatLossesTopic,
+        combatDebrisSignaledTopic
+      ]]
+    });
+    return decodeBattleReports(logs);
+  }
+
   private async callContract(contractAddress: Address, selector: string, args: string[]): Promise<string> {
     return this.transport.request<string>("eth_call", [
       {
@@ -2976,6 +3044,98 @@ export function decodeCompleteFleetMissionLogs(logs: RpcLog[]): FleetMissionSumm
   return [...decodeFleetMissionLogs(logs).values()].filter(isCompleteFleetMissionSummary);
 }
 
+export function isBattleReportLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === attackBattleResolvedTopic
+    || topic === combatRoundResolvedTopic
+    || topic === combatLossesTopic
+    || topic === combatDebrisSignaledTopic;
+}
+
+export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: string): BattleReport | null {
+  let base: Omit<BattleReport, "attackerLosses" | "debris" | "defenderLosses" | "roundReports"> | null = null;
+  let attackerLosses: Resources = emptyResources();
+  let defenderLosses: Resources = emptyResources();
+  let debris: BattleReport["debris"] = { metal: "0", crystal: "0" };
+  const roundReports: CombatRoundReport[] = [];
+
+  for (const log of logs) {
+    const topic = topicAt(log.topics, 0);
+    if (!isBattleReportLog(log)) continue;
+
+    const missionId = decodeUint(topicAt(log.topics, 1)).toString();
+    if (requestedMissionId && missionId !== requestedMissionId) continue;
+
+    const words = splitWords(log.data);
+    if (topic === attackBattleResolvedTopic) {
+      base = {
+        missionId,
+        attacker: decodeAddressWord(topicAt(log.topics, 2)),
+        targetPlanetId: decodeUint(topicAt(log.topics, 3)).toString(),
+        outcome: battleOutcomeLabel(decodeUintWord(wordAt(words, 0))),
+        rounds: Number(decodeUintWord(wordAt(words, 1))),
+        randomSeed: decodeUintWord(wordAt(words, 2)).toString(),
+        loot: decodeResources(words.slice(3, 6)),
+        transactionHash: log.transactionHash,
+        blockNumber: BigInt(log.blockNumber).toString()
+      };
+    } else if (topic === combatRoundResolvedTopic) {
+      roundReports.push({
+        round: Number(decodeUint(topicAt(log.topics, 2))),
+        attackerUnits: decodeUintWord(wordAt(words, 0)).toString(),
+        defenderUnits: decodeUintWord(wordAt(words, 1)).toString(),
+        attackerLosses: {
+          metal: decodeUintWord(wordAt(words, 2)).toString(),
+          crystal: decodeUintWord(wordAt(words, 3)).toString(),
+          deuterium: "0"
+        },
+        defenderLosses: {
+          metal: decodeUintWord(wordAt(words, 4)).toString(),
+          crystal: decodeUintWord(wordAt(words, 5)).toString(),
+          deuterium: "0"
+        }
+      });
+    } else if (topic === combatLossesTopic) {
+      attackerLosses = decodeResources(words.slice(0, 3));
+      defenderLosses = decodeResources(words.slice(3, 6));
+    } else if (topic === combatDebrisSignaledTopic) {
+      debris = {
+        metal: decodeUintWord(wordAt(words, 0)).toString(),
+        crystal: decodeUintWord(wordAt(words, 1)).toString()
+      };
+    }
+  }
+
+  if (!base) return null;
+
+  return {
+    ...base,
+    attackerLosses,
+    defenderLosses,
+    debris,
+    roundReports: roundReports.sort((left, right) => left.round - right.round)
+  };
+}
+
+export function decodeBattleReports(logs: RpcLog[]): BattleReport[] {
+  const missionIds = new Set<string>();
+  for (const log of logs) {
+    if (isBattleReportLog(log)) {
+      missionIds.add(decodeUint(topicAt(log.topics, 1)).toString());
+    }
+  }
+
+  return [...missionIds]
+    .map((missionId) => decodeBattleReportLogs(logs, missionId))
+    .filter((report): report is BattleReport => Boolean(report))
+    .sort((left, right) => {
+      const leftBlock = BigInt(left.blockNumber);
+      const rightBlock = BigInt(right.blockNumber);
+      if (leftBlock === rightBlock) return 0;
+      return leftBlock < rightBlock ? 1 : -1;
+    });
+}
+
 function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mission is FleetMissionSummary {
   return Boolean(
     mission.status
@@ -3002,6 +3162,14 @@ function missionTypeLabel(value: bigint): string {
 
 function missionStatusLabel(value: bigint): string {
   return missionStatuses[Number(value)] ?? `Unknown:${value.toString()}`;
+}
+
+function battleOutcomeLabel(value: bigint): BattleOutcomeName {
+  return battleOutcomes[Number(value)] ?? "Draw";
+}
+
+function emptyResources(): Resources {
+  return { metal: "0", crystal: "0", deuterium: "0" };
 }
 
 const zeroAddress = "0x0000000000000000000000000000000000000000" as const;
@@ -3043,8 +3211,13 @@ const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d1
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const attackMissionJoinedTopic = "0xc584e0cc52df45c2a92cc5556e493377d69bfe3e3658d1adb13f27cfcc89b146";
+const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
+const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
+const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
 const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack"] as const;
 const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
+const battleOutcomes = ["Draw", "AttackerWin", "DefenderWin"] as const;
 const moonChanceRequestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";
 const moonChanceFinalizedTopic = "0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d76e501b618572e6705d04";
 const moonChanceSkippedExistingMoonTopic =

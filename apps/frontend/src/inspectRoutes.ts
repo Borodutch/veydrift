@@ -2,6 +2,7 @@ import type { Page } from "./components/NavBar";
 
 export type InspectRoute =
   | { kind: "page"; page: Page }
+  | { kind: "battle-report"; missionId: string }
   | { kind: "player"; wallet: string }
   | { kind: "alliance"; allianceId: string };
 
@@ -31,6 +32,9 @@ export function parseInspectRoute(hash: string): InspectRoute {
   if (kind === "alliance" && value) {
     return { kind: "alliance", allianceId: decodeURIComponent(value) };
   }
+  if (kind === "battle-report" && value && /^[0-9]+$/.test(decodeURIComponent(value))) {
+    return { kind: "battle-report", missionId: decodeURIComponent(value) };
+  }
   if (pageNames.has(kind as Page)) {
     return { kind: "page", page: kind as Page };
   }
@@ -40,5 +44,6 @@ export function parseInspectRoute(hash: string): InspectRoute {
 export function buildInspectHash(route: InspectRoute): string {
   if (route.kind === "player") return `#/player/${encodeURIComponent(route.wallet)}`;
   if (route.kind === "alliance") return `#/alliance/${encodeURIComponent(route.allianceId)}`;
+  if (route.kind === "battle-report") return `#/battle-report/${encodeURIComponent(route.missionId)}`;
   return route.page === "overview" ? "#/" : `#/${route.page}`;
 }
