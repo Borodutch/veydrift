@@ -497,6 +497,7 @@ export type ChainAllianceState = {
     displayName?: string | null;
     role: AllianceRole;
     joinedAt: string;
+    totalScore?: string;
   }>;
 };
 

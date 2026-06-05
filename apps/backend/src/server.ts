@@ -1054,10 +1054,15 @@ async function enrichAllianceState(
     const displayName = indexer.playerProfile(wallet).displayName;
     return displayName ? { [key]: displayName } as Record<Key, string> : {};
   };
-  const scoreByAllianceId = await allianceMemberScoreTotals(indexer, chainReader);
+  const scoreByWallet = indexedPlayerScoreTotals(indexer);
+  const scoreByAllianceId = await allianceMemberScoreTotals(scoreByWallet, chainReader);
   const totalScoreField = (allianceId: string): { totalMemberScore?: string } => {
     const total = scoreByAllianceId.get(allianceId);
     return total !== undefined ? { totalMemberScore: total.toString() } : {};
+  };
+  const memberScoreField = (wallet: `0x${string}`): { totalScore?: string } => {
+    const total = scoreByWallet.get(wallet.toLowerCase());
+    return total !== undefined ? { totalScore: total.toString() } : {};
   };
 
   return {
@@ -1089,26 +1094,30 @@ async function enrichAllianceState(
     })),
     members: state.members.map((member) => ({
       ...member,
-      ...displayNameField("displayName", member.address)
+      ...displayNameField("displayName", member.address),
+      ...memberScoreField(member.address)
     }))
   };
 }
 
-async function allianceMemberScoreTotals(
-  indexer: SettlementIndexer,
-  chainReader: ChainReader | undefined
-): Promise<Map<string, bigint>> {
-  if (!chainReader?.getAllianceIntelForPlayers) return new Map();
-
+function indexedPlayerScoreTotals(indexer: SettlementIndexer): Map<string, bigint> {
   const planetsByOwner = indexer.settledPlanetsByOwner();
   const entries = indexer.highscoreEntriesForOwners(planetsByOwner);
-  const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), chainReader);
+  return new Map(entries.map((entry) => [entry.wallet.toLowerCase(), BigInt(entry.score.total)]));
+}
+
+async function allianceMemberScoreTotals(
+  scoreByWallet: ReadonlyMap<string, bigint>,
+  chainReader: ChainReader | undefined
+): Promise<Map<string, bigint>> {
+  if (!chainReader?.getAllianceIntelForPlayers || scoreByWallet.size === 0) return new Map();
+
+  const allianceIntel = await allianceIntelForPlayers([...scoreByWallet.keys()] as Address[], chainReader);
   const totals = new Map<string, bigint>();
 
-  for (const entry of entries) {
-    const alliance = allianceIntel.get(entry.wallet.toLowerCase());
+  for (const [wallet, score] of scoreByWallet) {
+    const alliance = allianceIntel.get(wallet);
     if (!alliance) continue;
-    const score = BigInt(entry.score.total);
     totals.set(alliance.allianceId, (totals.get(alliance.allianceId) ?? 0n) + score);
   }
 
