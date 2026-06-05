@@ -14,6 +14,7 @@ import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { MissionControlPage } from "./components/MissionControlPage";
+import { MissionCreationPage, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { BattleReportPage } from "./components/BattleReportPage";
 import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
@@ -1050,6 +1051,13 @@ const counterplayShipPriority = [
 ] as const satisfies ReadonlyArray<keyof MissionShips>;
 
 type CounterplayShipKey = (typeof counterplayShipPriority)[number];
+type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
+
+type PendingGalaxyMission = {
+  action: EnabledGalaxyAction;
+  target: Planet | undefined;
+  coords: Coordinates;
+};
 
 const counterplayShipIds: Record<CounterplayShipKey, number> = {
   smallCargo: 0,
@@ -1103,6 +1111,18 @@ function transportCargoForSelectedPlanet(
     crystal: String(crystal),
     deuterium: String(deuterium),
   };
+}
+
+function missionCargoFromDraft(cargo: MissionCargoDraft | undefined): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
+  if (!cargo) return undefined;
+  const normalized = {
+    metal: String(Math.max(0, Math.trunc(Number(cargo.metal ?? 0) || 0))),
+    crystal: String(Math.max(0, Math.trunc(Number(cargo.crystal ?? 0) || 0))),
+    deuterium: String(Math.max(0, Math.trunc(Number(cargo.deuterium ?? 0) || 0))),
+  };
+  return normalized.metal === "0" && normalized.crystal === "0" && normalized.deuterium === "0"
+    ? undefined
+    : normalized;
 }
 
 function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefined): FleetDriveLevels {
@@ -1469,6 +1489,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [shipyardError, setShipyardError] = useState<string | undefined>();
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
   const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
+  const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
   const [researchState, setResearchState] = useState<ChainResearchState | null>(null);
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchError, setResearchError] = useState<string | undefined>();
@@ -1537,6 +1558,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         position: selectedManagedPlanet.position,
       }
     : homeCoords;
+  const originMissionResources = useMemo(() => selectedManagedPlanet?.resources
+    ? {
+        metal: safeResourceNumber(selectedManagedPlanet.resources.metal) ?? 0,
+        crystal: safeResourceNumber(selectedManagedPlanet.resources.crystal) ?? 0,
+        deuterium: safeResourceNumber(selectedManagedPlanet.resources.deuterium) ?? 0,
+      }
+    : undefined,
+  [selectedManagedPlanet?.resources]);
   const homeCoordinateLabel = useMemo(
     () => displayHomeCoordinates(homePlanetIdentity, homeCoords, planet?.coordinates),
     [
@@ -3804,8 +3833,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
   }, [account, activePlanetId, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState, selectedManagedPlanet]);
 
-  const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent = 100) => {
+  const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
     if (!action.enabled) return;
+    setGalaxyAction({ status: "idle" });
+    setPendingGalaxyMission({ action, target, coords });
+  }, []);
+
+  const handleConfirmGalaxyMission = useCallback((draft: MissionLaunchDraft) => {
+    const pending = pendingGalaxyMission;
+    if (!pending) return;
+    const { action, target, coords } = pending;
     const originPlanetId = activePlanetId ?? onChainSettlement?.homePlanetId;
     if (!provider || !account || !gameContract || !originPlanetId) {
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or origin planet is unavailable." });
@@ -3813,6 +3850,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     if (action.mode === "colonize") {
+      setPendingGalaxyMission(null);
       void runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
@@ -3821,7 +3859,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         coords.galaxy,
         coords.system,
         coords.position,
-        speedPercent,
+        draft.speedPercent,
       ));
       return;
     }
@@ -3833,6 +3871,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     if (action.mode === "missile") {
+      setPendingGalaxyMission(null);
       void runGalaxyTransaction("Missile attack", () => sendLaunchInterplanetaryMissileAttackTransaction(
         provider,
         account,
@@ -3840,13 +3879,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         {
           originPlanetId,
           targetPlanetId,
-          primaryTargetId: action.primaryTargetId,
-          quantity: action.quantity,
+          primaryTargetId: draft.primaryTargetId ?? action.primaryTargetId,
+          quantity: draft.quantity ?? action.quantity,
         },
       ));
       return;
     }
 
+    setPendingGalaxyMission(null);
     void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchFleetMissionTransaction(
       provider,
       account,
@@ -3855,20 +3895,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         originPlanetId,
         targetPlanetId,
         missionType: missionTypeId(action.mission),
-        ships: action.ships,
-        speedPercent,
-        cargo: action.kind === "transport"
-          ? transportCargoForSelectedPlanet(
+        ships: draft.ships,
+        speedPercent: draft.speedPercent,
+        cargo: action.kind === "transport" || action.kind === "deploy"
+          ? missionCargoFromDraft(draft.cargo) ?? transportCargoForSelectedPlanet(
               selectedManagedPlanet,
-              action.ships,
+              draft.ships,
               coords,
               driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels),
-              speedPercent,
+              draft.speedPercent,
             )
           : undefined,
       },
     ));
-  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
+  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleCounterplay = useCallback((hostileMissionId: string, mode: "acsDefend" | "intercept") => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
@@ -4057,6 +4097,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
 
   const handleNavigate = useCallback((target: Page) => {
+    setPendingGalaxyMission(null);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setBattleReportMissionId(null);
@@ -4067,6 +4108,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleOpenMissionReport = useCallback((missionId: string) => {
+    setPendingGalaxyMission(null);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setBattleReportMissionId(null);
@@ -4077,6 +4119,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleOpenMissionReportList = useCallback(() => {
+    setPendingGalaxyMission(null);
     setMissionReportId(null);
     setPage("mission-control");
     setSelectedCoords(undefined);
@@ -4090,6 +4133,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
+    setPendingGalaxyMission(null);
     setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
     setInspectedPlayerWallet(null);
@@ -4101,6 +4145,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleSelectAlliance = useCallback((allianceId: string) => {
+    setPendingGalaxyMission(null);
     setSelectedAllianceId(allianceId);
     setInspectedAllianceId(allianceId);
     setInspectedPlayerWallet(null);
@@ -4112,6 +4157,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleSelectPlayer = useCallback((wallet: string) => {
+    setPendingGalaxyMission(null);
     setInspectedPlayerWallet(wallet);
     setInspectedAllianceId(null);
     setBattleReportMissionId(null);
@@ -4122,6 +4168,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleOpenBattleReport = useCallback((missionId: string) => {
+    setPendingGalaxyMission(null);
     setBattleReportMissionId(missionId);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
@@ -4228,6 +4275,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       );
     }
 
+    if (pendingGalaxyMission) {
+      return (
+        <MissionCreationPage
+          action={pendingGalaxyMission.action}
+          actionPending={galaxyAction.status === "pending"}
+          coords={pendingGalaxyMission.coords}
+          driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          onBack={() => setPendingGalaxyMission(null)}
+          onConfirm={handleConfirmGalaxyMission}
+          originCoords={activePlanetCoords}
+          originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
+          resources={originMissionResources}
+          shipyardState={shipyardState}
+          target={pendingGalaxyMission.target}
+        />
+      );
+    }
+
     if (page === "galaxy") {
       return (
         <GalaxyView
@@ -4258,7 +4323,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           apiBaseUrl={apiBaseUrl}
           coords={selectedCoords}
           defenseState={defenseState}
-          homeCoords={homeCoords}
+          homeCoords={activePlanetCoords}
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
           onAction={handleGalaxyAction}

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
-import { DEFAULT_MISSION_SPEED_PERCENT, MISSION_SPEED_OPTIONS } from "../fleetMissionRules";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
@@ -20,7 +19,7 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
-  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
+  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
   shipyardState?: ChainShipyardState | null | undefined;
 }
@@ -80,7 +79,6 @@ export function PlanetDetail({
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
-  const [missionSpeedPercent, setMissionSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const imageRef = useRef<HTMLImageElement>(null);
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
 
@@ -214,9 +212,7 @@ export function PlanetDetail({
               actions={emptyMissionActions}
               busy={actionState.status === "pending"}
               coords={coords}
-              missionSpeedPercent={missionSpeedPercent}
               onAction={onAction}
-              onMissionSpeedChange={setMissionSpeedPercent}
               planet={undefined}
             />
             <PlanetActionStatus actionState={actionState} />
@@ -313,9 +309,7 @@ export function PlanetDetail({
                 actions={missionActions}
                 busy={actionState.status === "pending"}
                 coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
-                missionSpeedPercent={missionSpeedPercent}
                 onAction={onAction}
-                onMissionSpeedChange={setMissionSpeedPercent}
                 planet={planet}
               />
             </div>
@@ -443,46 +437,23 @@ function PlanetMissionControls({
   actions,
   busy,
   coords,
-  missionSpeedPercent,
   onAction,
-  onMissionSpeedChange,
   planet,
 }: {
   actions: GalaxyAction[];
   busy: boolean;
   coords: Coordinates;
-  missionSpeedPercent: number;
-  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates, speedPercent: number) => void) | undefined;
-  onMissionSpeedChange: (speedPercent: number) => void;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   planet: Planet | undefined;
 }) {
   if (actions.length === 0) return null;
 
   return (
     <div className="flex flex-col items-start gap-2 lg:items-end">
-      <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
-        <span className="mr-1 text-[11px] font-medium uppercase text-slate-500">Speed</span>
-        {MISSION_SPEED_OPTIONS.map((speed) => (
-          <button
-            aria-pressed={missionSpeedPercent === speed}
-            className={`h-8 rounded border px-2 text-xs font-semibold transition ${
-              missionSpeedPercent === speed
-                ? "border-signal/45 bg-signal/15 text-signal"
-                : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
-            }`}
-            key={speed}
-            onClick={() => onMissionSpeedChange(speed)}
-            type="button"
-          >
-            {speed}%
-          </button>
-        ))}
-      </div>
       <GalaxyActionButtons
         actions={actions}
         busy={busy}
         coords={coords}
-        missionSpeedPercent={missionSpeedPercent}
         onAction={onAction}
         planet={planet}
       />
