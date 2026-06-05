@@ -2,10 +2,59 @@ import { describe, expect, test } from "bun:test";
 import {
   formatRiftCountdown,
   isWithdrawalReady,
+  riftRequirementFlairs,
   riftRequirementStatus,
 } from "./components/RiftPage";
 
 describe("RiftPage helpers", () => {
+  test("maps locked Rift requirements to shared clickable requirement flairs", () => {
+    expect(riftRequirementFlairs([
+      {
+        kind: "building",
+        key: "interdimensionalRiftStabilizer",
+        label: "Interdimensional Rift Stabilizer",
+        currentLevel: 0,
+        requiredLevel: 1,
+        binary: true,
+        built: false,
+      },
+      {
+        kind: "building",
+        key: "roboticsFactory",
+        label: "Robotics Factory",
+        currentLevel: 3,
+        requiredLevel: 4,
+      },
+      {
+        kind: "building",
+        key: "researchLab",
+        label: "Research Lab",
+        currentLevel: 2,
+        requiredLevel: 2,
+      },
+      {
+        kind: "technology",
+        key: "energy",
+        label: "Energy Technology",
+        currentLevel: 4,
+        requiredLevel: 5,
+      },
+      {
+        kind: "technology",
+        key: "hyperspace",
+        label: "Hyperspace Technology",
+        currentLevel: 1,
+        requiredLevel: 1,
+      },
+    ])).toEqual([
+      { label: "Interdimensional Rift Stabilizer", met: false, target: { kind: "building", key: "interdimensionalRiftStabilizer" } },
+      { label: "Robotics Factory 4", met: false, target: { kind: "building", key: "roboticsFactory" } },
+      { label: "Research Lab 2", met: true, target: { kind: "building", key: "researchLab" } },
+      { label: "Energy Technology 5", met: false, target: { kind: "research", key: "energy" } },
+      { label: "Hyperspace Technology 1", met: true, target: { kind: "research", key: "hyperspace" } },
+    ]);
+  });
+
   test("formats locked requirement status", () => {
     expect(riftRequirementStatus({ currentLevel: null, requiredLevel: 1 })).toBe("Requires Level 1; not available on this deployment");
     expect(riftRequirementStatus({ currentLevel: 0, requiredLevel: 1 })).toBe("Level 0 / 1 required");

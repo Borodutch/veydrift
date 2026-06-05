@@ -783,7 +783,7 @@ export function getResearchRequirementStates(
       ? { kind: "building", key: requirement.key }
       : requirement.type === "research"
         ? { kind: "research", key: requirement.key }
-        : undefined,
+        : { kind: "ship", key: "solarSatellite" },
   }));
 }
 

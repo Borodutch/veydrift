@@ -1,6 +1,8 @@
 import { useMemo, useState } from "preact/hooks";
+import type { BuildingKey, ResearchKey } from "../playableMvp";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceState } from "../walletFlow";
+import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type RiftActionState =
@@ -20,6 +22,7 @@ interface RiftPageProps {
   onApprove: (resource: RiftResourceState, amount: string) => void;
   onDeposit: (resource: RiftResourceState, amount: string) => void;
   onFinishWithdrawal: (withdrawal: PendingWithdrawal) => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onRequestWithdrawal: (resource: RiftResourceState, amount: string) => void;
   riftState: ChainRiftState | null;
@@ -37,6 +40,7 @@ export function RiftPage({
   onApprove,
   onDeposit,
   onFinishWithdrawal,
+  onOpenRequirement,
   onRefresh,
   onRequestWithdrawal,
   riftState,
@@ -89,7 +93,11 @@ export function RiftPage({
       {initialLoading ? (
         <VeydriftLoader label="Stabilizing Rift" />
       ) : locked ? (
-        <LockedRiftState riftState={riftState} unavailableReason={unavailableReason} />
+        <LockedRiftState
+          onOpenRequirement={onOpenRequirement}
+          riftState={riftState}
+          unavailableReason={unavailableReason}
+        />
       ) : (
         <>
           <div className="grid gap-3 md:grid-cols-3">
@@ -167,12 +175,16 @@ export function RiftPage({
 }
 
 function LockedRiftState({
+  onOpenRequirement,
   riftState,
   unavailableReason,
 }: {
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   riftState: ChainRiftState | null;
   unavailableReason?: string | undefined;
 }) {
+  const requirements = riftRequirementFlairs(riftState?.requirements ?? []);
+
   return (
     <div className="grid gap-4 rounded-lg border border-amber-200/20 bg-amber-200/5 p-4">
       <div>
@@ -182,16 +194,11 @@ function LockedRiftState({
         </p>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {(riftState?.requirements ?? []).map((requirement) => (
-          <div className="rounded border border-white/10 bg-black/20 p-3" key={`${requirement.kind}:${requirement.key}`}>
-            <p className="text-sm font-medium text-white">{requirement.label}</p>
-            <p className="mt-1 text-xs text-slate-400">
-              {riftRequirementStatus(requirement)}
-            </p>
-          </div>
-        ))}
-      </div>
+      <RequirementFlairs
+        emptyLabel="Rift requirement state is not available."
+        onOpenRequirement={onOpenRequirement}
+        requirements={requirements}
+      />
     </div>
   );
 }
@@ -341,6 +348,53 @@ export function riftRequirementStatus(requirement: Pick<ChainRiftState["requirem
   if (requirement.currentLevel >= requirement.requiredLevel) return `Level ${requirement.currentLevel} / ${requirement.requiredLevel}`;
   return `Level ${requirement.currentLevel} / ${requirement.requiredLevel} required`;
 }
+
+export function riftRequirementFlairs(requirements: ChainRiftState["requirements"]): RequirementFlair[] {
+  return requirements.map((requirement) => ({
+    label: requirement.binary ? requirement.label : `${requirement.label} ${requirement.requiredLevel}`,
+    met: riftRequirementMet(requirement),
+    target: riftRequirementTarget(requirement),
+  }));
+}
+
+function riftRequirementMet(requirement: ChainRiftState["requirements"][number]): boolean {
+  if (requirement.binary) {
+    return Boolean(requirement.built || (requirement.currentLevel !== null && requirement.currentLevel > 0));
+  }
+
+  return requirement.currentLevel !== null && requirement.currentLevel >= requirement.requiredLevel;
+}
+
+function riftRequirementTarget(requirement: ChainRiftState["requirements"][number]): RequirementTarget | undefined {
+  if (requirement.kind === "building" && isRiftBuildingKey(requirement.key)) {
+    return { kind: "building", key: requirement.key };
+  }
+
+  if (requirement.kind === "technology" && isRiftResearchKey(requirement.key)) {
+    return { kind: "research", key: requirement.key };
+  }
+
+  return undefined;
+}
+
+function isRiftBuildingKey(key: string): key is BuildingKey {
+  return riftBuildingRequirementKeys.has(key);
+}
+
+function isRiftResearchKey(key: string): key is ResearchKey {
+  return riftResearchRequirementKeys.has(key);
+}
+
+const riftBuildingRequirementKeys = new Set<string>([
+  "interdimensionalRiftStabilizer",
+  "roboticsFactory",
+  "researchLab",
+]);
+
+const riftResearchRequirementKeys = new Set<string>([
+  "energy",
+  "hyperspace",
+]);
 
 export function isWithdrawalReady(withdrawal: PendingWithdrawal, now: number): boolean {
   return withdrawal.ready || Date.parse(withdrawal.unlocksAt) <= now;
