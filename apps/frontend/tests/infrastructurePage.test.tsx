@@ -166,7 +166,7 @@ describe("Infrastructure page display helpers", () => {
         value: "0 produced",
       },
       {
-        delta: "(+11/h)",
+        delta: "+11/h",
         label: "Deuterium use",
         next: "11/h",
         tone: "warning",
@@ -227,11 +227,12 @@ describe("Infrastructure page display helpers", () => {
       children: "+126",
     });
     const warningDelta = MetricDeltaSubtext({
-      children: "(+14/h)",
+      children: "+14/h",
       tone: "warning",
     });
 
     expect(visibleText(positiveDelta)).toBe("+126");
+    expect(visibleText(warningDelta)).toBe("+14/h");
     expect(positiveDelta.props.className).toContain("block");
     expect(positiveDelta.props.className).toContain("text-xs");
     expect(positiveDelta.props.className).toContain("text-signal");
@@ -274,7 +275,7 @@ describe("Infrastructure page display helpers", () => {
     });
     expect(fusionRows.some((row) => row.value === "659 produced" || row.next === "696 produced")).toBe(false);
     expect(fusionRows).toContainEqual({
-      delta: "(+14/h)",
+      delta: "+14/h",
       label: "Deuterium use",
       next: "25/h",
       tone: "warning",
