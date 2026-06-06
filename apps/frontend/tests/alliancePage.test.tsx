@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   allianceDirectoryPageSize,
+  allianceRefreshButtonState,
   allianceRosterPageSize,
   allianceExitActionState,
   allianceInviteAcceptanceState,
@@ -13,7 +14,6 @@ import {
   rosterPageCount,
   rosterPageRows,
   shouldShowAllianceInitialLoader,
-  shouldShowAllianceRefreshIndicator,
   sortedAllianceDirectory,
   sortedRosterMembers,
 } from "../src/components/AlliancePage";
@@ -41,10 +41,6 @@ describe("AlliancePage loading display", () => {
       allianceState: null,
       loading: true,
     })).toBe(true);
-    expect(shouldShowAllianceRefreshIndicator({
-      allianceState: null,
-      loading: true,
-    })).toBe(false);
   });
 
   test("keeps confirmed alliance data visible during background refresh", () => {
@@ -52,10 +48,9 @@ describe("AlliancePage loading display", () => {
       allianceState: memberAllianceState(),
       loading: true,
     })).toBe(false);
-    expect(shouldShowAllianceRefreshIndicator({
-      allianceState: memberAllianceState(),
-      loading: true,
-    })).toBe(true);
+    expect(allianceRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
+    expect(alliancePageSource).not.toContain("Refreshing alliance");
+    expect(alliancePageSource).not.toContain("InlineSyncIndicator");
   });
 
   test("keeps loaded unaffiliated state distinct from loading", () => {
@@ -63,10 +58,7 @@ describe("AlliancePage loading display", () => {
       allianceState: unaffiliatedAllianceState(),
       loading: false,
     })).toBe(false);
-    expect(shouldShowAllianceRefreshIndicator({
-      allianceState: unaffiliatedAllianceState(),
-      loading: false,
-    })).toBe(false);
+    expect(allianceRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
   });
 
   test("keeps loaded member state distinct from loading", () => {
@@ -74,10 +66,7 @@ describe("AlliancePage loading display", () => {
       allianceState: memberAllianceState(),
       loading: false,
     })).toBe(false);
-    expect(shouldShowAllianceRefreshIndicator({
-      allianceState: memberAllianceState(),
-      loading: false,
-    })).toBe(false);
+    expect(allianceRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
   });
 
   test("treats a player with no alliance as outside member-only panels", () => {

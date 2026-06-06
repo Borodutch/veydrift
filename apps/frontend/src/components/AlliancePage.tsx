@@ -5,10 +5,17 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { VeydriftLoader } from "./VeydriftLoader";
 
 export const allianceRosterPageSize = 10;
 export const allianceDirectoryPageSize = 10;
+
+export function allianceRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
+  return {
+    disabled: loading,
+    label: loading ? "Refreshing" : "Refresh",
+  };
+}
 
 type AllianceActionState =
   | { status: "idle" }
@@ -115,7 +122,7 @@ export function AlliancePage({
   const selectedAlliance = findAllianceEntry(directory, activeAllianceId, currentAlliance);
   const inspectedAlliance = selectedAlliance?.allianceId === currentAllianceId ? null : selectedAlliance;
   const initialLoading = shouldShowAllianceInitialLoader({ allianceState, loading });
-  const backgroundRefresh = shouldShowAllianceRefreshIndicator({ allianceState, loading });
+  const refreshButton = allianceRefreshButtonState(loading);
   const openPlayer = onOpenPlayer ?? setSelectedPlayer;
   const openAlliance = onOpenAlliance ?? setActiveAllianceId;
   const exitAction = allianceExitActionState(allianceState);
@@ -170,16 +177,15 @@ export function AlliancePage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {backgroundRefresh ? <InlineSyncIndicator label="Refreshing alliance" /> : null}
           <button
             className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={onRefresh}
             type="button"
-            disabled={loading}
+            disabled={refreshButton.disabled}
             title="Refresh alliance state"
           >
             <RefreshCw aria-hidden="true" size={14} />
-            Refresh
+            {refreshButton.label}
           </button>
         </div>
       </header>
@@ -292,16 +298,6 @@ export function shouldShowAllianceInitialLoader({
   loading: boolean;
 }): boolean {
   return loading && !allianceState;
-}
-
-export function shouldShowAllianceRefreshIndicator({
-  allianceState,
-  loading,
-}: {
-  allianceState: ChainAllianceState | null;
-  loading: boolean;
-}): boolean {
-  return loading && Boolean(allianceState);
 }
 
 export function hasAllianceMembership(allianceState: ChainAllianceState | null): boolean {
