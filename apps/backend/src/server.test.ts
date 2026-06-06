@@ -1619,6 +1619,72 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("serves reconciled Alliance state while unrelated indexed state is stale", async () => {
+    const chainReader = new class extends MockChainReader {
+      override async getAllianceState(wallet: Address): Promise<AllianceState> {
+        throw new Error(`frontend alliance reads must not call live RPC for ${wallet}`);
+      }
+
+      async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+        throw new Error(`frontend alliance reads must not call live alliance intel for ${wallets.join(",")}`);
+      }
+
+      async listAllianceLogs() {
+        return [
+          {
+            blockNumber: "0x90",
+            blockTimestamp: "0x69801c80",
+            transactionHash: "0xalliance-create",
+            logIndex: "0x0",
+            topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+            data: abiStrings("VEY", "Veydrift Command")
+          },
+          {
+            blockNumber: "0x91",
+            blockTimestamp: "0x69801c81",
+            transactionHash: "0xalliance-owner",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+            data: abiWords(3n)
+          }
+        ];
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.markStale("indexed_state_reconciliation_pending");
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/alliance`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-live-read")).toBe("skipped");
+    expect(response.headers.get("x-veydrift-index-state")).toBe("alliance-healthy");
+    expect(body).toMatchObject({
+      wallet: player,
+      allianceAvailable: true,
+      source: "contract-state-indexer",
+      stale: true,
+      indexer: {
+        allianceStaleReason: null,
+        safeToServeAllianceState: true,
+        safeToServeIndexedState: false,
+        staleReason: "indexed_state_reconciliation_pending"
+      },
+      membership: { allianceId: "1", role: "owner", joinedAt: String(0x69801c81) },
+      profile: {
+        tag: "VEY",
+        name: "Veydrift Command",
+        owner: player,
+        memberCount: 1
+      }
+    });
+  });
+
   test("falls back to compact settlement reads when configured contract is not VeydriftGame", async () => {
     const reader = new VeydriftGameReader(configuredTestConfig, {
       async request<T>(_method: string, params: unknown[]): Promise<T> {

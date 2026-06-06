@@ -1550,7 +1550,9 @@ describe("SettlementIndexer", () => {
     await indexer.rebuild();
 
     expect(indexer.snapshot()).toMatchObject({
+      allianceStaleReason: null,
       indexedEventLogs: 4,
+      safeToServeAllianceState: true,
       safeToServeIndexedState: true,
       staleReason: null
     });
@@ -1568,6 +1570,54 @@ describe("SettlementIndexer", () => {
         { address: player, role: "owner", joinedAt: String(0x69801c81) },
         { address: officer, role: "officer", joinedAt: String(0x69801c83) }
       ]
+    });
+  });
+
+  test("keeps reconciled alliance state serveable when unrelated indexed state is stale", async () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listAllianceLogs() {
+        return [
+          {
+            blockNumber: "0x90",
+            blockTimestamp: "0x69801c80",
+            transactionHash: "0xalliance-create",
+            logIndex: "0x0",
+            topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+            data: abiStrings("VEY", "Veydrift Command")
+          },
+          {
+            blockNumber: "0x91",
+            blockTimestamp: "0x69801c81",
+            transactionHash: "0xalliance-owner",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+            data: abiWords(3n)
+          }
+        ];
+      }
+    }, 100n);
+
+    await indexer.rebuild();
+    indexer.markStale("indexed_state_reconciliation_pending");
+
+    expect(indexer.snapshot()).toMatchObject({
+      allianceStaleReason: null,
+      safeToServeAllianceState: true,
+      safeToServeIndexedState: false,
+      staleReason: "indexed_state_reconciliation_pending"
+    });
+    expect(indexer.allianceState(player)).toMatchObject({
+      allianceAvailable: true,
+      membership: { allianceId: "1", role: "owner", joinedAt: String(0x69801c81) },
+      profile: {
+        tag: "VEY",
+        name: "Veydrift Command",
+        owner: player,
+        memberCount: 1
+      }
     });
   });
 
