@@ -6,6 +6,7 @@ import {
   rankingsColumnLabels,
   rankingsPageSize,
   rankingsPaginationLabel,
+  rankingsRefreshButtonState,
   RankingsPagination,
   RankingsPageHeader,
   RankingsTable,
@@ -332,6 +333,12 @@ describe("RankingsPage", () => {
 
     expect(text).toContain("No settled commanders indexed yet");
     expect(text).not.toContain("Loading rankings");
+    expect(text).not.toContain("Refreshing rankings");
+  });
+
+  test("uses the refresh button as the rankings background refresh indicator", () => {
+    expect(rankingsRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
+    expect(rankingsRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
   });
 
   test("renders compact pagination controls from highscore metadata", () => {

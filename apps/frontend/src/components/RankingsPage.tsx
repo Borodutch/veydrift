@@ -5,7 +5,7 @@ import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { VeydriftLoader } from "./VeydriftLoader";
 
 type RankingsPageProps = {
   apiBaseUrl: string | undefined;
@@ -47,6 +47,13 @@ export function shouldShowRankingsInitialLoader({
   loading: boolean;
 }): boolean {
   return loading && !hasLoadedData;
+}
+
+export function rankingsRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
+  return {
+    disabled: loading,
+    label: loading ? "Refreshing" : "Refresh",
+  };
 }
 
 export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
@@ -95,8 +102,6 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
           {error}
         </div>
       ) : null}
-
-      {loading && data ? <InlineSyncIndicator label="Refreshing rankings" /> : null}
 
       <div className="flex flex-wrap gap-2">
         {categories.map((category) => (
@@ -156,17 +161,19 @@ export function RankingsPageHeader({
   loading: boolean;
   onRefresh: () => void;
 }) {
+  const refreshButton = rankingsRefreshButtonState(loading);
+
   return (
     <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
       <h1 className="text-2xl font-semibold text-white">Rankings</h1>
       <button
         className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={loading}
+        disabled={refreshButton.disabled}
         onClick={onRefresh}
         type="button"
       >
         <RotateCw aria-hidden="true" size={14} />
-        Refresh
+        {refreshButton.label}
       </button>
     </div>
   );
