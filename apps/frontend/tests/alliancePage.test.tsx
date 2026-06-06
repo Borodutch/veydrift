@@ -367,6 +367,12 @@ describe("AlliancePage loading display", () => {
     expect(inspectPagesSource).not.toContain("Public directory data exposes");
   });
 
+  test("keeps inspected alliance summaries player-facing instead of backend-detail heavy", () => {
+    expect(inspectPagesSource).toContain("<PublicAllianceInspectSummary alliance={alliance} />");
+    expect(inspectPagesSource).toContain('Pick<ChainAllianceState["directory"][number], "description" | "name" | "tag" | "totalMemberScore">');
+    expect(inspectPagesSource).not.toContain("#{alliance.allianceId}");
+  });
+
   test("pluralizes alliance member counts", () => {
     expect(memberCountLabel(0)).toBe("0 members");
     expect(memberCountLabel(1)).toBe("1 member");
