@@ -56,6 +56,29 @@ describe("Moon page helpers", () => {
     expect(systemsPanel?.props?.moonState?.buildings?.[0]?.label).toBe("Lunar Base");
     expect(text).not.toContain("No moon in orbit");
   });
+
+  test("renders indexed-not-ready Moon state without the telemetry loader", () => {
+    const page = MoonPage({
+      loading: false,
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: null,
+        moonAvailable: false,
+        unavailableReason: "Moon indexed state is still warming. Refresh shortly.",
+        indexedNotReady: true,
+        moon: null,
+        buildings: [],
+        queue: null,
+      },
+      onRefresh: () => undefined,
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Moon state is indexing");
+    expect(text).toContain("Moon indexed state is still warming. Refresh shortly.");
+    expect(text).not.toContain("Reading lunar telemetry");
+    expect(text).not.toContain("No moon in orbit");
+  });
 });
 
 function visibleText(node: ComponentChildren): string {
