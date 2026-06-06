@@ -534,7 +534,14 @@ function coordinateLabel(coordinates: Coordinates): string {
 
 function planetDistanceLabel(origin: Coordinates | null | undefined, target: Coordinates): string {
   if (!origin) return "--";
-  return `${fleetMissionDistance(origin, target)}ss`;
+  return `${formatDistanceValue(fleetMissionDistance(origin, target))} ss`;
+}
+
+function formatDistanceValue(value: number): string {
+  const distance = Math.max(0, Math.trunc(value));
+  if (distance >= 1_000_000) return `${trimCompactNumber(distance / 1_000_000)}M`;
+  if (distance >= 100_000) return `${trimCompactNumber(distance / 1_000)}K`;
+  return distance.toLocaleString("en-US");
 }
 
 function planetRaidableResourcesLabel(planet: HighscorePlanet): string {
