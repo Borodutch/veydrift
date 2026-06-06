@@ -262,6 +262,7 @@ export class SettlementIndexer {
         | "getPlayerQueues"
         | "getResearchState"
         | "getShipyardState"
+        | "listAllianceLogs"
         | "listCurrentPlanets"
     >,
     private readonly fromBlock: bigint,
@@ -964,6 +965,9 @@ export class SettlementIndexer {
     const debrisEvents = await this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest");
     const moonChanceEvents = await this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest");
     const canonicalState = await this.readCanonicalState(planetEvents);
+    const allianceLogs = this.chainReader.listAllianceLogs
+      ? await this.chainReader.listAllianceLogs(this.fromBlock, "latest")
+      : [];
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();
@@ -980,7 +984,11 @@ export class SettlementIndexer {
       for (const event of moonChanceEvents) {
         this.upsertMoonChanceReport(event);
       }
-      const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents]);
+      for (const log of allianceLogs) {
+        this.recordLogIfMissing(log);
+        this.applyAllianceEvent(decodeAllianceLog(log));
+      }
+      const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents, ...allianceLogs]);
       this.touch();
       this.recordSuccessfulReconciliation(latestBlock);
     });
@@ -2541,6 +2549,14 @@ export class SettlementIndexer {
       JSON.stringify(log),
       new Date().toISOString()
     );
+  }
+
+  private recordLogIfMissing(log: IndexedRpcLog): void {
+    const eventId = indexedLogKey(log);
+    const existing = this.db.query("SELECT event_json FROM indexed_event_logs WHERE event_id = ?").get(eventId) as EventRow | null;
+    if (existing) return;
+    this.recordLog(eventId, log);
+    this.recordLatestBlock(log.blockNumber);
   }
 
   private recordRemovedLog(eventId: string, log: IndexedRpcLog): void {

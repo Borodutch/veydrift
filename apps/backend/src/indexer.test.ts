@@ -1449,6 +1449,73 @@ describe("SettlementIndexer", () => {
     ]));
   });
 
+  test("rebuild backfills alliance event logs into the indexed read model", async () => {
+    const officer = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listAllianceLogs() {
+        return [
+          {
+            blockNumber: "0x90",
+            blockTimestamp: "0x69801c80",
+            transactionHash: "0xalliance-create",
+            logIndex: "0x0",
+            topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+            data: abiStrings("VEY", "Veydrift Command")
+          },
+          {
+            blockNumber: "0x91",
+            blockTimestamp: "0x69801c81",
+            transactionHash: "0xalliance-owner",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+            data: abiWords(3n)
+          },
+          {
+            blockNumber: "0x92",
+            transactionHash: "0xalliance-profile",
+            logIndex: "0x0",
+            topics: [allianceProfileUpdatedTopic, topic(1n)],
+            data: abiStrings("VEY", "Veydrift Command", "Indexed alliance")
+          },
+          {
+            blockNumber: "0x93",
+            blockTimestamp: "0x69801c83",
+            transactionHash: "0xalliance-officer",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(1n), addressTopic(officer)],
+            data: abiWords(2n)
+          }
+        ];
+      }
+    }, 100n);
+
+    await indexer.rebuild();
+
+    expect(indexer.snapshot()).toMatchObject({
+      indexedEventLogs: 4,
+      safeToServeIndexedState: true,
+      staleReason: null
+    });
+    expect(indexer.allianceState(player)).toMatchObject({
+      allianceAvailable: true,
+      membership: { allianceId: "1", role: "owner", joinedAt: String(0x69801c81) },
+      profile: {
+        tag: "VEY",
+        name: "Veydrift Command",
+        description: "Indexed alliance",
+        owner: player,
+        memberCount: 2
+      },
+      members: [
+        { address: player, role: "owner", joinedAt: String(0x69801c81) },
+        { address: officer, role: "officer", joinedAt: String(0x69801c83) }
+      ]
+    });
+  });
+
   test("indexes attacker and defender fleet mission visibility from mission event logs", () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer({

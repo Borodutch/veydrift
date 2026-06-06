@@ -683,6 +683,7 @@ export interface ChainReader {
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
+  listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -2155,6 +2156,32 @@ export class VeydriftGameReader implements ChainReader {
     );
 
     return logs.map((log) => decodeDebrisFieldLog(log));
+  }
+
+  async listAllianceLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    if (!this.allianceContractAddress) return [];
+
+    return this.getLogs(
+      {
+        address: this.allianceContractAddress,
+        fromBlock: toQuantity(fromBlock),
+        toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+        topics: [[
+          allianceCreatedTopic,
+          allianceProfileUpdatedTopic,
+          allianceInviteCreatedTopic,
+          allianceInviteCancelledTopic,
+          allianceJoinRequestedTopic,
+          allianceJoinRequestCancelledTopic,
+          allianceJoinRequestDismissedTopic,
+          allianceJoinRequestApprovedTopic,
+          allianceJoinedTopic,
+          allianceLeftTopic,
+          allianceRoleUpdatedTopic,
+          allianceDiplomacyUpdatedTopic
+        ]]
+      }
+    );
   }
 
   private async getGameSettlement(wallet: Address): Promise<WalletSettlement> {

@@ -28,6 +28,18 @@ const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
+const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
+const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
+const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b059f3234bbb0a671cf2b4bd";
+const allianceInviteCancelledTopic = "0x37f5074a814d223ffd29f3e588b4c5c9279cbe4437f691ea0fcf9733d6170255";
+const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
+const allianceJoinRequestCancelledTopic = "0x5b419221dee71707c4c46c47fa5abb0ae9022d7d37ddaa155aef0aac6cb8b024";
+const allianceJoinRequestDismissedTopic = "0xf1fb2103850257aab7ba733ed187ccfcf7483e838bc9d1b725c584a0eaac8cd3";
+const allianceJoinRequestApprovedTopic = "0xca0494582fd691cc814cd70d0af7915183b6b0a5b45ede056afe6d4fb9d85a28";
+const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
+const allianceLeftTopic = "0x65b0be45688803f341e315da7be3de9dd83ebf51eb3cccb3788080695e19ec54";
+const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
+const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 
 describe("HTTP JSON-RPC transport", () => {
   test("coalesces concurrent identical cacheable RPC reads", async () => {
@@ -351,6 +363,50 @@ describe("moon chance report event decoding", () => {
         moonCreated: true
       })
     ]);
+  });
+
+  test("lists alliance logs from the alliance contract", async () => {
+    const allianceContractAddress = "0x2222222222222222222222222222222222222222";
+    const reader = new VeydriftGameReader(
+      {
+        ...readerConfig,
+        allianceContractAddress
+      },
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_getLogs");
+          expect(params).toEqual([
+            {
+              address: allianceContractAddress,
+              fromBlock: "0x64",
+              toBlock: "0xc8",
+              topics: [[
+                allianceCreatedTopic,
+                allianceProfileUpdatedTopic,
+                allianceInviteCreatedTopic,
+                allianceInviteCancelledTopic,
+                allianceJoinRequestedTopic,
+                allianceJoinRequestCancelledTopic,
+                allianceJoinRequestDismissedTopic,
+                allianceJoinRequestApprovedTopic,
+                allianceJoinedTopic,
+                allianceLeftTopic,
+                allianceRoleUpdatedTopic,
+                allianceDiplomacyUpdatedTopic
+              ]]
+            }
+          ]);
+          return [
+            makeLog({
+              topics: [allianceCreatedTopic, topic(1n), addressTopic("0x1111111111111111111111111111111111111111")],
+              data: dataWords([])
+            })
+          ] as T;
+        }
+      }
+    );
+
+    await expect(reader.listAllianceLogs(100n, 200n)).resolves.toHaveLength(1);
   });
 
   test("chunks log queries when the RPC enforces a small block range", async () => {
