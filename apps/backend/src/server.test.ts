@@ -3187,6 +3187,57 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("keeps indexed infrastructure globally healthy while selected planet resources warm", async () => {
+    const chainReader = new MockChainReader();
+    let liveReadCalled = false;
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    chainReader.getInfrastructureState = async () => {
+      liveReadCalled = true;
+      throw new Error("pending planet resources should not call live RPC");
+    };
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xpending-planet",
+      logIndex: "0x0",
+      topics: [
+        planetStartedTopic,
+        addressTopic(player),
+        topic(125n)
+      ],
+      data: abiWords(2n, 45n, 10n, 211n, 1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure?planetId=125`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("healthy");
+    expect(liveReadCalled).toBe(false);
+    expect(body).toMatchObject({
+      wallet: player,
+      homePlanetId: "125",
+      planetId: "125",
+      planetLastSettledAt: null,
+      infrastructureAvailable: false,
+      unavailableReason: "Infrastructure indexed resources for this planet are still warming. Refresh shortly.",
+      resources: null,
+      stale: false,
+      source: "contract-state-indexer",
+      indexer: {
+        indexedState: "healthy",
+        pendingReconciliationReason: "planet_resources_pending:125",
+        safeToServeIndexedState: true,
+        staleReason: null
+      }
+    });
+  });
+
   test("serves indexed page state without live chain reads when warm", async () => {
     const chainReader = new MockChainReader();
     const liveReads: string[] = [];

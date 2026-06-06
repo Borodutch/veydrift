@@ -1125,11 +1125,12 @@ function indexedInfrastructureState(
   unavailableReason: string,
   indexer: SettlementIndexer
 ): InfrastructureState {
+  const planetResourcesPending = planet ? indexer.hasPendingPlanetResources(planet.planetId) : false;
   const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
   const ships = planet ? indexer.shipRows(planet.planetId) : [];
   const queue = planet ? indexer.planetQueue(planet.planetId, "building") : null;
   const technologyLevels = indexer.technologyLevels(wallet);
-  const derived = planet
+  const derived = planet && !planetResourcesPending
     ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels)
     : {
       productionPerHour: null,
@@ -1143,10 +1144,12 @@ function indexedInfrastructureState(
     wallet,
     homePlanetId: settlement.homePlanetId,
     planetId: planet?.planetId ?? settlement.homePlanetId,
-    planetLastSettledAt: planet?.lastSettledAt ?? null,
-    infrastructureAvailable: true,
-    unavailableReason,
-    resources: planet?.resources ?? null,
+    planetLastSettledAt: planetResourcesPending ? null : planet?.lastSettledAt ?? null,
+    infrastructureAvailable: !planetResourcesPending,
+    unavailableReason: planetResourcesPending
+      ? "Infrastructure indexed resources for this planet are still warming. Refresh shortly."
+      : unavailableReason,
+    resources: planet && !planetResourcesPending ? planet.resources : null,
     ...derived,
     technologyLevels,
     buildings,
