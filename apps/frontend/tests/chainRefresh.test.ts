@@ -8,6 +8,7 @@ import {
   resourceSnapshotFreshnessForSettlement,
   shouldApplyResourceSnapshot,
   shouldRefreshAllianceStateForPage,
+  shouldRefreshMissionActionStateForPage,
 } from "../src/PlayableMvpApp";
 import type { ChainInfrastructureState, WalletSettlementResponse } from "../src/walletFlow";
 
@@ -89,6 +90,13 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshAllianceStateForPage("rankings")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("alliance")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("overview")).toBe(false);
+  });
+
+  test("refreshes mission action state for Galaxy and planet detail surfaces", () => {
+    expect(shouldRefreshMissionActionStateForPage("galaxy")).toBe(true);
+    expect(shouldRefreshMissionActionStateForPage("planet")).toBe(true);
+    expect(shouldRefreshMissionActionStateForPage("shipyard")).toBe(false);
+    expect(shouldRefreshMissionActionStateForPage("overview")).toBe(false);
   });
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
