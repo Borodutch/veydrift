@@ -3808,6 +3808,73 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("hydrates highscore planet details only for the visible ranking page", async () => {
+    const owners = [
+      "0x3333333333333333333333333333333333333333",
+      "0x4444444444444444444444444444444444444444",
+      "0x5555555555555555555555555555555555555555",
+      "0x6666666666666666666666666666666666666666"
+    ] as Address[];
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => owners.map((owner, index) => ({
+      ...planet,
+      eventName: "PlanetStarted",
+      owner,
+      planetId: String(index + 10),
+      transactionHash: `0xranking${index}`,
+      blockNumber: String(123 + index)
+    }));
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+
+    const detailPlanetIds = new Set<string>();
+    const detailOwners = new Set<string>();
+    const infrastructureRows = indexer.infrastructureRows.bind(indexer);
+    const defenseRows = indexer.defenseRows.bind(indexer);
+    const shipRows = indexer.shipRows.bind(indexer);
+    const technologyLevels = indexer.technologyLevels.bind(indexer);
+    indexer.infrastructureRows = ((planetId: string) => {
+      detailPlanetIds.add(planetId);
+      return infrastructureRows(planetId);
+    }) as SettlementIndexer["infrastructureRows"];
+    indexer.defenseRows = ((planetId: string) => {
+      detailPlanetIds.add(planetId);
+      return defenseRows(planetId);
+    }) as SettlementIndexer["defenseRows"];
+    indexer.shipRows = ((planetId: string) => {
+      detailPlanetIds.add(planetId);
+      return shipRows(planetId);
+    }) as SettlementIndexer["shipRows"];
+    indexer.technologyLevels = ((wallet: Address) => {
+      detailOwners.add(wallet.toLowerCase());
+      return technologyLevels(wallet);
+    }) as SettlementIndexer["technologyLevels"];
+
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/highscores?category=total&page=2&pageSize=1&currentWallet=${owners[3]}&includeAttackProtection=true`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total).toHaveLength(1);
+    expect(body.rankings.total[0]).toMatchObject({
+      rank: 2,
+      wallet: owners[1]
+    });
+    expect(body.rankings.economy).toEqual([]);
+    expect(body.currentPlayer.rankings.total).toMatchObject({
+      rank: 4,
+      page: 4
+    });
+    expect(body.currentPlayer.rankings.economy).toBeNull();
+    expect(detailPlanetIds).toEqual(new Set(["11"]));
+    expect(detailOwners).toEqual(new Set([owners[1]!]));
+  });
+
   test("includes all indexed planets for each ranked commander", async () => {
     const chainReader = new MockChainReader();
     chainReader.listSettledPlanetEvents = async () => [
