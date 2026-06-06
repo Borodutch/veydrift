@@ -997,6 +997,34 @@ describe("Playable MVP app display helpers", () => {
       }),
       now: 1_700_000_030_000,
     })).toBeUndefined();
+
+    expect(buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        indexer: {
+          indexedState: "stale",
+          safeToServeIndexedState: false,
+          staleReason: "planet_resources_pending:98",
+        },
+        queue: readyQueue,
+        source: "contract-state-indexer",
+      }),
+      now: 1_700_000_030_000,
+    })).toBe(true);
+    expect(buildingCompletionUnavailableReasonFor({
+      canTransact: true,
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        indexer: {
+          indexedState: "stale",
+          safeToServeIndexedState: false,
+          staleReason: "planet_resources_pending:98",
+        },
+        queue: readyQueue,
+        source: "contract-state-indexer",
+      }),
+      now: 1_700_000_030_000,
+    })).toBeUndefined();
   });
 
   test("allows indexed ready building queues after backend revalidation without readonly preflight gating", () => {
@@ -1180,6 +1208,23 @@ describe("Playable MVP app display helpers", () => {
         queue: readyQueue,
         source: "contract-state-indexer",
         stale: true,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_030_000,
+    })).toBeUndefined();
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        indexer: {
+          indexedState: "stale",
+          safeToServeIndexedState: false,
+          staleReason: "planet_resources_pending:98",
+        },
+        queue: readyQueue,
+        source: "contract-state-indexer",
       }),
       isBuildingReadyToFinish: true,
       isDisplayedBuildingQueueReady: true,

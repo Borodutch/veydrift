@@ -285,7 +285,13 @@ export class SettlementIndexer {
       pendingReconciliationReason
     });
     const staleReason = reconciliationInProgress ? "reconciliation_in_progress" : blockingStaleReason;
-    const safeToServeIndexedState = blockingStaleReason === null && (!reconciliationInProgress || Boolean(lastReconciledAt));
+    const canServePreviousReconciliation =
+      reconciliationInProgress
+      && Boolean(lastReconciledAt)
+      && isPlanetHydrationPendingReason(blockingStaleReason);
+    const safeToServeIndexedState =
+      (blockingStaleReason === null || canServePreviousReconciliation)
+      && (!reconciliationInProgress || Boolean(lastReconciledAt));
     return {
       indexedDebrisFields: this.count("indexed_debris_fields"),
       indexedEventLogs: this.count("indexed_event_logs"),
@@ -2827,6 +2833,13 @@ function isZeroResourcePlaceholder(event: SettledPlanetEvent): boolean {
 
 function pendingPlanetResourcesReason(planetId: string): string {
   return `planet_resources_pending:${planetId}`;
+}
+
+function isPlanetHydrationPendingReason(reason: string | null): boolean {
+  return Boolean(
+    reason?.startsWith("planet_resources_pending:")
+    || reason?.startsWith("planet_identity_pending:")
+  );
 }
 
 function subtractResources(left: QueueState["cost"], right: QueueState["cost"]): QueueState["cost"] {
