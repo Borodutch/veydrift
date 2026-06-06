@@ -25,7 +25,6 @@ import {
   allianceJoinRequestDismissalState,
   buildAllianceRoster,
   findAllianceEntry,
-  memberCountLabel,
   rosterPageCount,
   rosterPageRows,
 } from "./AlliancePage";
@@ -260,6 +259,10 @@ export function AllianceInspectPage({
     tag: profile.tag,
   } : null;
   const alliance = findAllianceEntry(allianceState?.directory ?? [], allianceId, currentAlliance);
+  const publicRoster = useMemo(
+    () => buildAllianceRoster(!isCurrentAlliance ? alliance?.members ?? [] : [], alliance?.owner),
+    [alliance?.members, alliance?.owner, isCurrentAlliance]
+  );
   const role = allianceState?.membership.role ?? "none";
   const canManageMembers = isCurrentAlliance && (role === "owner" || role === "officer");
   const isOwner = isCurrentAlliance && role === "owner";
@@ -309,16 +312,21 @@ export function AllianceInspectPage({
                 onSetInviteFormOpen={setInviteFormOpen}
               />
             </Panel>
+          ) : publicRoster.all.length ? (
+            <Panel title="Members">
+              <RosterGroup
+                canManageMembers={false}
+                disabled
+                isOwner={false}
+                members={publicRoster.all}
+                onKick={onKick}
+                onOpenPlayer={onOpenPlayer}
+                onSetRole={onSetRole}
+              />
+            </Panel>
           ) : (
             <Panel title="Members">
-              <div className="grid gap-2 sm:grid-cols-3">
-                <MiniStat label="Members" value={memberCountLabel(alliance.memberCount)} />
-                <MiniStat label="Total Score" value={formatScore(alliance.totalMemberScore)} />
-                <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
-              </div>
-              <p className="mt-3 text-sm text-slate-400">
-                Public directory data exposes the owner, member count, total score, and profile metadata for this alliance.
-              </p>
+              <p className="text-sm text-slate-400">No indexed public members are available for this alliance yet.</p>
             </Panel>
           )}
 
@@ -464,17 +472,8 @@ function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onO
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-slate-400">No members found.</p>
+        <p className="text-sm text-slate-400">No indexed public members are available.</p>
       )}
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-white/10 bg-black/20 px-3 py-2">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-      <p className="mt-1 truncate text-sm font-semibold text-white">{value}</p>
     </div>
   );
 }

@@ -442,6 +442,13 @@ export type AllianceState = {
     createdAt: string;
     memberCount: number;
     totalMemberScore?: string;
+    members?: Array<{
+      address: Address;
+      displayName?: string | null;
+      role: AllianceRoleName;
+      joinedAt: string;
+      totalScore?: string;
+    }>;
   }>;
   pendingInvites: Array<{
     allianceId: string;
@@ -1642,6 +1649,43 @@ export class VeydriftGameReader implements ChainReader {
         }]
         : [];
     });
+    const directoryMemberAddressResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      directory.map((alliance) => ({ selector: "0x2a1ef311", args: [encodeUint(BigInt(alliance.allianceId))] }))
+    );
+    const directoryMemberAddresses = new Map<string, Address[]>(
+      directory.map((alliance, index) => [
+        alliance.allianceId,
+        decodeAddressArray(directoryMemberAddressResults[index] ?? "0x")
+      ])
+    );
+    const uniqueDirectoryMembers = Array.from(new Set(
+      [...directoryMemberAddresses.values()].flat().map((address) => address.toLowerCase() as Address)
+    ));
+    const directoryMemberMembershipResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      uniqueDirectoryMembers.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
+    );
+    const directoryMemberMemberships = new Map<string, { role: AllianceRoleName; joinedAt: string }>(
+      uniqueDirectoryMembers.map((address, index) => {
+        const words = splitWords(directoryMemberMembershipResults[index] ?? "0x");
+        return [address, {
+          role: allianceRoleName(Number(decodeUintWord(wordAt(words, 1)))),
+          joinedAt: decodeUintWord(wordAt(words, 2)).toString()
+        }];
+      })
+    );
+    const directoryWithMembers = directory.map((alliance) => ({
+      ...alliance,
+      members: (directoryMemberAddresses.get(alliance.allianceId) ?? []).map((address) => {
+        const membership = directoryMemberMemberships.get(address.toLowerCase());
+        return {
+          address,
+          role: membership?.role ?? "member",
+          joinedAt: membership?.joinedAt ?? "0"
+        };
+      })
+    }));
 
     if (allianceId === 0n) {
       return {
@@ -1649,7 +1693,7 @@ export class VeydriftGameReader implements ChainReader {
         allianceAvailable: true,
         membership: { allianceId: "0", role, joinedAt },
         profile: null,
-        directory,
+        directory: directoryWithMembers,
         pendingInvites,
         pendingJoinRequests,
         allianceJoinRequests: [],
@@ -1657,10 +1701,8 @@ export class VeydriftGameReader implements ChainReader {
       };
     }
 
-    const profile = directory.find((entry) => entry.allianceId === allianceId.toString()) ?? null;
-    const memberAddresses = decodeAddressArray(
-      await this.callContract(this.allianceContractAddress, "0x2a1ef311", [encodeUint(allianceId)])
-    );
+    const profile = directoryWithMembers.find((entry) => entry.allianceId === allianceId.toString()) ?? null;
+    const memberAddresses = directoryMemberAddresses.get(allianceId.toString()) ?? [];
     const joinRequestAddresses = decodeAddressArray(
       await this.callContract(this.allianceContractAddress, "0x2953e5ce", [encodeUint(allianceId)])
     );
@@ -1711,7 +1753,7 @@ export class VeydriftGameReader implements ChainReader {
         createdAt: profile.createdAt,
         memberCount: profile.memberCount
       } : null,
-      directory,
+      directory: directoryWithMembers,
       pendingInvites,
       pendingJoinRequests,
       allianceJoinRequests,
