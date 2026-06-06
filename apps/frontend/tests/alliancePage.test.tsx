@@ -37,6 +37,14 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).not.toContain('className="icon-button" onClick={onRefresh}');
   });
 
+  test("uses the shared labeled refresh button treatment on inspected alliances", () => {
+    expect(inspectPagesSource).toContain("allianceRefreshButtonState(disabled)");
+    expect(inspectPagesSource).toContain("inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200");
+    expect(inspectPagesSource).toContain('<RefreshCw aria-hidden="true" size={14} />');
+    expect(inspectPagesSource).toContain("{refreshButton.label}");
+    expect(inspectPagesSource).not.toContain('<button className="icon-button" disabled={actionBusy} onClick={onRefresh}');
+  });
+
   test("uses the shared loader for initial alliance state loading", () => {
     expect(shouldShowAllianceInitialLoader({
       allianceState: null,
