@@ -292,6 +292,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
+        const indexed = indexedWalletSettlementWarmResponse(indexer, wallet);
+        if (indexed) return indexed;
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return indexedWalletSettlementFallbackResponse(indexer, wallet, new Error("backend_not_configured"))
@@ -325,6 +327,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
+        const indexed = indexedWalletPlanetsWarmResponse(indexer, wallet);
+        if (indexed) return indexed;
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return indexedWalletPlanetsFallbackResponse(indexer, wallet, new Error("backend_not_configured"))
@@ -424,6 +428,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
+        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "infrastructure", indexedInfrastructureState);
+        if (indexed) return indexed;
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "infrastructure", new Error("backend_not_configured"), indexedInfrastructureState)
@@ -718,6 +724,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
+      if (indexer && hasWarmPlanetIndex(indexer)) {
+        return Response.json(accruedPlanetState(indexer, indexer.planet(planetId.toString())), {
+          headers: corsHeaders
+        });
+      }
       try {
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (!(ready instanceof Response)) {
@@ -729,12 +740,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (!isDegradableReadError(error)) {
           return errorResponse(error, 400);
         }
-      }
-      if (indexer) {
-        await ensurePlanetIndex(indexer);
-        return Response.json(accruedPlanetState(indexer, indexer.planet(planetId.toString())), {
-          headers: corsHeaders
-        });
       }
       const ready = requireChainReader(createLiveChainReader(), loaded.problems);
       if (ready instanceof Response) return ready;
@@ -778,7 +783,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       );
       const allianceIntel = await allianceIntelForOccupiedPlanets(
         Array.from(occupied.values()),
-        createLiveChainReader()
+        undefined
       );
 
       return Response.json(
@@ -840,7 +845,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               );
               const allianceIntel = await allianceIntelForOccupiedPlanets(
                 Array.from(occupied.values()),
-                createLiveChainReader()
+                undefined
               );
               const snapshot = systemSnapshot(
                 loaded.config.chainId,
@@ -1070,6 +1075,29 @@ function indexedWalletSettlementFallbackResponse(
   });
 }
 
+function indexedWalletSettlementWarmResponse(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`
+): Response | null {
+  if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
+
+  const snapshot = indexer.snapshot();
+  const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
+  return Response.json({
+    ...withPlayerProfile(settlement, indexer, wallet),
+    detail: "wallet settlement loaded from DB-indexed contract state before live RPC.",
+    indexer: snapshot,
+    liveReadSkippedAt: new Date().toISOString(),
+    source: "contract-state-indexer",
+    stale: !snapshot.safeToServeIndexedState
+  }, {
+    headers: {
+      ...corsHeaders,
+      "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
+    }
+  });
+}
+
 function indexedWalletPlanetsFallbackResponse(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`,
@@ -1086,6 +1114,28 @@ function indexedWalletPlanetsFallbackResponse(
     liveReadFailedAt: new Date().toISOString(),
     source: "contract-state-indexer",
     stale: true
+  }, {
+    headers: {
+      ...corsHeaders,
+      "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
+    }
+  });
+}
+
+function indexedWalletPlanetsWarmResponse(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`
+): Response | null {
+  if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
+
+  const snapshot = indexer.snapshot();
+  return Response.json({
+    ...withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet),
+    detail: "wallet planets loaded from DB-indexed contract state before live RPC.",
+    indexer: snapshot,
+    liveReadSkippedAt: new Date().toISOString(),
+    source: "contract-state-indexer",
+    stale: !snapshot.safeToServeIndexedState
   }, {
     headers: {
       ...corsHeaders,
