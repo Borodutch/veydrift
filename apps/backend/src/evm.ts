@@ -185,6 +185,93 @@ export type IndexedShipCountChangedEvent = {
   total: number;
 };
 
+export type IndexedAllianceEvent =
+  | {
+      eventName: "AllianceCreated";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      owner: Address;
+      tag: string;
+      name: string;
+      createdAt: string;
+    }
+  | {
+      eventName: "AllianceProfileUpdated";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      tag: string;
+      name: string;
+      description: string;
+    }
+  | {
+      eventName: "AllianceInviteCreated";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      inviter: Address;
+      player: Address;
+      invitedAt: string;
+    }
+  | {
+      eventName: "AllianceInviteCancelled" | "AllianceJoinRequestCancelled";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      player: Address;
+    }
+  | {
+      eventName: "AllianceJoinRequested";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      requester: Address;
+      requestedAt: string;
+    }
+  | {
+      eventName: "AllianceJoinRequestDismissed" | "AllianceJoinRequestApproved";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      manager: Address;
+      requester: Address;
+    }
+  | {
+      eventName: "AllianceJoined";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      player: Address;
+      role: AllianceRoleName;
+      roleId: number;
+      joinedAt: string;
+    }
+  | {
+      eventName: "AllianceLeft";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      player: Address;
+    }
+  | {
+      eventName: "AllianceRoleUpdated";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      player: Address;
+      role: AllianceRoleName;
+      roleId: number;
+    }
+  | {
+      eventName: "AllianceDiplomacyUpdated";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      otherAllianceId: string;
+      statusId: number;
+    };
+
 export type FleetMissionVisibility = {
   wallet: Address;
   homePlanetId: string | null;
@@ -482,7 +569,7 @@ export type AllianceState = {
   }>;
 };
 
-type AllianceRoleName = "none" | "member" | "officer" | "owner";
+export type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
 export type AttackBlockReason = "none" | "bashing_limit" | "score_protection" | "same_alliance";
 export type AttackRelation = "peer" | "stronger" | "weaker";
@@ -3318,6 +3405,18 @@ const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
+const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
+const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b059f3234bbb0a671cf2b4bd";
+const allianceInviteCancelledTopic = "0x37f5074a814d223ffd29f3e588b4c5c9279cbe4437f691ea0fcf9733d6170255";
+const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
+const allianceJoinRequestCancelledTopic = "0x5b419221dee71707c4c46c47fa5abb0ae9022d7d37ddaa155aef0aac6cb8b024";
+const allianceJoinRequestDismissedTopic = "0xf1fb2103850257aab7ba733ed187ccfcf7483e838bc9d1b725c584a0eaac8cd3";
+const allianceJoinRequestApprovedTopic = "0xca0494582fd691cc814cd70d0af7915183b6b0a5b45ede056afe6d4fb9d85a28";
+const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
+const allianceLeftTopic = "0x65b0be45688803f341e315da7be3de9dd83ebf51eb3cccb3788080695e19ec54";
+const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
+const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
@@ -3460,6 +3559,22 @@ export function isRiftResourceLog(log: RpcLog): boolean {
   return topic === marketResourceDepositedTopic
     || topic === marketResourceWithdrawalRequestedTopic
     || topic === marketResourceWithdrawalFinishedTopic;
+}
+
+export function isAllianceLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === allianceCreatedTopic
+    || topic === allianceProfileUpdatedTopic
+    || topic === allianceInviteCreatedTopic
+    || topic === allianceInviteCancelledTopic
+    || topic === allianceJoinRequestedTopic
+    || topic === allianceJoinRequestCancelledTopic
+    || topic === allianceJoinRequestDismissedTopic
+    || topic === allianceJoinRequestApprovedTopic
+    || topic === allianceJoinedTopic
+    || topic === allianceLeftTopic
+    || topic === allianceRoleUpdatedTopic
+    || topic === allianceDiplomacyUpdatedTopic;
 }
 
 export function isFleetMissionLog(log: RpcLog): boolean {
@@ -3717,6 +3832,118 @@ export function decodeRiftResourceLog(log: RpcLog): IndexedRiftResourceEvent {
       ? "MarketResourceDeposited"
       : "MarketResourceWithdrawalFinished"
   };
+}
+
+export function decodeAllianceLog(log: RpcLog): IndexedAllianceEvent {
+  const topic = topicAt(log.topics, 0);
+  const blockTimestamp = logBlockTimestampSeconds(log) ?? "0";
+  const base = {
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString()
+  };
+
+  if (topic === allianceCreatedTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: "AllianceCreated",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      owner: decodeAddressWord(topicAt(log.topics, 2)),
+      tag: decodeString(words, 0),
+      name: decodeString(words, 1),
+      createdAt: blockTimestamp
+    };
+  }
+  if (topic === allianceProfileUpdatedTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: "AllianceProfileUpdated",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      tag: decodeString(words, 0),
+      name: decodeString(words, 1),
+      description: decodeString(words, 2)
+    };
+  }
+  if (topic === allianceInviteCreatedTopic) {
+    return {
+      ...base,
+      eventName: "AllianceInviteCreated",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      inviter: decodeAddressWord(topicAt(log.topics, 2)),
+      player: decodeAddressWord(topicAt(log.topics, 3)),
+      invitedAt: blockTimestamp
+    };
+  }
+  if (topic === allianceInviteCancelledTopic || topic === allianceJoinRequestCancelledTopic) {
+    return {
+      ...base,
+      eventName: topic === allianceInviteCancelledTopic ? "AllianceInviteCancelled" : "AllianceJoinRequestCancelled",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      player: decodeAddressWord(topicAt(log.topics, 2))
+    };
+  }
+  if (topic === allianceJoinRequestedTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: "AllianceJoinRequested",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      requester: decodeAddressWord(topicAt(log.topics, 2)),
+      requestedAt: decodeUintWord(wordAt(words, 0)).toString()
+    };
+  }
+  if (topic === allianceJoinRequestDismissedTopic || topic === allianceJoinRequestApprovedTopic) {
+    return {
+      ...base,
+      eventName: topic === allianceJoinRequestDismissedTopic ? "AllianceJoinRequestDismissed" : "AllianceJoinRequestApproved",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      manager: decodeAddressWord(topicAt(log.topics, 2)),
+      requester: decodeAddressWord(topicAt(log.topics, 3))
+    };
+  }
+  if (topic === allianceJoinedTopic) {
+    const roleId = Number(decodeUintWord(wordAt(splitWords(log.data), 0)));
+    return {
+      ...base,
+      eventName: "AllianceJoined",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      player: decodeAddressWord(topicAt(log.topics, 2)),
+      role: allianceRoleName(roleId),
+      roleId,
+      joinedAt: blockTimestamp
+    };
+  }
+  if (topic === allianceLeftTopic) {
+    return {
+      ...base,
+      eventName: "AllianceLeft",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      player: decodeAddressWord(topicAt(log.topics, 2))
+    };
+  }
+  if (topic === allianceRoleUpdatedTopic) {
+    const roleId = Number(decodeUintWord(wordAt(splitWords(log.data), 0)));
+    return {
+      ...base,
+      eventName: "AllianceRoleUpdated",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      player: decodeAddressWord(topicAt(log.topics, 2)),
+      role: allianceRoleName(roleId),
+      roleId
+    };
+  }
+  if (topic === allianceDiplomacyUpdatedTopic) {
+    return {
+      ...base,
+      eventName: "AllianceDiplomacyUpdated",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      otherAllianceId: decodeUint(topicAt(log.topics, 2)).toString(),
+      statusId: Number(decodeUintWord(wordAt(splitWords(log.data), 0)))
+    };
+  }
+
+  throw new Error(`Unsupported alliance log topic: ${topic}`);
 }
 
 export function isMoonChanceReportLog(log: RpcLog): boolean {
@@ -4012,6 +4239,16 @@ function allianceRoleName(role: number): AllianceRoleName {
   if (role === 2) return "officer";
   if (role === 3) return "owner";
   return "none";
+}
+
+function logBlockTimestampSeconds(log: RpcLog): string | undefined {
+  if (!("blockTimestamp" in log) || typeof log.blockTimestamp !== "string") return undefined;
+
+  try {
+    return BigInt(log.blockTimestamp).toString();
+  } catch {
+    return undefined;
+  }
 }
 
 export function attackBlockReasonLabel(reason: AttackBlockReason): string | null {

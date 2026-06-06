@@ -453,7 +453,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return indexedAllianceUnavailableResponse(wallet, indexer);
+        return indexedAllianceResponse(wallet, indexer);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -528,7 +528,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         }
 
         const profiles = indexer?.playerProfiles(planetsByOwner.keys()) ?? new Map<string, PlayerProfile>();
-        const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), undefined);
+        const allianceIntel = allianceIntelForPlayers(entries.map((entry) => entry.wallet), indexer);
         const totalEntries = entries.length;
         const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
         const page = Math.min(pagination.page, totalPages);
@@ -627,7 +627,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       );
       const allianceIntel = await allianceIntelForOccupiedPlanets(
         Array.from(occupied.values()),
-        undefined
+        indexer
       );
 
       return Response.json(
@@ -689,7 +689,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               );
               const allianceIntel = await allianceIntelForOccupiedPlanets(
                 Array.from(occupied.values()),
-                undefined
+                indexer
               );
               const snapshot = systemSnapshot(
                 loaded.config.chainId,
@@ -833,6 +833,11 @@ function isIndexableChainReader(
 function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
   if (!indexer) return false;
   return indexer.snapshot().indexedPlanets > 0;
+}
+
+function hasWarmAllianceIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
+  if (!indexer) return false;
+  return indexer.snapshot().safeToServeIndexedState;
 }
 
 async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
@@ -1427,27 +1432,17 @@ function resourceWithClaimableAccrual(
 
 async function allianceIntelForOccupiedPlanets(
   planets: readonly SettledPlanetEvent[],
-  chainReader: ChainReader | undefined
+  indexer: SettlementIndexer | undefined
 ): Promise<Map<string, AllianceIdentity>> {
-  return allianceIntelForPlayers(planets.map((planet) => planet.owner), chainReader);
+  return allianceIntelForPlayers(planets.map((planet) => planet.owner), indexer);
 }
 
-async function allianceIntelForPlayers(
+function allianceIntelForPlayers(
   wallets: readonly string[],
-  chainReader: ChainReader | undefined
-): Promise<Map<string, AllianceIdentity>> {
-  const result = new Map<string, AllianceIdentity>();
-  if (!chainReader?.getAllianceIntelForPlayers || wallets.length === 0) return result;
-
-  try {
-    const owners = Array.from(new Set(wallets.map((wallet) => wallet.toLowerCase() as Address)));
-    const intel = await chainReader.getAllianceIntelForPlayers(owners);
-    for (const [owner, alliance] of intel) result.set(owner.toLowerCase(), alliance);
-  } catch (error) {
-    console.error("Alliance intel lookup failed", error);
-  }
-
-  return result;
+  indexer: SettlementIndexer | undefined
+): Map<string, AllianceIdentity> {
+  if (!indexer || wallets.length === 0) return new Map();
+  return indexer.allianceIntelForPlayers(wallets);
 }
 
 function debrisFieldRef(field: IndexedDebrisFieldEvent | undefined): { metal: string; crystal: string } | null {
@@ -1995,36 +1990,25 @@ function indexedSettlementFundingUnavailableResponse(indexer: SettlementIndexer 
   );
 }
 
-function indexedAllianceUnavailableResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {
-  const snapshot = indexer?.snapshot() ?? null;
-  console.warn("Frontend read skipped request-time live chain fallback", {
-    surface: "alliance",
-    indexer: snapshot,
-    source: "contract-state-indexer"
-  });
+function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {
+  if (!hasWarmAllianceIndex(indexer)) {
+    return indexedReadNotReadyResponse("alliance", indexer);
+  }
 
+  const snapshot = indexer.snapshot();
   return Response.json(
     {
-      wallet,
-      allianceAvailable: false,
-      dismissJoinRequestAvailable: process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED !== "false",
-      unavailableReason: "Alliance indexed state is not available yet; live alliance contract reads are disabled for frontend API requests.",
-      membership: { allianceId: "0", role: "none", joinedAt: "0" },
-      profile: null,
-      directory: [],
-      pendingInvites: [],
-      pendingJoinRequests: [],
-      allianceJoinRequests: [],
-      members: [],
+      ...indexer.allianceState(wallet),
+      detail: "Alliance state loaded from DB-indexed contract state before live RPC.",
       indexer: snapshot,
       liveReadSkippedAt: new Date().toISOString(),
       source: "contract-state-indexer",
-      stale: true
+      stale: !snapshot.safeToServeIndexedState
     },
     {
       headers: {
         ...corsHeaders,
-        "x-veydrift-index-state": snapshot ? "not-ready" : "unavailable",
+        "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale",
         "x-veydrift-live-read": "skipped"
       }
     }

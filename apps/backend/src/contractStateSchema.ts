@@ -189,6 +189,8 @@ export const canonicalContractTables = [
   "contract_rift_withdrawals",
   "contract_alliances",
   "contract_alliance_members",
+  "contract_alliance_invites",
+  "contract_alliance_join_requests",
   "contract_alliance_diplomacy",
   "contract_highscore_inputs",
   "indexed_event_logs"

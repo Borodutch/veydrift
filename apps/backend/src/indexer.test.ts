@@ -26,6 +26,12 @@ const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
+const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
+const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
+const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b059f3234bbb0a671cf2b4bd";
+const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
+const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
+const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -1350,6 +1356,99 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("indexes alliance membership, profile, invites, and join requests from event logs", () => {
+    const officer = "0x3333333333333333333333333333333333333333" as Address;
+    const applicant = "0x4444444444444444444444444444444444444444" as Address;
+    const invitee = "0x5555555555555555555555555555555555555555" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xalliance-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("VEY", "Veydrift Command")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xalliance-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xalliance-profile",
+      logIndex: "0x0",
+      topics: [allianceProfileUpdatedTopic, topic(1n)],
+      data: abiStrings("VEY", "Veydrift Command", "Indexed alliance")
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      blockTimestamp: "0x69801c83",
+      transactionHash: "0xalliance-officer",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(officer)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xalliance-role",
+      logIndex: "0x0",
+      topics: [allianceRoleUpdatedTopic, topic(1n), addressTopic(officer)],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x95",
+      blockTimestamp: "0x69801c85",
+      transactionHash: "0xalliance-invite",
+      logIndex: "0x0",
+      topics: [allianceInviteCreatedTopic, topic(1n), addressTopic(officer), addressTopic(invitee)],
+      data: "0x"
+    });
+    indexer.applyLog({
+      blockNumber: "0x96",
+      transactionHash: "0xalliance-request",
+      logIndex: "0x0",
+      topics: [allianceJoinRequestedTopic, topic(1n), addressTopic(applicant)],
+      data: abiWords(1770003000n)
+    });
+
+    expect(indexer.allianceState(player)).toMatchObject({
+      allianceAvailable: true,
+      membership: { allianceId: "1", role: "owner", joinedAt: String(0x69801c81) },
+      profile: {
+        tag: "VEY",
+        name: "Veydrift Command",
+        description: "Indexed alliance",
+        owner: player,
+        memberCount: 2
+      },
+      members: [
+        { address: player, role: "owner", joinedAt: String(0x69801c81) },
+        { address: officer, role: "officer", joinedAt: String(0x69801c83) }
+      ],
+      allianceJoinRequests: [
+        { allianceId: "1", requester: applicant, requestedAt: "1770003000" }
+      ]
+    });
+    expect(indexer.allianceState(invitee).pendingInvites).toEqual([
+      { allianceId: "1", inviter: officer, inviterDisplayName: null, invitedAt: String(0x69801c85) }
+    ]);
+    expect(indexer.allianceState(applicant).pendingJoinRequests).toEqual([
+      { allianceId: "1", requester: applicant, requesterDisplayName: null, requestedAt: "1770003000" }
+    ]);
+    expect(indexer.allianceIntelForPlayers([player, applicant])).toEqual(new Map([
+      [player, { allianceId: "1", tag: "VEY", name: "Veydrift Command" }]
+    ]));
+  });
+
   test("indexes attacker and defender fleet mission visibility from mission event logs", () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer({
@@ -2151,6 +2250,21 @@ function abiString(value: string): string {
     BigInt(bytes.length).toString(16).padStart(64, "0"),
     data.padEnd(Math.ceil(data.length / 64) * 64, "0")
   ].join("")}`;
+}
+
+function abiStrings(...values: string[]): string {
+  const tails = values.map((value) => {
+    const bytes = new TextEncoder().encode(value);
+    const data = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `${BigInt(bytes.length).toString(16).padStart(64, "0")}${data.padEnd(Math.ceil(data.length / 64) * 64, "0")}`;
+  });
+  let offset = 32n * BigInt(values.length);
+  const heads = tails.map((tail) => {
+    const head = offset.toString(16).padStart(64, "0");
+    offset += BigInt(tail.length / 2);
+    return head;
+  });
+  return `0x${[...heads, ...tails].join("")}`;
 }
 
 function topic(value: bigint): string {

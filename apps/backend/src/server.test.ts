@@ -58,6 +58,10 @@ const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e0
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
+const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
+const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
+const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
+const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
 const planet: PlanetState = {
   planetId: "7",
   owner: player,
@@ -1417,7 +1421,7 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({ error: "indexed_read_not_ready", source: "contract-state-indexer" });
   });
 
-  test("returns indexed alliance unavailable state without live RPC", async () => {
+  test("returns indexed-not-ready for cold Alliance reads without live RPC", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
       chainReader: withoutIndexLists(new class extends MockChainReader {
@@ -1428,19 +1432,12 @@ describe("Veydrift backend", () => {
     })(new Request(`http://localhost/wallet/${player}/alliance`));
 
     const body = await response.json();
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     expect(response.headers.get("x-veydrift-live-read")).toBe("skipped");
-    expect(body.wallet).toBe(player);
-    expect(body.allianceAvailable).toBe(false);
-    expect(body.membership).toEqual({
-      allianceId: "0",
-      role: "none",
-      joinedAt: "0"
+    expect(body).toMatchObject({
+      error: "indexed_read_not_ready",
+      source: "contract-state-indexer"
     });
-    expect(body.dismissJoinRequestAvailable).toBe(true);
-    expect(body.profile).toBeNull();
-    expect(body.members).toEqual([]);
-    expect(body.source).toBe("contract-state-indexer");
   });
 
   test("serves direct attack protection from indexed scores without live RPC", async () => {
@@ -1465,7 +1462,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("keeps alliance profile enrichment indexed-only when no alliance read model exists", async () => {
+  test("serves indexed no-membership Alliance state without live alliance reads", async () => {
     const chainReader = new class extends MockChainReader {
       override async getAllianceState(wallet: Address): Promise<AllianceState> {
         throw new Error(`frontend alliance reads must not call live RPC for ${wallet}`);
@@ -1533,12 +1530,93 @@ describe("Veydrift backend", () => {
     expect(response.headers.get("x-veydrift-live-read")).toBe("skipped");
     expect(body).toMatchObject({
       wallet: player,
-      allianceAvailable: false,
+      allianceAvailable: true,
       source: "contract-state-indexer",
-      stale: true
+      stale: false,
+      membership: {
+        allianceId: "0",
+        role: "none",
+        joinedAt: "0"
+      }
     });
     expect(body.profile).toBeNull();
     expect(body.directory).toEqual([]);
+  });
+
+  test("serves indexed Alliance profile, membership, and applications without live RPC", async () => {
+    const applicant = "0x4444444444444444444444444444444444444444" as Address;
+    const chainReader = new class extends MockChainReader {
+      override async getAllianceState(wallet: Address): Promise<AllianceState> {
+        throw new Error(`frontend alliance reads must not call live RPC for ${wallet}`);
+      }
+
+      async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+        throw new Error(`frontend alliance reads must not call live alliance intel for ${wallets.join(",")}`);
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xalliance-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("VEY", "Veydrift Command")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xalliance-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xalliance-profile",
+      logIndex: "0x0",
+      topics: [allianceProfileUpdatedTopic, topic(1n)],
+      data: abiStrings("VEY", "Veydrift Command", "Indexed alliance")
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xalliance-request",
+      logIndex: "0x0",
+      topics: [allianceJoinRequestedTopic, topic(1n), addressTopic(applicant)],
+      data: abiWords(1770003000n)
+    });
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/alliance`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-live-read")).toBe("skipped");
+    expect(response.headers.get("x-veydrift-index-state")).toBe("healthy");
+    expect(body).toMatchObject({
+      wallet: player,
+      allianceAvailable: true,
+      source: "contract-state-indexer",
+      stale: false,
+      membership: { allianceId: "1", role: "owner", joinedAt: String(0x69801c81) },
+      profile: {
+        tag: "VEY",
+        name: "Veydrift Command",
+        description: "Indexed alliance",
+        owner: player,
+        memberCount: 1
+      },
+      members: [
+        { address: player, role: "owner", joinedAt: String(0x69801c81) }
+      ],
+      allianceJoinRequests: [
+        { allianceId: "1", requester: applicant, requestedAt: "1770003000" }
+      ]
+    });
   });
 
   test("falls back to compact settlement reads when configured contract is not VeydriftGame", async () => {
@@ -4114,6 +4192,21 @@ describe("Veydrift backend", () => {
 
 function abiWords(...values: bigint[]): string {
   return `0x${values.map((value) => value.toString(16).padStart(64, "0")).join("")}`;
+}
+
+function abiStrings(...values: string[]): string {
+  const tails = values.map((value) => {
+    const bytes = new TextEncoder().encode(value);
+    const data = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `${BigInt(bytes.length).toString(16).padStart(64, "0")}${data.padEnd(Math.ceil(data.length / 64) * 64, "0")}`;
+  });
+  let offset = 32n * BigInt(values.length);
+  const heads = tails.map((tail) => {
+    const head = offset.toString(16).padStart(64, "0");
+    offset += BigInt(tail.length / 2);
+    return head;
+  });
+  return `0x${[...heads, ...tails].join("")}`;
 }
 
 function topic(value: bigint): string {
