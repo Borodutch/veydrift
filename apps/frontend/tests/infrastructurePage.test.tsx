@@ -8,6 +8,7 @@ import {
   InfrastructureLoadErrorPanel,
   InfrastructureRefreshErrorPanel,
   MetricDeltaSubtext,
+  deduplicatedInfrastructureActionNotice,
   detailEffectRows,
   infrastructureRefreshButtonState,
   infrastructureCatalogStatusText,
@@ -52,6 +53,29 @@ describe("Infrastructure page display helpers", () => {
       hasLoadedInfrastructureState: false,
       loadError: "Infrastructure request failed with 503",
     })).toBe(true);
+  });
+
+  test("suppresses duplicate selected-building backend unavailable action notices", () => {
+    const unavailableReason = "Infrastructure API is temporarily unavailable.";
+
+    expect(deduplicatedInfrastructureActionNotice({
+      label: unavailableReason,
+      tone: "error",
+    }, [unavailableReason])).toBeUndefined();
+    expect(deduplicatedInfrastructureActionNotice({
+      label: unavailableReason,
+      tone: "error",
+    }, ["Infrastructure request failed with 503."])).toEqual({
+      label: unavailableReason,
+      tone: "error",
+    });
+    expect(deduplicatedInfrastructureActionNotice({
+      label: unavailableReason,
+      tone: "success",
+    }, [unavailableReason])).toEqual({
+      label: unavailableReason,
+      tone: "success",
+    });
   });
 
   test("renders a compact level info button with the building label", () => {
