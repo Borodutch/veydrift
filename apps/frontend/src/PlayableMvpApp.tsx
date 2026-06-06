@@ -342,6 +342,54 @@ function resourceSnapshotSettledAt(snapshot: ResourceSnapshotFreshness): bigint 
   }
 }
 
+export function galaxyMissionActionErrorLabel(label: string, error: unknown): string {
+  const message = errorLabelMessage(error);
+  const normalizedMessage = message.toLowerCase();
+  const code = errorLabelCode(error);
+
+  if (/wallet is locked|metamask is locked|unlock metamask|unlock your wallet/i.test(message)) {
+    return `${label} could not read wallet state. Unlock your wallet, then retry.`;
+  }
+
+  if (/timed out reading .* from the wallet/i.test(message)) {
+    return `${label} could not read wallet state. Unlock or reconnect your wallet, then retry.`;
+  }
+
+  if (/timed out reading .* from the game api/i.test(message)) {
+    return `${label} could not load current game API state before launch. The game API may be temporarily unavailable; refresh mission state and retry.`;
+  }
+
+  if (
+    code === -32603
+    || code === "-32603"
+    || normalizedMessage.includes("internal json-rpc error")
+    || normalizedMessage.includes("wallet could not read the current game contract state")
+  ) {
+    return `${label} could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.`;
+  }
+
+  if (/execution reverted/i.test(message)) {
+    return `${label} was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.`;
+  }
+
+  return message || `${label} failed.`;
+}
+
+function errorLabelMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const candidate = error as { message?: unknown };
+    if (typeof candidate.message === "string") return candidate.message;
+  }
+  return "";
+}
+
+function errorLabelCode(error: unknown): unknown {
+  if (!error || typeof error !== "object") return undefined;
+  return (error as { code?: unknown }).code;
+}
+
 export function buildingFinishActionErrorLabel(error: unknown): string {
   if (!(error instanceof Error)) {
     return "Finish building upgrade transaction failed.";
@@ -3215,7 +3263,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       console.error(error);
       setGalaxyAction({
         status: "error",
-        label: error instanceof Error ? error.message : `${label} failed.`,
+        label: galaxyMissionActionErrorLabel(label, error),
       });
     }
   }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
