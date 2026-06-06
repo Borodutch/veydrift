@@ -154,6 +154,14 @@ type LevelRow = {
   value: number;
 };
 
+type IndexedPlanetLevelRow = LevelRow & {
+  planet_id: string;
+};
+
+type IndexedTechnologyLevelRow = LevelRow & {
+  owner: string;
+};
+
 type MoonRow = {
   event_json: string;
 };
@@ -605,7 +613,7 @@ export class SettlementIndexer {
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
     const planets = this.planetsFromRows(
-      "SELECT event_json FROM contract_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
+      "SELECT event_json FROM contract_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
     );
     const planet = planets.find((item) => item.eventName === "PlanetStarted") ?? planets[0] ?? null;
@@ -622,7 +630,7 @@ export class SettlementIndexer {
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
     const planets = this.planetsFromRows(
-      "SELECT event_json FROM contract_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
+      "SELECT event_json FROM contract_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
       wallet
     ).map((planet) => indexedManagedPlanet(
       planet,
@@ -730,7 +738,7 @@ export class SettlementIndexer {
         planet !== null && planet.owner.toLowerCase() === wallet.toLowerCase()
       ))
       : this.rows<SettledPlanetEvent>(
-        "SELECT event_json FROM indexed_planets WHERE lower(owner) = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
+        "SELECT event_json FROM indexed_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
         wallet
       ));
 
@@ -748,7 +756,72 @@ export class SettlementIndexer {
   }
 
   highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): HighscoreEntry[] {
-    return [...planetsByOwner.keys()].map((owner) => this.highscoreForWallet(owner as `0x${string}`));
+    const ownersAndPlanets = [...planetsByOwner.entries()];
+    if (ownersAndPlanets.length === 0) return [];
+
+    const planetIds = ownersAndPlanets.flatMap(([, planets]) => planets.map((planet) => planet.planetId));
+    const buildingsByPlanet = this.indexedPlanetLevelRows("contract_building_levels", "building_id", "level", planetIds);
+    const moonBuildingsByPlanet = this.indexedPlanetLevelRows("contract_moon_building_levels", "moon_building_id", "level", planetIds);
+    const defensesByPlanet = this.indexedPlanetLevelRows("contract_defense_counts", "defense_id", "count", planetIds);
+    const shipsByPlanet = this.indexedPlanetLevelRows("contract_ship_counts", "ship_id", "count", planetIds);
+    const technologiesByOwner = this.indexedTechnologyLevelRows(ownersAndPlanets.map(([owner]) => owner));
+
+    return ownersAndPlanets.map(([owner, planets]) => {
+      const homePlanet = planets.find((planet) => planet.eventName === "PlanetStarted") ?? planets[0] ?? null;
+      return calculateIndexedHighscore({
+        wallet: owner as Address,
+        homePlanetId: homePlanet?.planetId ?? null,
+        planetCount: planets.length,
+        planets: planets.map((planet) => ({
+          buildings: levelRows(buildingsByPlanet.get(planet.planetId)),
+          moonBuildings: levelRows(moonBuildingsByPlanet.get(planet.planetId)),
+          defenses: countRows(defensesByPlanet.get(planet.planetId)),
+          ships: countRows(shipsByPlanet.get(planet.planetId))
+        })),
+        technologies: levelRows(technologiesByOwner.get(owner.toLowerCase()))
+      });
+    });
+  }
+
+  private indexedPlanetLevelRows(
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts",
+    idColumn: "building_id" | "defense_id" | "moon_building_id" | "ship_id",
+    valueColumn: "count" | "level",
+    planetIds: readonly string[]
+  ): Map<string, LevelRow[]> {
+    const rowsByPlanet = new Map<string, LevelRow[]>();
+    for (const planetIdChunk of chunks([...new Set(planetIds)], 500)) {
+      if (planetIdChunk.length === 0) continue;
+      const rows = this.db.query(`
+        SELECT planet_id, ${idColumn} AS id, ${valueColumn} AS value
+        FROM ${table}
+        WHERE planet_id IN (${planetIdChunk.map(() => "?").join(",")})
+        ORDER BY planet_id ASC, ${idColumn} ASC
+      `).all(...planetIdChunk) as IndexedPlanetLevelRow[];
+      for (const row of rows) {
+        rowsByPlanet.set(row.planet_id, [...(rowsByPlanet.get(row.planet_id) ?? []), { id: row.id, value: row.value }]);
+      }
+    }
+    return rowsByPlanet;
+  }
+
+  private indexedTechnologyLevelRows(owners: readonly string[]): Map<string, LevelRow[]> {
+    const rowsByOwner = new Map<string, LevelRow[]>();
+    const normalizedOwners = [...new Set(owners.map((owner) => owner.toLowerCase()))];
+    for (const ownerChunk of chunks(normalizedOwners, 500)) {
+      if (ownerChunk.length === 0) continue;
+      const rows = this.db.query(`
+        SELECT owner, technology_id AS id, level AS value
+        FROM contract_technology_levels
+        WHERE owner IN (${ownerChunk.map(() => "?").join(",")})
+        ORDER BY owner ASC, technology_id ASC
+      `).all(...ownerChunk) as IndexedTechnologyLevelRow[];
+      for (const row of rows) {
+        const owner = row.owner.toLowerCase();
+        rowsByOwner.set(owner, [...(rowsByOwner.get(owner) ?? []), { id: row.id, value: row.value }]);
+      }
+    }
+    return rowsByOwner;
   }
 
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
@@ -2940,6 +3013,22 @@ function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
 function subtractResource(left: string, right: string): string {
   const result = BigInt(left) - BigInt(right);
   return result > 0n ? result.toString() : "0";
+}
+
+function chunks<T>(items: readonly T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    result.push(items.slice(index, index + size));
+  }
+  return result;
+}
+
+function levelRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; level: number }> {
+  return (rows ?? []).map((row) => ({ id: row.id, level: row.value }));
+}
+
+function countRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; count: number }> {
+  return (rows ?? []).map((row) => ({ id: row.id, count: row.value }));
 }
 
 const moonBuildingRows = [

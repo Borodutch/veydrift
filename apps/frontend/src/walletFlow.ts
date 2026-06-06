@@ -2124,6 +2124,7 @@ export async function confirmTransactionReceipt(
 }
 
 export type FetchHighscoreOptions = {
+  category?: HighscoreCategory;
   currentWallet?: string;
   includeAttackProtection?: boolean;
   limit?: number;
@@ -2140,6 +2141,7 @@ export async function fetchHighscores(
     params.set("limit", String(options));
   } else {
     params.set("limit", String(options.limit ?? options.pageSize ?? 100));
+    if (options.category !== undefined) params.set("category", options.category);
     if (options.currentWallet !== undefined) params.set("currentWallet", options.currentWallet);
     if (options.includeAttackProtection ?? Boolean(options.currentWallet)) params.set("includeAttackProtection", "true");
     if (options.page !== undefined) params.set("page", String(options.page));

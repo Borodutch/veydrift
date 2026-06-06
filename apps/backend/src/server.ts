@@ -527,21 +527,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return indexedReadNotReadyResponse("highscores", indexer);
         }
 
-        const profiles = indexer?.playerProfiles(planetsByOwner.keys()) ?? new Map<string, PlayerProfile>();
-        const allianceIntel = allianceIntelForPlayers(entries.map((entry) => entry.wallet), indexer);
         const totalEntries = entries.length;
         const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
         const page = Math.min(pagination.page, totalPages);
         const offset = (page - 1) * pagination.pageSize;
+        const requestedCategories = highscoreRequestedCategories(url);
+        const sortedRankings = sortedHighscoreRankings(entries, requestedCategories);
+        const visibleEntries = highscoreVisibleEntries(sortedRankings, requestedCategories, pagination.pageSize, offset);
+        const rankingWallets = highscoreRankingWallets(visibleEntries, url.searchParams.get("currentWallet"));
+        const profiles = indexer?.playerProfiles(rankingWallets) ?? new Map<string, PlayerProfile>();
+        const allianceIntel = allianceIntelForPlayers(rankingWallets, indexer);
         const rankedRows = highscoreRows(
-          entries,
+          visibleEntries,
           planetsByOwner,
           profiles,
           allianceIntel,
           indexer
         );
         const rankings = highscoreRankings(
-          entries,
+          sortedRankings,
+          requestedCategories,
           pagination.pageSize,
           offset,
           rankedRows
@@ -554,7 +559,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           highscoreAttackProtectionRequested(url)
         );
         const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
-        const currentPlayer = highscoreCurrentPlayerPages(entries, pagination.pageSize, url.searchParams.get("currentWallet"));
+        const currentPlayer = highscoreCurrentPlayerPages(sortedRankings, requestedCategories, pagination.pageSize, url.searchParams.get("currentWallet"));
 
         return Response.json(
           {
@@ -1617,6 +1622,8 @@ type HighscoreCurrentPlayerPage = {
   page: number;
 };
 
+type HighscoreRankingsByCategory = Record<HighscoreCategory, HighscoreEntry[]>;
+
 function highscorePagination(url: URL): { page: number; pageSize: number } {
   const limit = Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100;
   const pageSize = Number.parseInt(url.searchParams.get("pageSize") ?? String(limit), 10) || limit;
@@ -1628,18 +1635,62 @@ function highscorePagination(url: URL): { page: number; pageSize: number } {
   };
 }
 
-function highscoreCurrentPlayerPages(
+function highscoreRequestedCategories(url: URL): readonly HighscoreCategory[] {
+  const requested = url.searchParams.get("category");
+  if (!requested) return highscoreCategories;
+  return highscoreCategories.includes(requested as HighscoreCategory) ? [requested as HighscoreCategory] : highscoreCategories;
+}
+
+function sortedHighscoreRankings(
   entries: HighscoreEntry[],
+  categories: readonly HighscoreCategory[] = highscoreCategories
+): HighscoreRankingsByCategory {
+  const requested = new Set(categories);
+  return Object.fromEntries(
+    highscoreCategories.map((category) => [
+      category,
+      requested.has(category) ? sortedHighscores(entries, category) : []
+    ])
+  ) as HighscoreRankingsByCategory;
+}
+
+function highscoreVisibleEntries(
+  sortedRankings: HighscoreRankingsByCategory,
+  categories: readonly HighscoreCategory[],
+  limit: number,
+  offset: number
+): HighscoreEntry[] {
+  const rows = new Map<string, HighscoreEntry>();
+  for (const category of categories) {
+    for (const entry of sortedRankings[category].slice(offset, offset + limit)) {
+      rows.set(entry.wallet.toLowerCase(), entry);
+    }
+  }
+  return [...rows.values()];
+}
+
+function highscoreRankingWallets(entries: readonly HighscoreEntry[], currentWallet: string | null): string[] {
+  const wallets = new Set(entries.map((entry) => entry.wallet.toLowerCase()));
+  if (currentWallet && /^0x[a-fA-F0-9]{40}$/.test(currentWallet)) {
+    wallets.add(currentWallet.toLowerCase());
+  }
+  return [...wallets];
+}
+
+function highscoreCurrentPlayerPages(
+  sortedRankings: HighscoreRankingsByCategory,
+  categories: readonly HighscoreCategory[],
   pageSize: number,
   wallet: string | null
 ): { wallet: string; rankings: Record<HighscoreCategory, HighscoreCurrentPlayerPage | null> } | undefined {
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) return undefined;
 
   const normalizedWallet = wallet.toLowerCase();
+  const requested = new Set(categories);
   const rankings = Object.fromEntries(
     highscoreCategories.map((category) => {
-      const index = sortedHighscores(entries, category)
-        .findIndex((entry) => entry.wallet.toLowerCase() === normalizedWallet);
+      if (!requested.has(category)) return [category, null];
+      const index = sortedRankings[category].findIndex((entry) => entry.wallet.toLowerCase() === normalizedWallet);
       const rank = index === -1 ? null : index + 1;
       return [
         category,
@@ -1665,15 +1716,17 @@ function highscoreAttackProtectionRequested(url: URL): boolean {
 }
 
 function highscoreRankings(
-  entries: HighscoreEntry[],
+  sortedRankings: HighscoreRankingsByCategory,
+  categories: readonly HighscoreCategory[],
   limit: number,
   offset: number,
   rows: Map<string, RankedHighscoreEntry>
 ): Record<HighscoreCategory, RankedHighscoreEntry[]> {
+  const requested = new Set(categories);
   return Object.fromEntries(
     highscoreCategories.map((category) => [
       category,
-      rankHighscores(entries, category, limit, offset, rows)
+      requested.has(category) ? rankHighscores(sortedRankings[category], limit, offset, rows) : []
     ])
   ) as Record<HighscoreCategory, RankedHighscoreEntry[]>;
 }
@@ -1739,14 +1792,12 @@ function highscoreRows(
 }
 
 function rankHighscores(
-  entries: HighscoreEntry[],
-  category: HighscoreCategory,
+  sortedEntries: HighscoreEntry[],
   limit: number,
   offset: number,
   rows: ReadonlyMap<string, RankedHighscoreEntry>
 ): RankedHighscoreEntry[] {
-  return sortedHighscores(entries, category)
-    .slice(offset, offset + limit)
+  return sortedEntries.slice(offset, offset + limit)
     .map((entry, index) => {
       const row = rows.get(entry.wallet.toLowerCase())!;
       return {

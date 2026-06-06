@@ -73,6 +73,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
     setLoading(true);
     setError(undefined);
     fetchHighscores(apiBaseUrl, {
+      category: active,
       ...(currentWallet ? { currentWallet } : {}),
       page: targetPage,
       pageSize: rankingsPageSize
@@ -87,7 +88,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
 
   useEffect(() => {
     load(page);
-  }, [apiBaseUrl, currentWallet, page]);
+  }, [active, apiBaseUrl, currentWallet, page]);
 
   const entries = data?.rankings[active] ?? [];
   const pagination = data?.pagination ?? null;

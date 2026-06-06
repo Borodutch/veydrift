@@ -2016,7 +2016,7 @@ describe("walletFlow", () => {
     };
 
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      expect(String(input)).toBe(`https://api.example.test/highscores?limit=50&currentWallet=${account}&includeAttackProtection=true&page=2&pageSize=50`);
+      expect(String(input)).toBe(`https://api.example.test/highscores?limit=50&category=military&currentWallet=${account}&includeAttackProtection=true&page=2&pageSize=50`);
       expect(init).toEqual({
         headers: { accept: "application/json" },
       });
@@ -2027,7 +2027,7 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await expect(fetchHighscores("https://api.example.test", { currentWallet: account, page: 2, pageSize: 50 })).resolves.toEqual(rankings);
+      await expect(fetchHighscores("https://api.example.test", { category: "military", currentWallet: account, page: 2, pageSize: 50 })).resolves.toEqual(rankings);
     } finally {
       globalThis.fetch = originalFetch;
     }
