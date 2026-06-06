@@ -624,6 +624,61 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("keeps reconciled indexed state serveable for planet-specific identity and resource gaps", async () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    }, 100n);
+
+    await indexer.rebuild();
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      safeToServeIndexedState: true,
+      staleReason: null
+    });
+
+    expect(indexer.applyLog({
+      blockNumber: "0x7f",
+      transactionHash: "0xresource-before-identity",
+      logIndex: "0x0",
+      topics: [
+        planetSettledTopic,
+        topic(124n)
+      ],
+      data: abiWords(5000n, 4900n, 4800n, 1770000000n)
+    })).toMatchObject({
+      applied: true,
+      snapshot: {
+        indexedState: "healthy",
+        pendingReconciliationReason: "planet_identity_pending:124",
+        safeToServeIndexedState: true,
+        staleReason: null
+      }
+    });
+
+    expect(indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xidentity-placeholder",
+      logIndex: "0x1",
+      topics: [
+        planetStartedTopic,
+        addressTopic(player),
+        topic(125n)
+      ],
+      data: abiWords(2n, 45n, 10n, 211n, 1n)
+    })).toMatchObject({
+      applied: true,
+      snapshot: {
+        indexedState: "healthy",
+        pendingReconciliationReason: "planet_resources_pending:125",
+        safeToServeIndexedState: true,
+        staleReason: null
+      }
+    });
+    expect(indexer.hasPendingPlanetResources("125")).toBe(true);
+  });
+
   test("applies planet rename logs to every indexed planet read model", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

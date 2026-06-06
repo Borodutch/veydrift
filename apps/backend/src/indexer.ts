@@ -374,6 +374,13 @@ export class SettlementIndexer {
     return row ? this.withResourceSnapshot(parseEvent<SettledPlanetEvent>(row.event_json)) : null;
   }
 
+  hasPendingPlanetResources(planetId: string): boolean {
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
+    if (!row) return false;
+    return isZeroResourcePlaceholder(parseEvent<SettledPlanetEvent>(row.event_json))
+      && !this.planetResourceSnapshot(planetId);
+  }
+
   playerProfile(wallet: string): PlayerProfile {
     const normalizedWallet = wallet.toLowerCase() as Address;
     const row = this.db.query(`
@@ -2724,7 +2731,9 @@ export class SettlementIndexer {
     pendingReconciliationReason: string | null;
   }): string | null {
     if (lastReconciliationError) return `reconciliation_failed: ${lastReconciliationError}`;
-    if (pendingReconciliationReason) return pendingReconciliationReason;
+    if (pendingReconciliationReason && (!lastReconciledAt || !isPlanetHydrationPendingReason(pendingReconciliationReason))) {
+      return pendingReconciliationReason;
+    }
     if (!lastReconciledAt) return "never_reconciled";
     return null;
   }
