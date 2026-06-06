@@ -849,6 +849,44 @@ export function topBarEnergyFor({
   return localEnergy.sources ? { ...chainEnergy, sources: localEnergy.sources } : chainEnergy;
 }
 
+export function topBarResourcesFor({
+  caps,
+  now,
+  rates,
+  snapshotReceivedAtMs,
+  snapshotResources,
+}: {
+  caps: PlayableState["resources"];
+  now: number;
+  rates: PlayableState["resources"];
+  snapshotReceivedAtMs: number;
+  snapshotResources: PlayableState["resources"] | undefined;
+}): PlayableState["resources"] | undefined {
+  if (!snapshotResources) return undefined;
+
+  const elapsedSeconds = Math.max(0, Math.floor((now - snapshotReceivedAtMs) / 1_000));
+  if (elapsedSeconds <= 0) return snapshotResources;
+
+  return {
+    metal: liveResourceAmount(snapshotResources.metal, rates.metal, caps.metal, elapsedSeconds),
+    crystal: liveResourceAmount(snapshotResources.crystal, rates.crystal, caps.crystal, elapsedSeconds),
+    deuterium: liveResourceAmount(snapshotResources.deuterium, rates.deuterium, caps.deuterium, elapsedSeconds),
+  };
+}
+
+function liveResourceAmount(
+  snapshotValue: number,
+  ratePerHour: number,
+  cap: number,
+  elapsedSeconds: number,
+): number {
+  const produced = Math.floor((Math.max(0, ratePerHour) * elapsedSeconds) / 3_600);
+  const cappedValue = Number.isFinite(cap) && cap > 0
+    ? Math.min(cap, snapshotValue + produced)
+    : snapshotValue + produced;
+  return Math.max(0, Math.floor(cappedValue));
+}
+
 export function infrastructureUnavailableReasonFor({
   buildingAction,
   gameContract,
@@ -1490,7 +1528,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
   const [selectedShipKey, setSelectedShipKey] = useState<ShipKey>("smallCargo");
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
-  const [onChainSettlement, setOnChainSettlement] = useState<WalletSettlementResponse | undefined>();
+  const [onChainSettlement, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>();
+  const [topBarResourceSnapshotReceivedAtMs, setTopBarResourceSnapshotReceivedAtMs] = useState(() => Date.now());
+  const applyOnChainSettlementSnapshot = useCallback((settlement: WalletSettlementResponse | undefined) => {
+    setTopBarResourceSnapshotReceivedAtMs(Date.now());
+    setOnChainSettlementState(settlement);
+  }, []);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
   const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
@@ -2058,7 +2101,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     const requestId = beginRefreshRequest(onChainRefreshGate);
     if (!apiBaseUrl || !account) {
       latestOnChainResourceSnapshot.current = { planetId: null, lastSettledAt: null };
-      setOnChainSettlement(undefined);
+      applyOnChainSettlementSnapshot(undefined);
       setWalletPlanets([]);
       setOnChainQueues(undefined);
       setFleetVisibility(undefined);
@@ -2098,7 +2141,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!selectedPlanetId && selectedPlanet?.planetId) {
         setSelectedPlanetId(selectedPlanet.planetId);
       }
-      setOnChainSettlement(nextSettlement);
+      applyOnChainSettlementSnapshot(nextSettlement);
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
       setOnChainQueues((current) => preserveActiveResearchQueue(current, queues));
       setFleetVisibility(fleetVisibility);
@@ -2112,7 +2155,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setOnChainError(error instanceof Error ? error.message : "Failed to load live game state");
       setOnChainStatus("error");
     }
-  }, [account, activePlanetId, apiBaseUrl, isWalletConnected, selectedPlanetId]);
+  }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, isWalletConnected, selectedPlanetId]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
     if (!apiBaseUrl || !account) {
@@ -2149,7 +2192,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         latestInfrastructureResourceSnapshot.current,
         resourceSnapshotFreshnessForInfrastructure(snapshot.infrastructure),
       );
-      setOnChainSettlement(snapshot.settlement);
+      applyOnChainSettlementSnapshot(snapshot.settlement);
       setOnChainQueues(snapshot.queues);
       setOnChainError(undefined);
       setOnChainStatus("ready");
@@ -2183,7 +2226,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     } finally {
       setInfrastructureLoading(false);
     }
-  }, [account, activePlanetId, apiBaseUrl, infrastructureChainState, refreshInfrastructureState, refreshOnChainState]);
+  }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, infrastructureChainState, refreshInfrastructureState, refreshOnChainState]);
 
   const refreshStartedDefenseProductionState = useCallback(async (expectation: StartedDefenseProductionExpectation) => {
     if (!apiBaseUrl || !account) {
@@ -2551,9 +2594,30 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       deuterium: Number(nextCaps.deuterium),
     };
   }, [infrastructureChainState?.storageCaps, settledState.buildings]);
+  useEffect(() => {
+    if (onChainResources) {
+      setTopBarResourceSnapshotReceivedAtMs(Date.now());
+    }
+  }, [
+    caps.crystal,
+    caps.deuterium,
+    caps.metal,
+    rates.crystal,
+    rates.deuterium,
+    rates.metal,
+  ]);
+  const liveOnChainResources = useMemo(() => {
+    return topBarResourcesFor({
+      caps,
+      now,
+      rates,
+      snapshotReceivedAtMs: topBarResourceSnapshotReceivedAtMs,
+      snapshotResources: onChainResources,
+    });
+  }, [caps, now, onChainResources, rates, topBarResourceSnapshotReceivedAtMs]);
   const spendableResources = useMemo(() => {
-    return walletSpendableResourcesFor({ isWalletConnected, onChainResources });
-  }, [isWalletConnected, onChainResources]);
+    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: liveOnChainResources });
+  }, [isWalletConnected, liveOnChainResources]);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
@@ -2619,16 +2683,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const researchProgress = progress(settledState.researchQueue, now);
   const shipProgress = progress(shipQueue, now);
   const infrastructureState = useMemo<PlayableState>(() => {
-    if (!isWalletConnected || !onChainResources) {
+    if (!isWalletConnected || !liveOnChainResources) {
       return settledState;
     }
 
     return {
       ...settledState,
       queue: buildingQueue,
-      resources: onChainResources,
+      resources: liveOnChainResources,
     };
-  }, [buildingQueue, isWalletConnected, onChainResources, settledState]);
+  }, [buildingQueue, isWalletConnected, liveOnChainResources, settledState]);
 
   useEffect(() => {
     if (!completedBuildingFinishExpectation) return;
@@ -3837,12 +3901,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       .then(async (profile) => {
         setPlayerProfile((current) => mergePlayerProfile(current, profile));
         markFreshStateWrite(onChainRefreshGate);
-        setOnChainSettlement((current) => current ? { ...current, player: profile } : current);
+        setOnChainSettlementState((current) => current ? { ...current, player: profile } : current);
         try {
           const refreshedProfile = await fetchPlayerProfile(apiBaseUrl, account);
           setPlayerProfile((current) => mergePlayerProfile(current, refreshedProfile));
           markFreshStateWrite(onChainRefreshGate);
-          setOnChainSettlement((current) => current ? { ...current, player: refreshedProfile } : current);
+          setOnChainSettlementState((current) => current ? { ...current, player: refreshedProfile } : current);
         } catch (error) {
           console.error(error);
         }

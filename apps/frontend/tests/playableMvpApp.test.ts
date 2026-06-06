@@ -36,6 +36,7 @@ import {
   shipyardStateForMissionActions,
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
+  topBarResourcesFor,
   walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
@@ -450,6 +451,62 @@ describe("Playable MVP app display helpers", () => {
       isWalletConnected: false,
       onChainResources: resources,
     })).toBeUndefined();
+  });
+
+  test("ticks top-bar resources forward from the latest canonical accrued snapshot", () => {
+    expect(topBarResourcesFor({
+      caps: { metal: 2_000, crystal: 2_000, deuterium: 2_000 },
+      now: 1_700_000_002_000,
+      rates: { metal: 3_600, crystal: 1_800, deuterium: 0 },
+      snapshotReceivedAtMs: 1_700_000_000_000,
+      snapshotResources: { metal: 100, crystal: 100, deuterium: 100 },
+    })).toEqual({
+      metal: 102,
+      crystal: 101,
+      deuterium: 100,
+    });
+  });
+
+  test("rebases top-bar resource ticking after a fresh API snapshot", () => {
+    const initialSnapshotAt = 1_700_000_000_000;
+    const refreshedSnapshotAt = 1_700_000_010_000;
+
+    expect(topBarResourcesFor({
+      caps: { metal: 2_000, crystal: 2_000, deuterium: 2_000 },
+      now: refreshedSnapshotAt,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      snapshotReceivedAtMs: initialSnapshotAt,
+      snapshotResources: { metal: 100, crystal: 100, deuterium: 100 },
+    })?.metal).toBe(110);
+
+    expect(topBarResourcesFor({
+      caps: { metal: 2_000, crystal: 2_000, deuterium: 2_000 },
+      now: 1_700_000_015_000,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      snapshotReceivedAtMs: refreshedSnapshotAt,
+      snapshotResources: { metal: 108, crystal: 100, deuterium: 100 },
+    })?.metal).toBe(113);
+  });
+
+  test("does not keep pre-spend elapsed accrual after canonical resources rebase lower", () => {
+    const beforeSpendAt = 1_700_000_000_000;
+    const afterSpendAt = 1_700_000_030_000;
+
+    expect(topBarResourcesFor({
+      caps: { metal: 2_000, crystal: 2_000, deuterium: 2_000 },
+      now: afterSpendAt,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      snapshotReceivedAtMs: beforeSpendAt,
+      snapshotResources: { metal: 100, crystal: 100, deuterium: 100 },
+    })?.metal).toBe(130);
+
+    expect(topBarResourcesFor({
+      caps: { metal: 2_000, crystal: 2_000, deuterium: 2_000 },
+      now: 1_700_000_035_000,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      snapshotReceivedAtMs: afterSpendAt,
+      snapshotResources: { metal: 40, crystal: 100, deuterium: 100 },
+    })?.metal).toBe(45);
   });
 
   test("blocks research completion transactions until the active queue is ready", () => {
