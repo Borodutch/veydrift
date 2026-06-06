@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, formatMissionTime, missionLifecycleActions } from "../src/components/MissionControlPage";
+import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions } from "../src/components/MissionControlPage";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
@@ -121,6 +122,21 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Protected storage");
     expect(text).not.toContain("Raid-exposed resources");
     expect(text).not.toContain("Contract raid protection");
+  });
+
+  test("uses the shared refresh button treatment", () => {
+    expect(missionControlRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
+    expect(missionControlRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
+
+    const idlePage = missionControlPage({ loading: false });
+    const refreshingPage = missionControlPage({ loading: true });
+    const source = readFileSync(new URL("../src/components/MissionControlPage.tsx", import.meta.url), "utf8");
+
+    expect(visibleText(idlePage)).toContain("Refresh");
+    expect(visibleText(refreshingPage)).toContain("Refreshing");
+    expect(source).toContain("h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200");
+    expect(source).not.toContain("RefreshCw");
+    expect(source).not.toContain("inline-flex h-9 items-center justify-center gap-2");
   });
 
   test("renders attacker and defender attack views with side-specific controls", () => {

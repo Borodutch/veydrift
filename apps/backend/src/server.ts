@@ -447,24 +447,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/moon$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const readStartedAt = Date.now();
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        if (!requestsLiveState(url)) {
-          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "moon", indexedMoonState);
-          if (indexed) return indexed;
+        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "moon", indexedMoonState);
+        if (indexed) {
+          return moonTimedResponse(indexed, readStartedAt);
+        }
+        if (!requestsDiagnosticLiveMoonState(url)) {
+          return moonTimedResponse(indexedMoonNotReadyResponse(indexer, wallet, planetId), readStartedAt);
         }
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "moon", new Error("backend_not_configured"), indexedMoonState)
             ?? ready;
         }
-        return Response.json(await liveWalletRead(ready.getMoonState(wallet, planetId), "moon"), {
+        return moonTimedResponse(Response.json(await liveWalletRead(ready.getMoonState(wallet, planetId), "moon"), {
           headers: corsHeaders
-        });
+        }), readStartedAt);
       } catch (error) {
         const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "moon", error, indexedMoonState);
-        if (fallback) return fallback;
+        if (fallback) return moonTimedResponse(fallback, readStartedAt);
         return errorResponse(error, 400);
       }
     }
@@ -1247,6 +1251,15 @@ type IndexedWarmBody<T extends object> = T & {
   stale: boolean;
 };
 
+type IndexedMoonNotReadyBody = MoonState & {
+  detail: string;
+  indexedNotReady: true;
+  indexedNotReadyAt: string;
+  indexer: ReturnType<SettlementIndexer["snapshot"]> | null;
+  source: "contract-state-indexer";
+  stale: true;
+};
+
 async function indexedWarmResponse<T extends object>(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`,
@@ -1322,6 +1335,49 @@ async function indexedDegradedResponse<T extends object>(
       "x-veydrift-index-state": "stale"
     }
   });
+}
+
+function indexedMoonNotReadyResponse(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`,
+  selectedPlanetId: bigint | undefined
+): Response {
+  const homePlanetId = selectedPlanetId?.toString() ?? indexer?.walletSettlement(wallet).homePlanetId ?? null;
+  const indexedState = indexer?.moonState(wallet, homePlanetId);
+  const detail = indexer
+    ? "Moon indexed state is still warming. Refresh shortly."
+    : "Moon indexed state is not available from this backend yet. Refresh shortly.";
+  const body: IndexedMoonNotReadyBody = {
+    wallet,
+    homePlanetId,
+    moonAvailable: false,
+    unavailableReason: detail,
+    moon: null,
+    buildings: indexedState?.buildings ?? [],
+    queue: null,
+    detail,
+    indexedNotReady: true,
+    indexedNotReadyAt: new Date().toISOString(),
+    indexer: indexer?.snapshot() ?? null,
+    source: "contract-state-indexer",
+    stale: true
+  };
+
+  return Response.json(body, {
+    headers: {
+      ...corsHeaders,
+      "x-veydrift-index-state": "not-ready"
+    }
+  });
+}
+
+function moonTimedResponse(response: Response, readStartedAt: number): Response {
+  const elapsedMs = Date.now() - readStartedAt;
+  response.headers.set("x-veydrift-moon-read-ms", String(elapsedMs));
+  if (elapsedMs > 500) {
+    console.warn("Slow Moon backend read", { elapsedMs });
+  }
+  return response;
 }
 
 function indexedWalletSettlement(
@@ -1403,6 +1459,10 @@ function isDegradableReadError(error: unknown): boolean {
 
 function requestsLiveState(_url: URL): boolean {
   return false;
+}
+
+function requestsDiagnosticLiveMoonState(url: URL): boolean {
+  return url.searchParams.get("source") === "live";
 }
 
 function selectedPlanetIdOrUndefined(url: URL): bigint | undefined {

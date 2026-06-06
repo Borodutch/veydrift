@@ -1394,7 +1394,41 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("reports transient Moon RPC failures as service unavailable", async () => {
+  test("returns a fast indexed-not-ready Moon response instead of live reads when indexed state is cold", async () => {
+    class SlowMoonReader extends MockChainReader {
+      liveMoonReads = 0;
+
+      override async getMoonState(): Promise<MoonState> {
+        this.liveMoonReads += 1;
+        throw new Error("moon endpoint should not call live RPC while indexed state is unavailable");
+      }
+    }
+
+    const chainReader = new SlowMoonReader();
+    const handler = createRequestHandler({ chainReader: withoutIndexLists(chainReader), config: configuredTestConfig });
+    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("not-ready");
+    expect(response.headers.get("x-veydrift-moon-read-ms")).toMatch(/^\d+$/);
+    expect(chainReader.liveMoonReads).toBe(0);
+    expect(body).toMatchObject({
+      wallet: player,
+      homePlanetId: null,
+      moonAvailable: false,
+      unavailableReason: "Moon indexed state is not available from this backend yet. Refresh shortly.",
+      indexedNotReady: true,
+      source: "contract-state-indexer",
+      stale: true,
+      indexer: null,
+      moon: null,
+      queue: null
+    });
+    expect(typeof body.indexedNotReadyAt).toBe("string");
+  });
+
+  test("reports diagnostic Moon live-read RPC failures as service unavailable", async () => {
     class RpcFailingMoonReader extends MockChainReader {
       override async getMoonState(): Promise<MoonState> {
         throw new Error("RPC HTTP 429");
@@ -1402,7 +1436,7 @@ describe("Veydrift backend", () => {
     }
 
     const handler = createRequestHandler({ chainReader: withoutIndexLists(new RpcFailingMoonReader()), config: configuredTestConfig });
-    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const response = await handler(new Request(`http://localhost/wallet/${player}/moon?source=live`));
     const body = await response.json();
 
     expect(response.status).toBe(503);
