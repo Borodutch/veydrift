@@ -1087,7 +1087,7 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
-  test("answers wallet planet management state from the DB-backed indexer without live RPC", async () => {
+  test("falls back to DB-backed wallet planet management state when live RPC fails", async () => {
     const indexer = testIndexer();
     indexer.applyLog({
       blockNumber: "0x80",
@@ -1117,7 +1117,7 @@ describe("Veydrift backend", () => {
 
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(liveReadCalled).toBe(false);
+    expect(liveReadCalled).toBe(true);
     expect(body).toMatchObject({
       wallet: player,
       homePlanetId: "7",
@@ -1797,6 +1797,9 @@ describe("Veydrift backend", () => {
             4_800n
           ) as T;
         }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x0adbf924")) {
+          return abiWords(5_000n, 4_900n, 4_800n) as T;
+        }
         if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0xb8e835ab")) {
           return abiWords(1n, 1n, 1n, readyAt, 48n, 24n, 0n) as T;
         }
@@ -1880,6 +1883,9 @@ describe("Veydrift backend", () => {
             4_900n,
             4_800n
           ) as T;
+        }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x0adbf924")) {
+          return abiWords(5_000n, 4_900n, 4_800n) as T;
         }
         if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x5758361d")) {
           return abiWords(1n, 0n, 2n, readyAt, 4000n, 0n, 0n) as T;
@@ -1977,6 +1983,9 @@ describe("Veydrift backend", () => {
             4_800n
           ) as T;
         }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x0adbf924")) {
+          return abiWords(5_000n, 4_900n, 4_800n) as T;
+        }
         if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0xb8e835ab")) {
           return abiWords(1n, 2n, 1n, readyAt, 225n, 75n, 0n) as T;
         }
@@ -2060,6 +2069,9 @@ describe("Veydrift backend", () => {
             4_900n,
             4_800n
           ) as T;
+        }
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x0adbf924")) {
+          return abiWords(5_000n, 4_900n, 4_800n) as T;
         }
         if (
           call.to === configuredTestConfig.gameContractAddress
@@ -2320,10 +2332,24 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("serves indexed wallet settlement without live chain reads when warm", async () => {
+  test("serves live wallet settlement resources even when the index is warm", async () => {
     const chainReader = new MockChainReader();
-    chainReader.getWalletSettlement = async () => {
-      throw new Error("wallet settlement should not call live RPC");
+    let liveReadCalled = false;
+    chainReader.getWalletSettlement = async (wallet) => {
+      liveReadCalled = true;
+      return {
+        wallet,
+        hasFirstPlanet: true,
+        homePlanetId: planet.planetId,
+        planet: {
+          ...planet,
+          resources: {
+            metal: "6100",
+            crystal: "5300",
+            deuterium: "4900"
+          }
+        }
+      };
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm settlement index should not rebuild from chain");
@@ -2348,22 +2374,28 @@ describe("Veydrift backend", () => {
       homePlanetId: planet.planetId,
       planet: {
         planetId: planet.planetId,
-        owner: player
+        owner: player,
+        resources: {
+          metal: "6100",
+          crystal: "5300",
+          deuterium: "4900"
+        }
       }
     });
+    expect(liveReadCalled).toBe(true);
     expect(response.status).toBe(200);
   });
 
-  test("serves accrued indexed wallet resources for settlement, planets, and infrastructure", async () => {
+  test("falls back to accrued indexed wallet resources for settlement, planets, and infrastructure when live RPC is unavailable", async () => {
     const chainReader = new MockChainReader();
     chainReader.getWalletSettlement = async () => {
-      throw new Error("settlement should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.getWalletPlanets = async () => {
-      throw new Error("planets should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.getInfrastructureState = async () => {
-      throw new Error("infrastructure should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm accrued index should not rebuild from chain");
@@ -2422,16 +2454,100 @@ describe("Veydrift backend", () => {
     expect(infrastructureBody.raidableResources.metal).toBe("5064");
   });
 
+  test("serves direct preview resources over stale indexed resources for selected infrastructure planets", async () => {
+    const wallet = "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8" as Address;
+    const stalePlanet: SettledPlanetEvent = {
+      ...planet,
+      planetId: "10",
+      owner: wallet,
+      galaxy: 8,
+      system: 490,
+      position: 11,
+      lastSettledAt: "1780716473",
+      resources: {
+        metal: "13363",
+        crystal: "3054",
+        deuterium: "1855"
+      },
+      eventName: "ColonyCreated",
+      transactionHash: "0xstale",
+      blockNumber: "321"
+    };
+    const previewResources = {
+      metal: "14214",
+      crystal: "3389",
+      deuterium: "1934"
+    };
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = (async (requestWallet: Address, selectedPlanetId?: bigint) => {
+      expect(requestWallet).toBe(wallet);
+      expect(selectedPlanetId).toBe(10n);
+      return {
+        wallet,
+        homePlanetId: "7",
+        planetId: "10",
+        planetLastSettledAt: "1780716473",
+        infrastructureAvailable: true,
+        resources: previewResources,
+        productionPerHour: {
+          metal: "1594",
+          crystal: "627",
+          deuterium: "148"
+        },
+        energyBalance: {
+          produced: "1000",
+          required: "800",
+          scaleBps: "10000"
+        },
+        storageCaps: {
+          metal: "20000",
+          crystal: "20000",
+          deuterium: "10000"
+        },
+        protectedResources: {
+          metal: "1000",
+          crystal: "1000",
+          deuterium: "1000"
+        },
+        raidableResources: {
+          metal: "13214",
+          crystal: "2389",
+          deuterium: "934"
+        },
+        technologyLevels: {},
+        buildings: [],
+        queue: null
+      };
+    }) as ChainReader["getInfrastructureState"];
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm resource endpoint should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent(stalePlanet);
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${wallet}/infrastructure?planetId=10`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.resources).toEqual(previewResources);
+    expect(body.source).toBeUndefined();
+  });
+
   test("serves post-spend indexed resources after multiple active queued spends", async () => {
     const chainReader = new MockChainReader();
     chainReader.getWalletSettlement = async () => {
-      throw new Error("settlement should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.getWalletPlanets = async () => {
-      throw new Error("planets should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.getInfrastructureState = async () => {
-      throw new Error("infrastructure should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm queued-spend index should not rebuild from chain");
@@ -2592,7 +2708,7 @@ describe("Veydrift backend", () => {
       throw new Error("queues should not call live RPC");
     };
     chainReader.getInfrastructureState = async () => {
-      throw new Error("infrastructure should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm indexed state should not rebuild from chain");
@@ -2704,7 +2820,7 @@ describe("Veydrift backend", () => {
   test("serves indexed infrastructure energy from solar satellite ship counts", async () => {
     const chainReader = new MockChainReader();
     chainReader.getInfrastructureState = async () => {
-      throw new Error("infrastructure should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm indexed state should not rebuild from chain");
@@ -2902,12 +3018,12 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("serves indexed infrastructure resources without live chain reads when warm", async () => {
+  test("serves indexed infrastructure resources when live RPC fails", async () => {
     const chainReader = new MockChainReader();
     let liveReadCalled = false;
     chainReader.getInfrastructureState = async () => {
       liveReadCalled = true;
-      throw new Error("infrastructure should not call live RPC");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm infrastructure index should not rebuild from chain");
@@ -2930,12 +3046,12 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
-    expect(liveReadCalled).toBe(false);
+    expect(liveReadCalled).toBe(true);
     expect(body).toMatchObject({
       wallet: player,
       homePlanetId: planet.planetId,
       infrastructureAvailable: true,
-      unavailableReason: "infrastructure loaded from DB-indexed contract state before live RPC.",
+      unavailableReason: "infrastructure live contract read failed; returning DB-indexed contract state.",
       resources: {
         metal: "5000",
         crystal: "4900",
@@ -2980,17 +3096,17 @@ describe("Veydrift backend", () => {
       queue: null,
       stale: true,
       source: "contract-state-indexer",
-      detail: "infrastructure loaded from DB-indexed contract state before live RPC."
+      detail: "RPC HTTP 503"
     });
-    expect(typeof body.liveReadSkippedAt).toBe("string");
+    expect(typeof body.liveReadFailedAt).toBe("string");
   });
 
-  test("marks warm indexed responses healthy after canonical reconciliation", async () => {
+  test("falls back to a healthy indexed infrastructure snapshot when live RPC fails", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
     chainReader.getInfrastructureState = async () => {
-      throw new Error("healthy indexed infrastructure should not call live RPC during hydration");
+      throw new Error("RPC HTTP 503");
     };
 
     const handler = createRequestHandler({
@@ -3003,9 +3119,10 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("x-veydrift-index-state")).toBe("healthy");
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(body).toMatchObject({
-      stale: false,
+      stale: true,
+      degraded: true,
       indexer: {
         indexedState: "healthy",
         safeToServeIndexedState: true,
@@ -3144,19 +3261,19 @@ describe("Veydrift backend", () => {
     }));
   });
 
-  test("ignores client live-read requests for canonical warm indexed wallet state", async () => {
+  test("falls back from client live-read resource requests to canonical warm indexed wallet state", async () => {
     const chainReader = new MockChainReader();
     chainReader.getWalletSettlement = async () => {
-      throw new Error("client source=live must not bypass indexed settlement");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.getWalletPlanets = async () => {
-      throw new Error("client source=live must not bypass indexed planets");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.getPlayerQueues = async () => {
       throw new Error("client source=live must not bypass indexed queues");
     };
     chainReader.getInfrastructureState = async () => {
-      throw new Error("client source=live must not bypass indexed infrastructure");
+      throw new Error("RPC HTTP 503");
     };
     chainReader.getShipyardState = async () => {
       throw new Error("client source=live must not bypass indexed shipyard");
@@ -3241,10 +3358,18 @@ describe("Veydrift backend", () => {
     expect(riftBody).toMatchObject({ source: "contract-state-indexer", riftAvailable: true, unlocked: false });
   });
 
-  test("serves indexed planet detail without live chain reads when warm", async () => {
+  test("serves live preview resources for planet detail even when the index is warm", async () => {
     const chainReader = new MockChainReader();
-    chainReader.getPlanet = async () => {
-      throw new Error("planet detail should not call live RPC");
+    chainReader.getPlanet = async (planetId) => {
+      expect(planetId).toBe(7n);
+      return {
+        ...planet,
+        resources: {
+          metal: "14214",
+          crystal: "3389",
+          deuterium: "1934"
+        }
+      };
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm planet index should not rebuild from chain");
@@ -3265,7 +3390,12 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request(`http://localhost/planets/${planet.planetId}`));
     await expect(response.json()).resolves.toMatchObject({
       planetId: planet.planetId,
-      owner: player
+      owner: player,
+      resources: {
+        metal: "14214",
+        crystal: "3389",
+        deuterium: "1934"
+      }
     });
     expect(response.status).toBe(200);
   });

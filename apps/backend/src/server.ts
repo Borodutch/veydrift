@@ -292,28 +292,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
-          const snapshot = indexer.snapshot();
-          const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
-          return Response.json({
-            ...withPlayerProfile(settlement, indexer, wallet),
-            indexer: snapshot,
-            liveReadSkippedAt: new Date().toISOString(),
-            source: "contract-state-indexer",
-            stale: !snapshot.safeToServeIndexedState
-          }, {
-            headers: {
-              ...corsHeaders,
-              "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
-            }
-          });
-        }
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) return ready;
+        if (ready instanceof Response) {
+          return indexedWalletSettlementFallbackResponse(indexer, wallet, new Error("backend_not_configured"))
+            ?? ready;
+        }
         return Response.json(withPlayerProfile(await liveWalletRead(ready.getWalletSettlement(wallet), "wallet settlement"), indexer, wallet), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = indexedWalletSettlementFallbackResponse(indexer, wallet as `0x${string}`, error);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -336,17 +325,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (!requestsLiveState(url) && hasWarmPlanetIndex(indexer)) {
-          return Response.json(withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet), {
-            headers: corsHeaders
-          });
-        }
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) return ready;
+        if (ready instanceof Response) {
+          return indexedWalletPlanetsFallbackResponse(indexer, wallet, new Error("backend_not_configured"))
+            ?? ready;
+        }
         return Response.json(withPlayerProfile(await liveWalletRead(ready.getWalletPlanets(wallet), "wallet planets"), indexer, wallet), {
           headers: corsHeaders
         });
       } catch (error) {
+        const fallback = indexedWalletPlanetsFallbackResponse(indexer, wallet as `0x${string}`, error);
+        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -435,10 +424,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        if (!requestsLiveState(url)) {
-          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "infrastructure", indexedInfrastructureState);
-          if (indexed) return indexed;
-        }
         const ready = requireChainReader(createLiveChainReader(), loaded.problems);
         if (ready instanceof Response) {
           return await indexedDegradedResponse(indexer, wallet, planetId, "infrastructure", new Error("backend_not_configured"), indexedInfrastructureState)
@@ -729,9 +714,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
+      try {
+        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
+        if (!(ready instanceof Response)) {
+          return Response.json(await liveWalletRead(ready.getPlanet(planetId), "planet"), {
+            headers: corsHeaders
+          });
+        }
+      } catch (error) {
+        if (!isDegradableReadError(error)) {
+          return errorResponse(error, 400);
+        }
+      }
       if (indexer) {
         await ensurePlanetIndex(indexer);
-        return Response.json(indexer.planet(planetId.toString()), {
+        return Response.json(accruedPlanetState(indexer, indexer.planet(planetId.toString())), {
           headers: corsHeaders
         });
       }
@@ -1042,6 +1039,55 @@ function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
     fallbackName: `${normalizedWallet.slice(0, 6)}...${normalizedWallet.slice(-4)}`,
     updatedAt: null
   };
+}
+
+function indexedWalletSettlementFallbackResponse(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`,
+  error: unknown
+): Response | null {
+  if (!indexer || !hasWarmPlanetIndex(indexer) || !isDegradableReadError(error)) return null;
+
+  const snapshot = indexer.snapshot();
+  const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
+  return Response.json({
+    ...withPlayerProfile(settlement, indexer, wallet),
+    degraded: true,
+    detail: error instanceof Error ? error.message : "wallet settlement live contract read failed; returning DB-indexed contract state.",
+    indexer: snapshot,
+    liveReadFailedAt: new Date().toISOString(),
+    source: "contract-state-indexer",
+    stale: true
+  }, {
+    headers: {
+      ...corsHeaders,
+      "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
+    }
+  });
+}
+
+function indexedWalletPlanetsFallbackResponse(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`,
+  error: unknown
+): Response | null {
+  if (!indexer || !hasWarmPlanetIndex(indexer) || !isDegradableReadError(error)) return null;
+
+  const snapshot = indexer.snapshot();
+  return Response.json({
+    ...withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet),
+    degraded: true,
+    detail: error instanceof Error ? error.message : "wallet planets live contract read failed; returning DB-indexed contract state.",
+    indexer: snapshot,
+    liveReadFailedAt: new Date().toISOString(),
+    source: "contract-state-indexer",
+    stale: true
+  }, {
+    headers: {
+      ...corsHeaders,
+      "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
+    }
+  });
 }
 
 async function enrichAllianceState(
