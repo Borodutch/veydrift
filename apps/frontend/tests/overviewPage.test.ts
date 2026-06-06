@@ -533,7 +533,14 @@ describe("overview queue progress display", () => {
   test("keeps Overview building finish button copy compact without clipping", () => {
     expect(overviewSource).toContain('label: actionPending ? "Completing building" : "Complete building"');
     expect(overviewSource).toContain("w-full min-w-0 items-center justify-center whitespace-normal break-words");
-    expect(overviewSource).toContain("max-w-full whitespace-normal break-words");
+    expect(overviewSource).toContain("max-w-full whitespace-normal break-words [overflow-wrap:anywhere]");
+  });
+
+  test("keeps Overview building completion notices bounded on mobile", () => {
+    expect(overviewSource).toContain(
+      "min-w-0 max-w-full overflow-hidden whitespace-normal break-words rounded-md border",
+    );
+    expect(overviewSource).toContain("[overflow-wrap:anywhere]");
   });
 
   test("shows building finish action notices for the active overview queue", () => {
