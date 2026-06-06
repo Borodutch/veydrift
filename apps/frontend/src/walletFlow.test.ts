@@ -1854,6 +1854,7 @@ describe("walletFlow", () => {
         },
       },
     ]);
+    expect(calls.map((call) => call.url)).not.toContainEqual(expect.stringContaining("source=live"));
   });
 
   test("includes backend wallet API validation messages in shipyard errors", async () => {
