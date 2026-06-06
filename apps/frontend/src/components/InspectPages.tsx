@@ -18,6 +18,7 @@ import {
 import {
   AllianceMemberActions,
   AllianceSummary,
+  allianceRefreshButtonState,
   allianceRosterPageSize,
   allianceDisplayName,
   allianceExitActionState,
@@ -268,6 +269,7 @@ export function AllianceInspectPage({
   const isOwner = isCurrentAlliance && role === "owner";
   const busy = disabled || actionBusy || !canTransact;
   const exitAction = allianceExitActionState(isCurrentAlliance ? allianceState : null);
+  const refreshButton = allianceRefreshButtonState(disabled);
 
   return (
     <InspectShell
@@ -275,8 +277,15 @@ export function AllianceInspectPage({
       subtitle={alliance?.description || "Public alliance details"}
       onBack={onBack}
       action={(
-        <button className="icon-button" disabled={actionBusy} onClick={onRefresh} type="button" title="Refresh alliance state">
-          <RefreshCw size={16} />
+        <button
+          className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={refreshButton.disabled || actionBusy}
+          onClick={onRefresh}
+          type="button"
+          title="Refresh alliance state"
+        >
+          <RefreshCw aria-hidden="true" size={14} />
+          {refreshButton.label}
         </button>
       )}
     >
@@ -285,7 +294,11 @@ export function AllianceInspectPage({
       {alliance ? (
         <div className="grid gap-4">
           <Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>
-            <AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />
+            {isCurrentAlliance ? (
+              <AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />
+            ) : (
+              <PublicAllianceInspectSummary alliance={alliance} />
+            )}
           </Panel>
 
           {isCurrentAlliance ? (
@@ -360,6 +373,31 @@ export function AllianceInspectPage({
         </div>
       ) : null}
     </InspectShell>
+  );
+}
+
+function PublicAllianceInspectSummary({
+  alliance,
+}: {
+  alliance: Pick<ChainAllianceState["directory"][number], "description" | "name" | "tag" | "totalMemberScore">;
+}) {
+  return (
+    <div className="grid gap-3">
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold leading-none text-cyan-100">
+            {alliance.tag}
+          </span>
+          <h3 className="min-w-0 text-base font-semibold text-white">{alliance.name}</h3>
+        </div>
+        <p className="mt-2 max-w-3xl text-sm text-slate-400">
+          {alliance.description || "No public alliance description."}
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <CompactStat label="Total Score" value={formatScore(alliance.totalMemberScore)} />
+      </div>
+    </div>
   );
 }
 

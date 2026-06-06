@@ -797,6 +797,58 @@ export function walletRequestErrorMessage(error: unknown): string {
   return message;
 }
 
+const fleetMissionRevertReasons: Record<string, string> = {
+  "0x705f508b": "Selected origin planet does not have the requested ships. Refresh shipyard state and retry.",
+  "0x2ab0f96f": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and retry.",
+  "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Add cargo-capable ships, reduce cargo, slow the mission, or choose a closer target.",
+  "0x57aab7e3": "All fleet slots are already in use. Wait for a fleet to return, then retry.",
+  "0x400d5197": "You cannot attack your own planet.",
+  "0xbb3f9d15": "Choose a target planet that is different from the origin planet.",
+  "0x9a3d4eb9": "The selected target planet no longer exists. Refresh galaxy state and choose a target again.",
+  "0xab2bcfd3": "This wallet does not own the selected origin planet. Refresh planets and retry.",
+  "0x524f409b": "Select at least one valid ship for this mission.",
+  "0x65dba1c3": "This target has reached the attack bashing limit. Choose another target or retry later.",
+  "0x3570048f": "This target is protected by score rules and cannot be attacked.",
+  "0x1fbd4a7a": "You cannot attack a planet owned by your alliance.",
+  "0xa3ab075a": "The selected debris field is empty. Refresh galaxy state and retry.",
+  "0x84c69485": "This mission type is not supported for the selected fleet action.",
+  "0xb85299a2": "The target attack is already too close to arrival for this fleet action.",
+  "0xb3439205": "A fleet mission involving this planet still needs resolution. Resolve it before launching another mission.",
+};
+
+function revertSelector(error: unknown): string | undefined {
+  const data = errorData(error);
+  return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
+    ? data.slice(0, 10).toLowerCase()
+    : undefined;
+}
+
+function fleetMissionRevertReason(error: unknown): string | undefined {
+  const message = errorMessage(error);
+  if (/INVALID_MISSION_SPEED/i.test(message)) {
+    return "Choose a valid mission speed between 10% and 100%.";
+  }
+
+  return fleetMissionRevertReasons[revertSelector(error) ?? ""];
+}
+
+async function assertFleetMissionCallSucceeds(
+  provider: Eip1193Provider,
+  from: string,
+  to: string,
+  data: string,
+): Promise<void> {
+  try {
+    await provider.request({
+      method: "eth_call",
+      params: [{ from, to, data }, "latest"],
+    });
+  } catch (error) {
+    const reason = fleetMissionRevertReason(error);
+    throw new Error(reason ?? walletRequestErrorMessage(error));
+  }
+}
+
 export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<void> {
   const lockProbe = (provider as Eip1193Provider & WalletLockProbe)._metamask;
 
@@ -1756,6 +1808,7 @@ export async function sendLaunchFleetMissionTransaction(
   params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
+  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data);
 
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -1916,6 +1969,18 @@ function errorCode(error: unknown): unknown {
   return typeof error === "object" && error !== null && "code" in error
     ? (error as { code: unknown }).code
     : undefined;
+}
+
+function errorData(error: unknown): unknown {
+  if (typeof error !== "object" || error === null) return undefined;
+  if ("data" in error) return (error as { data: unknown }).data;
+  if ("error" in error) {
+    const nested = (error as { error: unknown }).error;
+    if (typeof nested === "object" && nested !== null && "data" in nested) {
+      return (nested as { data: unknown }).data;
+    }
+  }
+  return undefined;
 }
 
 export async function fetchWalletSettlement(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {

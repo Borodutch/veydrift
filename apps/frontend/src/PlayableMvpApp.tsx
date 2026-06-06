@@ -296,6 +296,43 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
   return page === "alliance" || page === "rankings" || page === "alliance-inspect";
 }
 
+export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
+  return page === "galaxy" || page === "planet";
+}
+
+export function shipyardStateForMissionActions({
+  account,
+  activePlanetId,
+  homePlanetId,
+  shipyardError,
+  shipyardLoading,
+  shipyardState,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  homePlanetId: string | null | undefined;
+  shipyardError: string | undefined;
+  shipyardLoading: boolean;
+  shipyardState: ChainShipyardState | null;
+}): ChainShipyardState | null {
+  if (shipyardState) return shipyardState;
+  if (!account || !shipyardError || shipyardLoading) return null;
+
+  return {
+    wallet: account,
+    homePlanetId: homePlanetId ?? null,
+    planetId: activePlanetId ?? homePlanetId ?? null,
+    productionAvailable: false,
+    unavailableReason: `Shipyard state could not be loaded: ${shipyardError}. Refresh and retry.`,
+    resources: null,
+    shipyardLevel: 0,
+    naniteLevel: 0,
+    technologyLevels: {},
+    ships: [],
+    queue: null,
+  };
+}
+
 function resourceSnapshotSettledAt(snapshot: ResourceSnapshotFreshness): bigint | undefined {
   if (!snapshot.lastSettledAt) return undefined;
   try {
@@ -1549,6 +1586,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     [onChainSettlement?.homePlanetId, selectedPlanetId, walletPlanets]
   );
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlement?.homePlanetId ?? undefined;
+  const missionActionShipyardState = useMemo(() => shipyardStateForMissionActions({
+    account,
+    activePlanetId,
+    homePlanetId: onChainSettlement?.homePlanetId,
+    shipyardError,
+    shipyardLoading,
+    shipyardState,
+  }), [
+    account,
+    activePlanetId,
+    onChainSettlement?.homePlanetId,
+    shipyardError,
+    shipyardLoading,
+    shipyardState,
+  ]);
   const activeShipyardProductionQueue = activeProductionQueue(shipyardState?.queue, onChainQueues?.ship, "ship");
   const activeDefenseProductionQueue = activeProductionQueue(defenseState?.queue, onChainQueues?.defense, "defense");
   const activePlanetCoords = selectedManagedPlanet
@@ -2367,8 +2419,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     const refreshFromChainEvent = () => {
       void refreshOnChainState();
       refreshInfrastructureState();
-      if (page === "shipyard" || page === "galaxy") refreshShipyardState();
-      if (page === "defenses" || page === "galaxy") refreshDefenseState();
+      if (page === "shipyard" || shouldRefreshMissionActionStateForPage(page)) refreshShipyardState();
+      if (page === "defenses" || shouldRefreshMissionActionStateForPage(page)) refreshDefenseState();
       if (shouldRefreshAllianceStateForPage(page)) refreshAllianceState();
       if (page === "research") refreshResearchState();
       if (page === "rift") refreshRiftState();
@@ -2654,14 +2706,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
-    if (page === "shipyard" || page === "galaxy") {
+    if (page === "shipyard" || shouldRefreshMissionActionStateForPage(page)) {
       refreshShipyardState();
     }
   }, [page, pageStateHydrationReady, refreshShipyardState]);
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
-    if (page === "defenses" || page === "galaxy") {
+    if (page === "defenses" || shouldRefreshMissionActionStateForPage(page)) {
       refreshDefenseState();
     }
   }, [page, pageStateHydrationReady, refreshDefenseState]);
@@ -4304,7 +4356,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
           defenseState={defenseState}
-          shipyardState={shipyardState}
+          shipyardState={missionActionShipyardState}
           onAction={handleGalaxyAction}
           onSelectAlliance={handleSelectAlliance}
           onSelectPlayer={handleSelectPlayer}
@@ -4328,7 +4380,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           homePlanet={homePlanetIdentity}
           onAction={handleGalaxyAction}
           onBack={() => setPage("galaxy")}
-          shipyardState={shipyardState}
+          shipyardState={missionActionShipyardState}
         />
       );
     }

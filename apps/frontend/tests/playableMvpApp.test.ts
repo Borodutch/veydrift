@@ -33,6 +33,7 @@ import {
   researchStateForCompletionRevalidation,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
+  shipyardStateForMissionActions,
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
   walletSpendableResourcesFor,
@@ -110,6 +111,35 @@ describe("Playable MVP app display helpers", () => {
       apiBaseUrl,
       hydratedWalletSnapshotKey: undefined,
     })).toBe(true);
+  });
+
+  test("turns shipyard load failures into explicit mission-action blockers", () => {
+    const unavailable = shipyardStateForMissionActions({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "8",
+      homePlanetId: "7",
+      shipyardError: "Shipyard API returned 503",
+      shipyardLoading: false,
+      shipyardState: null,
+    });
+
+    expect(unavailable).toMatchObject({
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planetId: "8",
+      productionAvailable: false,
+      unavailableReason: "Shipyard state could not be loaded: Shipyard API returned 503. Refresh and retry.",
+      ships: [],
+    });
+
+    expect(shipyardStateForMissionActions({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "8",
+      homePlanetId: "7",
+      shipyardError: "Shipyard API returned 503",
+      shipyardLoading: true,
+      shipyardState: null,
+    })).toBeNull();
   });
 
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {

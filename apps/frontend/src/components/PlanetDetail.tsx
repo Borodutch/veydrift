@@ -251,9 +251,9 @@ export function PlanetDetail({
         </button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] lg:items-start">
         {/* Planet image */}
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 lg:sticky lg:top-4">
           <div className="relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/30">
             {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
             <OptimizedImage
@@ -283,8 +283,8 @@ export function PlanetDetail({
           )}
         </div>
 
-        {/* Planet info */}
-        <div className="flex flex-col gap-3">
+        {/* Planet summary */}
+        <div className="grid min-w-0 gap-3">
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
@@ -317,86 +317,60 @@ export function PlanetDetail({
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            {/* Owner */}
-            <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Public Commander
-              </h3>
-              <PublicRecordRows rows={publicCommanderRows(planet, isHome)} />
-            </div>
-
-            {/* Temperature */}
-            <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Temperature
-              </h3>
-              <span className="text-sm text-slate-300">
-                {planet.temperature.min}°C to {planet.temperature.max}°C
-              </span>
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                <div
-                  className="h-full rounded-full bg-signal/60"
-                  style={{
-                    width: `${Math.min(
-                      100,
-                      Math.max(0, (planet.temperature.max + 150) / 300 * 100)
-                    )}%`,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Public planet data */}
-            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
-              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Public Planet Data
-              </h3>
-              <PublicRecordRows rows={publicPlanetDataRows(planet)} columns />
-            </div>
-
-            {/* Production modifiers */}
-            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
-              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Production Modifiers
-              </h3>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {publicProductionRows(planet).map((row) => (
-                  <ProductionMetric key={row.label} {...row} />
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
-              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Public Resources
-              </h3>
-              <ResourceBars resources={planet.publicState?.resources} />
-            </div>
-
-            <PublicStatePanel
-              title="Buildings"
-              rows={publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")}
-            />
-            <PublicStatePanel
-              title="Fleet"
-              rows={publicStateRows(planet.publicState?.fleet, shipCatalog, "count")}
-            />
-            <PublicStatePanel
-              title="Defenses"
-              rows={publicStateRows(planet.publicState?.defenses, defenseCatalog, "count")}
-            />
-            <PublicStatePanel
-              title="Research"
-              rows={publicStateRows(planet.publicState?.research, researchCatalog, "level")}
-            />
-
-            <div className="rounded-lg border border-white/10 bg-white/5 p-4 sm:col-span-2">
-              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Active Public Queues
-              </h3>
-              <PublicRecordRows rows={publicQueueRows(planet)} columns />
-            </div>
+            <PlanetCommanderPanel planet={planet} isHome={isHome} />
+            <PlanetTemperaturePanel planet={planet} />
           </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2 xl:col-span-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Public Planet Data
+          </h3>
+          <PublicRecordRows rows={publicPlanetDataRows(planet)} columns />
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Production Modifiers
+          </h3>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {publicProductionRows(planet).map((row) => (
+              <ProductionMetric key={row.label} {...row} />
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Public Resources
+          </h3>
+          <ResourceBars resources={planet.publicState?.resources} />
+        </div>
+
+        <PublicStatePanel
+          title="Buildings"
+          rows={publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")}
+        />
+        <PublicStatePanel
+          title="Fleet"
+          rows={publicStateRows(planet.publicState?.fleet, shipCatalog, "count")}
+        />
+        <PublicStatePanel
+          title="Defenses"
+          rows={publicStateRows(planet.publicState?.defenses, defenseCatalog, "count")}
+        />
+        <PublicStatePanel
+          title="Research"
+          rows={publicStateRows(planet.publicState?.research, researchCatalog, "level")}
+        />
+
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2 xl:col-span-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Active Public Queues
+          </h3>
+          <PublicRecordRows rows={publicQueueRows(planet)} columns />
         </div>
       </div>
     </div>
@@ -473,6 +447,41 @@ function PlanetActionStatus({ actionState }: { actionState: GalaxyActionState })
           : "border-signal/25 bg-signal/10 text-signal"
     }`}>
       {actionState.label}
+    </div>
+  );
+}
+
+function PlanetCommanderPanel({ isHome, planet }: { isHome: boolean; planet: Planet }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        Public Commander
+      </h3>
+      <PublicRecordRows rows={publicCommanderRows(planet, isHome)} />
+    </div>
+  );
+}
+
+function PlanetTemperaturePanel({ planet }: { planet: Planet }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        Temperature
+      </h3>
+      <span className="text-sm text-slate-300">
+        {planet.temperature.min}°C to {planet.temperature.max}°C
+      </span>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full bg-signal/60"
+          style={{
+            width: `${Math.min(
+              100,
+              Math.max(0, (planet.temperature.max + 150) / 300 * 100)
+            )}%`,
+          }}
+        />
+      </div>
     </div>
   );
 }
