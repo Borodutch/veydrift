@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { productionQueueViewModel } from "./components/ProductionCatalog";
+import { defenseCatalog, shipCatalog } from "./playableMvp";
 import { activeProductionQueue } from "./productionQueueFallback";
 import type { QueueStateResponse } from "./walletFlow";
 
@@ -17,6 +19,30 @@ describe("production queue fallback", () => {
     expect(activeProductionQueue(null, queue, "defense")).toBe(queue);
     expect(activeProductionQueue(queueState("defense", 1, 1), queue, "defense")?.itemId).toBe(1);
     expect(activeProductionQueue(null, queueState("ship", 0, 2), "defense")).toBeUndefined();
+  });
+
+  test("feeds shared detail queue panels from overview fallbacks when page queues are empty", () => {
+    const defenseQueue = activeProductionQueue(null, queueState("defense", 0, 1, {
+      readyAt: "1700000120",
+      startedAt: "1700000000",
+    }), "defense");
+    const shipQueue = activeProductionQueue(null, queueState("ship", 0, 2, {
+      readyAt: "1700000120",
+      startedAt: "1700000000",
+    }), "ship");
+
+    expect(productionQueueViewModel(defenseQueue, defenseCatalog)).toMatchObject({
+      label: "Rocket Launcher",
+      quantity: 1,
+      readyAt: "1700000120",
+      startedAt: "1700000000",
+    });
+    expect(productionQueueViewModel(shipQueue, shipCatalog)).toMatchObject({
+      label: "Small Cargo",
+      quantity: 2,
+      readyAt: "1700000120",
+      startedAt: "1700000000",
+    });
   });
 
   test("preserves overview defense startedAt when detailed defense queue lacks it", () => {
