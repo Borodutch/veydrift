@@ -1621,6 +1621,45 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("treats previously reconciled DB state as alliance-warm before the explicit marker exists", async () => {
+    const db = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listAllianceLogs() {
+        return [
+          {
+            blockNumber: "0x90",
+            blockTimestamp: "0x69801c80",
+            transactionHash: "0xalliance-create",
+            logIndex: "0x0",
+            topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+            data: abiStrings("VEY", "Veydrift Command")
+          }
+        ];
+      }
+    }, 100n, { database: db });
+
+    await indexer.rebuild();
+    db.query("DELETE FROM indexer_metadata WHERE key = 'allianceReconciledAt'").run();
+
+    expect(indexer.snapshot()).toMatchObject({
+      allianceStaleReason: null,
+      safeToServeAllianceState: true
+    });
+    expect(indexer.allianceState(player)).toMatchObject({
+      allianceAvailable: true,
+      directory: [
+        {
+          tag: "VEY",
+          name: "Veydrift Command",
+          owner: player
+        }
+      ]
+    });
+  });
+
   test("indexes attacker and defender fleet mission visibility from mission event logs", () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer({

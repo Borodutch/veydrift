@@ -277,9 +277,9 @@ export class SettlementIndexer {
 
   snapshot(): IndexerSnapshot {
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
-    const allianceReconciledAt = this.metadata("allianceReconciledAt");
     const indexedPlanets = this.count("indexed_planets");
     const lastReconciledAt = this.metadata("lastReconciledAt");
+    const allianceReconciledAt = this.metadata("allianceReconciledAt") ?? lastReconciledAt;
     const lastReconciledBlock = this.metadata("lastReconciledBlock");
     const lastReconciliationError = this.metadata("lastReconciliationError");
     const pendingReconciliationReason = this.metadata("pendingReconciliationReason");
