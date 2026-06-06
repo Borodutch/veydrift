@@ -18,6 +18,7 @@ import {
 import {
   AllianceMemberActions,
   AllianceSummary,
+  allianceRefreshButtonState,
   allianceRosterPageSize,
   allianceDisplayName,
   allianceExitActionState,
@@ -268,6 +269,7 @@ export function AllianceInspectPage({
   const isOwner = isCurrentAlliance && role === "owner";
   const busy = disabled || actionBusy || !canTransact;
   const exitAction = allianceExitActionState(isCurrentAlliance ? allianceState : null);
+  const refreshButton = allianceRefreshButtonState(disabled);
 
   return (
     <InspectShell
@@ -275,8 +277,15 @@ export function AllianceInspectPage({
       subtitle={alliance?.description || "Public alliance details"}
       onBack={onBack}
       action={(
-        <button className="icon-button" disabled={actionBusy} onClick={onRefresh} type="button" title="Refresh alliance state">
-          <RefreshCw size={16} />
+        <button
+          className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={refreshButton.disabled || actionBusy}
+          onClick={onRefresh}
+          type="button"
+          title="Refresh alliance state"
+        >
+          <RefreshCw aria-hidden="true" size={14} />
+          {refreshButton.label}
         </button>
       )}
     >
