@@ -29,6 +29,7 @@ const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -1349,7 +1350,7 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("indexes fleet mission visibility from mission event logs", () => {
+  test("indexes attacker and defender fleet mission visibility from mission event logs", () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -1399,10 +1400,55 @@ describe("SettlementIndexer", () => {
       ],
       data: abiWords(1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
     });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xfleet2",
+      logIndex: "0x0",
+      topics: [
+        fleetMissionLaunchedTopic,
+        topic(45n),
+        addressTopic(player),
+        topic(3n)
+      ],
+      data: abiWords(7n, 99n, 1770001300n, 1770002500n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xfleet2",
+      logIndex: "0x1",
+      topics: [
+        fleetMissionCargoTopic,
+        topic(45n)
+      ],
+      data: abiWords(0n, 0n, 0n, 30n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xfleet2",
+      logIndex: "0x2",
+      topics: [
+        fleetMissionShipsTopic,
+        topic(45n)
+      ],
+      data: abiWords(0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xfleetreturn",
+      logIndex: "0x0",
+      topics: [
+        fleetMissionReturnExposedTopic,
+        topic(45n),
+        addressTopic(player),
+        topic(2n)
+      ],
+      data: abiWords(7n, 99n, 1770002500n, 100n, 25n, 0n)
+    });
 
-    const visibility = indexer.fleetMissionVisibility(player);
-    expect(visibility.outgoing).toEqual([]);
-    expect(visibility.incoming[0]).toMatchObject({
+    const defenderVisibility = indexer.fleetMissionVisibility(player);
+    expect(defenderVisibility.outgoing).toEqual([]);
+    expect(defenderVisibility.returning.map((mission) => mission.missionId)).toEqual(["45"]);
+    expect(defenderVisibility.incoming[0]).toMatchObject({
       missionId: "44",
       missionType: "Attack",
       owner: attacker,
@@ -1431,6 +1477,11 @@ describe("SettlementIndexer", () => {
         lightFighter: "2"
       }
     });
+
+    const attackerVisibility = indexer.fleetMissionVisibility(attacker);
+    expect(attackerVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["44"]);
+    expect(attackerVisibility.incoming).toEqual([]);
+    expect(attackerVisibility.returning).toEqual([]);
   });
 
   test("removed duplicate log marks reorg health instead of being ignored", () => {

@@ -27,6 +27,10 @@ interface IVeydriftAttackProtectionAllianceSystem {
         returns (uint256);
 }
 
+interface IVeydriftAttackTargetQueueSettler {
+    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
+}
+
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
     bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
@@ -449,7 +453,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (mission.status != FleetMissionStatus.Outbound) return;
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
-        _settleResources(mission.targetPlanetId);
+        if (mission.missionType == FleetMissionType.Attack) {
+            _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
+        } else {
+            _settleResources(mission.targetPlanetId);
+        }
         if (mission.missionType == FleetMissionType.Transport) {
             _planets[mission.targetPlanetId].resources =
                 _add(_planets[mission.targetPlanetId].resources, mission.cargo);
@@ -510,12 +518,22 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function _settleResources(uint256 planetId) private {
         uint64 currentTime = _currentTimestamp();
+        _settleResourcesUntil(planetId, currentTime);
+    }
+
+    function _settleAttackTargetSnapshot(uint256 planetId, uint64 impactAt) private {
+        _settleResourcesUntil(planetId, impactAt);
+        IVeydriftAttackTargetQueueSettler(address(this))
+            .completeAttackTargetSnapshotQueues(planetId, impactAt);
+    }
+
+    function _settleResourcesUntil(uint256 planetId, uint64 settledAt) private {
         Planet storage planetRef = _planets[planetId];
-        if (currentTime <= planetRef.lastSettledAt) {
+        if (settledAt <= planetRef.lastSettledAt) {
             return;
         }
 
-        uint256 elapsed = uint256(currentTime) - planetRef.lastSettledAt;
+        uint256 elapsed = uint256(settledAt) - planetRef.lastSettledAt;
         (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
             _productionPerHour(planetId);
         Resources memory produced = Resources({
@@ -528,7 +546,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         added = _reserveLimitedIncrease(added);
         _increaseInternalResources(added);
         planetRef.resources = _add(planetRef.resources, added);
-        planetRef.lastSettledAt = currentTime;
+        planetRef.lastSettledAt = settledAt;
     }
 
     function _productionPerHour(uint256 planetId)
