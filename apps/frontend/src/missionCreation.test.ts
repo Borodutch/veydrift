@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { missionDraftBlocker } from "./components/MissionCreationPage";
+import { missionDraftBlocker, missionTimingSummary } from "./components/MissionCreationPage";
 import type { GalaxyAction } from "./galaxyActions";
 
 const attackAction: Extract<GalaxyAction, { enabled: true }> = {
@@ -100,5 +100,17 @@ describe("mission creation", () => {
       resources: { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
       selectedShipCount: 1,
     })).toBe("Cargo exceeds available capacity.");
+  });
+
+  test("summarizes mission timing with duration first and exact clocks preserved", () => {
+    const summary = missionTimingSummary(3_900, Date.UTC(2026, 0, 1, 12, 0, 0));
+
+    expect(summary).toMatchObject({
+      arrivalDuration: "1h 5m",
+      returnDuration: "2h 10m",
+    });
+    expect(summary?.arrivalClock).toContain("1:05");
+    expect(summary?.returnClock).toContain("2:10");
+    expect(missionTimingSummary(0)).toBeNull();
   });
 });

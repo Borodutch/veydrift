@@ -12,6 +12,7 @@ import {
 } from "../fleetMissionRules";
 import { emptyMissionShips, type GalaxyAction, type MissionShipKey, type MissionShips } from "../galaxyActions";
 import type { ChainShipyardState } from "../walletFlow";
+import { formatDuration } from "../durationFormat";
 import { formatUserTimestamp } from "../timestampFormat";
 
 export type MissionCargoDraft = {
@@ -100,6 +101,7 @@ export function MissionCreationPage({
   const availableShips = useMemo(() => missionShipOptionsForAction(action, shipyardState), [action, shipyardState]);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
+  const timingSummary = missionTimingSummary(travelSeconds);
   const blockedReason = missionDraftBlocker({
     action,
     cargoCapacity,
@@ -242,10 +244,10 @@ export function MissionCreationPage({
           <SummaryRow label="Ships" value={action.mode === "missile" ? "Missile launch" : selectedShipCount.toLocaleString()} />
           <SummaryRow label="Fuel" value={`${fuelCost.toLocaleString()} deuterium`} />
           <SummaryRow label="Cargo" value={cargoSupported ? `${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}` : "None"} />
-          {travelSeconds > 0 ? (
+          {timingSummary ? (
             <>
-              <SummaryRow label="Arrival" value={formatUserTimestamp(Date.now() + travelSeconds * 1_000)} />
-              <SummaryRow label="Return" value={formatUserTimestamp(Date.now() + travelSeconds * 2_000)} />
+              <SummaryRow label="Arrival" subvalue={timingSummary.arrivalClock} value={timingSummary.arrivalDuration} />
+              <SummaryRow label="Return" subvalue={timingSummary.returnClock} value={timingSummary.returnDuration} />
             </>
           ) : null}
           {blockedReason ? (
@@ -301,6 +303,25 @@ export function missionDraftBlocker({
   if (cargoSupported && cargoTotal > cargoCapacity) return "Cargo exceeds available capacity.";
   if (cargoSupported && cargoTotal < 0) return "Cargo cannot be negative.";
   return undefined;
+}
+
+export function missionTimingSummary(travelSeconds: number, nowMs: number = Date.now()): {
+  arrivalClock: string;
+  arrivalDuration: string;
+  returnClock: string;
+  returnDuration: string;
+} | null {
+  if (!Number.isFinite(travelSeconds) || travelSeconds <= 0) return null;
+  const arrivalSeconds = Math.ceil(travelSeconds);
+  const returnSeconds = arrivalSeconds * 2;
+  const arrivalAt = nowMs + arrivalSeconds * 1_000;
+  const returnAt = nowMs + returnSeconds * 1_000;
+  return {
+    arrivalClock: formatUserTimestamp(arrivalAt),
+    arrivalDuration: formatDuration(arrivalSeconds),
+    returnClock: formatUserTimestamp(returnAt),
+    returnDuration: formatDuration(returnSeconds),
+  };
 }
 
 function initialMissionShips(action: EnabledGalaxyAction): MissionShips {
@@ -385,11 +406,14 @@ function NumberField({
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({ label, subvalue, value }: { label: string; subvalue?: string | undefined; value: string }) {
   return (
     <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-2 text-sm last:border-b-0 last:pb-0">
       <span className="text-slate-500">{label}</span>
-      <span className="text-right font-medium text-slate-200">{value}</span>
+      <span className="text-right">
+        <span className="block font-medium text-slate-200">{value}</span>
+        {subvalue ? <span className="block text-xs text-slate-500">{subvalue}</span> : null}
+      </span>
     </div>
   );
 }
