@@ -392,12 +392,16 @@ function BuildingDetailPanel({
     onFinishBuilding,
     queue: activeBuildingQueue,
   });
+  const visibleActionNotice = deduplicatedInfrastructureActionNotice(actionNotice, [
+    status.reason,
+    finishAction.reason,
+  ]);
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
-  const noticeClass = actionNotice?.tone === "error"
+  const noticeClass = visibleActionNotice?.tone === "error"
     ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
-    : actionNotice?.tone === "success"
+    : visibleActionNotice?.tone === "success"
       ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
       : "border-signal/20 bg-signal/10 text-signal";
 
@@ -482,9 +486,9 @@ function BuildingDetailPanel({
         />
       )}
 
-      {actionNotice && (
+      {visibleActionNotice && (
         <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold break-words ${noticeClass}`}>
-          {actionNotice.label}
+          {visibleActionNotice.label}
         </div>
       )}
 
@@ -590,6 +594,20 @@ export function infrastructureFinishAction({
 export function infrastructureHeaderFinishAction(action: ReturnType<typeof infrastructureFinishAction>) {
   if (!action.visible || action.disabled) return undefined;
   return action;
+}
+
+export function deduplicatedInfrastructureActionNotice(
+  actionNotice: InfrastructureActionNotice | undefined,
+  displayedReasons: Array<string | undefined>,
+): InfrastructureActionNotice | undefined {
+  if (
+    actionNotice?.tone === "error"
+    && displayedReasons.some((reason) => reason === actionNotice.label)
+  ) {
+    return undefined;
+  }
+
+  return actionNotice;
 }
 
 export function ActiveBuildingQueueDetail({
