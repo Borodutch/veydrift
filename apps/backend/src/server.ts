@@ -55,8 +55,6 @@ const corsHeaders = {
   ...jsonHeaders
 } as const;
 
-const LIVE_WALLET_READ_TIMEOUT_MS = 6_000;
-
 type GraphQLPayload = {
   query?: string;
 };
@@ -114,12 +112,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
   const indexerChainReader =
-    dependencies.chainReader
-      ? chainReader
-      : loaded.problems.length === 0
-        ? new VeydriftGameReader(loaded.config)
-        : undefined;
-  const createLiveChainReader = (): ChainReader | undefined =>
     dependencies.chainReader
       ? chainReader
       : loaded.problems.length === 0
@@ -294,17 +286,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         const indexed = indexedWalletSettlementWarmResponse(indexer, wallet);
         if (indexed) return indexed;
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return indexedWalletSettlementFallbackResponse(indexer, wallet, new Error("backend_not_configured"))
-            ?? ready;
-        }
-        return Response.json(withPlayerProfile(await liveWalletRead(ready.getWalletSettlement(wallet), "wallet settlement"), indexer, wallet), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("wallet settlement", indexer);
       } catch (error) {
-        const fallback = indexedWalletSettlementFallbackResponse(indexer, wallet as `0x${string}`, error);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -313,11 +296,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) return ready;
-        return Response.json(await liveWalletRead(ready.getSettlementFunding(wallet), "settlement funding"), {
-          headers: corsHeaders
-        });
+        return indexedSettlementFundingUnavailableResponse(indexer);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -329,17 +308,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         const indexed = indexedWalletPlanetsWarmResponse(indexer, wallet);
         if (indexed) return indexed;
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return indexedWalletPlanetsFallbackResponse(indexer, wallet, new Error("backend_not_configured"))
-            ?? ready;
-        }
-        return Response.json(withPlayerProfile(await liveWalletRead(ready.getWalletPlanets(wallet), "wallet planets"), indexer, wallet), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("wallet planets", indexer);
       } catch (error) {
-        const fallback = indexedWalletPlanetsFallbackResponse(indexer, wallet as `0x${string}`, error);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -353,17 +323,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "player queues", indexedPlayerQueues);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return await indexedDegradedResponse(indexer, wallet, planetId, "player queues", new Error("backend_not_configured"), indexedPlayerQueues)
-            ?? ready;
-        }
-        return Response.json(await liveWalletRead(ready.getPlayerQueues(wallet, planetId), "player queues"), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("player queues", indexer);
       } catch (error) {
-        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "player queues", error, indexedPlayerQueues);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -376,17 +337,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, undefined, "fleet visibility", indexedFleetVisibility);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return await indexedDegradedResponse(indexer, wallet, undefined, "fleet visibility", new Error("backend_not_configured"), indexedFleetVisibility)
-            ?? ready;
-        }
-        return Response.json(await liveWalletRead(ready.getFleetMissionVisibility(wallet), "fleet visibility"), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("fleet visibility", indexer);
       } catch (error) {
-        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, undefined, "fleet visibility", error, indexedFleetVisibility);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -394,18 +346,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname.match(/^\/battle-report\/[^/]+$/)) {
       const missionId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) return ready;
-        const report = await liveWalletRead(ready.getBattleReport(parseMissionId(missionId)), "battle report");
-        if (!report) {
-          return Response.json(
-            { error: "Battle report not found." },
-            { headers: corsHeaders, status: 404 }
-          );
-        }
-        return Response.json(report, {
-          headers: corsHeaders
-        });
+        parseMissionId(missionId);
+        if (!indexer) return indexedReadNotReadyResponse("battle report", indexer);
+        return Response.json(
+          {
+            error: "battle_report_not_indexed",
+            detail: "Battle reports are not available until the indexed battle report read model catches up.",
+            source: "contract-state-indexer"
+          },
+          { headers: corsHeaders, status: 404 }
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -413,10 +363,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/battle-reports") {
       try {
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) return ready;
-        return Response.json(await liveWalletRead(ready.listBattleReports(), "battle reports"), {
-          headers: corsHeaders
+        if (!indexer) return indexedReadNotReadyResponse("battle reports", indexer);
+        return Response.json([], {
+          headers: {
+            ...corsHeaders,
+            "x-veydrift-index-state": indexer.snapshot().safeToServeIndexedState ? "healthy" : "stale"
+          }
         });
       } catch (error) {
         return errorResponse(error, 400);
@@ -430,17 +382,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const planetId = selectedPlanetId(url);
         const indexed = await indexedWarmResponse(indexer, wallet, planetId, "infrastructure", indexedInfrastructureState);
         if (indexed) return indexed;
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return await indexedDegradedResponse(indexer, wallet, planetId, "infrastructure", new Error("backend_not_configured"), indexedInfrastructureState)
-            ?? ready;
-        }
-        return Response.json(await liveWalletRead(ready.getInfrastructureState(wallet, planetId), "infrastructure"), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("infrastructure", indexer);
       } catch (error) {
-        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "infrastructure", error, indexedInfrastructureState);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -455,20 +398,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (indexed) {
           return moonTimedResponse(indexed, readStartedAt);
         }
-        if (!requestsDiagnosticLiveMoonState(url)) {
-          return moonTimedResponse(indexedMoonNotReadyResponse(indexer, wallet, planetId), readStartedAt);
-        }
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return await indexedDegradedResponse(indexer, wallet, planetId, "moon", new Error("backend_not_configured"), indexedMoonState)
-            ?? ready;
-        }
-        return moonTimedResponse(Response.json(await liveWalletRead(ready.getMoonState(wallet, planetId), "moon"), {
-          headers: corsHeaders
-        }), readStartedAt);
+        return moonTimedResponse(indexedMoonNotReadyResponse(indexer, wallet, planetId), readStartedAt);
       } catch (error) {
-        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "moon", error, indexedMoonState);
-        if (fallback) return moonTimedResponse(fallback, readStartedAt);
         return errorResponse(error, 400);
       }
     }
@@ -482,17 +413,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "shipyard", indexedShipyardState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return await indexedDegradedResponse(indexer, wallet, planetId, "shipyard", new Error("backend_not_configured"), indexedShipyardState)
-            ?? ready;
-        }
-        return Response.json(await liveWalletRead(ready.getShipyardState(wallet, planetId), "shipyard"), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("shipyard", indexer);
       } catch (error) {
-        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "shipyard", error, indexedShipyardState);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -506,17 +428,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "defenses", indexedDefenseState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return await indexedDegradedResponse(indexer, wallet, planetId, "defenses", new Error("backend_not_configured"), indexedDefenseState)
-            ?? ready;
-        }
-        return Response.json(await liveWalletRead(ready.getDefenseState(wallet, planetId), "defenses"), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("defenses", indexer);
       } catch (error) {
-        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "defenses", error, indexedDefenseState);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
@@ -530,31 +443,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "research", indexedResearchState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return await indexedDegradedResponse(indexer, wallet, planetId, "research", new Error("backend_not_configured"), indexedResearchState)
-            ?? ready;
-        }
-        return Response.json(await liveWalletRead(ready.getResearchState(wallet, planetId), "research"), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("research", indexer);
       } catch (error) {
-        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "research", error, indexedResearchState);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/alliance$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
-        return Response.json(await enrichAllianceState(await liveWalletRead(ready.getAllianceState(wallet), "alliance"), indexer, ready), {
-          headers: corsHeaders
-        });
+        return indexedAllianceUnavailableResponse(wallet, indexer);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -569,32 +468,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           const indexed = await indexedWarmResponse(indexer, wallet, planetId, "rift", indexedRiftState);
           if (indexed) return indexed;
         }
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (ready instanceof Response) {
-          return await indexedDegradedResponse(indexer, wallet, planetId, "rift", new Error("backend_not_configured"), indexedRiftState)
-            ?? ready;
-        }
-        return Response.json(await liveWalletRead(ready.getRiftState(wallet, planetId), "rift"), {
-          headers: corsHeaders
-        });
+        return indexedReadNotReadyResponse("rift", indexer);
       } catch (error) {
-        const fallback = await indexedDegradedResponse(indexer, wallet as `0x${string}`, selectedPlanetIdOrUndefined(url), "rift", error, indexedRiftState);
-        if (fallback) return fallback;
         return errorResponse(error, 400);
       }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-      if (ready instanceof Response) return ready;
-
       try {
         assertAddress(wallet);
         const targetPlanetId = positiveBigIntQuery(url, "targetPlanetId");
-        return Response.json(await liveWalletRead(ready.getAttackProtectionStatus(wallet, targetPlanetId), "attack protection"), {
-          headers: corsHeaders
-        });
+        return indexedAttackProtectionResponse(indexer, wallet, targetPlanetId);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -605,8 +490,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         assertAddress(wallet);
-        if (indexer) {
-          await ensurePlanetIndex(indexer);
+        if (hasWarmPlanetIndex(indexer)) {
           const indexedPlanets = indexer.settledPlanetsByOwner().get(wallet.toLowerCase()) ?? [];
           return Response.json(
             {
@@ -619,18 +503,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             }
           );
         }
-
-        const ready = requireHighscoreReader(chainReader, loaded.problems);
-        if (ready instanceof Response) return ready;
-        return Response.json(
-          {
-            formula: highscoreFormula,
-            entry: await ready.getHighscoreForWallet(wallet)
-          },
-          {
-            headers: corsHeaders
-          }
-        );
+        return indexedReadNotReadyResponse("wallet highscore", indexer);
       } catch (error) {
         return highscoreFailureResponse(error);
       }
@@ -651,17 +524,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           entries = indexer.highscoreEntriesForOwners(planetsByOwner);
           source = "contract-state-indexer";
         } else {
-          const ready = requireHighscoreReader(chainReader, loaded.problems);
-          if (ready instanceof Response) return ready;
-          planetsByOwner = new Map();
-          entries = ready.getHighscoresForWallets
-            ? await ready.getHighscoresForWallets(planetsByOwner)
-            : await highscoreEntriesForOwners(ready, planetsByOwner);
-          source = "live-chain-reader";
+          return indexedReadNotReadyResponse("highscores", indexer);
         }
 
         const profiles = indexer?.playerProfiles(planetsByOwner.keys()) ?? new Map<string, PlayerProfile>();
-        const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), chainReader);
+        const allianceIntel = await allianceIntelForPlayers(entries.map((entry) => entry.wallet), undefined);
         const totalEntries = entries.length;
         const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
         const page = Math.min(pagination.page, totalPages);
@@ -679,20 +546,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           offset,
           rankedRows
         );
-        const protection = indexer
-          ? rankedHighscoreIndexedProtectionLookup(
-            highscoreRankingRows(rankings),
-            entries,
-            allianceIntel,
-            url.searchParams.get("currentWallet"),
-            highscoreAttackProtectionRequested(url)
-          )
-          : await rankedHighscoreProtectionLookup(
-            highscoreRankingRows(rankings),
-            chainReader,
-            url.searchParams.get("currentWallet"),
-            highscoreAttackProtectionRequested(url)
-          );
+        const protection = rankedHighscoreIndexedProtectionLookup(
+          highscoreRankingRows(rankings),
+          entries,
+          allianceIntel,
+          url.searchParams.get("currentWallet"),
+          highscoreAttackProtectionRequested(url)
+        );
         const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
         const currentPlayer = highscoreCurrentPlayerPages(entries, pagination.pageSize, url.searchParams.get("currentWallet"));
 
@@ -724,28 +584,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
-      if (indexer && hasWarmPlanetIndex(indexer)) {
+        if (indexer && hasWarmPlanetIndex(indexer)) {
         return Response.json(accruedPlanetState(indexer, indexer.planet(planetId.toString())), {
           headers: corsHeaders
         });
       }
-      try {
-        const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-        if (!(ready instanceof Response)) {
-          return Response.json(await liveWalletRead(ready.getPlanet(planetId), "planet"), {
-            headers: corsHeaders
-          });
-        }
-      } catch (error) {
-        if (!isDegradableReadError(error)) {
-          return errorResponse(error, 400);
-        }
-      }
-      const ready = requireChainReader(createLiveChainReader(), loaded.problems);
-      if (ready instanceof Response) return ready;
-      return Response.json(await ready.getPlanet(planetId), {
-        headers: corsHeaders
-      });
+      return indexedReadNotReadyResponse("planet detail", indexer);
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
@@ -986,26 +830,6 @@ function isIndexableChainReader(
   );
 }
 
-async function highscoreEntriesForOwners(
-  reader: HighscoreReader,
-  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>
-): Promise<HighscoreEntry[]> {
-  const entries = [];
-  for (const [owner, planets] of planetsByOwner.entries()) {
-    entries.push(await reader.getHighscoreForWallet(
-      owner as `0x${string}`,
-      planets.map((planet) => planet.planetId)
-    ));
-  }
-  return entries;
-}
-
-async function ensurePlanetIndex(indexer: SettlementIndexer): Promise<void> {
-  if (indexer.snapshot().indexedPlanets === 0) {
-    await indexer.rebuildPlanets();
-  }
-}
-
 function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
   if (!indexer) return false;
   return indexer.snapshot().indexedPlanets > 0;
@@ -1050,31 +874,6 @@ function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
   };
 }
 
-function indexedWalletSettlementFallbackResponse(
-  indexer: SettlementIndexer | undefined,
-  wallet: `0x${string}`,
-  error: unknown
-): Response | null {
-  if (!indexer || !hasWarmPlanetIndex(indexer) || !isDegradableReadError(error)) return null;
-
-  const snapshot = indexer.snapshot();
-  const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
-  return Response.json({
-    ...withPlayerProfile(settlement, indexer, wallet),
-    degraded: true,
-    detail: error instanceof Error ? error.message : "wallet settlement live contract read failed; returning DB-indexed contract state.",
-    indexer: snapshot,
-    liveReadFailedAt: new Date().toISOString(),
-    source: "contract-state-indexer",
-    stale: true
-  }, {
-    headers: {
-      ...corsHeaders,
-      "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
-    }
-  });
-}
-
 function indexedWalletSettlementWarmResponse(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`
@@ -1090,30 +889,6 @@ function indexedWalletSettlementWarmResponse(
     liveReadSkippedAt: new Date().toISOString(),
     source: "contract-state-indexer",
     stale: !snapshot.safeToServeIndexedState
-  }, {
-    headers: {
-      ...corsHeaders,
-      "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
-    }
-  });
-}
-
-function indexedWalletPlanetsFallbackResponse(
-  indexer: SettlementIndexer | undefined,
-  wallet: `0x${string}`,
-  error: unknown
-): Response | null {
-  if (!indexer || !hasWarmPlanetIndex(indexer) || !isDegradableReadError(error)) return null;
-
-  const snapshot = indexer.snapshot();
-  return Response.json({
-    ...withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet),
-    degraded: true,
-    detail: error instanceof Error ? error.message : "wallet planets live contract read failed; returning DB-indexed contract state.",
-    indexer: snapshot,
-    liveReadFailedAt: new Date().toISOString(),
-    source: "contract-state-indexer",
-    stale: true
   }, {
     headers: {
       ...corsHeaders,
@@ -1143,105 +918,6 @@ function indexedWalletPlanetsWarmResponse(
     }
   });
 }
-
-async function enrichAllianceState(
-  state: AllianceState,
-  indexer: SettlementIndexer | undefined,
-  chainReader: ChainReader | undefined
-): Promise<AllianceState> {
-  const dismissJoinRequestAvailable = process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED !== "false";
-  if (!indexer) return { ...state, dismissJoinRequestAvailable };
-
-  const displayNameField = <Key extends string>(key: Key, wallet: `0x${string}`): Record<Key, string> | Record<string, never> => {
-    const displayName = indexer.playerProfile(wallet).displayName;
-    return displayName ? { [key]: displayName } as Record<Key, string> : {};
-  };
-  const scoreByWallet = indexedPlayerScoreTotals(indexer);
-  const scoreByAllianceId = await allianceMemberScoreTotals(scoreByWallet, chainReader);
-  const totalScoreField = (allianceId: string): { totalMemberScore?: string } => {
-    const total = scoreByAllianceId.get(allianceId);
-    return total !== undefined ? { totalMemberScore: total.toString() } : {};
-  };
-  const memberScoreField = (wallet: `0x${string}`): { totalScore?: string } => {
-    const total = scoreByWallet.get(wallet.toLowerCase());
-    return total !== undefined ? { totalScore: total.toString() } : {};
-  };
-
-  return {
-    ...state,
-    dismissJoinRequestAvailable,
-    profile: state.profile
-      ? {
-          ...state.profile,
-          ...displayNameField("ownerDisplayName", state.profile.owner),
-          ...totalScoreField(state.membership.allianceId)
-        }
-      : null,
-    directory: state.directory.map((alliance) => {
-      const members = alliance.members?.map((member) => ({
-        ...member,
-        ...displayNameField("displayName", member.address),
-        ...memberScoreField(member.address)
-      }));
-      return {
-        ...alliance,
-        ...displayNameField("ownerDisplayName", alliance.owner),
-        ...totalScoreField(alliance.allianceId),
-        ...(members ? { members } : {})
-      };
-    }),
-    pendingInvites: state.pendingInvites.map((invite) => ({
-      ...invite,
-      ...displayNameField("inviterDisplayName", invite.inviter)
-    })),
-    pendingJoinRequests: state.pendingJoinRequests.map((request) => ({
-      ...request,
-      ...displayNameField("requesterDisplayName", request.requester)
-    })),
-    allianceJoinRequests: state.allianceJoinRequests.map((request) => ({
-      ...request,
-      ...displayNameField("requesterDisplayName", request.requester)
-    })),
-    members: state.members.map((member) => ({
-      ...member,
-      ...displayNameField("displayName", member.address),
-      ...memberScoreField(member.address)
-    }))
-  };
-}
-
-function indexedPlayerScoreTotals(indexer: SettlementIndexer): Map<string, bigint> {
-  const planetsByOwner = indexer.settledPlanetsByOwner();
-  const entries = indexer.highscoreEntriesForOwners(planetsByOwner);
-  return new Map(entries.map((entry) => [entry.wallet.toLowerCase(), BigInt(entry.score.total)]));
-}
-
-async function allianceMemberScoreTotals(
-  scoreByWallet: ReadonlyMap<string, bigint>,
-  chainReader: ChainReader | undefined
-): Promise<Map<string, bigint>> {
-  if (!chainReader?.getAllianceIntelForPlayers || scoreByWallet.size === 0) return new Map();
-
-  const allianceIntel = await allianceIntelForPlayers([...scoreByWallet.keys()] as Address[], chainReader);
-  const totals = new Map<string, bigint>();
-
-  for (const [wallet, score] of scoreByWallet) {
-    const alliance = allianceIntel.get(wallet);
-    if (!alliance) continue;
-    totals.set(alliance.allianceId, (totals.get(alliance.allianceId) ?? 0n) + score);
-  }
-
-  return totals;
-}
-
-type IndexedDegradedBody<T extends object> = T & {
-  degraded: true;
-  detail: string;
-  indexer: ReturnType<SettlementIndexer["snapshot"]>;
-  liveReadFailedAt: string;
-  source: "contract-state-indexer";
-  stale: true;
-};
 
 type IndexedWarmBody<T extends object> = T & {
   detail: string;
@@ -1294,45 +970,6 @@ async function indexedWarmResponse<T extends object>(
     headers: {
       ...corsHeaders,
       "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale"
-    }
-  });
-}
-
-async function indexedDegradedResponse<T extends object>(
-  indexer: SettlementIndexer | undefined,
-  wallet: `0x${string}`,
-  selectedPlanetId: bigint | undefined,
-  surface: string,
-  error: unknown,
-  build: (
-    wallet: `0x${string}`,
-    settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
-    planet: SettledPlanetEvent | null,
-    detail: string,
-    indexer: SettlementIndexer
-  ) => T
-): Promise<Response | null> {
-  if (!indexer || !isDegradableReadError(error)) return null;
-
-  if (!hasWarmPlanetIndex(indexer)) return null;
-  const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
-  if (!settlement) return null;
-
-  const detail = `${surface} live contract read failed; returning DB-indexed contract state.`;
-  const body: IndexedDegradedBody<T> = {
-    ...build(wallet, settlement.settlement, settlement.planet, detail, indexer),
-    degraded: true,
-    detail: error instanceof Error ? error.message : detail,
-    indexer: indexer.snapshot(),
-    liveReadFailedAt: new Date().toISOString(),
-    source: "contract-state-indexer",
-    stale: true
-  };
-
-  return Response.json(body, {
-    headers: {
-      ...corsHeaders,
-      "x-veydrift-index-state": "stale"
     }
   });
 }
@@ -1452,25 +1089,8 @@ function accruedPlanetState<T extends PlanetState | null>(
   };
 }
 
-function isDegradableReadError(error: unknown): boolean {
-  return error instanceof Error
-    && (error.message === "backend_not_configured" || isRpcTransportError(error));
-}
-
 function requestsLiveState(_url: URL): boolean {
   return false;
-}
-
-function requestsDiagnosticLiveMoonState(url: URL): boolean {
-  return url.searchParams.get("source") === "live";
-}
-
-function selectedPlanetIdOrUndefined(url: URL): bigint | undefined {
-  try {
-    return selectedPlanetId(url);
-  } catch {
-    return undefined;
-  }
 }
 
 function indexedPlayerQueues(
@@ -1906,51 +1526,6 @@ function universeContractAddress(config: BackendConfig): `0x${string}` {
   );
 }
 
-function requireChainReader(chainReader: ChainReader | undefined, problems: ConfigProblem[]): ChainReader | Response {
-  if (!chainReader) {
-    return unavailableResponse(problems);
-  }
-
-  return chainReader;
-}
-
-async function liveWalletRead<T>(promise: Promise<T>, label: string): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Timed out reading ${label} from live chain state after ${Math.round(LIVE_WALLET_READ_TIMEOUT_MS / 1_000)} seconds.`));
-    }, LIVE_WALLET_READ_TIMEOUT_MS);
-  });
-
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timeoutId !== undefined) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
-
-type HighscoreReader = ChainReader & Required<Pick<ChainReader, "getHighscoreForWallet">>;
-
-function requireHighscoreReader(chainReader: ChainReader | undefined, problems: ConfigProblem[]): HighscoreReader | Response {
-  const ready = requireChainReader(chainReader, problems);
-  if (ready instanceof Response) return ready;
-  if (!ready.getHighscoreForWallet) {
-    return Response.json(
-      {
-        error: "highscores_not_supported"
-      },
-      {
-        headers: corsHeaders,
-        status: 503
-      }
-    );
-  }
-
-  return ready as HighscoreReader;
-}
-
 function highscoreFailureResponse(error: unknown): Response {
   if (isRpcTransportError(error)) {
     return Response.json(
@@ -2183,31 +1758,6 @@ function rankHighscores(
     });
 }
 
-async function rankedHighscoreProtectionLookup(
-  rows: Iterable<RankedHighscoreEntry>,
-  chainReader: ChainReader | undefined,
-  currentWallet: string | null | undefined,
-  includeAttackProtection: boolean
-): Promise<Map<string, RankedHighscoreAttackProtection | null>> {
-  if (!includeAttackProtection) return new Map();
-
-  const uniquePlanets = new Map<string, RankedHighscorePlanet>();
-  for (const row of rows) {
-    for (const planet of row.planets) {
-      uniquePlanets.set(planet.planetId, planet);
-    }
-  }
-
-  const statuses = await Promise.all(
-    [...uniquePlanets.values()].map(async (planet) => [
-      planet.planetId,
-      await rankedHighscoreAttackProtection(chainReader, currentWallet, planet)
-    ] as const)
-  );
-
-  return new Map(statuses);
-}
-
 function rankedHighscoreIndexedProtectionLookup(
   rows: Iterable<RankedHighscoreEntry>,
   entries: readonly HighscoreEntry[],
@@ -2299,25 +1849,6 @@ function indexedNewbieProtectionRatioBps(score: bigint): bigint {
   return 0n;
 }
 
-async function rankedHighscoreAttackProtection(
-  chainReader: ChainReader | undefined,
-  currentWallet: string | null | undefined,
-  planet: RankedHighscorePlanet | null
-): Promise<RankedHighscoreAttackProtection | null> {
-  if (!chainReader || !planet || !currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return null;
-
-  try {
-    const status = await chainReader.getAttackProtectionStatus(currentWallet as Address, BigInt(planet.planetId));
-    return {
-      allowed: status.allowed,
-      blockedReason: status.blockedReason,
-      blockedReasonLabel: status.blockedReasonLabel
-    };
-  } catch {
-    return null;
-  }
-}
-
 function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory): HighscoreEntry[] {
   return [...entries].sort((left, right) => {
     const delta = BigInt(right.score[category]) - BigInt(left.score[category]);
@@ -2404,6 +1935,161 @@ function rankedHighscoreHomePlanet(
 ): RankedHighscorePlanet | null {
   if (!entry.homePlanetId) return null;
   return planets.find((candidate) => candidate.planetId === entry.homePlanetId) ?? null;
+}
+
+function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer | undefined): Response {
+  const snapshot = indexer?.snapshot() ?? null;
+  console.warn("Frontend read skipped request-time live chain fallback", {
+    surface,
+    indexer: snapshot,
+    source: "contract-state-indexer"
+  });
+
+  return Response.json(
+    {
+      error: "indexed_read_not_ready",
+      detail: `${surface} is not available from indexed contract state yet. Refresh shortly.`,
+      indexer: snapshot,
+      liveReadSkippedAt: new Date().toISOString(),
+      retryable: true,
+      source: "contract-state-indexer"
+    },
+    {
+      headers: {
+        ...corsHeaders,
+        "x-veydrift-index-state": snapshot ? "not-ready" : "unavailable",
+        "x-veydrift-live-read": "skipped"
+      },
+      status: 503
+    }
+  );
+}
+
+function indexedSettlementFundingUnavailableResponse(indexer: SettlementIndexer | undefined): Response {
+  const snapshot = indexer?.snapshot() ?? null;
+  console.warn("Frontend read skipped request-time live chain fallback", {
+    surface: "settlement funding",
+    indexer: snapshot,
+    source: "contract-state-indexer"
+  });
+
+  return Response.json(
+    {
+      affordable: false,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: null,
+      unavailableReason: "Settlement funding requires indexed funding state; live contract balance reads are disabled for frontend API requests.",
+      indexer: snapshot,
+      liveReadSkippedAt: new Date().toISOString(),
+      source: "contract-state-indexer",
+      stale: true
+    },
+    {
+      headers: {
+        ...corsHeaders,
+        "x-veydrift-index-state": snapshot ? "not-ready" : "unavailable",
+        "x-veydrift-live-read": "skipped"
+      }
+    }
+  );
+}
+
+function indexedAllianceUnavailableResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {
+  const snapshot = indexer?.snapshot() ?? null;
+  console.warn("Frontend read skipped request-time live chain fallback", {
+    surface: "alliance",
+    indexer: snapshot,
+    source: "contract-state-indexer"
+  });
+
+  return Response.json(
+    {
+      wallet,
+      allianceAvailable: false,
+      dismissJoinRequestAvailable: process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED !== "false",
+      unavailableReason: "Alliance indexed state is not available yet; live alliance contract reads are disabled for frontend API requests.",
+      membership: { allianceId: "0", role: "none", joinedAt: "0" },
+      profile: null,
+      directory: [],
+      pendingInvites: [],
+      pendingJoinRequests: [],
+      allianceJoinRequests: [],
+      members: [],
+      indexer: snapshot,
+      liveReadSkippedAt: new Date().toISOString(),
+      source: "contract-state-indexer",
+      stale: true
+    },
+    {
+      headers: {
+        ...corsHeaders,
+        "x-veydrift-index-state": snapshot ? "not-ready" : "unavailable",
+        "x-veydrift-live-read": "skipped"
+      }
+    }
+  );
+}
+
+function indexedAttackProtectionResponse(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`,
+  targetPlanetId: bigint
+): Response {
+  if (!hasWarmPlanetIndex(indexer)) {
+    return indexedReadNotReadyResponse("attack protection", indexer);
+  }
+
+  const target = indexer.planet(targetPlanetId.toString());
+  if (!target) {
+    return Response.json(
+      {
+        error: "target_planet_not_indexed",
+        detail: "Attack protection target is not available from indexed contract state yet.",
+        source: "contract-state-indexer"
+      },
+      {
+        headers: {
+          ...corsHeaders,
+          "x-veydrift-index-state": "not-ready",
+          "x-veydrift-live-read": "skipped"
+        },
+        status: 404
+      }
+    );
+  }
+
+  const planetsByOwner = indexer.settledPlanetsByOwner();
+  const attacker = indexer.highscoreForWallet(wallet, (planetsByOwner.get(wallet.toLowerCase()) ?? []).map((planet) => planet.planetId));
+  const defender = indexer.highscoreForWallet(target.owner, (planetsByOwner.get(target.owner.toLowerCase()) ?? []).map((planet) => planet.planetId));
+  const attackerScore = BigInt(attacker.score.total);
+  const defenderScore = BigInt(defender.score.total);
+  const scoreProtected = attackerScore > 0n && (defenderScore < attackerScore / 5n || defenderScore > attackerScore * 5n);
+
+  const body: AttackProtectionStatus & {
+    liveReadSkippedAt: string;
+    source: "contract-state-indexer";
+  } = {
+    wallet,
+    targetPlanetId: targetPlanetId.toString(),
+    allowed: !scoreProtected,
+    blockedReason: scoreProtected ? "score_protection" : "none",
+    blockedReasonLabel: scoreProtected ? attackBlockReasonLabel("score_protection") : null,
+    relation: defenderScore > attackerScore ? "stronger" : defenderScore < attackerScore ? "weaker" : "peer",
+    defenderHonorStatus: "neutral",
+    plunderBps: scoreProtected ? 0 : 5000,
+    defenderInactive: false,
+    liveReadSkippedAt: new Date().toISOString(),
+    source: "contract-state-indexer"
+  };
+
+  return Response.json(body, {
+    headers: {
+      ...corsHeaders,
+      "x-veydrift-index-state": indexer.snapshot().safeToServeIndexedState ? "healthy" : "stale",
+      "x-veydrift-live-read": "skipped"
+    }
+  });
 }
 
 function unavailableResponse(problems: ConfigProblem[]): Response {
