@@ -90,6 +90,16 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         if (!queue.active) revert QueueInactive();
         if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
 
+        _completeReadyDefenseProduction(planetId, queue);
+    }
+
+    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external {
+        while (defenseQueues[planetId].active && defenseQueues[planetId].readyAt <= cutoffAt) {
+            _completeReadyDefenseProduction(planetId, defenseQueues[planetId]);
+        }
+    }
+
+    function _completeReadyDefenseProduction(uint256 planetId, DefenseQueue memory queue) private {
         uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
         _defenseCounts[planetId][queue.defense] = total;
         emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);

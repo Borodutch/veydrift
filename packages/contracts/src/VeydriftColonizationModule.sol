@@ -102,6 +102,17 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         if (!queue.active) revert QueueInactive();
         if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
 
+        _completeReadyShipProduction(planetId, queue);
+    }
+
+    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external {
+        while (shipQueues[planetId].active && shipQueues[planetId].readyAt <= cutoffAt) {
+            _completeReadyShipProduction(planetId, shipQueues[planetId]);
+        }
+        _delegateToDefenseProductionModule();
+    }
+
+    function _completeReadyShipProduction(uint256 planetId, ShipQueue memory queue) private {
         uint32 total = _shipCounts[planetId][queue.ship] + queue.quantity;
         _shipCounts[planetId][queue.ship] = total;
         emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
