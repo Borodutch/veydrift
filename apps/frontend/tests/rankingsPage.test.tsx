@@ -8,6 +8,7 @@ import {
   rankingsPaginationLabel,
   rankingsRefreshButtonState,
   RankingsPagination,
+  RankingsPageHeader,
   RankingsTable,
   shouldShowRankingsInitialLoader,
 } from "../src/components/RankingsPage";
@@ -16,6 +17,15 @@ import type { HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 describe("RankingsPage", () => {
   test("uses one ranking table with the active category score and total context", () => {
     expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Score"]);
+  });
+
+  test("renders the rankings title without the old highscores eyebrow", () => {
+    const header = RankingsPageHeader({ loading: false, onRefresh: () => undefined });
+    const text = visibleText(header);
+
+    expect(text).toContain("Rankings");
+    expect(text).toContain("Refresh");
+    expect(text).not.toContain("Public Highscores");
   });
 
   test("renders rank, commander, planet icons, and the active score without duplicate totals", () => {
@@ -201,7 +211,8 @@ describe("RankingsPage", () => {
     });
     const tacticalButton = buttonWithTitle(table, "Open [2:44:9]");
 
-    expect(visibleText(table)).toContain("Unnamed planet 2890ss 4.5K 20K");
+    expect(visibleText(table)).toContain("Planet Dist Loot Combat [2:44:9] 2890ss 4.5K 20K");
+    expect(visibleText(table)).not.toContain("Unnamed planet");
     expect(tacticalButton?.props?.title).toBe("Open [2:44:9]");
     tacticalButton?.props?.onClick?.();
     expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
@@ -211,7 +222,7 @@ describe("RankingsPage", () => {
       loading: false,
       originCoordinates: { galaxy: 2, system: 44, position: 9 },
     });
-    expect(visibleText(sameOriginTable)).toContain("Unnamed planet 0ss 4.5K 20K");
+    expect(visibleText(sameOriginTable)).toContain("[2:44:9] 0ss 4.5K 20K");
   });
 
   test("renders same-alliance blocking as ally styling instead of protected styling", () => {
