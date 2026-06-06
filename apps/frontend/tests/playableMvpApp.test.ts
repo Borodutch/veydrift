@@ -11,6 +11,7 @@ import {
   completedBuildingFinishSyncReasonFor,
   defenseCompletionPlanetIdFor,
   failedBuildingFinishSyncReasonFor,
+  galaxyMissionActionErrorLabel,
   hasInfrastructureDisplayState,
   infrastructureBackendSyncPausedLabel,
   infrastructureBackendSyncPausedReasonFor,
@@ -141,6 +142,28 @@ describe("Playable MVP app display helpers", () => {
       shipyardLoading: true,
       shipyardState: null,
     })).toBeNull();
+  });
+
+  test("labels mission launch wallet, API/RPC, and preflight failures distinctly", () => {
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+    })).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
+
+    expect(galaxyMissionActionErrorLabel(
+      "Attack mission",
+      new Error("The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered."),
+    )).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
+
+    expect(galaxyMissionActionErrorLabel(
+      "Attack mission",
+      new Error("Timed out reading wallet accounts from the wallet after 10 seconds."),
+    )).toBe("Attack mission could not read wallet state. Unlock or reconnect your wallet, then retry.");
+
+    expect(galaxyMissionActionErrorLabel(
+      "Attack mission",
+      new Error("execution reverted"),
+    )).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
   });
 
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {
