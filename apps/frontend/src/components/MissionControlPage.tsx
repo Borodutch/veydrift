@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List, RefreshCw, Swords } from "lucide-preact";
+import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -19,6 +19,13 @@ export type MissionLifecycleAction = {
   enabled: boolean;
   reason?: string | undefined;
 };
+
+export function missionControlRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
+  return {
+    disabled: loading,
+    label: loading ? "Refreshing" : "Refresh",
+  };
+}
 
 interface MissionControlPageProps {
   actionState: MissionControlActionState;
@@ -67,6 +74,7 @@ export function MissionControlPage({
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
   const activeCount = incoming.length + outgoing.length + returning.length;
   const initialLoading = loading && !fleetVisibility;
+  const refreshButton = missionControlRefreshButtonState(loading);
 
   return (
     <section className="grid gap-4">
@@ -79,12 +87,12 @@ export function MissionControlPage({
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
+            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={refreshButton.disabled}
             onClick={onRefresh}
             type="button"
           >
-            <RefreshCw aria-hidden="true" size={15} />
-            Refresh
+            {refreshButton.label}
           </button>
         </div>
       </header>
