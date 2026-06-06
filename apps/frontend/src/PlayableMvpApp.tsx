@@ -520,7 +520,10 @@ export function buildingCompletionReadyToFinishFlag({
   infrastructureState: ChainInfrastructureState | null;
   now?: number;
 }): boolean {
-  if (isInfrastructureBackendSyncPaused(infrastructureState)) {
+  if (
+    isInfrastructureBackendSyncPaused(infrastructureState)
+    && !hasReadyIndexedBuildingCompletionState(infrastructureState, now)
+  ) {
     return false;
   }
 
@@ -546,7 +549,7 @@ export function buildingCompletionUnavailableReasonFor({
   }
 
   const syncPausedReason = infrastructureBackendSyncPausedReasonFor({ infrastructureChainState: infrastructureState });
-  if (syncPausedReason) {
+  if (syncPausedReason && !hasReadyIndexedBuildingCompletionState(infrastructureState, now)) {
     return syncPausedReason;
   }
 
@@ -590,7 +593,21 @@ function buildingCompletionQueueForVerification(
   infrastructureState: ChainInfrastructureState | null,
   _fallbackBuildingQueue?: QueueStateResponse | null | undefined,
 ): QueueStateResponse | null {
-  return canonicalInfrastructureBuildingCompletionQueue(infrastructureState);
+  if (!infrastructureState || infrastructureState.degraded === true) return null;
+  return infrastructureState.queue?.active ? infrastructureState.queue : null;
+}
+
+function hasReadyIndexedBuildingCompletionState(
+  infrastructureState: ChainInfrastructureState | null,
+  now = Date.now(),
+): boolean {
+  return Boolean(
+    infrastructureState
+      && infrastructureState.source === "contract-state-indexer"
+      && infrastructureState.degraded !== true
+      && infrastructureState.infrastructureAvailable !== false
+      && isBuildingQueueSafelyReadyToFinish(infrastructureState.queue, now)
+  );
 }
 
 export function buildingFinishUnavailableReasonForDisplay({
@@ -628,7 +645,7 @@ export function buildingFinishUnavailableReasonForDisplay({
     return completedQueueSyncReason;
   }
 
-  if (backendSyncPausedReason) {
+  if (backendSyncPausedReason && !hasReadyIndexedBuildingCompletionState(infrastructureState, now)) {
     return backendSyncPausedReason;
   }
 
@@ -641,7 +658,13 @@ export function buildingFinishUnavailableReasonForDisplay({
     });
   }
 
-  if (isBuildingReadyToFinish && !isInfrastructureBackendSyncPaused(infrastructureState)) {
+  if (
+    isBuildingReadyToFinish
+    && (
+      !isInfrastructureBackendSyncPaused(infrastructureState)
+      || hasReadyIndexedBuildingCompletionState(infrastructureState, now)
+    )
+  ) {
     return undefined;
   }
 

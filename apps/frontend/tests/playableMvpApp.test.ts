@@ -957,7 +957,7 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(buildingFinishLiveStateRequiredLabel);
   });
 
-  test("blocks ready indexed building completion while backend indexed state is stale", () => {
+  test("allows ready indexed building completion from warm stale metadata", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       infrastructureState: infrastructureState({
@@ -965,8 +965,8 @@ describe("Playable MVP app display helpers", () => {
         source: "contract-state-indexer",
         stale: true,
       }),
-      now: 1_700_000_000_000,
-    })).toBe(infrastructureBackendSyncPausedLabel);
+      now: 1_700_000_030_000,
+    })).toBeUndefined();
 
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
@@ -978,6 +978,15 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(infrastructureBackendSyncPausedLabel);
 
     const readyQueue = readyBuildingQueue();
+    expect(buildingCompletionReadyToFinishFlag({
+      fallbackBuildingQueue: readyQueue,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      now: 1_700_000_030_000,
+    })).toBe(true);
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
       fallbackBuildingQueue: readyQueue,
@@ -986,8 +995,8 @@ describe("Playable MVP app display helpers", () => {
         source: "contract-state-indexer",
         stale: true,
       }),
-      now: 1_700_000_000_000,
-    })).toBe(infrastructureBackendSyncPausedLabel);
+      now: 1_700_000_030_000,
+    })).toBeUndefined();
   });
 
   test("allows indexed ready building queues after backend revalidation without readonly preflight gating", () => {
@@ -1157,11 +1166,25 @@ describe("Playable MVP app display helpers", () => {
         queue: readyQueue,
         source: "contract-state-indexer",
         stale: false,
+        degraded: true,
       }),
       isBuildingReadyToFinish: true,
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
     })).toBe(infrastructureBackendSyncPausedLabel);
+    expect(buildingFinishUnavailableReasonForDisplay({
+      activeBuildingQueue: readyQueue,
+      backendSyncPausedReason: infrastructureBackendSyncPausedLabel,
+      canTransact: true,
+      infrastructureState: infrastructureState({
+        queue: readyQueue,
+        source: "contract-state-indexer",
+        stale: true,
+      }),
+      isBuildingReadyToFinish: true,
+      isDisplayedBuildingQueueReady: true,
+      now: 1_700_000_030_000,
+    })).toBeUndefined();
     expect(infrastructureBackendSyncPausedLabel).toContain("Infrastructure API is temporarily unavailable");
     expect(infrastructureBackendSyncPausedLabel).not.toContain("Syncing building queue");
   });
@@ -1182,11 +1205,11 @@ describe("Playable MVP app display helpers", () => {
         }),
         isBuildingReadyToFinish: true,
         isDisplayedBuildingQueueReady: true,
-        now: 1_700_000_000_000,
+        now: 1_700_000_030_000,
       });
 
       expect(`${walletPath}: ${unavailableReason}`).not.toContain("Syncing building queue");
-      expect(unavailableReason).toBe(infrastructureBackendSyncPausedLabel);
+      expect(unavailableReason).toBeUndefined();
     }
   });
 
@@ -1280,8 +1303,8 @@ describe("Playable MVP app display helpers", () => {
       }),
       isBuildingReadyToFinish: true,
       isDisplayedBuildingQueueReady: true,
-      now: 1_700_000_000_000,
-    })).toBe(infrastructureBackendSyncPausedLabel);
+      now: 1_700_000_030_000,
+    })).toBeUndefined();
 
     expect(buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue: readyQueue,
