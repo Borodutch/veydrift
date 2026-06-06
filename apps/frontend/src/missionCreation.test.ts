@@ -47,6 +47,7 @@ describe("mission creation", () => {
       quantity: 1,
       resources: { metal: 0, crystal: 0, deuterium: 0 },
       selectedShipCount: 1,
+      totalCargoCapacity: 0,
     })).toBe("Active origin planet is unavailable.");
 
     expect(missionDraftBlocker({
@@ -59,6 +60,7 @@ describe("mission creation", () => {
       quantity: 1,
       resources: { metal: 0, crystal: 0, deuterium: 0 },
       selectedShipCount: 0,
+      totalCargoCapacity: 0,
     })).toBe("Choose at least one ship.");
   });
 
@@ -73,6 +75,7 @@ describe("mission creation", () => {
       quantity: 1,
       resources: { metal: 0, crystal: 0, deuterium: 10 },
       selectedShipCount: 1,
+      totalCargoCapacity: 50,
     })).toBe("Need 25 deuterium for fuel.");
 
     expect(missionDraftBlocker({
@@ -85,7 +88,23 @@ describe("mission creation", () => {
       quantity: 0,
       resources: { metal: 0, crystal: 0, deuterium: 0 },
       selectedShipCount: 0,
+      totalCargoCapacity: 0,
     })).toBe("Choose at least one missile.");
+  });
+
+  test("blocks fleet missions when fuel alone exceeds selected ship cargo capacity", () => {
+    expect(missionDraftBlocker({
+      action: attackAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 230,
+      originCoords: { galaxy: 1, system: 294, position: 1 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 50,
+    })).toBe("Selected ships have 50 cargo capacity, but this mission needs 230 for fuel.");
   });
 
   test("blocks cargo drafts that exceed selected ship capacity", () => {
@@ -99,6 +118,7 @@ describe("mission creation", () => {
       quantity: 1,
       resources: { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
       selectedShipCount: 1,
+      totalCargoCapacity: 150,
     })).toBe("Cargo exceeds available capacity.");
   });
 
