@@ -16,6 +16,7 @@ import {
   type InfrastructureState,
   type MoonChanceReportEvent,
   type MoonState,
+  type ManagedPlanet,
   type PlanetState,
   type PlayerQueues,
   type ResearchState,
@@ -1266,7 +1267,20 @@ function indexedWalletPlanets(
   const response = indexer.walletPlanets(wallet);
   return {
     ...response,
-    planets: response.planets.map((planet) => accruedPlanetState(indexer, planet))
+    planets: response.planets.map((planet) => indexedWalletPlanetState(indexer, planet))
+  };
+}
+
+function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPlanet): ManagedPlanet {
+  const buildings = indexer.infrastructureRows(planet.planetId);
+  const ships = indexer.shipRows(planet.planetId);
+  const defenses = indexer.defenseRows(planet.planetId);
+  const technologyLevels = indexer.technologyLevels(planet.owner);
+  const accrued = accruedPlanetState(indexer, planet);
+
+  return {
+    ...accrued,
+    tactical: indexedPlanetTacticalSummary(accrued, buildings, ships, defenses, technologyLevels)
   };
 }
 
@@ -2183,7 +2197,7 @@ function rankedHighscorePlanets(
 }
 
 function indexedPlanetTacticalSummary(
-  planet: SettledPlanetEvent,
+  planet: PlanetState,
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
   defenses: DefenseState["defenses"],

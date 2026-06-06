@@ -1089,6 +1089,20 @@ describe("Veydrift backend", () => {
 
   test("answers wallet planet management state from the DB-backed indexer without live RPC", async () => {
     const indexer = testIndexer();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xwallet-planet-defense",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(4n, 4n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xwallet-planet-ship",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(2n, 2n)
+    });
     let liveReadCalled = false;
     const response = await createRequestHandler({
       config: configuredTestConfig,
@@ -1118,6 +1132,23 @@ describe("Veydrift backend", () => {
             metal: "5000",
             crystal: "4900",
             deuterium: "4800"
+          },
+          tactical: {
+            raidableResources: {
+              metal: "5000",
+              crystal: "4900",
+              deuterium: "4800"
+            },
+            raidableResourceTotal: "14700",
+            ships: {
+              count: 2,
+              power: expect.any(String)
+            },
+            defenses: {
+              count: 4,
+              power: expect.any(String)
+            },
+            combatPower: expect.any(String)
           },
           queues: {
             building: null,
