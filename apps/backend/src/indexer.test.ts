@@ -767,6 +767,60 @@ describe("SettlementIndexer", () => {
     expect(indexer.walletPlanets(player).planets[0]?.keyLevels.shipyard).toBe(2);
   });
 
+  test("reports used fields as completed building levels only", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xmetal2",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x85",
+      transactionHash: "0xterraformer1",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(12n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x86",
+      transactionHash: "0xdefense5",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(5n, 5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xship7",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(7n, 7n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x88",
+      transactionHash: "0xresearch4",
+      logIndex: "0x0",
+      topics: [researchCompletedTopic, addressTopic(player), topic(4n)],
+      data: abiWords(4n)
+    });
+
+    expect(indexer.walletPlanets(player).planets[0]).toMatchObject({
+      fieldsUsed: 3,
+      fieldsCapacity: planet.fields,
+      keyLevels: {
+        metalMine: 2,
+        terraformer: 1
+      }
+    });
+  });
+
   test("indexes ship and research queues plus completed counts and levels", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

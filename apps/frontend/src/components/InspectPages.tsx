@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { ArrowLeft, Crown, RefreshCw, UserRound } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { planetImageForType, planetTypeFromTemperature } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
@@ -28,6 +29,7 @@ import {
   rosterPageCount,
   rosterPageRows,
 } from "./AlliancePage";
+import { OptimizedImage } from "./OptimizedImage";
 import { VeydriftLoader } from "./VeydriftLoader";
 
 type PlayerInspectState =
@@ -116,13 +118,7 @@ export function PlayerInspectPage({
           <div className="flex flex-wrap gap-2 rounded border border-white/10 bg-black/20 px-3 py-2">
             <CompactStat label="Rank" value={state.highscore ? `#${state.highscore.rank}` : "Unranked"} />
             <CompactStat label="Planets" value={String(state.planets?.planets.length ?? state.highscore?.planetCount ?? 0)} />
-            <CompactStat label="Total" value={formatScore(state.highscore?.score.total)} />
-            {state.highscore?.attackProtection && !state.highscore.attackProtection.allowed && state.highscore.attackProtection.blockedReason !== "none" ? (
-              <CompactStat label="Risk" value={state.highscore.attackProtection.blockedReasonLabel ?? "Protected"} />
-            ) : (
-              <CompactStat label="Risk" value="Attackable" />
-            )}
-            {originLabel ? <CompactStat label="Origin" value={originLabel} /> : null}
+            {originLabel ? <CompactStat label="Home planet" value={originLabel} /> : null}
           </div>
 
           <Panel title="Planets">
@@ -145,11 +141,14 @@ export function PlayerInspectPage({
 
           <Panel title="Score">
             {scoreItems.length ? (
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <dl className="divide-y divide-white/10 rounded border border-white/10 bg-black/15">
                 {scoreItems.map((item) => (
-                  <CompactStat key={item.label} label={item.label} value={item.value} />
+                  <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm" key={item.label}>
+                    <dt className="font-medium text-slate-400">{item.label}</dt>
+                    <dd className="font-mono font-semibold text-slate-100">{item.value}</dd>
+                  </div>
                 ))}
-              </div>
+              </dl>
             ) : (
               <p className="text-sm text-slate-400">No public score row is indexed yet.</p>
             )}
@@ -176,22 +175,33 @@ function PlayerPlanetRow({
 
   return (
     <button
-      className="grid gap-2 rounded border border-white/10 bg-black/20 px-3 py-2 text-left transition hover:border-cyan-300/25 hover:bg-white/[0.06]"
+      className="grid gap-3 rounded border border-white/10 bg-black/20 p-2 text-left transition hover:border-cyan-300/25 hover:bg-white/[0.06] sm:grid-cols-[64px_minmax(0,1fr)]"
       key={planet.planetId}
       onClick={() => onSelectPlanet(coords)}
       title={`Open [${coords.galaxy}:${coords.system}:${coords.position}]`}
       type="button"
     >
-      <span className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-white">{planet.name || `Planet #${planet.planetId}`}</span>
-        <span className="font-mono text-xs text-cyan-100">[{coords.galaxy}:{coords.system}:{coords.position}]</span>
+      <span className="h-16 w-16 overflow-hidden rounded border border-white/10 bg-black/30">
+        <OptimizedImage
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          sizes="icon"
+          src={playerInspectPlanetImage(planet)}
+        />
       </span>
-      <span className="grid gap-1 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-4">
-        {signals.map((signal) => (
-          <span className="min-w-0 truncate" key={signal.label}>
-            <span className="text-slate-600">{signal.label}</span> {signal.value}
-          </span>
-        ))}
+      <span className="grid min-w-0 gap-2">
+        <span className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm font-semibold text-white">{planet.name || `Planet #${planet.planetId}`}</span>
+          <span className="font-mono text-xs text-cyan-100">[{coords.galaxy}:{coords.system}:{coords.position}]</span>
+        </span>
+        <span className="grid gap-1 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-3">
+          {signals.map((signal) => (
+            <span className="min-w-0 truncate" key={signal.label}>
+              <span className="text-slate-600">{signal.label}</span> {signal.value}
+            </span>
+          ))}
+        </span>
       </span>
     </button>
   );
@@ -355,7 +365,7 @@ function InspectShell({ action, children, eyebrow, onBack, subtitle, title, titl
   titlePrefix?: ComponentChildren;
 }) {
   return (
-    <section className="min-h-0 overflow-auto bg-[#080d16]">
+    <section className="min-h-0 overflow-auto">
       <div className="mx-auto grid w-full max-w-7xl gap-4 p-4">
         <header className="flex flex-col gap-3 border-b border-white/10 pb-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0">
@@ -505,6 +515,7 @@ function formatScore(value: string | undefined): string {
 export function playerInspectScoreItems(highscore: HighscoreEntry | null): Array<{ label: string; value: string }> {
   if (!highscore) return [];
   return [
+    { label: "Total", value: formatScore(highscore.score.total) },
     { label: "Economy", value: formatScore(highscore.score.economy) },
     { label: "Military", value: formatScore(highscore.score.military) },
     { label: "Fleet", value: formatScore(highscore.score.fleet) },
@@ -520,10 +531,14 @@ export function playerPlanetTacticalSignals(
   originCoords: Coordinates | undefined,
   attackProtection: HighscoreEntry["attackProtection"] | null,
 ): Array<{ label: string; value: string }> {
+  const protectionSignal = attackProtection && !attackProtection.allowed && attackProtection.blockedReason !== "none"
+    ? [{ label: "Protection", value: attackProtection.blockedReasonLabel ?? "Protected" }]
+    : [];
+
   return [
-    { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Origin unavailable" },
+    { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Home planet unavailable" },
     { label: "Raidable", value: formatResources(planet.resources) },
-    { label: "Risk", value: attackRiskLabel(attackProtection) },
+    ...protectionSignal,
     { label: "Ships/Def", value: "Not indexed publicly" },
     { label: "Fields", value: `${planet.fieldsUsed}/${planet.fieldsCapacity}` },
     { label: "Queues", value: planetQueueSignal(planet) },
@@ -531,9 +546,8 @@ export function playerPlanetTacticalSignals(
   ];
 }
 
-function attackRiskLabel(attackProtection: HighscoreEntry["attackProtection"] | null): string {
-  if (!attackProtection || attackProtection.allowed || attackProtection.blockedReason === "none") return "Attackable";
-  return attackProtection.blockedReasonLabel ?? "Protected";
+export function playerInspectPlanetImage(planet: Pick<ManagedPlanetResponse, "temperature">): string {
+  return planetImageForType(planetTypeFromTemperature(planet.temperature));
 }
 
 function formatResources(resources: OnChainResources): string {

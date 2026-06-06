@@ -188,6 +188,12 @@ export function deriveTechnologyRows(levelFor: (id: number) => number): Research
   }));
 }
 
+export function usedFieldsFromBuildingRows(
+  buildings: ReadonlyArray<Pick<InfrastructureState["buildings"][number], "level">>
+): number {
+  return buildings.reduce((sum, building) => sum + Math.max(0, Math.floor(building.level)), 0);
+}
+
 export function deriveInfrastructureFields(
   planet: PlanetState,
   buildings: InfrastructureState["buildings"],
