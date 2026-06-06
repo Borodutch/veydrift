@@ -162,6 +162,19 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
   moon: {
     exists: boolean;
   } | null;
+  tactical?: {
+    raidableResources: OnChainResources;
+    raidableResourceTotal: string;
+    ships: {
+      count: number;
+      power: string;
+    };
+    defenses: {
+      count: number;
+      power: string;
+    };
+    combatPower: string;
+  } | undefined;
 };
 
 export type WalletPlanetsResponse = {

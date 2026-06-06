@@ -34,9 +34,10 @@ describe("inspect pages", () => {
     );
 
     expect(signals).toContainEqual({ label: "Distance", value: "1,010" });
-    expect(signals).toContainEqual({ label: "Raidable", value: "12.5K M / 3K C / 400 D" });
+    expect(signals).toContainEqual({ label: "Resources", value: "8K M / 1K C / 200 D" });
     expect(signals).toContainEqual({ label: "Protection", value: "Attack blocked by score protection." });
-    expect(signals).toContainEqual({ label: "Ships/Def", value: "Not indexed publicly" });
+    expect(signals).toContainEqual({ label: "Ships", value: "3 units / 12K power" });
+    expect(signals).toContainEqual({ label: "Defenses", value: "5 units / 4K power" });
     expect(signals).toContainEqual({ label: "Queues", value: "Building, Defense" });
     expect(signals).toContainEqual({ label: "Moon", value: "Yes" });
   });
@@ -62,6 +63,8 @@ describe("inspect pages", () => {
     expect(source).toContain('label="Home planet"');
     expect(source).not.toContain('label="Origin"');
     expect(source).not.toContain('value="Attackable"');
+    expect(source).not.toContain('label: "Raidable"');
+    expect(source).not.toContain('"Not indexed publicly"');
     expect(source).not.toContain('bg-[#080d16]');
   });
 });
@@ -135,6 +138,23 @@ function managedPlanet(): ManagedPlanetResponse {
     },
     resources: { crystal: "3000", deuterium: "400", metal: "12500" },
     system: 44,
+    tactical: {
+      combatPower: "16000",
+      defenses: {
+        count: 5,
+        power: "4000",
+      },
+      raidableResourceTotal: "9200",
+      raidableResources: {
+        crystal: "1000",
+        deuterium: "200",
+        metal: "8000",
+      },
+      ships: {
+        count: 3,
+        power: "12000",
+      },
+    },
     temperature: 42,
   };
 }

@@ -62,6 +62,19 @@ export type ManagedPlanet = PlanetState & {
   moon: {
     exists: boolean;
   } | null;
+  tactical?: {
+    raidableResources: Resources;
+    raidableResourceTotal: string;
+    ships: {
+      count: number;
+      power: string;
+    };
+    defenses: {
+      count: number;
+      power: string;
+    };
+    combatPower: string;
+  } | undefined;
 };
 
 export type WalletPlanets = {

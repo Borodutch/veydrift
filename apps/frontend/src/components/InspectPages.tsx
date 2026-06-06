@@ -537,9 +537,10 @@ export function playerPlanetTacticalSignals(
 
   return [
     { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Home planet unavailable" },
-    { label: "Raidable", value: formatResources(planet.resources) },
+    { label: "Resources", value: formatResources(planet.tactical?.raidableResources ?? planet.resources) },
     ...protectionSignal,
-    { label: "Ships/Def", value: "Not indexed publicly" },
+    { label: "Ships", value: planetTacticalUnitSignal(planet.tactical?.ships) },
+    { label: "Defenses", value: planetTacticalUnitSignal(planet.tactical?.defenses) },
     { label: "Fields", value: `${planet.fieldsUsed}/${planet.fieldsCapacity}` },
     { label: "Queues", value: planetQueueSignal(planet) },
     { label: "Moon", value: planet.moon?.exists ? "Yes" : "No" },
@@ -564,6 +565,13 @@ function formatShortNumber(value: string): string {
   } catch {
     return value;
   }
+}
+
+function planetTacticalUnitSignal(unit: { count: number; power: string } | undefined): string {
+  if (!unit) return "Unavailable";
+  const count = unit.count.toLocaleString("en-US");
+  const power = formatShortNumber(unit.power);
+  return unit.count === 1 ? `${count} unit / ${power} power` : `${count} units / ${power} power`;
 }
 
 function planetQueueSignal(planet: ManagedPlanetResponse): string {
