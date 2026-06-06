@@ -532,28 +532,22 @@ function BuildingDetailPanel({
 }
 
 export function infrastructureUpgradeButtonLabel({
-  actionUnavailableReason,
   binary,
   defaultLabel,
-  statusDisabled,
 }: {
   actionUnavailableReason?: string | undefined;
   binary: boolean;
   defaultLabel: string;
   statusDisabled: boolean;
 }): string {
-  if (statusDisabled && actionUnavailableReason) {
-    return actionUnavailableReason;
-  }
-
   return binary ? "Build Rift Bridge" : defaultLabel;
 }
 
 export function infrastructureFinishButtonLabel(
-  actionUnavailableReason: string | undefined,
+  _actionUnavailableReason: string | undefined,
   binary: boolean,
 ): string {
-  return actionUnavailableReason ?? (binary ? "Finish build" : "Finish upgrade");
+  return binary ? "Finish build" : "Finish upgrade";
 }
 
 export function infrastructureFinishAction({
@@ -600,14 +594,28 @@ export function deduplicatedInfrastructureActionNotice(
   actionNotice: InfrastructureActionNotice | undefined,
   displayedReasons: Array<string | undefined>,
 ): InfrastructureActionNotice | undefined {
+  const normalizedActionLabel = normalizeInfrastructureNotice(actionNotice?.label);
+
   if (
     actionNotice?.tone === "error"
-    && displayedReasons.some((reason) => reason === actionNotice.label)
+    && normalizedActionLabel
+    && displayedReasons.some((reason) => {
+      const normalizedReason = normalizeInfrastructureNotice(reason);
+      return normalizedReason
+        && (normalizedReason === normalizedActionLabel
+          || normalizedReason.includes(normalizedActionLabel)
+          || normalizedActionLabel.includes(normalizedReason));
+    })
   ) {
     return undefined;
   }
 
   return actionNotice;
+}
+
+function normalizeInfrastructureNotice(label: string | undefined): string | undefined {
+  const normalized = label?.trim().replace(/\s+/g, " ").toLowerCase();
+  return normalized || undefined;
 }
 
 export function ActiveBuildingQueueDetail({
