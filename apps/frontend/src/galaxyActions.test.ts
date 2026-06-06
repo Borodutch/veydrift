@@ -78,6 +78,25 @@ describe("galaxyActions", () => {
     });
   });
 
+  test("labels missing attack fleet separately from state and protection blockers", () => {
+    const attack = galaxyActionsForSlot({
+      account,
+      attackProtection: {
+        allowed: true,
+        blockedReason: "none",
+        blockedReasonLabel: null,
+      },
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([]),
+    }).find((action) => action.kind === "attack");
+
+    expect(attack).toMatchObject({
+      enabled: false,
+      reason: "Requires at least one movable ship on your home planet.",
+    });
+  });
+
   test("keeps transport and deploy available for owned non-origin planets", () => {
     const ownColony = planet({
       ownerId: account,
