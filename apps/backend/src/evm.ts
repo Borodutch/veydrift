@@ -1011,7 +1011,10 @@ export class VeydriftGameReader implements ChainReader {
     if (owner === zeroAddress) {
       return null;
     }
-    const name = await this.readPlanetName(planetId);
+    const [name, resources] = await Promise.all([
+      this.readPlanetName(planetId),
+      this.readResources("0x0adbf924", planetId)
+    ]);
 
     return {
       planetId: planetId.toString(),
@@ -1026,7 +1029,7 @@ export class VeydriftGameReader implements ChainReader {
       crystalMultiplierBps: Number(decodeUintWord(wordAt(words, 7))),
       deuteriumMultiplierBps: Number(decodeUintWord(wordAt(words, 8))),
       lastSettledAt: decodeUintWord(wordAt(words, 9)).toString(),
-      resources: decodeResources(words.slice(10, 13))
+      resources
     };
   }
 
