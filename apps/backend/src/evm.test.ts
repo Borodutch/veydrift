@@ -23,6 +23,7 @@ const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
@@ -645,11 +646,45 @@ describe("moon chance report event decoding", () => {
 });
 
 describe("fleet mission visibility", () => {
-  test("includes incoming hostile missions against owned colonies", async () => {
-    const wallet = "0x0000000000000000000000000000000000000def" as Address;
+  test("reconstructs attacker and defender mission views plus battle reports from logs", async () => {
+    const defender = "0x0000000000000000000000000000000000000def" as Address;
     const attacker = "0x0000000000000000000000000000000000000abc" as Address;
+    const missionLogs = [
+      ...fleetMissionLogs({ missionId: 10n, owner: attacker, missionType: 3n, originPlanetId: 99n, targetPlanetId: 1n }),
+      ...fleetMissionLogs({ missionId: 11n, owner: attacker, missionType: 3n, originPlanetId: 99n, targetPlanetId: 2n }),
+      ...fleetMissionLogs({ missionId: 12n, owner: defender, missionType: 0n, originPlanetId: 1n, targetPlanetId: 2n }),
+      ...fleetMissionLogs({ missionId: 13n, owner: attacker, missionType: 3n, originPlanetId: 99n, targetPlanetId: 1n }),
+      makeLog({
+        topics: [fleetMissionReturnExposedTopic, topic(13n), addressTopic(attacker), topic(2n)],
+        data: dataWords([word(99n), word(1n), word(1_800_000_300n), word(100n), word(25n), word(0n)])
+      })
+    ];
+    const battleLogs = [
+      makeLog({
+        topics: [attackBattleResolvedTopic, topic(10n), addressTopic(attacker), topic(1n)],
+        data: dataWords([word(1n), word(3n), word(12345n), word(100n), word(50n), word(10n)])
+      }),
+      makeLog({
+        topics: [combatLossesTopic, topic(10n)],
+        data: dataWords([word(200n), word(50n), word(0n), word(400n), word(100n), word(0n)])
+      }),
+      makeLog({
+        topics: [combatDebrisSignaledTopic, topic(10n), topic(1n)],
+        data: dataWords([word(180n), word(45n)])
+      })
+    ];
     const reader = new class extends VeydriftGameReader {
       override async getWalletPlanets(account: Address) {
+        if (account === attacker) {
+          return {
+            wallet: account,
+            homePlanetId: "99",
+            planets: [
+              { planetId: "99" }
+            ]
+          } as Awaited<ReturnType<VeydriftGameReader["getWalletPlanets"]>>;
+        }
+
         return {
           wallet: account,
           homePlanetId: "1",
@@ -662,22 +697,29 @@ describe("fleet mission visibility", () => {
     }(
       readerConfig,
       {
-        async request<T>(method: string): Promise<T> {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
           expect(method).toBe("eth_getLogs");
-          return [
-            ...fleetMissionLogs({ missionId: 10n, owner: attacker, missionType: 3n, originPlanetId: 99n, targetPlanetId: 1n }),
-            ...fleetMissionLogs({ missionId: 11n, owner: attacker, missionType: 3n, originPlanetId: 99n, targetPlanetId: 2n }),
-            ...fleetMissionLogs({ missionId: 12n, owner: wallet, missionType: 0n, originPlanetId: 1n, targetPlanetId: 2n })
-          ] as T;
+          const [filter] = params as [{ topics?: unknown[] }];
+          const topics = filter.topics?.[0] as string[] | undefined;
+          return (topics?.includes(attackBattleResolvedTopic) ? battleLogs : missionLogs) as T;
         }
       }
     );
 
-    const visibility = await reader.getFleetMissionVisibility(wallet);
+    const defenderVisibility = await reader.getFleetMissionVisibility(defender);
+    const attackerVisibility = await reader.getFleetMissionVisibility(attacker);
 
-    expect(visibility.homePlanetId).toBe("1");
-    expect(visibility.incoming.map((mission) => mission.missionId)).toEqual(["10", "11"]);
-    expect(visibility.outgoing.map((mission) => mission.missionId)).toEqual(["12"]);
+    expect(defenderVisibility.homePlanetId).toBe("1");
+    expect(defenderVisibility.incoming.map((mission) => mission.missionId)).toEqual(["10", "11"]);
+    expect(defenderVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["12"]);
+    expect(defenderVisibility.returning).toEqual([]);
+    expect(defenderVisibility.battleReports.map((report) => report.missionId)).toEqual(["10"]);
+
+    expect(attackerVisibility.homePlanetId).toBe("99");
+    expect(attackerVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["10", "11"]);
+    expect(attackerVisibility.returning.map((mission) => mission.missionId)).toEqual(["13"]);
+    expect(attackerVisibility.incoming).toEqual([]);
+    expect(attackerVisibility.battleReports.map((report) => report.missionId)).toEqual(["10"]);
   });
 });
 

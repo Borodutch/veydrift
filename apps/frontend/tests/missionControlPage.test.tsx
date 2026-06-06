@@ -123,6 +123,107 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Contract raid protection");
   });
 
+  test("renders attacker and defender attack views with side-specific controls", () => {
+    const defenderPage = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x9999999999999999999999999999999999999999",
+        homePlanetId: "9",
+        incoming: [mission({
+          missionId: "77",
+          owner: "0x1111111111111111111111111111111111111111",
+          originPlanetId: "7",
+          targetPlanetId: "9",
+          originPlanet: {
+            planetId: "7",
+            owner: "0x1111111111111111111111111111111111111111",
+            ownerDisplayName: "Astra",
+            name: "New Eos",
+            galaxy: 2,
+            system: 44,
+            position: 9,
+            coordinates: "2:44:9",
+          },
+          targetPlanet: {
+            planetId: "9",
+            owner: "0x9999999999999999999999999999999999999999",
+            ownerDisplayName: "Orion",
+            name: "Red Haven",
+            galaxy: 4,
+            system: 55,
+            position: 11,
+            coordinates: "4:55:11",
+          },
+        })],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        battleReports: [battleReport("77")],
+      },
+      walletPlanets: [managedPlanet({
+        planetId: "9",
+        owner: "0x9999999999999999999999999999999999999999",
+        coordinates: "4:55:11",
+        name: "Red Haven",
+      })],
+    });
+    const defenderText = visibleText(defenderPage);
+
+    expect(defenderText).toContain("Incoming attacks 1");
+    expect(defenderText).toContain("Astra (0x1111...1111)");
+    expect(defenderText).toContain("New Eos [2:44:9] -> Red Haven [4:55:11]");
+    expect(defenderText).toContain("Group defend");
+    expect(defenderText).toContain("Intercept");
+    expect(defenderText).toContain("Resolved battle reports 1");
+    expect(defenderText).not.toContain("Recall fleet");
+
+    const attackerPage = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({
+          missionId: "77",
+          owner: "0x1111111111111111111111111111111111111111",
+          originPlanetId: "7",
+          targetPlanetId: "9",
+          originPlanet: {
+            planetId: "7",
+            owner: "0x1111111111111111111111111111111111111111",
+            ownerDisplayName: "Astra",
+            name: "New Eos",
+            galaxy: 2,
+            system: 44,
+            position: 9,
+            coordinates: "2:44:9",
+          },
+          targetPlanet: {
+            planetId: "9",
+            owner: "0x9999999999999999999999999999999999999999",
+            ownerDisplayName: "Orion",
+            name: "Red Haven",
+            galaxy: 4,
+            system: 55,
+            position: 11,
+            coordinates: "4:55:11",
+          },
+        })],
+        returning: [],
+        joinableAttacks: [],
+        battleReports: [battleReport("77")],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const attackerText = visibleText(attackerPage);
+
+    expect(attackerText).toContain("Outgoing fleets 1");
+    expect(attackerText).toContain("Recall fleet");
+    expect(attackerText).toContain("View report");
+    expect(attackerText).toContain("Copy report");
+    expect(attackerText).toContain("Resolved battle reports 1");
+    expect(attackerText).not.toContain("Group defend");
+    expect(attackerText).not.toContain("Intercept");
+  });
+
   test("renders a shareable battle report detail with OGame-style operational fields", () => {
     const page = missionControlPage({
       fleetVisibility: {
