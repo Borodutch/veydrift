@@ -837,7 +837,7 @@ function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is 
 
 function hasWarmAllianceIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
   if (!indexer) return false;
-  return indexer.snapshot().safeToServeIndexedState;
+  return indexer.snapshot().safeToServeAllianceState;
 }
 
 async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
@@ -2006,12 +2006,14 @@ function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndex
       indexer: snapshot,
       liveReadSkippedAt: new Date().toISOString(),
       source: "contract-state-indexer",
-      stale: !snapshot.safeToServeIndexedState
+      stale: !snapshot.safeToServeAllianceState || !snapshot.safeToServeIndexedState
     },
     {
       headers: {
         ...corsHeaders,
-        "x-veydrift-index-state": snapshot.safeToServeIndexedState ? "healthy" : "stale",
+        "x-veydrift-index-state": snapshot.safeToServeAllianceState
+          ? (snapshot.safeToServeIndexedState ? "healthy" : "alliance-healthy")
+          : "stale",
         "x-veydrift-live-read": "skipped"
       }
     }
