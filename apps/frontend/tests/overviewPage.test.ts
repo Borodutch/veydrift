@@ -20,11 +20,12 @@ import {
   overviewQueueItemLabelClassName,
   overviewQueueItemRemainingClassName,
   defenseQueuePreview,
+  overviewPlanetEffects,
   queueProgressBarState,
   queueProgressFillState,
   shipQueuePreview,
 } from "../src/overviewData";
-import { defenseCatalog, queueProgressPercent, shipCatalog } from "../src/playableMvp";
+import { createInitialPlayableState, defenseCatalog, queueProgressPercent, shipCatalog } from "../src/playableMvp";
 import { timestampToMs } from "../src/timestampFormat";
 import type { Planet } from "../src/types";
 
@@ -98,6 +99,62 @@ describe("overview planet hero image", () => {
 });
 
 describe("overview queue progress display", () => {
+  test("renders an accessible planet effects info control beside Overview stats", () => {
+    expect(overviewSource).toContain('aria-label="Show planet effects"');
+    expect(overviewSource).toContain('aria-controls="overview-planet-effects"');
+    expect(overviewSource).toContain("<PlanetEffectsPanel");
+    expect(overviewSource).toContain("Temperature changes implemented production math");
+    expect(overviewSource).toContain('aria-label="Close planet effects"');
+  });
+
+  test("derives selected planet effect values from canonical production helpers", () => {
+    const state = createInitialPlayableState(1_700_000_000_000);
+    state.buildings.deuteriumSynthesizer = 3;
+    state.buildings.solarPlant = 4;
+    state.buildings.fusionReactor = 1;
+    state.buildings.terraformer = 2;
+    state.research.energy = 2;
+    state.ships.solarSatellite = 2;
+
+    const effects = overviewPlanetEffects({
+      buildings: state.buildings,
+      energyTechnologyLevel: state.research.energy,
+      settlement: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        hasFirstPlanet: true,
+        homePlanetId: "7",
+        planet: {
+          planetId: "7",
+          owner: "0x1111111111111111111111111111111111111111",
+          name: "Vey Prime",
+          galaxy: 1,
+          system: 42,
+          position: 7,
+          fields: 220,
+          temperature: 40,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 9_800,
+          lastSettledAt: "1700000000",
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+        },
+      },
+      solarSatelliteCount: state.ships.solarSatellite,
+      usedFields: 12,
+    });
+
+    expect(effects.fields).toBe("12 / 220");
+    expect(effects.availableFields).toBe(208);
+    expect(effects.fieldPressurePercent).toBeCloseTo(5.45, 2);
+    expect(effects.temperature).toBe("20°C to 60°C");
+    expect(effects.deuteriumMultiplier).toBe("98%");
+    expect(effects.deuteriumCapacityPerHour).toBe(38);
+    expect(effects.liveDeuteriumPerHour).toBe(27);
+    expect(effects.minePower).toBe("100%");
+    expect(effects.solarSatelliteEnergy).toBe(30);
+    expect(effects.terraformer).toBe("+10 now, +5 next level");
+  });
+
   test("allows long active building names to wrap beside queue metadata", () => {
     expect(overviewQueueItemLabelClassName).not.toContain("truncate");
     expect(overviewQueueItemLabelClassName).toContain("break-words");

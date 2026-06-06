@@ -1,6 +1,6 @@
 import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ArrowRight, Check, Pencil, Trash2, X } from "lucide-preact";
+import { ArrowRight, Check, Info, Pencil, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
 import {
   buildingQueueAsset,
@@ -8,6 +8,8 @@ import {
   buildingQueuePreview,
   defenseQueuePreview,
   displayPlanetStats,
+  overviewPlanetEffects,
+  type OverviewPlanetEffectsDisplay,
   overviewQueueItemLabelClassName,
   overviewQueueItemRemainingClassName,
   queueProgressBarState,
@@ -155,6 +157,14 @@ export function OverviewPage({
 }: OverviewPageProps) {
   const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
+  const planetEffects = overviewPlanetEffects({
+    buildings: settledState.buildings,
+    energyTechnologyLevel: settledState.research.energy,
+    productionRates: rates,
+    settlement: onChainSettlement,
+    solarSatelliteCount: settledState.ships.solarSatellite,
+    usedFields,
+  });
   const buildingQueue = activeBuildingQueue ?? (settledState.queue?.kind === "building" ? settledState.queue : undefined);
   const onChainBuildingQueue = buildingQueue
     ? {
@@ -248,6 +258,7 @@ export function OverviewPage({
   const [playerDraft, setPlayerDraft] = useState(playerProfile?.displayName ?? "");
   const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
   const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
+  const [effectsPanelOpen, setEffectsPanelOpen] = useState(false);
   const planetSubhead = homePlanet
     ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : "Home planet";
@@ -549,11 +560,34 @@ export function OverviewPage({
         </div>
 
         {/* Stats strip — compact, never overflows */}
-        <div className="grid grid-cols-2 gap-2 border-t border-white/10 p-3 sm:grid-cols-4 sm:p-4">
-          <StatPip label="Fields" value={stats.fields} />
-          <StatPip label="Temperature" value={stats.temperature} />
-          <StatPip label="Diameter" value={stats.diameter} />
-          <StatPip label="Status" value={stats.status} />
+        <div className="grid gap-3 border-t border-white/10 p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Planet stats</p>
+            <button
+              aria-controls="overview-planet-effects"
+              aria-expanded={effectsPanelOpen}
+              aria-label="Show planet effects"
+              className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
+              onClick={() => setEffectsPanelOpen((open) => !open)}
+              title="Planet effects"
+              type="button"
+            >
+              <Info aria-hidden="true" size={15} strokeWidth={2} />
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <StatPip label="Fields" value={stats.fields} />
+            <StatPip label="Temperature" value={stats.temperature} />
+            <StatPip label="Diameter" value={stats.diameter} />
+            <StatPip label="Status" value={stats.status} />
+          </div>
+          {effectsPanelOpen ? (
+            <PlanetEffectsPanel
+              effects={planetEffects}
+              id="overview-planet-effects"
+              onClose={() => setEffectsPanelOpen(false)}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -1204,6 +1238,75 @@ function StatPip({ label, value }: { label: string; value: string }) {
     <div className="min-w-0">
       <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{label}</dt>
       <dd className="mt-0.5 break-words text-xs font-semibold leading-tight text-white">{value}</dd>
+    </div>
+  );
+}
+
+function PlanetEffectsPanel({
+  effects,
+  id,
+  onClose,
+}: {
+  effects: OverviewPlanetEffectsDisplay;
+  id: string;
+  onClose: () => void;
+}) {
+  return (
+    <section
+      aria-label="Planet effects"
+      className="grid gap-3 rounded-md border border-cyan-300/20 bg-[#09111f]/95 p-3 text-xs leading-5 text-slate-200 shadow-lg shadow-black/20"
+      id={id}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100">Planet effects</p>
+          <p className="mt-1 text-slate-400">
+            Fields limit construction slots. Temperature changes implemented production math for deuterium and Solar Satellite energy.
+          </p>
+        </div>
+        <button
+          aria-label="Close planet effects"
+          className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
+          onClick={onClose}
+          type="button"
+        >
+          <X aria-hidden="true" size={14} strokeWidth={2} />
+        </button>
+      </div>
+
+      <dl className="grid gap-2 sm:grid-cols-2">
+        <EffectMetric label="Fields used" value={effects.fields} />
+        <EffectMetric
+          label="Fields available"
+          value={effects.availableFields === undefined ? "Unavailable" : effects.availableFields.toLocaleString()}
+        />
+        <EffectMetric label="Terraformer" value={effects.terraformer} />
+        <EffectMetric label="Field pressure" value={effects.fieldPressurePercent === undefined ? "Unavailable" : `${Math.round(effects.fieldPressurePercent)}%`} />
+        <EffectMetric label="Temperature" value={effects.temperature} />
+        <EffectMetric label="Deuterium multiplier" value={effects.deuteriumMultiplier} />
+        <EffectMetric
+          label="Deuterium output"
+          value={effects.liveDeuteriumPerHour === undefined ? "Unavailable" : `${effects.liveDeuteriumPerHour.toLocaleString()}/h`}
+        />
+        <EffectMetric
+          label="Deuterium capacity"
+          value={effects.deuteriumCapacityPerHour === undefined ? "Unavailable" : `${effects.deuteriumCapacityPerHour.toLocaleString()}/h before power`}
+        />
+        <EffectMetric label="Mine power" value={effects.minePower} />
+        <EffectMetric
+          label="Solar Satellite"
+          value={effects.solarSatelliteEnergy === undefined ? "Unavailable" : `${effects.solarSatelliteEnergy.toLocaleString()} energy each`}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function EffectMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-2.5 py-2">
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</dt>
+      <dd className="mt-0.5 break-words text-xs font-semibold text-slate-100">{value}</dd>
     </div>
   );
 }

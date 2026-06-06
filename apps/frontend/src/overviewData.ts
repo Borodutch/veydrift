@@ -1,12 +1,17 @@
 import type { PlayerQueuesResponse, QueueStateResponse, WalletSettlementResponse } from "./walletFlow";
 import {
+  buildingEffectMetrics,
   buildingCatalog,
   buildingContractIds,
   defenseCatalog,
+  energyBalance,
+  productionCapacityPerHour,
+  productionPerHour,
   queueProgressPercent,
   shipCatalog,
   type BuildingKey,
   type EnergyBalance,
+  type PlanetProductionProfile,
   type Resources,
 } from "./playableMvp";
 import type { Coordinates } from "./types";
@@ -29,6 +34,19 @@ export type PlanetStatDisplay = {
   temperature: string;
   diameter: string;
   status: string;
+};
+
+export type OverviewPlanetEffectsDisplay = {
+  availableFields: number | undefined;
+  deuteriumCapacityPerHour: number | undefined;
+  deuteriumMultiplier: string;
+  fieldPressurePercent: number | undefined;
+  fields: string;
+  liveDeuteriumPerHour: number | undefined;
+  minePower: string;
+  solarSatelliteEnergy: number | undefined;
+  temperature: string;
+  terraformer: string;
 };
 
 export function isWalletPlanetHydrated({
@@ -143,6 +161,82 @@ export function displayPlanetStats(
     diameter: displayDiameterKm(fields),
     status: status === "loading" ? "Syncing" : status === "error" ? "API error" : active ? "Active" : "Idle",
   };
+}
+
+export function overviewPlanetEffects({
+  buildings,
+  energyTechnologyLevel,
+  productionRates,
+  settlement,
+  solarSatelliteCount,
+  usedFields,
+}: {
+  buildings: Record<BuildingKey, number>;
+  energyTechnologyLevel: number;
+  productionRates?: Resources | undefined;
+  settlement: WalletSettlementResponse | undefined;
+  solarSatelliteCount: number;
+  usedFields: number;
+}): OverviewPlanetEffectsDisplay {
+  const planet = settlement?.planet;
+  const fields = safePlanetFields(planet?.fields);
+  const temperature = safePlanetTemperature(planet?.temperature);
+
+  if (!planet || fields === undefined || temperature === undefined) {
+    return {
+      availableFields: undefined,
+      deuteriumCapacityPerHour: undefined,
+      deuteriumMultiplier: "Unavailable",
+      fieldPressurePercent: undefined,
+      fields: "Unavailable",
+      liveDeuteriumPerHour: productionRates?.deuterium,
+      minePower: "Unavailable",
+      solarSatelliteEnergy: undefined,
+      temperature: displayTemperatureRange(temperature),
+      terraformer: "Unavailable",
+    };
+  }
+
+  const profile: PlanetProductionProfile = {
+    maxTemperature: temperature,
+    metalMultiplierBps: planet.metalMultiplierBps,
+    crystalMultiplierBps: planet.crystalMultiplierBps,
+    deuteriumMultiplierBps: planet.deuteriumMultiplierBps,
+  };
+  const availableFields = Math.max(0, fields - usedFields);
+  const fieldPressurePercent = fields === 0 ? undefined : Math.min(100, Math.max(0, (usedFields / fields) * 100));
+  const capacity = productionCapacityPerHour(buildings, profile);
+  const liveProduction = productionRates ?? productionPerHour(
+    buildings,
+    profile,
+    energyTechnologyLevel,
+    solarSatelliteCount,
+  );
+  const energy = energyBalance(buildings, energyTechnologyLevel, solarSatelliteCount, profile);
+  const terraformer = buildingEffectMetrics(buildings, "terraformer", profile, energyTechnologyLevel);
+
+  return {
+    availableFields,
+    deuteriumCapacityPerHour: capacity.deuterium,
+    deuteriumMultiplier: formatBasisPoints(planet.deuteriumMultiplierBps),
+    fieldPressurePercent,
+    fields: `${integerFormatter.format(usedFields)} / ${integerFormatter.format(fields)}`,
+    liveDeuteriumPerHour: liveProduction.deuterium,
+    minePower: formatBasisPoints(energy.scaleBps),
+    solarSatelliteEnergy: energy.sources?.solarSatelliteEnergy,
+    temperature: displayTemperatureRange(temperature),
+    terraformer: terraformer.kind === "terraformer"
+      ? `+${integerFormatter.format(terraformer.currentFieldsAdded)} now, +${integerFormatter.format(terraformer.deltaFields)} next level`
+      : "Unavailable",
+  };
+}
+
+function formatBasisPoints(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return "Unavailable";
+  return `${(value / 100).toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: value % 100 === 0 ? 0 : 2,
+  })}%`;
 }
 
 export function buildingQueueAsset(key: BuildingKey): string | undefined {
