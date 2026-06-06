@@ -88,23 +88,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
 
   return (
     <section className="space-y-4">
-      <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-200/70">
-            Public Highscores
-          </p>
-          <h1 className="mt-1 text-2xl font-semibold text-white">Rankings</h1>
-        </div>
-        <button
-          className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={loading}
-          onClick={() => load(page)}
-          type="button"
-        >
-          <RotateCw aria-hidden="true" size={14} />
-          Refresh
-        </button>
-      </div>
+      <RankingsPageHeader loading={loading} onRefresh={() => load(page)} />
 
       {error ? (
         <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
@@ -162,6 +146,29 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         </p>
       ) : null}
     </section>
+  );
+}
+
+export function RankingsPageHeader({
+  loading,
+  onRefresh,
+}: {
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
+      <h1 className="text-2xl font-semibold text-white">Rankings</h1>
+      <button
+        className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={loading}
+        onClick={onRefresh}
+        type="button"
+      >
+        <RotateCw aria-hidden="true" size={14} />
+        Refresh
+      </button>
+    </div>
   );
 }
 

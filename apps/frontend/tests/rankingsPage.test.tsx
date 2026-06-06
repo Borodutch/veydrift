@@ -7,6 +7,7 @@ import {
   rankingsPageSize,
   rankingsPaginationLabel,
   RankingsPagination,
+  RankingsPageHeader,
   RankingsTable,
   shouldShowRankingsInitialLoader,
 } from "../src/components/RankingsPage";
@@ -15,6 +16,15 @@ import type { HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 describe("RankingsPage", () => {
   test("uses one ranking table with the active category score and total context", () => {
     expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Score"]);
+  });
+
+  test("renders the rankings title without the old highscores eyebrow", () => {
+    const header = RankingsPageHeader({ loading: false, onRefresh: () => undefined });
+    const text = visibleText(header);
+
+    expect(text).toContain("Rankings");
+    expect(text).toContain("Refresh");
+    expect(text).not.toContain("Public Highscores");
   });
 
   test("renders rank, commander, planet icons, and the active score without duplicate totals", () => {
