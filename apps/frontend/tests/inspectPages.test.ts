@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { playerInspectScoreItems, playerPlanetTacticalSignals } from "../src/components/InspectPages";
+import { readFileSync } from "node:fs";
+import { playerInspectPlanetImage, playerInspectScoreItems, playerPlanetTacticalSignals } from "../src/components/InspectPages";
 import type { HighscoreEntry, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("inspect pages", () => {
@@ -7,6 +8,7 @@ describe("inspect pages", () => {
     const items = playerInspectScoreItems(highscoreEntry());
 
     expect(items.map((item) => item.label)).toEqual([
+      "Total",
       "Economy",
       "Military",
       "Fleet",
@@ -16,6 +18,7 @@ describe("inspect pages", () => {
       "Ships",
     ]);
     expect(items.map((item) => item.label)).not.toContain("Wallet");
+    expect(items.find((item) => item.label === "Total")?.value).toBe("4,400");
     expect(items.find((item) => item.label === "Ships")?.value).toBe("42");
   });
 
@@ -32,10 +35,34 @@ describe("inspect pages", () => {
 
     expect(signals).toContainEqual({ label: "Distance", value: "1,010" });
     expect(signals).toContainEqual({ label: "Raidable", value: "12.5K M / 3K C / 400 D" });
-    expect(signals).toContainEqual({ label: "Risk", value: "Attack blocked by score protection." });
+    expect(signals).toContainEqual({ label: "Protection", value: "Attack blocked by score protection." });
     expect(signals).toContainEqual({ label: "Ships/Def", value: "Not indexed publicly" });
     expect(signals).toContainEqual({ label: "Queues", value: "Building, Defense" });
     expect(signals).toContainEqual({ label: "Moon", value: "Yes" });
+  });
+
+  test("omits attackable risk copy from player planet tactical signals", () => {
+    const signals = playerPlanetTacticalSignals(
+      managedPlanet(),
+      { galaxy: 2, system: 44, position: 7 },
+      { allowed: true, blockedReason: "none", blockedReasonLabel: null },
+    );
+
+    expect(signals.some((signal) => signal.label === "Risk")).toBe(false);
+    expect(signals.some((signal) => signal.value === "Attackable")).toBe(false);
+  });
+
+  test("uses compact planet imagery based on indexed temperature", () => {
+    expect(playerInspectPlanetImage(managedPlanet())).toBe("/assets/game/style-pass/generated/planets/hot-desert.webp");
+  });
+
+  test("keeps player inspect wording aligned with the shared page treatment", () => {
+    const source = readFileSync(new URL("../src/components/InspectPages.tsx", import.meta.url), "utf8");
+
+    expect(source).toContain('label="Home planet"');
+    expect(source).not.toContain('label="Origin"');
+    expect(source).not.toContain('value="Attackable"');
+    expect(source).not.toContain('bg-[#080d16]');
   });
 });
 
