@@ -48,6 +48,7 @@ const configuredTestConfig: BackendConfig = {
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
+const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
 const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
@@ -1616,6 +1617,78 @@ describe("Veydrift backend", () => {
       allianceJoinRequests: [
         { allianceId: "1", requester: applicant, requestedAt: "1770003000" }
       ]
+    });
+  });
+
+  test("serves reconciled Alliance state while unrelated planet index state is stale", async () => {
+    const chainReader = new class extends MockChainReader {
+      override async getAllianceState(wallet: Address): Promise<AllianceState> {
+        throw new Error(`frontend alliance reads must not call live RPC for ${wallet}`);
+      }
+
+      async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
+        throw new Error(`frontend alliance reads must not call live alliance intel for ${wallets.join(",")}`);
+      }
+
+      async listAllianceLogs() {
+        return [
+          {
+            blockNumber: "0x90",
+            blockTimestamp: "0x69801c80",
+            transactionHash: "0xalliance-create",
+            logIndex: "0x0",
+            topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+            data: abiStrings("VEY", "Veydrift Command")
+          },
+          {
+            blockNumber: "0x91",
+            blockTimestamp: "0x69801c81",
+            transactionHash: "0xalliance-owner",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+            data: abiWords(3n)
+          }
+        ];
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0xa0",
+      transactionHash: "0xlate-settlement",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(999n)],
+      data: abiWords(5000n, 4900n, 4800n, 1770000000n)
+    });
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/alliance`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-live-read")).toBe("skipped");
+    expect(response.headers.get("x-veydrift-index-state")).toBe("alliance-healthy");
+    expect(body).toMatchObject({
+      wallet: player,
+      allianceAvailable: true,
+      source: "contract-state-indexer",
+      stale: true,
+      indexer: {
+        allianceStaleReason: null,
+        safeToServeAllianceState: true,
+        safeToServeIndexedState: false,
+        staleReason: "planet_identity_pending:999"
+      },
+      membership: { allianceId: "1", role: "owner", joinedAt: String(0x69801c81) },
+      profile: {
+        tag: "VEY",
+        name: "Veydrift Command",
+        owner: player,
+        memberCount: 1
+      }
     });
   });
 

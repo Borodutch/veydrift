@@ -82,6 +82,8 @@ export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 
 export type IndexerSnapshot = {
+  allianceReconciledAt: string | null;
+  allianceStaleReason: string | null;
   indexedDebrisFields: number;
   indexedEventLogs: number;
   indexedMoonChanceReports: number;
@@ -98,6 +100,7 @@ export type IndexerSnapshot = {
   pendingReconciliationReason: string | null;
   reconciliationInProgress: boolean;
   reorgDetectedAt: string | null;
+  safeToServeAllianceState: boolean;
   safeToServeIndexedState: boolean;
   staleReason: string | null;
 };
@@ -274,6 +277,7 @@ export class SettlementIndexer {
 
   snapshot(): IndexerSnapshot {
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
+    const allianceReconciledAt = this.metadata("allianceReconciledAt");
     const indexedPlanets = this.count("indexed_planets");
     const lastReconciledAt = this.metadata("lastReconciledAt");
     const lastReconciledBlock = this.metadata("lastReconciledBlock");
@@ -292,7 +296,14 @@ export class SettlementIndexer {
     const safeToServeIndexedState =
       (blockingStaleReason === null || canServePreviousReconciliation)
       && (!reconciliationInProgress || Boolean(lastReconciledAt));
+    const allianceStaleReason = this.allianceStaleReason({
+      allianceReconciledAt,
+      lastReconciliationError,
+      reconciliationInProgress
+    });
     return {
+      allianceReconciledAt,
+      allianceStaleReason,
       indexedDebrisFields: this.count("indexed_debris_fields"),
       indexedEventLogs: this.count("indexed_event_logs"),
       indexedMoonChanceReports: this.count("indexed_moon_chance_reports"),
@@ -309,6 +320,7 @@ export class SettlementIndexer {
       pendingReconciliationReason,
       reconciliationInProgress,
       reorgDetectedAt: this.metadata("reorgDetectedAt"),
+      safeToServeAllianceState: allianceStaleReason === null,
       safeToServeIndexedState,
       staleReason
     };
@@ -995,6 +1007,7 @@ export class SettlementIndexer {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
       const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents, ...allianceLogs]);
+      this.recordSuccessfulAllianceReconciliation();
       this.touch();
       this.recordSuccessfulReconciliation(latestBlock);
     });
@@ -2598,6 +2611,10 @@ export class SettlementIndexer {
     }
   }
 
+  private recordSuccessfulAllianceReconciliation(): void {
+    this.setMetadata("allianceReconciledAt", new Date().toISOString());
+  }
+
   private recordReconciliationError(error: unknown): void {
     this.setMetadata("lastReconciliationError", error instanceof Error ? error.message : String(error));
   }
@@ -2726,6 +2743,21 @@ export class SettlementIndexer {
     if (lastReconciliationError) return `reconciliation_failed: ${lastReconciliationError}`;
     if (pendingReconciliationReason) return pendingReconciliationReason;
     if (!lastReconciledAt) return "never_reconciled";
+    return null;
+  }
+
+  private allianceStaleReason({
+    allianceReconciledAt,
+    lastReconciliationError,
+    reconciliationInProgress
+  }: {
+    allianceReconciledAt: string | null;
+    lastReconciliationError: string | null;
+    reconciliationInProgress: boolean;
+  }): string | null {
+    if (lastReconciliationError) return `reconciliation_failed: ${lastReconciliationError}`;
+    if (reconciliationInProgress && !allianceReconciledAt) return "reconciliation_in_progress";
+    if (!allianceReconciledAt) return "alliance_never_reconciled";
     return null;
   }
 }
