@@ -5,7 +5,7 @@ import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { VeydriftLoader } from "./VeydriftLoader";
 
 type RankingsPageProps = {
   apiBaseUrl: string | undefined;
@@ -49,6 +49,13 @@ export function shouldShowRankingsInitialLoader({
   return loading && !hasLoadedData;
 }
 
+export function rankingsRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
+  return {
+    disabled: loading,
+    label: loading ? "Refreshing" : "Refresh",
+  };
+}
+
 export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
@@ -85,6 +92,7 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
   const entries = data?.rankings[active] ?? [];
   const pagination = data?.pagination ?? null;
   const currentPlayerPage = data?.currentPlayer?.rankings[active] ?? null;
+  const refreshButton = rankingsRefreshButtonState(loading);
 
   return (
     <section className="space-y-4">
@@ -97,12 +105,12 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         </div>
         <button
           className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={loading}
+          disabled={refreshButton.disabled}
           onClick={() => load(page)}
           type="button"
         >
           <RotateCw aria-hidden="true" size={14} />
-          Refresh
+          {refreshButton.label}
         </button>
       </div>
 
@@ -111,8 +119,6 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
           {error}
         </div>
       ) : null}
-
-      {loading && data ? <InlineSyncIndicator label="Refreshing rankings" /> : null}
 
       <div className="flex flex-wrap gap-2">
         {categories.map((category) => (
