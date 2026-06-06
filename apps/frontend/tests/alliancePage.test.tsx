@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   allianceDirectoryPageSize,
+  allianceRefreshButtonState,
   allianceRosterPageSize,
   allianceExitActionState,
   allianceInviteAcceptanceState,
@@ -13,7 +14,6 @@ import {
   rosterPageCount,
   rosterPageRows,
   shouldShowAllianceInitialLoader,
-  shouldShowAllianceRefreshIndicator,
   sortedAllianceDirectory,
   sortedRosterMembers,
 } from "../src/components/AlliancePage";
@@ -21,6 +21,7 @@ import type { ChainAllianceState } from "../src/walletFlow";
 
 const alliancePageSource = await Bun.file(new URL("../src/components/AlliancePage.tsx", import.meta.url)).text();
 const inspectPagesSource = await Bun.file(new URL("../src/components/InspectPages.tsx", import.meta.url)).text();
+const walletFlowSource = await Bun.file(new URL("../src/walletFlow.ts", import.meta.url)).text();
 
 describe("AlliancePage loading display", () => {
   test("uses the shared app shell instead of an extra Alliance page wrapper", () => {
@@ -41,10 +42,6 @@ describe("AlliancePage loading display", () => {
       allianceState: null,
       loading: true,
     })).toBe(true);
-    expect(shouldShowAllianceRefreshIndicator({
-      allianceState: null,
-      loading: true,
-    })).toBe(false);
   });
 
   test("keeps confirmed alliance data visible during background refresh", () => {
@@ -52,10 +49,9 @@ describe("AlliancePage loading display", () => {
       allianceState: memberAllianceState(),
       loading: true,
     })).toBe(false);
-    expect(shouldShowAllianceRefreshIndicator({
-      allianceState: memberAllianceState(),
-      loading: true,
-    })).toBe(true);
+    expect(allianceRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
+    expect(alliancePageSource).not.toContain("Refreshing alliance");
+    expect(alliancePageSource).not.toContain("InlineSyncIndicator");
   });
 
   test("keeps loaded unaffiliated state distinct from loading", () => {
@@ -63,10 +59,7 @@ describe("AlliancePage loading display", () => {
       allianceState: unaffiliatedAllianceState(),
       loading: false,
     })).toBe(false);
-    expect(shouldShowAllianceRefreshIndicator({
-      allianceState: unaffiliatedAllianceState(),
-      loading: false,
-    })).toBe(false);
+    expect(allianceRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
   });
 
   test("keeps loaded member state distinct from loading", () => {
@@ -74,10 +67,7 @@ describe("AlliancePage loading display", () => {
       allianceState: memberAllianceState(),
       loading: false,
     })).toBe(false);
-    expect(shouldShowAllianceRefreshIndicator({
-      allianceState: memberAllianceState(),
-      loading: false,
-    })).toBe(false);
+    expect(allianceRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
   });
 
   test("treats a player with no alliance as outside member-only panels", () => {
@@ -359,6 +349,14 @@ describe("AlliancePage loading display", () => {
     expect(inspectPagesSource).not.toContain('eyebrow="Alliance Inspect"');
     expect(inspectPagesSource).toContain('<Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>');
     expect(inspectPagesSource).toContain("<AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />");
+  });
+
+  test("renders public inspected alliance member rows instead of directory explanation copy", () => {
+    expect(walletFlowSource).toContain("members?: Array<{");
+    expect(inspectPagesSource).toContain("publicRoster.all.length");
+    expect(inspectPagesSource).toContain("members={publicRoster.all}");
+    expect(inspectPagesSource).toContain("No indexed public members are available for this alliance yet.");
+    expect(inspectPagesSource).not.toContain("Public directory data exposes");
   });
 
   test("pluralizes alliance member counts", () => {
