@@ -210,11 +210,13 @@ describe("RankingsPage", () => {
       originCoordinates: { galaxy: 2, system: 42, position: 9 },
     });
     const tacticalButton = buttonWithTitle(table, "Open [2:44:9]");
+    const planetHeader = elementNodes(table).find((item) => item.type === "span" && visibleText(item) === "Planet");
 
     expect(visibleText(table)).toContain("[2:44:9] Dist 2,890 ss Loot 4.5K Combat 20K");
     expect(visibleText(table)).toContain("2,890 ss 4.5K 20K");
     expect(visibleText(table)).not.toContain("2890ss");
     expect(visibleText(table)).not.toContain("Unnamed planet");
+    expect(planetHeader?.props?.className).toContain("col-span-2");
     expect(tacticalButton?.props?.title).toBe("Open [2:44:9]");
     tacticalButton?.props?.onClick?.();
     expect(selected).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
