@@ -4,10 +4,12 @@ import { dirname } from "node:path";
 import {
   buildingIds,
   defenseIds,
+  allianceRoleIds,
   shipIds,
   technologyIds
 } from "./contractStateSchema";
 import {
+  decodeAllianceLog,
   decodeCompleteFleetMissionLogs,
   decodeDebrisFieldLog,
   decodeIndexedQueueCompletedLog,
@@ -23,6 +25,7 @@ import {
   isFleetMissionLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
+  isAllianceLog,
   isMoonCreatedLog,
   isMoonChanceReportLog,
   isPlanetSettledLog,
@@ -32,6 +35,8 @@ import {
   isShipCountChangedLog,
   type ChainReader,
   type Address,
+  type AllianceIdentity,
+  type AllianceState,
   type DebrisFieldEvent,
   type DefenseState,
   type FleetMissionPlanetReference,
@@ -39,6 +44,7 @@ import {
   type FleetMissionSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
+  type IndexedAllianceEvent,
   type IndexedMoonCreatedEvent,
   type IndexedRiftResourceEvent,
   type IndexedShipCountChangedEvent,
@@ -189,6 +195,37 @@ type PlayerProfileRow = {
   display_name: string | null;
   updated_at: string | null;
   wallet: string;
+};
+
+type AllianceRow = {
+  active: number;
+  alliance_id: string;
+  created_at: string;
+  description: string;
+  member_count: number;
+  name: string;
+  owner: string;
+  tag: string;
+};
+
+type AllianceMemberRow = {
+  alliance_id: string;
+  joined_at: string;
+  role_id: number;
+  wallet: string;
+};
+
+type AllianceInviteRow = {
+  alliance_id: string;
+  invited_at: string;
+  inviter: string;
+  player: string;
+};
+
+type AllianceJoinRequestRow = {
+  alliance_id: string;
+  requested_at: string;
+  requester: string;
 };
 
 type QueueUpsertEvent = IndexedQueueStartedEvent & {
@@ -351,6 +388,62 @@ export class SettlementIndexer {
     return new Map(uniqueWallets.map((wallet) => [wallet, this.playerProfile(wallet)]));
   }
 
+  allianceState(wallet: `0x${string}`): AllianceState {
+    const normalizedWallet = wallet.toLowerCase() as Address;
+    const membership = this.allianceMembership(normalizedWallet);
+    const directory = this.allianceDirectory();
+    const directoryById = new Map(directory.map((alliance) => [alliance.allianceId, alliance]));
+    const pendingInvites = this.allianceInvitesForWallet(normalizedWallet);
+    const pendingJoinRequests = this.allianceJoinRequestsForWallet(normalizedWallet);
+    const members = membership.allianceId === "0" ? [] : this.allianceMembers(membership.allianceId);
+    const allianceJoinRequests = membership.allianceId === "0" ? [] : this.allianceJoinRequestsForAlliance(membership.allianceId);
+    const profile = membership.allianceId === "0" ? null : directoryById.get(membership.allianceId) ?? null;
+
+    return {
+      wallet,
+      allianceAvailable: true,
+      dismissJoinRequestAvailable: process.env.VEYDRIFT_ALLIANCE_DISMISS_JOIN_REQUEST_ENABLED !== "false",
+      membership,
+      profile: profile ? {
+        active: profile.active,
+        tag: profile.tag,
+        name: profile.name,
+        description: profile.description,
+        owner: profile.owner,
+        createdAt: profile.createdAt,
+        memberCount: profile.memberCount,
+        ...(profile.ownerDisplayName !== undefined ? { ownerDisplayName: profile.ownerDisplayName } : {}),
+        ...(profile.totalMemberScore !== undefined ? { totalMemberScore: profile.totalMemberScore } : {})
+      } : null,
+      directory,
+      pendingInvites,
+      pendingJoinRequests,
+      allianceJoinRequests,
+      members
+    };
+  }
+
+  allianceIntelForPlayers(wallets: readonly string[]): Map<string, AllianceIdentity> {
+    const uniqueWallets = [...new Set(wallets.map((wallet) => wallet.toLowerCase()))];
+    if (uniqueWallets.length === 0) return new Map();
+
+    const rows = this.db.query(`
+      SELECT member.wallet, alliance.alliance_id, alliance.tag, alliance.name
+      FROM contract_alliance_members member
+      INNER JOIN contract_alliances alliance ON alliance.alliance_id = member.alliance_id
+      WHERE alliance.active = 1 AND member.wallet IN (${uniqueWallets.map(() => "?").join(",")})
+    `).all(...uniqueWallets) as Array<{ wallet: string; alliance_id: string; tag: string; name: string }>;
+
+    return new Map(rows.map((row) => [
+      row.wallet.toLowerCase(),
+      {
+        allianceId: row.alliance_id,
+        tag: row.tag,
+        name: row.name
+      }
+    ]));
+  }
+
   upsertPlayerDisplayName(wallet: Address, displayName: string): PlayerProfile {
     const updatedAt = new Date().toISOString();
     this.db.query(`
@@ -362,6 +455,126 @@ export class SettlementIndexer {
     `).run(wallet, displayName, updatedAt);
 
     return this.playerProfile(wallet);
+  }
+
+  private allianceMembership(wallet: Address): AllianceState["membership"] {
+    const row = this.db.query(`
+      SELECT alliance_id, wallet, role_id, joined_at
+      FROM contract_alliance_members
+      WHERE wallet = lower(?)
+    `).get(wallet) as AllianceMemberRow | null;
+
+    return row ? {
+      allianceId: row.alliance_id,
+      role: allianceRoleName(row.role_id),
+      joinedAt: row.joined_at
+    } : {
+      allianceId: "0",
+      role: "none",
+      joinedAt: "0"
+    };
+  }
+
+  private allianceDirectory(): AllianceState["directory"] {
+    const rows = this.db.query(`
+      SELECT alliance_id, active, tag, name, description, owner, created_at, member_count
+      FROM contract_alliances
+      WHERE active = 1
+      ORDER BY CAST(alliance_id AS INTEGER) ASC
+    `).all() as AllianceRow[];
+    return rows.map((row) => {
+      const members = this.allianceMembers(row.alliance_id);
+      return {
+        allianceId: row.alliance_id,
+        active: row.active === 1,
+        tag: row.tag,
+        name: row.name,
+        description: row.description,
+        owner: row.owner.toLowerCase() as Address,
+        ownerDisplayName: this.playerProfile(row.owner).displayName,
+        createdAt: row.created_at,
+        memberCount: row.member_count,
+        totalMemberScore: this.allianceTotalScore(members.map((member) => member.address)),
+        members
+      };
+    });
+  }
+
+  private allianceMembers(allianceId: string): NonNullable<AllianceState["directory"][number]["members"]> {
+    const rows = this.db.query(`
+      SELECT alliance_id, wallet, role_id, joined_at
+      FROM contract_alliance_members
+      WHERE alliance_id = ?
+      ORDER BY CASE role_id WHEN 3 THEN 0 WHEN 2 THEN 1 WHEN 1 THEN 2 ELSE 3 END, joined_at ASC, wallet ASC
+    `).all(allianceId) as AllianceMemberRow[];
+    return rows.map((row) => {
+      const address = row.wallet.toLowerCase() as Address;
+      return {
+        address,
+        displayName: this.playerProfile(address).displayName,
+        role: allianceRoleName(row.role_id),
+        joinedAt: row.joined_at,
+        totalScore: this.walletTotalScore(address)
+      };
+    });
+  }
+
+  private allianceInvitesForWallet(wallet: Address): AllianceState["pendingInvites"] {
+    const rows = this.db.query(`
+      SELECT alliance_id, player, inviter, invited_at
+      FROM contract_alliance_invites
+      WHERE player = lower(?)
+      ORDER BY CAST(alliance_id AS INTEGER) ASC
+    `).all(wallet) as AllianceInviteRow[];
+    return rows.map((row) => ({
+      allianceId: row.alliance_id,
+      inviter: row.inviter.toLowerCase() as Address,
+      inviterDisplayName: this.playerProfile(row.inviter).displayName,
+      invitedAt: row.invited_at
+    }));
+  }
+
+  private allianceJoinRequestsForWallet(wallet: Address): AllianceState["pendingJoinRequests"] {
+    const rows = this.db.query(`
+      SELECT alliance_id, requester, requested_at
+      FROM contract_alliance_join_requests
+      WHERE requester = lower(?)
+      ORDER BY CAST(alliance_id AS INTEGER) ASC
+    `).all(wallet) as AllianceJoinRequestRow[];
+    return rows.map((row) => ({
+      allianceId: row.alliance_id,
+      requester: row.requester.toLowerCase() as Address,
+      requesterDisplayName: this.playerProfile(row.requester).displayName,
+      requestedAt: row.requested_at
+    }));
+  }
+
+  private allianceJoinRequestsForAlliance(allianceId: string): AllianceState["allianceJoinRequests"] {
+    const rows = this.db.query(`
+      SELECT alliance_id, requester, requested_at
+      FROM contract_alliance_join_requests
+      WHERE alliance_id = ?
+      ORDER BY requested_at ASC, requester ASC
+    `).all(allianceId) as AllianceJoinRequestRow[];
+    return rows.map((row) => ({
+      allianceId: row.alliance_id,
+      requester: row.requester.toLowerCase() as Address,
+      requesterDisplayName: this.playerProfile(row.requester).displayName,
+      requesterMembership: this.allianceMembership(row.requester.toLowerCase() as Address),
+      requestedAt: row.requested_at
+    }));
+  }
+
+  private allianceTotalScore(wallets: readonly Address[]): string {
+    return wallets.reduce((sum, wallet) => sum + BigInt(this.walletTotalScore(wallet)), 0n).toString();
+  }
+
+  private walletTotalScore(wallet: Address): string {
+    try {
+      return this.highscoreForWallet(wallet).score.total;
+    } catch {
+      return "0";
+    }
   }
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
@@ -680,6 +893,10 @@ export class SettlementIndexer {
     }
     if (isRiftResourceLog(log)) {
       this.applyRiftResourceEvent(decodeRiftResourceLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isAllianceLog(log)) {
+      this.applyAllianceEvent(decodeAllianceLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isFleetMissionLog(log)) {
@@ -1088,6 +1305,25 @@ export class SettlementIndexer {
         joined_at TEXT NOT NULL,
         PRIMARY KEY (alliance_id, wallet)
       );
+      CREATE INDEX IF NOT EXISTS contract_alliance_members_wallet_idx
+        ON contract_alliance_members (wallet);
+      CREATE TABLE IF NOT EXISTS contract_alliance_invites (
+        alliance_id TEXT NOT NULL,
+        player TEXT NOT NULL,
+        inviter TEXT NOT NULL,
+        invited_at TEXT NOT NULL,
+        PRIMARY KEY (alliance_id, player)
+      );
+      CREATE INDEX IF NOT EXISTS contract_alliance_invites_player_idx
+        ON contract_alliance_invites (player);
+      CREATE TABLE IF NOT EXISTS contract_alliance_join_requests (
+        alliance_id TEXT NOT NULL,
+        requester TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        PRIMARY KEY (alliance_id, requester)
+      );
+      CREATE INDEX IF NOT EXISTS contract_alliance_join_requests_requester_idx
+        ON contract_alliance_join_requests (requester);
       CREATE TABLE IF NOT EXISTS contract_alliance_diplomacy (
         alliance_id TEXT NOT NULL,
         other_alliance_id TEXT NOT NULL,
@@ -1225,6 +1461,8 @@ export class SettlementIndexer {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      } else if (isAllianceLog(log)) {
+        this.applyAllianceEvent(decodeAllianceLog(log));
       }
     }
   }
@@ -1261,6 +1499,8 @@ export class SettlementIndexer {
         } else {
           this.applyQueueCompletionEffects(event);
         }
+      } else if (isAllianceLog(log)) {
+        this.applyAllianceEvent(decodeAllianceLog(log));
       }
     }
   }
@@ -1389,6 +1629,11 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
     this.db.query("DELETE FROM contract_moon_building_queues").run();
+    this.db.query("DELETE FROM contract_alliances").run();
+    this.db.query("DELETE FROM contract_alliance_members").run();
+    this.db.query("DELETE FROM contract_alliance_invites").run();
+    this.db.query("DELETE FROM contract_alliance_join_requests").run();
+    this.db.query("DELETE FROM contract_alliance_diplomacy").run();
   }
 
   private applyCanonicalState(state: CanonicalReconciliationState): void {
@@ -2169,6 +2414,116 @@ export class SettlementIndexer {
     this.touch();
   }
 
+  private applyAllianceEvent(event: IndexedAllianceEvent): void {
+    if (event.eventName === "AllianceCreated") {
+      this.db.query(`
+        INSERT INTO contract_alliances (
+          alliance_id, active, tag, name, description, owner, created_at, member_count, event_json
+        )
+        VALUES (?, 1, ?, ?, '', lower(?), ?, 0, ?)
+        ON CONFLICT(alliance_id) DO UPDATE SET
+          active = 1,
+          tag = excluded.tag,
+          name = excluded.name,
+          owner = excluded.owner,
+          created_at = excluded.created_at,
+          event_json = excluded.event_json
+      `).run(event.allianceId, event.tag, event.name, event.owner, event.createdAt, JSON.stringify(event));
+    } else if (event.eventName === "AllianceProfileUpdated") {
+      this.db.query(`
+        UPDATE contract_alliances
+        SET tag = ?, name = ?, description = ?, event_json = ?
+        WHERE alliance_id = ?
+      `).run(event.tag, event.name, event.description, JSON.stringify(event), event.allianceId);
+    } else if (event.eventName === "AllianceInviteCreated") {
+      this.db.query(`
+        INSERT INTO contract_alliance_invites (alliance_id, player, inviter, invited_at)
+        VALUES (?, lower(?), lower(?), ?)
+        ON CONFLICT(alliance_id, player) DO UPDATE SET
+          inviter = excluded.inviter,
+          invited_at = excluded.invited_at
+      `).run(event.allianceId, event.player, event.inviter, event.invitedAt);
+    } else if (event.eventName === "AllianceInviteCancelled") {
+      this.db.query(`
+        DELETE FROM contract_alliance_invites
+        WHERE alliance_id = ? AND player = lower(?)
+      `).run(event.allianceId, event.player);
+    } else if (event.eventName === "AllianceJoinRequested") {
+      this.db.query(`
+        INSERT INTO contract_alliance_join_requests (alliance_id, requester, requested_at)
+        VALUES (?, lower(?), ?)
+        ON CONFLICT(alliance_id, requester) DO UPDATE SET
+          requested_at = excluded.requested_at
+      `).run(event.allianceId, event.requester, event.requestedAt);
+    } else if (event.eventName === "AllianceJoinRequestCancelled") {
+      this.db.query(`
+        DELETE FROM contract_alliance_join_requests
+        WHERE alliance_id = ? AND requester = lower(?)
+      `).run(event.allianceId, event.player);
+    } else if (event.eventName === "AllianceJoinRequestDismissed" || event.eventName === "AllianceJoinRequestApproved") {
+      this.db.query(`
+        DELETE FROM contract_alliance_join_requests
+        WHERE alliance_id = ? AND requester = lower(?)
+      `).run(event.allianceId, event.requester);
+    } else if (event.eventName === "AllianceJoined") {
+      this.db.query(`
+        INSERT INTO contract_alliance_members (alliance_id, wallet, role_id, joined_at)
+        VALUES (?, lower(?), ?, ?)
+        ON CONFLICT(alliance_id, wallet) DO UPDATE SET
+          role_id = excluded.role_id,
+          joined_at = excluded.joined_at
+      `).run(event.allianceId, event.player, event.roleId, event.joinedAt);
+      this.db.query(`
+        UPDATE contract_alliances
+        SET member_count = (
+          SELECT COUNT(*)
+          FROM contract_alliance_members
+          WHERE alliance_id = ?
+        )
+        WHERE alliance_id = ?
+      `).run(event.allianceId, event.allianceId);
+      this.db.query("DELETE FROM contract_alliance_invites WHERE alliance_id = ? AND player = lower(?)").run(event.allianceId, event.player);
+      this.db.query("DELETE FROM contract_alliance_join_requests WHERE alliance_id = ? AND requester = lower(?)").run(event.allianceId, event.player);
+    } else if (event.eventName === "AllianceLeft") {
+      this.db.query(`
+        DELETE FROM contract_alliance_members
+        WHERE alliance_id = ? AND wallet = lower(?)
+      `).run(event.allianceId, event.player);
+      this.db.query(`
+        UPDATE contract_alliances
+        SET member_count = (
+          SELECT COUNT(*)
+          FROM contract_alliance_members
+          WHERE alliance_id = ?
+        )
+        WHERE alliance_id = ?
+      `).run(event.allianceId, event.allianceId);
+    } else if (event.eventName === "AllianceRoleUpdated") {
+      this.db.query(`
+        UPDATE contract_alliance_members
+        SET role_id = ?
+        WHERE alliance_id = ? AND wallet = lower(?)
+      `).run(event.roleId, event.allianceId, event.player);
+    } else if (event.eventName === "AllianceDiplomacyUpdated") {
+      this.db.query(`
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
+          status_id = excluded.status_id,
+          updated_at = excluded.updated_at
+      `).run(event.allianceId, event.otherAllianceId, event.statusId, event.blockNumber);
+      this.db.query(`
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
+          status_id = excluded.status_id,
+          updated_at = excluded.updated_at
+      `).run(event.otherAllianceId, event.allianceId, event.statusId, event.blockNumber);
+    }
+
+    this.touch();
+  }
+
   private touch(): void {
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
@@ -2551,6 +2906,14 @@ function blockNumberToDecimal(blockNumber: string): string {
   } catch {
     return blockNumber;
   }
+}
+
+function allianceRoleName(roleId: number): AllianceState["membership"]["role"] {
+  if (!allianceRoleIds.includes(roleId)) return "none";
+  if (roleId === 1) return "member";
+  if (roleId === 2) return "officer";
+  if (roleId === 3) return "owner";
+  return "none";
 }
 
 function decodeIntegerString(value: string): bigint {
