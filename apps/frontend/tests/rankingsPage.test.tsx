@@ -211,8 +211,9 @@ describe("RankingsPage", () => {
     });
     const tacticalButton = buttonWithTitle(table, "Open [2:44:9]");
 
-    expect(visibleText(table)).toContain("[2:44:9] Dist 2890ss Loot 4.5K Combat 20K");
-    expect(visibleText(table)).toContain("2890ss 4.5K 20K");
+    expect(visibleText(table)).toContain("[2:44:9] Dist 2,890 ss Loot 4.5K Combat 20K");
+    expect(visibleText(table)).toContain("2,890 ss 4.5K 20K");
+    expect(visibleText(table)).not.toContain("2890ss");
     expect(visibleText(table)).not.toContain("Unnamed planet");
     expect(tacticalButton?.props?.title).toBe("Open [2:44:9]");
     tacticalButton?.props?.onClick?.();
@@ -223,7 +224,15 @@ describe("RankingsPage", () => {
       loading: false,
       originCoordinates: { galaxy: 2, system: 44, position: 9 },
     });
-    expect(visibleText(sameOriginTable)).toContain("[2:44:9] Dist 0ss Loot 4.5K Combat 20K");
+    expect(visibleText(sameOriginTable)).toContain("[2:44:9] Dist 0 ss Loot 4.5K Combat 20K");
+
+    const longDistanceTable = RankingsTable({
+      entries: [rankingEntry({ planets: [tacticalPlanet] })],
+      loading: false,
+      originCoordinates: { galaxy: 7, system: 44, position: 9 },
+    });
+    expect(visibleText(longDistanceTable)).toContain("[2:44:9] Dist 100K ss Loot 4.5K Combat 20K");
+    expect(visibleText(longDistanceTable)).not.toContain("100000ss");
   });
 
   test("renders same-alliance blocking as ally styling instead of protected styling", () => {
