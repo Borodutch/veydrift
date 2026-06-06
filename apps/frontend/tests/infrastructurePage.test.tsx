@@ -10,6 +10,8 @@ import {
   MetricDeltaSubtext,
   deduplicatedInfrastructureActionNotice,
   detailEffectRows,
+  infrastructureFinishButtonLabel,
+  infrastructureUpgradeButtonLabel,
   infrastructureRefreshButtonState,
   infrastructureCatalogStatusText,
   shouldShowInfrastructureInitialLoadError,
@@ -76,6 +78,29 @@ describe("Infrastructure page display helpers", () => {
       label: unavailableReason,
       tone: "success",
     });
+  });
+
+  test("keeps backend unavailable copy out of infrastructure buttons and duplicate notices", () => {
+    const unavailableReason =
+      "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
+
+    expect(infrastructureFinishButtonLabel(unavailableReason, false)).toBe("Finish upgrade");
+    expect(infrastructureFinishButtonLabel(unavailableReason, true)).toBe("Finish build");
+    expect(infrastructureUpgradeButtonLabel({
+      actionUnavailableReason: unavailableReason,
+      binary: false,
+      defaultLabel: "Upgrade Level 14",
+      statusDisabled: true,
+    })).toBe("Upgrade Level 14");
+
+    expect(deduplicatedInfrastructureActionNotice({
+      label: unavailableReason,
+      tone: "error",
+    }, [unavailableReason])).toBeUndefined();
+    expect(deduplicatedInfrastructureActionNotice({
+      label: "Infrastructure API is temporarily unavailable.",
+      tone: "error",
+    }, [unavailableReason])).toBeUndefined();
   });
 
   test("renders a compact level info button with the building label", () => {
