@@ -16,6 +16,7 @@ import type {
   PlayerQueues,
   ResearchState,
   RiftState,
+  RpcLog,
   RpcMetrics,
   SettledPlanetEvent,
   SettlementFundingState,
@@ -161,6 +162,14 @@ export class CachedChainReader implements ChainReader {
 
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]> {
     return this.inner.listDebrisFieldEvents(fromBlock, toBlock);
+  }
+
+  listAllianceLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]> {
+    if (!this.inner.listAllianceLogs) {
+      return Promise.resolve([]);
+    }
+
+    return this.inner.listAllianceLogs(fromBlock, toBlock);
   }
 
   rpcMetrics(): RpcMetrics {
