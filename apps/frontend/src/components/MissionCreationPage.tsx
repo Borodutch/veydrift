@@ -4,6 +4,7 @@ import {
   DEFAULT_MISSION_SPEED_PERCENT,
   MISSION_SPEED_OPTIONS,
   fleetMissionAvailableCargoCapacity,
+  fleetMissionCargoCapacity,
   fleetMissionDistance,
   fleetMissionFuelCost,
   fleetMissionShipCount,
@@ -96,6 +97,7 @@ export function MissionCreationPage({
   const distance = originCoords ? fleetMissionDistance(originCoords, coords) : 0;
   const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
   const fuelCost = action.mode === "missile" ? 0 : fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
+  const totalCargoCapacity = action.mode === "missile" ? 0 : fleetMissionCargoCapacity(ships);
   const cargoCapacity = action.mode === "missile" ? 0 : fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
   const availableShips = useMemo(() => missionShipOptionsForAction(action, shipyardState), [action, shipyardState]);
@@ -112,6 +114,7 @@ export function MissionCreationPage({
     quantity,
     resources,
     selectedShipCount,
+    totalCargoCapacity,
   });
 
   const maxCargoResources = {
@@ -242,7 +245,7 @@ export function MissionCreationPage({
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Mission Summary</h3>
           <SummaryRow label="Distance" value={distance.toLocaleString()} />
           <SummaryRow label="Ships" value={action.mode === "missile" ? "Missile launch" : selectedShipCount.toLocaleString()} />
-          <SummaryRow label="Fuel" value={`${fuelCost.toLocaleString()} deuterium`} />
+          <SummaryRow label="Fuel" value={`${fuelCost.toLocaleString()} / ${totalCargoCapacity.toLocaleString()} deuterium`} />
           <SummaryRow label="Cargo" value={cargoSupported ? `${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}` : "None"} />
           {timingSummary ? (
             <>
@@ -285,6 +288,7 @@ export function missionDraftBlocker({
   quantity,
   resources,
   selectedShipCount,
+  totalCargoCapacity,
 }: {
   action: EnabledGalaxyAction;
   cargoCapacity: number;
@@ -295,11 +299,15 @@ export function missionDraftBlocker({
   quantity: number;
   resources: MissionResourceSnapshot | undefined;
   selectedShipCount: number;
+  totalCargoCapacity: number;
 }): string | undefined {
   if (!originCoords) return "Active origin planet is unavailable.";
   if (action.mode === "missile") return quantity > 0 ? undefined : "Choose at least one missile.";
   if (selectedShipCount <= 0) return "Choose at least one ship.";
   if ((resources?.deuterium ?? 0) < fuelCost) return `Need ${fuelCost.toLocaleString()} deuterium for fuel.`;
+  if (fuelCost > totalCargoCapacity) {
+    return `Selected ships have ${totalCargoCapacity.toLocaleString()} cargo capacity, but this mission needs ${fuelCost.toLocaleString()} for fuel.`;
+  }
   if (cargoSupported && cargoTotal > cargoCapacity) return "Cargo exceeds available capacity.";
   if (cargoSupported && cargoTotal < 0) return "Cargo cannot be negative.";
   return undefined;

@@ -609,6 +609,14 @@ describe("walletFlow", () => {
     expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");
     expect(requests).toEqual([
       {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: missionData,
+        }, "latest"],
+      },
+      {
         method: "eth_sendTransaction",
         params: [{
           from: account,
@@ -643,7 +651,7 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("submits fleet launches without browser-side contract preflight reads", async () => {
+  test("preflights fleet launches and reports stale ship counts before opening wallet submit", async () => {
     const ships = {
       smallCargo: 1,
       lightFighter: 0,
@@ -666,6 +674,110 @@ describe("walletFlow", () => {
       if (method === "eth_call") {
         throw { code: 3, message: "execution reverted", data: "0x705f508b" };
       }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    })).rejects.toThrow("Selected origin planet does not have the requested ships");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeLaunchFleetMissionCall({
+            originPlanetId: 7,
+            targetPlanetId: 9,
+            missionType: 3,
+            ships,
+          }),
+        }, "latest"],
+      },
+    ]);
+  });
+
+  test("preflights fleet launches and reports cargo capacity failures before wallet submit", async () => {
+    const ships = {
+      smallCargo: 0,
+      lightFighter: 1,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") {
+        throw { code: 3, message: "execution reverted", data: "0xd7c35576" };
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 1,
+      targetPlanetId: 6,
+      missionType: 3,
+      ships,
+    })).rejects.toThrow("selected ships do not have enough cargo capacity");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeLaunchFleetMissionCall({
+            originPlanetId: 1,
+            targetPlanetId: 6,
+            missionType: 3,
+            ships,
+          }),
+        }, "latest"],
+      },
+    ]);
+  });
+
+  test("submits fleet launches after successful preflight", async () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const data = encodeLaunchFleetMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    });
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") return "0x";
       return "0xfleet";
     });
 
@@ -678,17 +790,12 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       {
+        method: "eth_call",
+        params: [{ from: account, to: contract, data }, "latest"],
+      },
+      {
         method: "eth_sendTransaction",
-        params: [{
-          from: account,
-          to: contract,
-          data: encodeLaunchFleetMissionCall({
-            originPlanetId: 7,
-            targetPlanetId: 9,
-            missionType: 3,
-            ships,
-          }),
-        }],
+        params: [{ from: account, to: contract, data }],
       },
     ]);
   });
