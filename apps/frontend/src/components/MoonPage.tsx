@@ -34,6 +34,8 @@ export function MoonPage({
 }: MoonPageProps) {
   const moon = moonState?.moon;
   const hasMoon = Boolean(moon?.exists);
+  const unavailableReason = moonState?.unavailableReason;
+  const moonUnavailable = moonState?.moonAvailable === false;
 
   return (
     <div className="grid gap-4">
@@ -74,10 +76,16 @@ export function MoonPage({
         </>
       ) : loading ? (
         <VeydriftLoader label="Reading lunar telemetry" />
+      ) : moonUnavailable ? (
+        <MoonStatusPanel
+          title={moonState?.indexedNotReady ? "Moon state is indexing" : "Moon systems unavailable"}
+          body={unavailableReason ?? "Moon state is not available for the selected planet yet."}
+          tone="warning"
+        />
       ) : error ? (
         <MoonStatusPanel title="Moon state unavailable" body={error} tone="warning" />
       ) : (
-        <NoMoonGuidance reason={moonState?.unavailableReason} />
+        <NoMoonGuidance reason={unavailableReason} />
       )}
     </div>
   );
