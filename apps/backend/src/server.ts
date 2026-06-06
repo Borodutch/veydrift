@@ -1076,11 +1076,19 @@ async function enrichAllianceState(
           ...totalScoreField(state.membership.allianceId)
         }
       : null,
-    directory: state.directory.map((alliance) => ({
-      ...alliance,
-      ...displayNameField("ownerDisplayName", alliance.owner),
-      ...totalScoreField(alliance.allianceId)
-    })),
+    directory: state.directory.map((alliance) => {
+      const members = alliance.members?.map((member) => ({
+        ...member,
+        ...displayNameField("displayName", member.address),
+        ...memberScoreField(member.address)
+      }));
+      return {
+        ...alliance,
+        ...displayNameField("ownerDisplayName", alliance.owner),
+        ...totalScoreField(alliance.allianceId),
+        ...(members ? { members } : {})
+      };
+    }),
     pendingInvites: state.pendingInvites.map((invite) => ({
       ...invite,
       ...displayNameField("inviterDisplayName", invite.inviter)
