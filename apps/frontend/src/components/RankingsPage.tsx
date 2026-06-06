@@ -320,7 +320,6 @@ function RankingRow({
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
 }) {
-  const homePlanet = entry.homePlanet ?? null;
   const rankedPlanets = rankingPlanets(entry);
   const canOpenPlayer = Boolean(onSelectPlayer);
   const commanderLabel = entry.displayName?.trim() || shortAddress(entry.wallet);
@@ -412,11 +411,6 @@ function RankingRow({
               </span>
             ) : null}
           </span>
-          {homePlanet ? (
-            <span className="block min-w-0 truncate text-xs text-slate-500" title={homePlanetHoverLabel(homePlanet)}>
-              {homePlanetLabel(homePlanet)}
-            </span>
-          ) : null}
           <span className="mt-0.5 block font-mono text-xs font-semibold text-cyan-100 sm:hidden">
             Score {formatScore(entry.score[active])}
           </span>
@@ -431,53 +425,59 @@ function RankingRow({
             <span className="hidden text-right sm:block">Loot</span>
             <span className="hidden text-right sm:block">Combat</span>
           </div>
-          {rankedPlanets.map((planet) => (
-            <button
-              aria-label={`Open planet at ${homePlanetCoordinatesLabel(planet)}`}
-              className="grid w-full grid-cols-[22px_minmax(0,1fr)] items-center gap-1 rounded border border-white/5 bg-black/20 px-2 py-1.5 text-left text-[11px] transition hover:border-cyan-200/30 hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-cyan-300/30 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px] sm:gap-2"
-              disabled={!onSelectPlanet}
-              key={`tactical-${planet.planetId}`}
-              onClick={() => onSelectPlanet?.(planet.coordinates)}
-              title={`Open ${homePlanetHoverLabel(planet)}`}
-              type="button"
-            >
-              <span className="relative row-span-2 h-5 w-5 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 sm:row-span-1 sm:h-6 sm:w-6">
-                <OptimizedImage
-                  alt=""
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                  sizes="icon"
-                  src={planetImageForType(planet.archetype)}
-                />
-              </span>
-              <span className="min-w-0 truncate text-slate-200">
-                {homePlanetLabel(planet)}
-              </span>
-              <span className="col-start-2 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 font-mono text-[10px] sm:hidden">
-                <span className="text-slate-400" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
-                  <span className="text-slate-500">Dist </span>
+          {rankedPlanets.map((planet) => {
+            const isHomePlanet = entry.homePlanetId === planet.planetId;
+            return (
+              <button
+                aria-label={`Open planet at ${homePlanetCoordinatesLabel(planet)}`}
+                className="grid w-full grid-cols-[22px_minmax(0,1fr)] items-center gap-1 rounded border border-white/5 bg-black/20 px-2 py-1.5 text-left text-[11px] transition hover:border-cyan-200/30 hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-cyan-300/30 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px] sm:gap-2"
+                disabled={!onSelectPlanet}
+                key={`tactical-${planet.planetId}`}
+                onClick={() => onSelectPlanet?.(planet.coordinates)}
+                title={`Open ${homePlanetHoverLabel(planet)}`}
+                type="button"
+              >
+                <span className="relative row-span-2 h-5 w-5 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 sm:row-span-1 sm:h-6 sm:w-6">
+                  <OptimizedImage
+                    alt=""
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                    sizes="icon"
+                    src={planetImageForType(planet.archetype)}
+                  />
+                </span>
+                <span className="min-w-0 truncate text-slate-200">
+                  {isHomePlanet ? (
+                    <span className="mr-1 font-mono text-[10px] font-semibold text-cyan-100">[HOME]</span>
+                  ) : null}
+                  {homePlanetLabel(planet)}
+                </span>
+                <span className="col-start-2 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 font-mono text-[10px] sm:hidden">
+                  <span className="text-slate-400" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
+                    <span className="text-slate-500">Dist </span>
+                    {planetDistanceLabel(originCoordinates, planet.coordinates)}
+                  </span>
+                  <span className="text-emerald-100" title={planetRaidableResourcesLabel(planet)}>
+                    <span className="text-slate-500">Loot </span>
+                    {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
+                  </span>
+                  <span className="text-rose-100" title={planetCombatLabel(planet)}>
+                    <span className="text-slate-500">Combat </span>
+                    {compactScore(planet.tactical?.combatPower ?? "0")}
+                  </span>
+                </span>
+                <span className="hidden text-right font-mono text-slate-400 sm:block" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
                   {planetDistanceLabel(originCoordinates, planet.coordinates)}
                 </span>
-                <span className="text-emerald-100" title={planetRaidableResourcesLabel(planet)}>
-                  <span className="text-slate-500">Loot </span>
+                <span className="hidden min-w-0 truncate font-mono text-emerald-100 sm:block sm:text-right" title={planetRaidableResourcesLabel(planet)}>
                   {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
                 </span>
-                <span className="text-rose-100" title={planetCombatLabel(planet)}>
-                  <span className="text-slate-500">Combat </span>
+                <span className="hidden min-w-0 truncate text-right font-mono text-rose-100 sm:block" title={planetCombatLabel(planet)}>
                   {compactScore(planet.tactical?.combatPower ?? "0")}
                 </span>
-              </span>
-              <span className="hidden text-right font-mono text-slate-400 sm:block" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
-                {planetDistanceLabel(originCoordinates, planet.coordinates)}
-              </span>
-              <span className="hidden min-w-0 truncate font-mono text-emerald-100 sm:block sm:text-right" title={planetRaidableResourcesLabel(planet)}>
-                {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
-              </span>
-              <span className="hidden min-w-0 truncate text-right font-mono text-rose-100 sm:block" title={planetCombatLabel(planet)}>
-                {compactScore(planet.tactical?.combatPower ?? "0")}
-              </span>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>

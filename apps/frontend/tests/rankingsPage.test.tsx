@@ -181,6 +181,39 @@ describe("RankingsPage", () => {
     expect(selected).toEqual([{ galaxy: 3, system: 12, position: 4 }]);
   });
 
+  test("marks the home planet inside the planet list instead of commander subtext", () => {
+    const entry = rankingEntry({
+      homePlanet: {
+        ...rankingEntry().homePlanet!,
+        name: "Eos",
+      },
+      planets: [
+        {
+          ...rankingEntry().homePlanet!,
+          name: "Eos",
+        },
+        {
+          archetype: "frozen-ice",
+          coordinates: { galaxy: 3, system: 12, position: 4 },
+          name: "Borealis",
+          planetId: "8",
+        },
+      ],
+    });
+    const table = RankingsTable({ entries: [entry], loading: false });
+    const row = rowWithWallet(table, entry.wallet);
+    const homeButton = buttonWithTitle(row, "Open Eos [2:44:9]");
+    const colonyButton = buttonWithTitle(row, "Open Borealis [3:12:4]");
+    const commanderSubline = elementNodes(row).find(
+      (item) => item.type === "span" && item.props?.title === "Eos [2:44:9]"
+    );
+
+    expect(commanderSubline).toBeUndefined();
+    expect(visibleText(homeButton)).toContain("[HOME] Eos");
+    expect(visibleText(colonyButton)).toContain("Borealis");
+    expect(visibleText(colonyButton)).not.toContain("[HOME]");
+  });
+
   test("renders compact tactical planet sub-lists from indexed payload fields", () => {
     const selected: Coordinates[] = [];
     const tacticalPlanet = {
