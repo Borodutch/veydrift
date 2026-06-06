@@ -426,8 +426,7 @@ function RankingRow({
       {rankedPlanets.length > 0 ? (
         <div className="col-start-1 col-end-3 mt-2 min-w-0 max-w-full overflow-hidden space-y-1 sm:col-start-2 sm:col-end-4">
           <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-1 px-2 text-[10px] font-semibold uppercase tracking-normal text-slate-500 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px] sm:gap-2">
-            <span aria-hidden="true" />
-            <span>Planet</span>
+            <span className="col-span-2">Planet</span>
             <span className="hidden text-right sm:block">Dist</span>
             <span className="hidden text-right sm:block">Loot</span>
             <span className="hidden text-right sm:block">Combat</span>
