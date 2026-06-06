@@ -66,6 +66,7 @@ import {
   deriveDefenseRows,
   deriveShipRows,
   deriveTechnologyRows,
+  usedFieldsFromBuildingRows,
   zeroResources
 } from "./readModels";
 import type { HighscoreEntry } from "./highscores";
@@ -2429,7 +2430,7 @@ function indexedManagedPlanet(
     ...planet,
     coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
     isHomePlanet: planet.planetId === homePlanetId,
-    fieldsUsed: buildings.filter((building) => building.level > 0).length,
+    fieldsUsed: usedFieldsFromBuildingRows(buildings),
     fieldsCapacity: planet.fields,
     keyLevels: {
       metalMine: level(0),

@@ -1,5 +1,6 @@
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
+import { usedFieldsFromBuildingRows } from "./readModels";
 import type { Coordinates } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
@@ -2597,7 +2598,7 @@ export class VeydriftGameReader implements ChainReader {
       this.readMoonSummary(planetId)
     ]);
     const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
-    const fieldsUsed = buildings.reduce((sum, building) => sum + building.level, 0);
+    const fieldsUsed = usedFieldsFromBuildingRows(buildings);
 
     return {
       ...planet,
