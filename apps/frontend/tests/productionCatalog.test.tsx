@@ -95,6 +95,39 @@ describe("ProductionCatalog selected panel", () => {
     expect(visibleText(catalog)).not.toContain("Combat");
     expect(visibleText(catalog)).not.toContain("Logistics");
   });
+
+  test("uses the caller clock for active production queue progress", () => {
+    const catalog = ProductionCatalog({
+      actionPending: false,
+      canTransact: true,
+      emptyLabel: "Select an item.",
+      items: [catalogItem()],
+      now: 1_700_000_060_000,
+      onBuild: () => undefined,
+      onFinishQueue: () => undefined,
+      onQuantity: () => undefined,
+      onRefreshQueue: () => undefined,
+      onSelect: () => undefined,
+      queue: {
+        asset: "/assets/game/defenses/rocket-launcher.webp",
+        label: "Rocket Launcher",
+        quantity: 2,
+        readyAt: "1700000120",
+        startedAt: "1700000000",
+      },
+      selectedKey: "rocketLauncher",
+    });
+    const text = visibleText(catalog);
+    const normalizedText = text.replace(/\s+/g, " ");
+
+    expect(text).toContain("Active queue");
+    expect(normalizedText).toContain("Rocket Launcher x2");
+    expect(text).toContain("50%");
+    expect(text).toContain("Time remaining 1m");
+    expect(text).toContain("Production in progress.");
+    expect(text).toContain("Refresh queue");
+    expect(text).not.toContain("Ready now.");
+  });
 });
 
 function catalogItem(overrides: Partial<ProductionCatalogItem<"rocketLauncher">> = {}): ProductionCatalogItem<"rocketLauncher"> {

@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { formatCost } from "../buildingDetails";
 import type { Resources } from "../playableMvp";
+import { timestampToMs } from "../timestampFormat";
 import type { QueueStateResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 import { QueueProgressPanel } from "./QueueProgressPanel";
@@ -101,6 +102,7 @@ export function ProductionCatalog<Key extends string>({
   canTransact,
   emptyLabel,
   items,
+  now = Date.now(),
   onBuild,
   onFinishQueue,
   onOpenRequirement,
@@ -114,6 +116,7 @@ export function ProductionCatalog<Key extends string>({
   canTransact: boolean;
   emptyLabel: string;
   items: ProductionCatalogItem<Key>[];
+  now?: number | undefined;
   onBuild: (item: ProductionCatalogItem<Key>) => void;
   onFinishQueue?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
@@ -132,6 +135,7 @@ export function ProductionCatalog<Key extends string>({
         <ProductionQueuePanel
           actionPending={actionPending}
           canTransact={canTransact}
+          now={now}
           onFinish={onFinishQueue}
           onRefresh={onRefreshQueue}
           queue={queue}
@@ -177,17 +181,19 @@ export function ProductionCatalog<Key extends string>({
 function ProductionQueuePanel({
   actionPending,
   canTransact,
+  now,
   onFinish,
   onRefresh,
   queue,
 }: {
   actionPending: boolean;
   canTransact: boolean;
+  now: number;
   onFinish?: (() => void) | undefined;
   onRefresh?: (() => void) | undefined;
   queue: ProductionQueue;
 }) {
-  const ready = isQueueReady(queue.readyAt);
+  const ready = isQueueReady(queue.readyAt, now);
   const action = ready ? onFinish : onRefresh;
 
   return (
@@ -199,6 +205,7 @@ function ProductionQueuePanel({
       } : undefined}
       asset={queue.asset}
       label={queue.label}
+      now={now}
       quantity={queue.quantity}
       readyAt={queue.readyAt}
       startedAt={queue.startedAt}
@@ -461,13 +468,15 @@ function Stat({
   );
 }
 
-function isQueueReady(readyAt: string | null): boolean {
-  return readyAt ? Number(readyAt) <= Math.floor(Date.now() / 1_000) : false;
+function isQueueReady(readyAt: string | null, now = Date.now()): boolean {
+  const readyAtMs = timestampToMs(readyAt);
+  return readyAtMs !== undefined && readyAtMs <= now;
 }
 
 function formatQueueReadyAt(readyAt: string | null): string {
-  if (!readyAt) return "Ready time unknown";
-  return new Date(Number(readyAt) * 1_000).toLocaleTimeString([], {
+  const readyAtMs = timestampToMs(readyAt);
+  if (readyAtMs === undefined) return "Ready time unknown";
+  return new Date(readyAtMs).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });

@@ -28,6 +28,7 @@ interface DefensePageProps {
   defenseState: ChainDefenseState | null;
   error: string | undefined;
   loading: boolean;
+  now?: number | undefined;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
   onFinish: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
@@ -69,6 +70,7 @@ export function DefensePage({
   defenseState,
   error,
   loading,
+  now,
   onBuild,
   onFinish,
   onOpenRequirement,
@@ -138,6 +140,7 @@ export function DefensePage({
             queue,
             resources: spendableResources ?? resources,
           })}
+          now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
           onFinishQueue={onFinish}
           onOpenRequirement={onOpenRequirement}
