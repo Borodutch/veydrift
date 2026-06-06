@@ -21,6 +21,7 @@ import type { ChainAllianceState } from "../src/walletFlow";
 
 const alliancePageSource = await Bun.file(new URL("../src/components/AlliancePage.tsx", import.meta.url)).text();
 const inspectPagesSource = await Bun.file(new URL("../src/components/InspectPages.tsx", import.meta.url)).text();
+const walletFlowSource = await Bun.file(new URL("../src/walletFlow.ts", import.meta.url)).text();
 
 describe("AlliancePage loading display", () => {
   test("uses the shared app shell instead of an extra Alliance page wrapper", () => {
@@ -359,6 +360,14 @@ describe("AlliancePage loading display", () => {
     expect(inspectPagesSource).not.toContain('eyebrow="Alliance Inspect"');
     expect(inspectPagesSource).toContain('<Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>');
     expect(inspectPagesSource).toContain("<AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />");
+  });
+
+  test("renders public inspected alliance member rows instead of directory explanation copy", () => {
+    expect(walletFlowSource).toContain("members?: Array<{");
+    expect(inspectPagesSource).toContain("publicRoster.all.length");
+    expect(inspectPagesSource).toContain("members={publicRoster.all}");
+    expect(inspectPagesSource).toContain("No indexed public members are available for this alliance yet.");
+    expect(inspectPagesSource).not.toContain("Public directory data exposes");
   });
 
   test("pluralizes alliance member counts", () => {

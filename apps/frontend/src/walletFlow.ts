@@ -468,6 +468,13 @@ export type ChainAllianceState = {
     createdAt: string;
     memberCount: number;
     totalMemberScore?: string;
+    members?: Array<{
+      address: string;
+      displayName?: string | null;
+      role: AllianceRole;
+      joinedAt: string;
+      totalScore?: string;
+    }>;
   }>;
   pendingInvites: Array<{
     allianceId: string;

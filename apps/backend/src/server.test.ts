@@ -1472,6 +1472,17 @@ describe("Veydrift backend", () => {
 
   test("adds indexed total member score to alliance profiles and directory rows", async () => {
     const chainReader = new class extends MockChainReader {
+      override async getAllianceState(wallet: Address): Promise<AllianceState> {
+        const state = await super.getAllianceState(wallet);
+        return {
+          ...state,
+          directory: state.directory.map((alliance) => ({
+            ...alliance,
+            members: state.members
+          }))
+        };
+      }
+
       async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
         expect(wallets).toContain(player);
         return new Map([
@@ -1540,6 +1551,12 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
     expect(body.profile.totalMemberScore).toBe("15");
     expect(body.directory[0].totalMemberScore).toBe("15");
+    expect(body.directory[0].members).toEqual([{
+      address: player,
+      role: "owner",
+      joinedAt: "1770000000",
+      totalScore: "15"
+    }]);
     expect(body.members[0].totalScore).toBe("15");
   });
 
