@@ -29,6 +29,7 @@ interface ShipyardPageProps {
   canTransact: boolean;
   error: string | undefined;
   loading: boolean;
+  now?: number | undefined;
   onBuild: (shipId: number, key: ShipKey, quantity: number) => void;
   onCollect: () => void;
   onFinish: () => void;
@@ -70,6 +71,7 @@ export function ShipyardPage({
   canTransact,
   error,
   loading,
+  now,
   onBuild,
   onCollect,
   onFinish,
@@ -142,6 +144,7 @@ export function ShipyardPage({
             shipyardLevel,
             shipyardState,
           })}
+          now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
           onFinishQueue={onFinish}
           onOpenRequirement={onOpenRequirement}
