@@ -66,7 +66,6 @@ export function MissionDetailPage({
             </button>
           </>
         )}
-        eyebrow="Mission Detail"
         subtitle="Shareable mission state, current stage, available orders, and combat report when the indexed battle log exposes one."
         title={missionId ? `Mission #${missionId}` : "Mission"}
       />
