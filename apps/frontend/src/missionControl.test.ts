@@ -46,12 +46,14 @@ describe("Mission Control battle reports", () => {
         outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
         returning: [mission("33", "Deploy", "Returning", "0x1111111111111111111111111111111111111111", "9", "7", now - 60_000)],
         joinableAttacks: [],
+        completedMissions: [],
         battleReports: [battleReport("31")],
       },
       loading: false,
       now,
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
+      onJoinAttack: () => undefined,
       onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
@@ -62,9 +64,10 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("Mission Control");
     expect(text).toContain("Watch inbound attacks");
-    expect(text).toContain("Incoming attacks");
-    expect(text).toContain("Outgoing fleets");
-    expect(text).toContain("Returning fleets");
+    expect(text).toContain("Fleet movement");
+    expect(text).toContain("Hostile inbound");
+    expect(text).toContain("Returns");
+    expect(text).toContain("Past missions");
     expect(text).toContain("Commander 0x2222...2222");
     expect(text).toContain("Origin Planet #8");
     expect(text).toContain("Target Planet #7");

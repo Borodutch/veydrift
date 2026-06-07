@@ -221,6 +221,7 @@ class MockChainReader implements ChainReader {
       outgoing: [],
       returning: [],
       joinableAttacks: [],
+      completedMissions: [],
       battleReports: []
     };
   }
