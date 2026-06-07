@@ -128,6 +128,7 @@ import {
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
+  sendJoinAttackMissionTransaction,
   sendFinishMoonBuildingUpgradeTransaction,
   sendJumpGateJumpTransaction,
   sendRecallFleetMissionTransaction,
@@ -4272,6 +4273,31 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       )
     );
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState]);
+
+  const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string) => {
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+      return;
+    }
+
+    const ships = selectCounterplayShips(shipyardState);
+    if (!ships) {
+      setGalaxyAction({ status: "error", label: "No ships available to join the attack." });
+      return;
+    }
+
+    void runGalaxyTransaction("Group attack join", () => sendJoinAttackMissionTransaction(
+      provider,
+      account,
+      gameContract,
+      {
+        originPlanetId: onChainSettlement.homePlanetId ?? "0",
+        attackMissionId,
+        targetPlanetId,
+        ships,
+      },
+    ));
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
 
   const handleNavigate = useCallback((target: Page) => {
     setPendingGalaxyMission(null);

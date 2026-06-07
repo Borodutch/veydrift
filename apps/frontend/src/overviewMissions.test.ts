@@ -173,6 +173,7 @@ function visibility(overrides: Partial<FleetMissionVisibilityResponse>): FleetMi
     outgoing: [],
     returning: [],
     joinableAttacks: [],
+    completedMissions: [],
     battleReports: [],
     ...overrides,
   };
