@@ -26,6 +26,11 @@ export type InjectedWindow = {
 };
 
 const WALLET_READ_TIMEOUT_MS = 10_000;
+// Initial first-planet bootstrap reads use a shorter timeout so a stalled
+// mobile wallet provider (e.g. Trust Wallet on Android intermittently not
+// answering the first eth_accounts/eth_chainId) is detected and retried
+// quickly instead of leaving the player on "Reading wallet link".
+export const WALLET_BOOTSTRAP_READ_TIMEOUT_MS = 6_000;
 const FARCASTER_WALLET_PROVIDER_TIMEOUT_MS = 1_200;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
 export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock your wallet and try again.";
@@ -1287,10 +1292,10 @@ export function decodeBoolResult(hex: string): boolean {
   return decodeUintResult(hex) !== 0n;
 }
 
-export async function getCurrentAccounts(provider: Eip1193Provider): Promise<string[]> {
+export async function getCurrentAccounts(provider: Eip1193Provider, timeoutMs?: number): Promise<string[]> {
   return readWalletRequest<string[]>(provider, {
     method: "eth_accounts"
-  }, "wallet accounts");
+  }, "wallet accounts", timeoutMs);
 }
 
 export async function requestAccounts(provider: Eip1193Provider): Promise<string[]> {
@@ -1304,10 +1309,10 @@ export async function requestAccounts(provider: Eip1193Provider): Promise<string
   return accounts;
 }
 
-export async function getChainId(provider: Eip1193Provider): Promise<string> {
+export async function getChainId(provider: Eip1193Provider, timeoutMs?: number): Promise<string> {
   return readWalletRequest<string>(provider, {
     method: "eth_chainId"
-  }, "wallet network");
+  }, "wallet network", timeoutMs);
 }
 
 export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promise<void> {
@@ -1960,9 +1965,10 @@ export function planetFromTransaction(account: string, txHash: string): PlanetSu
 async function readWalletRequest<T>(
   provider: Eip1193Provider,
   args: { method: string; params?: unknown[] },
-  label: string
+  label: string,
+  timeoutMs: number = WALLET_READ_TIMEOUT_MS
 ): Promise<T> {
-  return timeoutPromise(provider.request<T>(args), WALLET_READ_TIMEOUT_MS, label);
+  return timeoutPromise(provider.request<T>(args), timeoutMs, label);
 }
 
 async function timeoutPromise<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -1998,6 +2004,23 @@ function errorCode(error: unknown): unknown {
   return typeof error === "object" && error !== null && "code" in error
     ? (error as { code: unknown }).code
     : undefined;
+}
+
+export function isTransientWalletBootstrapError(error: unknown): boolean {
+  // User rejections and locked wallets are terminal: the player must act, so we
+  // must not silently retry them.
+  if (isUserRejected(error)) return false;
+  const message = errorMessage(error);
+  if (/wallet is locked|metamask is locked|unlock/i.test(message)) return false;
+
+  const code = errorCode(error);
+  if (code === -32603 || code === "-32603") return true;
+  if (/internal json-rpc error/i.test(message)) return true;
+  // Timeout wrappers for wallet and game-API reads.
+  if (/timed out reading .* from the (wallet|game api)/i.test(message)) return true;
+  // Transient transport failures.
+  if (/failed to fetch|network ?error|load failed/i.test(message)) return true;
+  return false;
 }
 
 function errorData(error: unknown): unknown {

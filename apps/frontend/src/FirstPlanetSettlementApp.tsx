@@ -26,8 +26,10 @@ import {
   getChainId,
   getCurrentAccounts,
   isBaseSepoliaChain,
+  isTransientWalletBootstrapError,
   isUserRejected,
   miniAppUnsupportedChainMessage,
+  WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   requestAccounts,
   getAvailableWalletProviderDetails,
   sendSettlementTransaction,
@@ -117,6 +119,13 @@ type WalletProviderContext = {
   walletProviderSource: "injected" | "farcaster" | undefined;
 };
 
+// Some mobile wallet providers (notably Trust Wallet on Android) intermittently
+// stall the first eth_accounts/eth_chainId read after a cold page load, leaving
+// the player stuck on "Reading wallet link" until they manually refresh. Retry
+// the bootstrap automatically on transient failures instead.
+const WALLET_BOOTSTRAP_MAX_RETRIES = 4;
+const WALLET_BOOTSTRAP_RETRY_MS = 1_200;
+
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
   const [settlementConfigState, setSettlementConfigState] = useState<SettlementConfigState>(() => ({
@@ -140,6 +149,8 @@ export function FirstPlanetSettlementApp() {
   const farcasterAutoConnectAttempted = useRef(false);
   const farcasterNetworkSetupAttempted = useRef<string>();
   const walletProviderCleanup = useRef<(() => void) | undefined>();
+  const walletBootstrapAttempts = useRef(0);
+  const walletBootstrapRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -255,6 +266,10 @@ export function FirstPlanetSettlementApp() {
       disposed = true;
       walletProviderCleanup.current?.();
       walletProviderCleanup.current = undefined;
+      if (walletBootstrapRetryTimer.current !== undefined) {
+        clearTimeout(walletBootstrapRetryTimer.current);
+        walletBootstrapRetryTimer.current = undefined;
+      }
     };
   }, []);
 
@@ -395,6 +410,7 @@ export function FirstPlanetSettlementApp() {
 
   async function refreshWallet(injected = provider, preferredAccount?: string, context = walletProviderContext()) {
     if (!injected) {
+      walletBootstrapAttempts.current = 0;
       setWallet({
         kind: "no-wallet"
       });
@@ -403,9 +419,12 @@ export function FirstPlanetSettlementApp() {
     }
 
     try {
-      const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected);
+      const accounts = preferredAccount
+        ? [preferredAccount]
+        : await getCurrentAccounts(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
 
       if (!accounts[0]) {
+        walletBootstrapAttempts.current = 0;
         setWallet({
           kind: "disconnected"
         });
@@ -427,7 +446,10 @@ export function FirstPlanetSettlementApp() {
         return;
       }
 
-      const chainId = await getChainId(injected);
+      const chainId = await getChainId(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
+      // The flaky wallet reads (accounts + chain) both succeeded; stop counting
+      // bootstrap retries.
+      walletBootstrapAttempts.current = 0;
 
       if (!isBaseSepoliaChain(chainId)) {
         if (shouldAttemptFarcasterNetworkSetup({
@@ -486,6 +508,26 @@ export function FirstPlanetSettlementApp() {
       await refreshPlanet(injected, accounts[0]);
     } catch (error) {
       console.error("Wallet bootstrap failed", error);
+
+      if (
+        isTransientWalletBootstrapError(error)
+        && walletBootstrapAttempts.current < WALLET_BOOTSTRAP_MAX_RETRIES
+      ) {
+        // A mobile wallet provider stalled an initial read. Keep the player on
+        // the "Reading wallet link" state and retry shortly instead of forcing
+        // a manual page refresh.
+        walletBootstrapAttempts.current += 1;
+        setWallet({ kind: "loading" });
+        if (walletBootstrapRetryTimer.current !== undefined) {
+          clearTimeout(walletBootstrapRetryTimer.current);
+        }
+        walletBootstrapRetryTimer.current = setTimeout(() => {
+          void refreshWallet(injected, preferredAccount, context);
+        }, WALLET_BOOTSTRAP_RETRY_MS);
+        return;
+      }
+
+      walletBootstrapAttempts.current = 0;
       setWallet({
         kind: "disconnected"
       });
