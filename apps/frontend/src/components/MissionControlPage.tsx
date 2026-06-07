@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List, Swords } from "lucide-preact";
+import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -12,7 +12,7 @@ type MissionControlActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
-export type MissionLifecycleActionKind = "completeReturn" | "counterplay" | "recall" | "resolve";
+export type MissionLifecycleActionKind = "completeReturn" | "counterplay" | "joinAttack" | "recall" | "resolve";
 
 export type MissionLifecycleAction = {
   kind: MissionLifecycleActionKind;
@@ -33,6 +33,7 @@ interface MissionControlPageProps {
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
   onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
@@ -41,6 +42,7 @@ interface MissionControlPageProps {
   onResolve: (missionId: string) => void;
   reportMissionId?: string | undefined;
   reportUrlForMission?: ((missionId: string) => string) | undefined;
+  fleetSlots?: { active: number; limit: number } | undefined;
   walletPlanets?: ManagedPlanetResponse[] | undefined;
 }
 
@@ -52,6 +54,7 @@ export function MissionControlPage({
   now,
   onCompleteReturn,
   onCounterplay,
+  onJoinAttack,
   onOpenBattleReport,
   onOpenReport,
   onOpenReportList,
@@ -60,17 +63,22 @@ export function MissionControlPage({
   onResolve,
   reportMissionId,
   reportUrlForMission,
+  fleetSlots,
   walletPlanets = [],
 }: MissionControlPageProps) {
   const incoming = fleetVisibility?.incoming ?? [];
   const outgoing = fleetVisibility?.outgoing ?? [];
   const returning = fleetVisibility?.returning ?? [];
+  const joinableAttacks = fleetVisibility?.joinableAttacks ?? [];
+  const completedMissions = fleetVisibility?.completedMissions ?? [];
   const battleReports = fleetVisibility?.battleReports ?? [];
-  const due = [...incoming, ...outgoing].filter((mission) => isMissionDue(mission, now));
-  const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...(fleetVisibility?.joinableAttacks ?? [])]);
+  const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, outgoing, returning });
+  const due = activeMissionRows.filter(({ mission }) => isMissionDue(mission, now) || isMissionReturned(mission, now));
+  const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
+  const pastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
-  const activeCount = incoming.length + outgoing.length + returning.length;
+  const activeCount = activeMissionRows.length;
   const initialLoading = loading && !fleetVisibility;
 
   return (
@@ -114,83 +122,28 @@ export function MissionControlPage({
               No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.
             </div>
           ) : null}
+          <ActiveMissionSection
+            canTransact={canTransact}
+            dueCount={due.length}
+            fleetSlots={fleetSlots}
+            missions={activeMissionRows}
+            now={now}
+            onCompleteReturn={onCompleteReturn}
+            onCounterplay={onCounterplay}
+            onJoinAttack={onJoinAttack}
+            onOpenReport={onOpenReport}
+            onRecall={onRecall}
+            onRefresh={onRefresh}
+            onResolve={onResolve}
+            planetLookup={planetLookup}
+          />
 
-          {due.length > 0 ? (
-            <section className="rounded-lg border border-red-300/25 bg-red-400/10 p-3">
-              <div className="mb-3">
-                <h3 className="text-sm font-semibold text-white">Needs orders now</h3>
-                <p className="mt-1 text-xs leading-5 text-red-100/80">
-                  These missions have reached their target. Resolve battles or land fleets before relying on those ships and slots again.
-                </p>
-              </div>
-              <MissionSection
-                actionContext="due"
-                canTransact={canTransact}
-                missions={due}
-                now={now}
-                onCompleteReturn={onCompleteReturn}
-                onCounterplay={onCounterplay}
-                onOpenReport={onOpenReport}
-                onRecall={onRecall}
-                onResolve={onResolve}
-                planetLookup={planetLookup}
-                title="Ready to resolve"
-                tone="danger"
-              />
-            </section>
-          ) : null}
-
-          <div className="grid gap-3">
-            <MissionSection
-              actionContext="incoming"
-              canTransact={canTransact}
-              empty="No hostile inbound missions."
-              missions={incoming}
-              now={now}
-              onCompleteReturn={onCompleteReturn}
-              onCounterplay={onCounterplay}
-              onOpenReport={onOpenReport}
-              onRecall={onRecall}
-              onResolve={onResolve}
-              planetLookup={planetLookup}
-              title="Incoming attacks"
-              tone="danger"
-            />
-            <MissionSection
-              actionContext="outgoing"
-              canTransact={canTransact}
-              empty="No outbound missions."
-              missions={outgoing}
-              now={now}
-              onCompleteReturn={onCompleteReturn}
-              onCounterplay={onCounterplay}
-              onOpenReport={onOpenReport}
-              onRecall={onRecall}
-              onResolve={onResolve}
-              planetLookup={planetLookup}
-              title="Outgoing fleets"
-              tone="neutral"
-            />
-            <MissionSection
-              actionContext="returning"
-              canTransact={canTransact}
-              empty="No fleets waiting to return."
-              missions={returning}
-              now={now}
-              onCompleteReturn={onCompleteReturn}
-              onCounterplay={onCounterplay}
-              onOpenReport={onOpenReport}
-              onRecall={onRecall}
-              onResolve={onResolve}
-              planetLookup={planetLookup}
-              title="Returning fleets"
-              tone="warning"
-            />
-          </div>
-
-          <ResolvedBattleReportSection
+          <PastMissionSection
+            now={now}
             onOpenBattleReport={onOpenBattleReport}
-            reports={battleReports}
+            onOpenReport={onOpenReport}
+            planetLookup={planetLookup}
+            rows={pastMissionRows}
           />
         </>
       )}
@@ -205,7 +158,7 @@ export function missionLifecycleActions({
   now,
 }: {
   canTransact: boolean;
-  context: "due" | "incoming" | "outgoing" | "returning";
+  context: ActiveMissionContext;
   mission: FleetMissionSummary;
   now: number;
 }): MissionLifecycleAction[] {
@@ -249,80 +202,112 @@ export function missionLifecycleActions({
     });
   }
 
+  if (context === "joinable" && mission.status === "Outbound" && mission.missionType === "Attack") {
+    actions.push({
+      enabled: canTransact && !due,
+      kind: "joinAttack",
+      label: "Join attack",
+      reason: due ? "Mission is already due for resolution." : walletReason(canTransact),
+    });
+  }
+
   return actions;
 }
 
-function MissionSection({
-  actionContext,
+type ActiveMissionContext = "due" | "incoming" | "joinable" | "outgoing" | "returning";
+
+type ActiveMissionRow = {
+  context: ActiveMissionContext;
+  direction: string;
+  mission: FleetMissionSummary;
+};
+
+type PastMissionRow =
+  | { kind: "mission"; mission: FleetMissionSummary }
+  | { kind: "battleReport"; report: BattleReport };
+
+function ActiveMissionSection({
   canTransact,
-  empty,
+  dueCount,
+  fleetSlots,
   missions,
   now,
   onCompleteReturn,
   onCounterplay,
+  onJoinAttack,
   onOpenReport,
   onRecall,
+  onRefresh,
   onResolve,
   planetLookup,
-  title,
-  tone,
 }: {
-  actionContext: "due" | "incoming" | "outgoing" | "returning";
   canTransact: boolean;
-  empty?: string | undefined;
-  missions: FleetMissionSummary[];
+  dueCount: number;
+  fleetSlots?: { active: number; limit: number } | undefined;
+  missions: ActiveMissionRow[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
+  onRefresh: () => void;
   onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
-  title: string;
-  tone: "danger" | "neutral" | "warning";
 }) {
-  const border = tone === "danger"
-    ? "border-red-300/25 bg-red-400/10"
-    : tone === "warning"
-      ? "border-amber-300/25 bg-amber-300/10"
-      : "border-white/10 bg-[#101624]";
+  const slotLabel = fleetSlots ? `Fleets ${fleetSlots.active}/${fleetSlots.limit}` : `Fleets ${missions.length}/?`;
   return (
-    <section className={`min-w-0 overflow-hidden rounded-lg border ${border}`}>
+    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
       <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Fleet movement</p>
-          <h3 className="mt-0.5 text-sm font-semibold text-white">{title}</h3>
+          <h3 className="mt-0.5 text-sm font-semibold text-white">Active missions</h3>
         </div>
-        <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-xs tabular-nums text-slate-300">
-          {missions.length}
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {dueCount > 0 ? (
+            <span className="rounded border border-red-300/25 bg-red-400/10 px-2 py-1 text-xs font-medium text-red-100">
+              Needs orders now {dueCount}
+            </span>
+          ) : null}
+          <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-xs tabular-nums text-slate-300">
+            {slotLabel}
+          </span>
+          <button
+            className="h-8 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+            onClick={onRefresh}
+            type="button"
+          >
+            Reload
+          </button>
+        </div>
       </div>
       {missions.length === 0 ? (
-        <p className="px-3 py-4 text-xs text-slate-500">{empty ?? "No missions."}</p>
+        <p className="px-3 py-4 text-xs text-slate-500">No active missions.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-[56rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+          <table className="min-w-[58rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
             <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
               <tr>
-                <th className="w-[8.5rem] px-3 py-2">Mission</th>
-                <th className="w-[11rem] px-3 py-2">Origin</th>
-                <th className="w-[11rem] px-3 py-2">Destination</th>
-                <th className="w-[9rem] px-3 py-2">Arrival</th>
+                <th className="w-[9rem] px-3 py-2">Countdown</th>
+                <th className="w-[10rem] px-3 py-2">Mission</th>
+                <th className="w-[23rem] px-3 py-2">Origin {"->"} Target</th>
                 <th className="w-[9rem] px-3 py-2">Return</th>
                 <th className="w-[13rem] px-3 py-2">Fleet / cargo</th>
                 <th className="w-[15rem] px-3 py-2">Orders</th>
               </tr>
             </thead>
             <tbody>
-              {missions.map((mission) => (
+              {missions.map(({ context, direction, mission }) => (
                 <MissionRow
                   canTransact={canTransact}
-                  context={actionContext}
-                  key={`${actionContext}:${mission.missionId}`}
+                  context={context}
+                  direction={direction}
+                  key={`${context}:${mission.missionId}`}
                   mission={mission}
                   now={now}
                   onCompleteReturn={onCompleteReturn}
                   onCounterplay={onCounterplay}
+                  onJoinAttack={onJoinAttack}
                   onOpenReport={onOpenReport}
                   onRecall={onRecall}
                   onResolve={onResolve}
@@ -340,21 +325,25 @@ function MissionSection({
 function MissionRow({
   canTransact,
   context,
+  direction,
   mission,
   now,
   onCompleteReturn,
   onCounterplay,
+  onJoinAttack,
   onOpenReport,
   onRecall,
   onResolve,
   planetLookup,
 }: {
   canTransact: boolean;
-  context: "due" | "incoming" | "outgoing" | "returning";
+  context: ActiveMissionContext;
+  direction: string;
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -362,27 +351,40 @@ function MissionRow({
 }) {
   const actions = missionLifecycleActions({ canTransact, context, mission, now });
   const report = missionReport(mission, now, planetLookup);
+  const timing = missionTiming(mission, now);
   return (
     <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
       <td className="border-t border-white/10 px-3 py-3">
-        <p className="font-semibold text-white">{missionTypeLabel(mission.missionType)} #{mission.missionId}</p>
-        <p className="mt-1 text-slate-500">{missionStatusLabel(mission.status)}</p>
+        <p className={`font-semibold tabular-nums ${timing.due ? "text-red-100" : "text-white"}`}>{timing.countdown}</p>
+        <p className="mt-1 whitespace-pre-line text-slate-500">{timing.clock}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
+          {missionTypeLabel(mission.missionType)}
+        </span>
+        <p className="mt-2 font-semibold text-white">#{mission.missionId}</p>
+        <p className="mt-1 text-slate-500">{direction}</p>
         <p className="mt-1 text-slate-500">Report {missionReportLabel(mission)}</p>
       </td>
       <td className="border-t border-white/10 px-3 py-3">
-        <MissionCellLabel label={`Origin Planet #${mission.originPlanetId}`} value={report.origin} />
+        <div className="grid grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)] items-center gap-2">
+          <MissionCellLabel label={`Origin Planet #${mission.originPlanetId}`} value={report.origin} />
+          <div className="min-w-0">
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-cyan-300" style={{ width: `${missionProgressPercent(mission, now)}%` }} />
+            </div>
+            <p className="mt-1 text-center text-[10px] text-slate-500">-&gt;</p>
+          </div>
+          <MissionCellLabel label={`Target Planet #${mission.targetPlanetId}`} value={report.target} />
+        </div>
         <p className="mt-2 text-slate-500">{`Commander ${commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId))}`}</p>
       </td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <MissionCellLabel label={`Target Planet #${mission.targetPlanetId}`} value={report.target} />
-        <p className="mt-2 text-slate-500">{report.routeSummary}</p>
-      </td>
-      <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">{formatMissionTime(mission.arrivalAt, now)}</td>
       <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">{formatMissionTime(mission.returnAt, now)}</td>
       <td className="border-t border-white/10 px-3 py-3">
         <MissionCellLabel label="Ships" value={formatShips(mission.ships)} />
         <p className="mt-2 text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
         <p className="mt-1 text-slate-500">Fuel {formatResource(mission.fuelCost)} D</p>
+        {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
       </td>
       <td className="border-t border-white/10 px-3 py-3">
         <div className="flex flex-wrap gap-1.5">
@@ -405,6 +407,7 @@ function MissionRow({
                 if (action.kind === "resolve") onResolve(mission.missionId);
                 if (action.kind === "recall") onRecall(mission.missionId);
                 if (action.kind === "completeReturn") onCompleteReturn(mission.missionId);
+                if (action.kind === "joinAttack") onJoinAttack(mission.missionId, mission.targetPlanetId);
               }}
             />
           ))}
@@ -555,77 +558,82 @@ function MissionReportDetail({
   );
 }
 
-function ResolvedBattleReportSection({
+function PastMissionSection({
+  now,
   onOpenBattleReport,
-  reports,
+  onOpenReport,
+  planetLookup,
+  rows,
 }: {
+  now: number;
   onOpenBattleReport: (missionId: string) => void;
-  reports: BattleReport[];
+  onOpenReport: (missionId: string) => void;
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+  rows: PastMissionRow[];
 }) {
   const pageSize = 6;
-  const pages = reportPages(reports, pageSize);
+  const pages = paginatedRows(rows, pageSize);
   const hasPages = pages.length > 1;
 
   return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-3" data-report-page-current="0">
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-3" data-past-page-current="0">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
-            <Swords aria-hidden="true" size={17} />
-          </span>
-          <h3 className="text-sm font-semibold text-white">Resolved battle reports</h3>
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Archive</p>
+          <h3 className="mt-0.5 text-sm font-semibold text-white">Past missions</h3>
         </div>
-        <span className="text-xs tabular-nums text-slate-400">{reports.length}</span>
+        <span className="text-xs tabular-nums text-slate-400">{rows.length}</span>
       </div>
-      {reports.length === 0 ? (
-        <p className="text-xs text-slate-500">No resolved attack reports for this wallet yet.</p>
+      {rows.length === 0 ? (
+        <p className="text-xs text-slate-500">No completed missions are visible for this wallet yet.</p>
       ) : (
         <>
-          {pages.map((pageReports, pageIndex) => (
+          {pages.map((pageRows, pageIndex) => (
             <div
-              className="grid gap-2 lg:grid-cols-2"
-              data-report-page={pageIndex}
+              className="overflow-x-auto"
+              data-past-page={pageIndex}
               hidden={pageIndex !== 0}
-              key={`resolved-report-page:${pageIndex}`}
+              key={`past-mission-page:${pageIndex}`}
             >
-              {pageReports.map((report) => (
-                <article className="min-w-0 rounded-md border border-white/10 bg-black/20 p-3" key={report.missionId}>
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <h4 className="truncate text-sm font-semibold text-white">
-                        Mission #{report.missionId} / {battleOutcomeLabel(report.outcome)}
-                      </h4>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
-                      </p>
-                    </div>
-                    <button
-                      className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
-                      onClick={() => onOpenBattleReport(report.missionId)}
-                      type="button"
-                    >
-                      Open report
-                    </button>
-                  </div>
-                  <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <MissionDatum label="Rounds" value={report.rounds.toString()} />
-                    <MissionDatum label="Loot" value={formatCargo(report.loot)} />
-                    <MissionDatum label="Attacker losses" value={formatCargo(report.attackerLosses)} />
-                    <MissionDatum label="Defender losses" value={formatCargo(report.defenderLosses)} />
-                  </dl>
-                </article>
-              ))}
+              <table className="min-w-[56rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+                <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  <tr>
+                    <th className="w-[10rem] px-3 py-2">Completed</th>
+                    <th className="w-[12rem] px-3 py-2">Mission</th>
+                    <th className="w-[19rem] px-3 py-2">Route / target</th>
+                    <th className="w-[13rem] px-3 py-2">Result</th>
+                    <th className="w-[10rem] px-3 py-2">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.map((row) => row.kind === "mission" ? (
+                    <PastMissionSummaryRow
+                      key={`past-mission:${row.mission.missionId}`}
+                      mission={row.mission}
+                      now={now}
+                      onOpenReport={onOpenReport}
+                      planetLookup={planetLookup}
+                    />
+                  ) : (
+                    <PastBattleReportRow
+                      key={`past-report:${row.report.missionId}`}
+                      onOpenBattleReport={onOpenBattleReport}
+                      report={row.report}
+                    />
+                  ))}
+                </tbody>
+              </table>
             </div>
           ))}
           {hasPages ? (
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
-              <span className="text-xs tabular-nums text-slate-400" data-report-page-label>Page 1 of {pages.length}</span>
+              <span className="text-xs tabular-nums text-slate-400" data-past-page-label>Page 1 of {pages.length}</span>
               <div className="flex flex-wrap gap-2">
                 <button
                   className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 disabled:hover:bg-white/5"
-                  data-report-page-prev
+                  data-past-page-prev
                   disabled
-                  onClick={(event) => showResolvedReportPage(event, "previous")}
+                  onClick={(event) => showPastMissionPage(event, "previous")}
                   type="button"
                 >
                   <ChevronLeft aria-hidden="true" size={13} />
@@ -635,9 +643,9 @@ function ResolvedBattleReportSection({
                   <button
                     aria-current={pageIndex === 0 ? "page" : undefined}
                     className="h-8 min-w-8 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 aria-[current=page]:border-cyan-300/35 aria-[current=page]:bg-cyan-300/10 aria-[current=page]:text-cyan-100"
-                    data-report-page-button={pageIndex}
-                    key={`resolved-report-page-button:${pageIndex}`}
-                    onClick={(event) => showResolvedReportPage(event, pageIndex)}
+                    data-past-page-button={pageIndex}
+                    key={`past-mission-page-button:${pageIndex}`}
+                    onClick={(event) => showPastMissionPage(event, pageIndex)}
                     type="button"
                   >
                     {pageIndex + 1}
@@ -645,8 +653,8 @@ function ResolvedBattleReportSection({
                 ))}
                 <button
                   className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 disabled:hover:bg-white/5"
-                  data-report-page-next
-                  onClick={(event) => showResolvedReportPage(event, "next")}
+                  data-past-page-next
+                  onClick={(event) => showPastMissionPage(event, "next")}
                   type="button"
                 >
                   Next
@@ -661,48 +669,135 @@ function ResolvedBattleReportSection({
   );
 }
 
-function reportPages(reports: BattleReport[], pageSize: number): BattleReport[][] {
-  const pages: BattleReport[][] = [];
-  for (let index = 0; index < reports.length; index += pageSize) {
-    pages.push(reports.slice(index, index + pageSize));
+function PastMissionSummaryRow({
+  mission,
+  now,
+  onOpenReport,
+  planetLookup,
+}: {
+  mission: FleetMissionSummary;
+  now: number;
+  onOpenReport: (missionId: string) => void;
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+}) {
+  const completedAt = missionCompletionTimestamp(mission);
+  const report = missionReport(mission, now, planetLookup);
+  return (
+    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
+      <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">
+        {completedAt === undefined ? "Unknown" : formatMissionTime(String(Math.floor(completedAt / 1_000)), now)}
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
+          {missionTypeLabel(mission.missionType)}
+        </span>
+        <p className="mt-2 font-semibold text-white">Mission #{mission.missionId}</p>
+        <p className="mt-1 text-slate-500">{missionStatusLabel(mission.status)}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <p className="font-medium text-slate-100">{report.routeSummary}</p>
+        <p className="mt-1 text-slate-500">Commander {report.attacker}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <p className="font-medium text-slate-100">{report.outcome}</p>
+        <p className="mt-1 text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
+        {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <button
+          className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+          onClick={() => onOpenReport(mission.missionId)}
+          type="button"
+        >
+          Open details
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function PastBattleReportRow({
+  onOpenBattleReport,
+  report,
+}: {
+  onOpenBattleReport: (missionId: string) => void;
+  report: BattleReport;
+}) {
+  return (
+    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
+      <td className="border-t border-white/10 px-3 py-3 tabular-nums">Block {report.blockNumber || "unknown"}</td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <span className="inline-flex rounded border border-red-300/25 bg-red-400/10 px-2 py-1 text-[11px] font-semibold text-red-100">
+          Battle report
+        </span>
+        <p className="mt-2 font-semibold text-white">Mission #{report.missionId}</p>
+        <p className="mt-1 text-slate-500">{battleOutcomeLabel(report.outcome)}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <p className="font-medium text-slate-100">
+          Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
+        </p>
+        <p className="mt-1 text-slate-500">Rounds {report.rounds}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <p className="font-medium text-slate-100">Loot {formatCargo(report.loot)}</p>
+        <p className="mt-1 text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <button
+          className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+          onClick={() => onOpenBattleReport(report.missionId)}
+          type="button"
+        >
+          Open report
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function paginatedRows<T>(rows: T[], pageSize: number): T[][] {
+  const pages: T[][] = [];
+  for (let index = 0; index < rows.length; index += pageSize) {
+    pages.push(rows.slice(index, index + pageSize));
   }
   return pages;
 }
 
-function showResolvedReportPage(event: Event, target: number | "next" | "previous") {
+function showPastMissionPage(event: Event, target: number | "next" | "previous") {
   const button = event.currentTarget;
   if (!(button instanceof HTMLElement)) return;
 
-  const section = button.closest<HTMLElement>("[data-report-page-current]");
+  const section = button.closest<HTMLElement>("[data-past-page-current]");
   if (!section) return;
 
-  const pages = Array.from(section.querySelectorAll<HTMLElement>("[data-report-page]"));
+  const pages = Array.from(section.querySelectorAll<HTMLElement>("[data-past-page]"));
   if (pages.length === 0) return;
 
-  const current = Number(section.dataset.reportPageCurrent ?? "0");
+  const current = Number(section.dataset.pastPageCurrent ?? "0");
   const nextPage = target === "next"
     ? current + 1
     : target === "previous"
       ? current - 1
       : target;
   const clamped = Math.max(0, Math.min(pages.length - 1, nextPage));
-  section.dataset.reportPageCurrent = clamped.toString();
+  section.dataset.pastPageCurrent = clamped.toString();
 
   pages.forEach((page, pageIndex) => {
     page.hidden = pageIndex !== clamped;
   });
 
-  const label = section.querySelector<HTMLElement>("[data-report-page-label]");
+  const label = section.querySelector<HTMLElement>("[data-past-page-label]");
   if (label) label.textContent = `Page ${clamped + 1} of ${pages.length}`;
 
-  const previous = section.querySelector<HTMLButtonElement>("[data-report-page-prev]");
+  const previous = section.querySelector<HTMLButtonElement>("[data-past-page-prev]");
   if (previous) previous.disabled = clamped === 0;
 
-  const next = section.querySelector<HTMLButtonElement>("[data-report-page-next]");
+  const next = section.querySelector<HTMLButtonElement>("[data-past-page-next]");
   if (next) next.disabled = clamped === pages.length - 1;
 
-  section.querySelectorAll<HTMLButtonElement>("[data-report-page-button]").forEach((pageButton) => {
-    const pageIndex = Number(pageButton.dataset.reportPageButton ?? "0");
+  section.querySelectorAll<HTMLButtonElement>("[data-past-page-button]").forEach((pageButton) => {
+    const pageIndex = Number(pageButton.dataset.pastPageButton ?? "0");
     if (pageIndex === clamped) {
       pageButton.setAttribute("aria-current", "page");
     } else {
@@ -738,15 +833,6 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MissionDatum({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</dt>
-      <dd className="mt-0.5 whitespace-pre-line break-words text-slate-300">{value}</dd>
-    </div>
-  );
-}
-
 export function formatMissionTime(value: string, now: number): string {
   const timestamp = timestampToMs(value);
   if (timestamp === undefined) return "Unknown";
@@ -768,6 +854,108 @@ function isMissionDue(mission: FleetMissionSummary, now: number): boolean {
 
 function isMissionReturned(mission: FleetMissionSummary, now: number): boolean {
   return Number(mission.returnAt) * 1_000 <= now;
+}
+
+function chronologicalActiveMissionRows({
+  incoming,
+  joinableAttacks,
+  outgoing,
+  returning,
+}: {
+  incoming: FleetMissionSummary[];
+  joinableAttacks: FleetMissionSummary[];
+  outgoing: FleetMissionSummary[];
+  returning: FleetMissionSummary[];
+}): ActiveMissionRow[] {
+  const rows: ActiveMissionRow[] = [
+    ...incoming.map((mission): ActiveMissionRow => ({ context: "incoming", direction: "Hostile inbound", mission })),
+    ...outgoing.map((mission): ActiveMissionRow => ({ context: "outgoing", direction: "Outbound", mission })),
+    ...returning.map((mission): ActiveMissionRow => ({ context: "returning", direction: "Returning", mission })),
+    ...joinableAttacks.map((mission): ActiveMissionRow => ({ context: "joinable", direction: "Joinable attack", mission })),
+  ];
+  return uniqueMissionRows(rows).sort((left, right) => {
+    const leftTime = nextMissionEventTimestamp(left.mission) ?? Number.MAX_SAFE_INTEGER;
+    const rightTime = nextMissionEventTimestamp(right.mission) ?? Number.MAX_SAFE_INTEGER;
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return Number(left.mission.missionId) - Number(right.mission.missionId);
+  });
+}
+
+function chronologicalPastMissionRows(completedMissions: FleetMissionSummary[], battleReports: BattleReport[]): PastMissionRow[] {
+  const completedMissionIds = new Set(completedMissions.map((mission) => mission.missionId));
+  return [
+    ...completedMissions.map((mission): PastMissionRow => ({ kind: "mission", mission })),
+    ...battleReports
+      .filter((report) => !completedMissionIds.has(report.missionId))
+      .map((report): PastMissionRow => ({ kind: "battleReport", report })),
+  ].sort((left, right) => pastRowTimestamp(right) - pastRowTimestamp(left));
+}
+
+function uniqueMissionRows(rows: ActiveMissionRow[]): ActiveMissionRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (seen.has(row.mission.missionId)) return false;
+    seen.add(row.mission.missionId);
+    return true;
+  });
+}
+
+function missionTiming(mission: FleetMissionSummary, now: number): { clock: string; countdown: string; due: boolean } {
+  const timestamp = nextMissionEventTimestamp(mission);
+  if (timestamp === undefined) return { clock: "Unknown", countdown: "Unknown", due: false };
+  return {
+    clock: formatUserTimestamp(timestamp),
+    countdown: formatDurationUntil(timestamp, now),
+    due: timestamp <= now,
+  };
+}
+
+function nextMissionEventTimestamp(mission: FleetMissionSummary): number | undefined {
+  if (mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned") {
+    return timestampToMs(mission.returnAt);
+  }
+  return timestampToMs(mission.arrivalAt);
+}
+
+function missionCompletionTimestamp(mission: FleetMissionSummary): number | undefined {
+  if (mission.status === "Returned") return timestampToMs(mission.returnAt);
+  return timestampToMs(mission.arrivalAt);
+}
+
+function pastRowTimestamp(row: PastMissionRow): number {
+  if (row.kind === "battleReport") return Number(row.report.blockNumber || "0");
+  const completedAt = missionCompletionTimestamp(row.mission);
+  if (completedAt !== undefined) return completedAt;
+  return Number(row.mission.blockNumber || "0");
+}
+
+function missionProgressPercent(mission: FleetMissionSummary, now: number): number {
+  const arrivalAt = timestampToMs(mission.arrivalAt);
+  const returnAt = timestampToMs(mission.returnAt);
+  if (arrivalAt === undefined || returnAt === undefined) return 0;
+
+  const returning = mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned";
+  const duration = Math.abs(returnAt - arrivalAt);
+  const start = returning ? arrivalAt : arrivalAt - duration;
+  const end = returning ? returnAt : arrivalAt;
+  if (end <= start) return 100;
+
+  return clamp(((now - start) / (end - start)) * 100, 0, 100);
+}
+
+function missionTypeTone(missionType: string): string {
+  if (["Attack", "AcsAttack", "MissileAttack"].includes(missionType)) {
+    return "border-red-300/25 bg-red-400/10 text-red-100";
+  }
+  if (missionType === "Transport") return "border-cyan-300/25 bg-cyan-300/10 text-cyan-100";
+  if (missionType === "Deploy") return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
+  if (missionType === "Harvest") return "border-amber-300/25 bg-amber-300/10 text-amber-100";
+  if (["AcsDefend", "Intercept"].includes(missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
+  return "border-slate-300/20 bg-slate-300/10 text-slate-100";
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function walletReason(canTransact: boolean): string | undefined {

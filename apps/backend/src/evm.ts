@@ -279,6 +279,7 @@ export type FleetMissionVisibility = {
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
   joinableAttacks: FleetMissionSummary[];
+  completedMissions: FleetMissionSummary[];
   battleReports: BattleReport[];
 };
 
@@ -1189,7 +1190,7 @@ export class VeydriftGameReader implements ChainReader {
   async getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
     const planets = await this.getWalletPlanets(wallet);
     if (!planets.homePlanetId) {
-      return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [], joinableAttacks: [], battleReports: [] };
+      return { wallet, homePlanetId: null, incoming: [], outgoing: [], returning: [], joinableAttacks: [], completedMissions: [], battleReports: [] };
     }
 
     const walletLower = wallet.toLowerCase();
@@ -1221,6 +1222,9 @@ export class VeydriftGameReader implements ChainReader {
           && mission.missionType === "Attack"
           && mission.status === "Outbound"
       ),
+      completedMissions: summaries
+        .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
+        .sort(compareFleetMissionsNewestFirst),
       battleReports: battleReports.filter((report) =>
         report.attacker.toLowerCase() === walletLower || ownedPlanetIds.has(report.targetPlanetId)
       )
@@ -3263,6 +3267,10 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
       mission.returnAt = decodeUintWord(wordAt(words, 2)).toString();
       mission.cargo = decodeResources(words.slice(3, 6));
+    } else if (topic === fleetMissionReturnedTopic) {
+      mission.owner = decodeAddressWord(topicAt(log.topics, 2));
+      mission.status = "Returned";
+      mission.originPlanetId = decodeUint(topicAt(log.topics, 3)).toString();
     }
 
     missions.set(missionId, mission);
@@ -3385,6 +3393,28 @@ function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mis
       && mission.blockNumber
       && mission.needsResolution !== undefined
   );
+}
+
+function isVisibleCompletedMission(
+  mission: FleetMissionSummary,
+  walletLower: string,
+  ownedPlanetIds: ReadonlySet<string>
+): boolean {
+  if (mission.status !== "Resolved" && mission.status !== "Returned") return false;
+  return mission.owner.toLowerCase() === walletLower || ownedPlanetIds.has(mission.targetPlanetId);
+}
+
+function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: FleetMissionSummary): number {
+  const leftTime = Number(left.status === "Returned" ? left.returnAt : left.arrivalAt);
+  const rightTime = Number(right.status === "Returned" ? right.returnAt : right.arrivalAt);
+  if (leftTime !== rightTime) return rightTime - leftTime;
+  const leftBlock = BigInt(left.blockNumber);
+  const rightBlock = BigInt(right.blockNumber);
+  if (leftBlock !== rightBlock) return rightBlock > leftBlock ? 1 : -1;
+  const leftMission = BigInt(left.missionId);
+  const rightMission = BigInt(right.missionId);
+  if (leftMission === rightMission) return 0;
+  return rightMission > leftMission ? 1 : -1;
 }
 
 function missionTypeLabel(value: bigint): string {

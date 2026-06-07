@@ -1554,6 +1554,7 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
     outgoing: [],
     returning: [],
     joinableAttacks: [],
+    completedMissions: [],
     battleReports: [],
   };
 }
@@ -4593,6 +4594,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
+          onJoinAttack={handleJoinAttack}
           onOpenBattleReport={handleOpenBattleReport}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
@@ -4601,6 +4603,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onResolve={handleResolveMission}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}
+          fleetSlots={shipyardState?.fleetSlots}
           walletPlanets={walletPlanets}
         />
       );
