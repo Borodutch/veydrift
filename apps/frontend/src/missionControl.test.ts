@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
+import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage } from "./components/MissionControlPage";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
-import { fetchBattleReports, type BattleReport, type FleetMissionSummary } from "./walletFlow";
+import { fetchBattleReports, fetchMission, type BattleReport, type FleetMissionSummary } from "./walletFlow";
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
@@ -10,6 +11,8 @@ describe("Mission Control battle reports", () => {
     expect(buildInspectHash({ kind: "page", page: "battle-reports" })).toBe("#/battle-reports");
     expect(parseInspectRoute("#/battle-report/42")).toEqual({ kind: "battle-report", missionId: "42" });
     expect(buildInspectHash({ kind: "battle-report", missionId: "42" })).toBe("#/battle-report/42");
+    expect(parseInspectRoute("#/mission/42")).toEqual({ kind: "mission", missionId: "42" });
+    expect(buildInspectHash({ kind: "mission", missionId: "42" })).toBe("#/mission/42");
   });
 
   test("fetches public battle report lists without wallet scope", async () => {
@@ -29,6 +32,29 @@ describe("Mission Control battle reports", () => {
         { missionId: "42", outcome: "AttackerWin" },
       ]);
       expect(requestedUrls).toEqual(["https://api.example.test/battle-reports"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches a single mission without wallet scope", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({ mission: mission("42"), battleReport: battleReport("42") }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(fetchMission("https://api.example.test/", "42")).resolves.toMatchObject({
+        mission: { missionId: "42" },
+        battleReport: { missionId: "42" },
+      });
+      expect(requestedUrls).toEqual(["https://api.example.test/mission/42"]);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -79,6 +105,41 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Contract-indexed");
     expect(text).not.toContain("ACS");
   });
+
+  test("renders shareable mission detail stages, actions, and OGame-style report structure", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      canTransact: true,
+      detail: {
+        mission: {
+          ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          needsResolution: true,
+        },
+        battleReport: battleReport("42"),
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCounterplay: () => undefined,
+      onOpenBattleReport: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      shareUrl: "https://test.veydrift.com/#/mission/42",
+    })).join(" ");
+
+    expect(text).toContain("Mission #42");
+    expect(text).toContain("Needs resolution");
+    expect(text).toContain("Resolve battle");
+    expect(text).toContain("OGame-Style Battle Report");
+    expect(text).toContain("Attacker vs Defender");
+    expect(text).toContain("Combat Classes");
+    expect(text).toContain("Ships And Defences");
+    expect(text).toContain("Debris to recyclers");
+  });
 });
 
 function collectText(node: unknown): string[] {
@@ -98,12 +159,12 @@ function collectText(node: unknown): string[] {
 
 function mission(
   missionId: string,
-  missionType: string,
-  status: string,
-  owner: string,
-  originPlanetId: string,
-  targetPlanetId: string,
-  arrivalMs: number,
+  missionType = "Attack",
+  status = "Outbound",
+  owner = "0x1111111111111111111111111111111111111111",
+  originPlanetId = "7",
+  targetPlanetId = "9",
+  arrivalMs = Date.parse("2026-06-05T12:01:00.000Z"),
 ): FleetMissionSummary {
   return {
     missionId,

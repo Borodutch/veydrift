@@ -334,18 +334,55 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/mission\/[^/]+$/)) {
+      const missionId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        parseMissionId(missionId);
+        if (!indexer) return indexedReadNotReadyResponse("mission", indexer);
+        const snapshot = indexer.snapshot();
+        const mission = indexer.fleetMission(missionId);
+        if (!mission) {
+          return Response.json(
+            {
+              error: "mission_not_found",
+              detail: "That mission is not available in the indexed mission read model.",
+              source: indexedSource
+            },
+            { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
+          );
+        }
+        return Response.json(
+          {
+            mission,
+            battleReport: indexer.battleReport(missionId),
+            source: indexedSource
+          },
+          { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/battle-report\/[^/]+$/)) {
       const missionId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         parseMissionId(missionId);
         if (!indexer) return indexedReadNotReadyResponse("battle report", indexer);
+        const snapshot = indexer.snapshot();
+        const report = indexer.battleReport(missionId);
+        if (report) {
+          return Response.json(report, {
+            headers: indexedStateHeaders(indexedStateLabel(snapshot))
+          });
+        }
         return Response.json(
           {
             error: "battle_report_not_indexed",
             detail: "Battle reports are not available until the indexed battle report read model catches up.",
             source: indexedSource
           },
-          { headers: corsHeaders, status: 404 }
+          { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
         );
       } catch (error) {
         return errorResponse(error, 400);
@@ -356,7 +393,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         if (!indexer) return indexedReadNotReadyResponse("battle reports", indexer);
         const snapshot = indexer.snapshot();
-        return Response.json([], {
+        return Response.json(indexer.battleReports(), {
           headers: indexedStateHeaders(indexedStateLabel(snapshot))
         });
       } catch (error) {

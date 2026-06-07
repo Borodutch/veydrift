@@ -1,0 +1,469 @@
+import { ArrowLeft, Copy, ExternalLink, RefreshCw, Swords } from "lucide-preact";
+
+import { formatDurationUntil } from "../durationFormat";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import type { BattleReport, FleetMissionSummary, MissionDetailResponse } from "../walletFlow";
+import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
+import { PageHeader, RefreshButton } from "./PageHeader";
+
+type MissionActionContext = "due" | "incoming" | "outgoing" | "returning";
+
+interface MissionDetailPageProps {
+  account?: string | undefined;
+  canTransact: boolean;
+  detail?: MissionDetailResponse | undefined;
+  error?: string | undefined;
+  loading: boolean;
+  missionId: string | null;
+  now: number;
+  onBack: () => void;
+  onCompleteReturn: (missionId: string) => void;
+  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onOpenBattleReport: (missionId: string) => void;
+  onRecall: (missionId: string) => void;
+  onResolve: (missionId: string) => void;
+  onRetry: () => void;
+  shareUrl: string;
+}
+
+export function MissionDetailPage({
+  account,
+  canTransact,
+  detail,
+  error,
+  loading,
+  missionId,
+  now,
+  onBack,
+  onCompleteReturn,
+  onCounterplay,
+  onOpenBattleReport,
+  onRecall,
+  onResolve,
+  onRetry,
+  shareUrl,
+}: MissionDetailPageProps) {
+  const mission = detail?.mission;
+  const report = detail?.battleReport ?? undefined;
+  const copyShareUrl = () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    void navigator.clipboard.writeText(shareUrl);
+  };
+
+  return (
+    <section className="grid gap-4">
+      <PageHeader
+        actions={(
+          <>
+            <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
+              <ArrowLeft aria-hidden="true" size={15} />
+              Mission Control
+            </button>
+            <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
+            <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20" onClick={copyShareUrl} type="button">
+              <Copy aria-hidden="true" size={15} />
+              Copy link
+            </button>
+          </>
+        )}
+        eyebrow="Mission Detail"
+        subtitle="Shareable mission state, current stage, available orders, and combat report when the indexed battle log exposes one."
+        title={missionId ? `Mission #${missionId}` : "Mission"}
+      />
+
+      {loading ? (
+        <Notice>Loading mission...</Notice>
+      ) : error ? (
+        <Notice tone="danger">{error}</Notice>
+      ) : mission ? (
+        <>
+          <MissionStageSummary account={account} mission={mission} now={now} />
+          <MissionActions
+            account={account}
+            canTransact={canTransact}
+            mission={mission}
+            now={now}
+            onCompleteReturn={onCompleteReturn}
+            onCounterplay={onCounterplay}
+            onRecall={onRecall}
+            onResolve={onResolve}
+          />
+          <MissionFacts mission={mission} now={now} shareUrl={shareUrl} />
+          <MissionBattleReport
+            mission={mission}
+            onOpenBattleReport={onOpenBattleReport}
+            report={report}
+          />
+        </>
+      ) : (
+        <Notice>No mission selected.</Notice>
+      )}
+    </section>
+  );
+}
+
+function MissionStageSummary({ account, mission, now }: { account?: string | undefined; mission: FleetMissionSummary; now: number }) {
+  const stage = missionStage(mission, now);
+  const relationship = missionRelationship(mission, account);
+  return (
+    <section className={`rounded-lg border p-4 ${stage.tone === "danger" ? "border-red-300/25 bg-red-400/10" : stage.tone === "warning" ? "border-amber-300/25 bg-amber-300/10" : "border-cyan-300/20 bg-cyan-300/10"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">{relationship}</p>
+          <h3 className="mt-1 text-xl font-semibold text-white">{stage.label}</h3>
+          <p className="mt-1 text-sm leading-6 text-slate-300">{stage.detail}</p>
+        </div>
+        <span className="rounded border border-white/10 bg-black/20 px-3 py-1.5 text-sm font-medium text-slate-200">
+          {missionTypeLabel(mission.missionType)}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function MissionActions({
+  account,
+  canTransact,
+  mission,
+  now,
+  onCompleteReturn,
+  onCounterplay,
+  onRecall,
+  onResolve,
+}: {
+  account?: string | undefined;
+  canTransact: boolean;
+  mission: FleetMissionSummary;
+  now: number;
+  onCompleteReturn: (missionId: string) => void;
+  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onRecall: (missionId: string) => void;
+  onResolve: (missionId: string) => void;
+}) {
+  const context = missionActionContext(mission, now, account);
+  const actions = missionLifecycleActions({ canTransact, context, mission, now })
+    .filter((action) => action.kind !== "recall" || Boolean(mission.recallCost));
+
+  if (actions.length === 0) {
+    return (
+      <Notice>
+        No wallet action applies at this mission stage.
+      </Notice>
+    );
+  }
+
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+      <h3 className="mb-3 text-sm font-semibold text-white">Available Orders</h3>
+      <div className="flex flex-wrap gap-2">
+        {actions.map((action) => action.kind === "counterplay" ? (
+          <span className="contents" key={action.kind}>
+            <ActionButton action={{ ...action, label: "Group defend" }} onClick={() => onCounterplay(mission.missionId, "acsDefend")} />
+            <ActionButton action={{ ...action, label: "Intercept" }} onClick={() => onCounterplay(mission.missionId, "intercept")} />
+          </span>
+        ) : (
+          <ActionButton
+            action={action}
+            key={action.kind}
+            onClick={() => {
+              if (action.kind === "resolve") onResolve(mission.missionId);
+              if (action.kind === "recall") onRecall(mission.missionId);
+              if (action.kind === "completeReturn") onCompleteReturn(mission.missionId);
+            }}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MissionFacts({ mission, now, shareUrl }: { mission: FleetMissionSummary; now: number; shareUrl: string }) {
+  const noFleetReturned = isNoFleetReturned(mission);
+  return (
+    <section className="grid gap-3 lg:grid-cols-2">
+      <Panel title="Route">
+        <Datum label="Origin" value={planetLabel(mission.originPlanet, mission.originPlanetId)} />
+        <Datum label="Target" value={planetLabel(mission.targetPlanet, mission.targetPlanetId)} />
+        <Datum label="Commander" value={shortHash(mission.owner)} />
+        <Datum label="Mission id" value={mission.missionId} />
+      </Panel>
+      <Panel title="Timing">
+        <Datum label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
+        {noFleetReturned ? (
+          <Datum label="Return" value="Completed, no fleet returned" />
+        ) : (
+          <Datum label="Return" value={formatMissionTime(mission.returnAt, now)} />
+        )}
+        <Datum label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
+        <Datum label="Share URL" value={shareUrl || "Available after navigation"} />
+      </Panel>
+      <Panel title="Fleet And Cargo">
+        <Datum label="Ships" value={formatShips(mission.ships)} />
+        <Datum label="Cargo" value={formatResources(mission.cargo)} />
+        <Datum label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
+        <Datum label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+      </Panel>
+      <Panel title="Chain Proof">
+        <Datum label="Transaction" value={mission.transactionHash || "Pending chain proof"} />
+        <Datum label="Block" value={mission.blockNumber || "Pending chain proof"} />
+        <Datum label="Attack group" value={mission.attackGroupId ?? "None"} />
+        <Datum label="Joined missions" value={mission.joinedAttackMissionIds.length > 0 ? mission.joinedAttackMissionIds.join(", ") : "None"} />
+      </Panel>
+    </section>
+  );
+}
+
+function MissionBattleReport({
+  mission,
+  onOpenBattleReport,
+  report,
+}: {
+  mission: FleetMissionSummary;
+  onOpenBattleReport: (missionId: string) => void;
+  report?: BattleReport | undefined;
+}) {
+  if (!isCombatMission(mission)) {
+    return (
+      <Notice>
+        This is a {missionTypeLabel(mission.missionType).toLowerCase()} mission, so there is no combat battle report section.
+      </Notice>
+    );
+  }
+
+  if (!report) {
+    return (
+      <Notice tone={mission.needsResolution ? "warning" : "neutral"}>
+        {mission.needsResolution
+          ? "Combat is due or resolving; the indexed battle report is not available yet."
+          : "No indexed battle report is available for this combat mission yet."}
+      </Notice>
+    );
+  }
+
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
+            <Swords aria-hidden="true" size={17} />
+          </span>
+          <div>
+            <h3 className="text-sm font-semibold text-white">OGame-Style Battle Report</h3>
+            <p className="text-xs text-slate-500">Layout mirrors the report structure; unavailable indexed fields are shown explicitly.</p>
+          </div>
+        </div>
+        <button
+          className="inline-flex h-8 items-center justify-center gap-2 rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+          onClick={() => onOpenBattleReport(report.missionId)}
+          type="button"
+        >
+          <ExternalLink aria-hidden="true" size={13} />
+          Public report
+        </button>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Panel title="Attacker vs Defender">
+          <Datum label="Attacker" value={shortHash(report.attacker)} />
+          <Datum label="Defender" value={`Planet #${report.targetPlanetId}`} />
+          <Datum label="Outcome" value={battleOutcomeLabel(report.outcome)} />
+          <Datum label="Rounds" value={report.rounds.toString()} />
+        </Panel>
+        <Panel title="Combat Classes">
+          <Datum label="Attacker class" value="Not indexed yet" />
+          <Datum label="Defender class" value="Not indexed yet" />
+          <Datum label="Weapons / shields / armour" value="Not indexed yet" />
+          <Datum label="Honour points" value="Not indexed yet" />
+        </Panel>
+        <Panel title="Ships And Defences">
+          <Datum label="Attacker fleet" value={formatShips(mission.ships)} />
+          <Datum label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
+          <Datum label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
+          <Datum label="Defences" value="Not indexed yet" />
+        </Panel>
+        <Panel title="Loot And Debris">
+          <Datum label="Loot" value={formatResources(report.loot)} />
+          <Datum label="Attacker losses" value={formatResources(report.attackerLosses)} />
+          <Datum label="Defender losses" value={formatResources(report.defenderLosses)} />
+          <Datum label="Debris to recyclers" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
+        </Panel>
+      </div>
+
+      <div className="mt-4 grid gap-2">
+        {report.roundReports.length === 0 ? (
+          <Notice>No round-by-round snapshots were indexed for this battle.</Notice>
+        ) : report.roundReports.map((round) => (
+          <article className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
+              <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
+            </div>
+            <Datum label="Attacker shots / shields" value={`${formatResource(round.attackerUnits)} units fired; ${formatResources(round.attackerLosses)} lost`} />
+            <Datum label="Defender shots / shields" value={`${formatResource(round.defenderUnits)} units fired; ${formatResources(round.defenderLosses)} lost`} />
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onClick: () => void }) {
+  return (
+    <button
+      className={`inline-flex h-9 items-center justify-center gap-2 rounded border px-3 text-sm font-medium transition ${
+        action.enabled
+          ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+          : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
+      }`}
+      disabled={!action.enabled}
+      onClick={onClick}
+      title={action.enabled ? action.label : action.reason}
+      type="button"
+    >
+      <RefreshCw aria-hidden="true" size={14} />
+      {action.label}
+    </button>
+  );
+}
+
+function Panel({ children, title }: { children: preact.ComponentChildren; title: string }) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+      <h3 className="mb-3 text-sm font-semibold text-white">{title}</h3>
+      <div className="grid gap-3">{children}</div>
+    </section>
+  );
+}
+
+function Datum({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</dt>
+      <dd className="mt-0.5 break-words text-sm text-slate-300">{value}</dd>
+    </div>
+  );
+}
+
+function Notice({ children, tone = "neutral" }: { children: preact.ComponentChildren; tone?: "danger" | "neutral" | "warning" }) {
+  const className = tone === "danger"
+    ? "border-red-300/25 bg-red-400/10 text-red-100"
+    : tone === "warning"
+      ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
+      : "border-white/10 bg-[#101624] text-slate-400";
+  return <div className={`rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
+}
+
+function missionStage(mission: FleetMissionSummary, now: number): { detail: string; label: string; tone: "danger" | "neutral" | "warning" } {
+  if (isNoFleetReturned(mission)) {
+    return { detail: "The battle is complete and no returning fleet leg exists.", label: "Completed, no fleet returned", tone: "neutral" };
+  }
+  if (mission.status === "Outbound" && isMissionDue(mission, now)) {
+    return {
+      detail: mission.needsResolution ? "The mission has reached the target and needs resolution." : "The mission has reached its target; the backend may still be indexing final state.",
+      label: mission.needsResolution ? "Needs resolution" : "Arrived",
+      tone: "danger",
+    };
+  }
+  if (mission.status === "Outbound") {
+    return { detail: `Arrives ${formatMissionTime(mission.arrivalAt, now)}.`, label: "Outbound", tone: "neutral" };
+  }
+  if (mission.status === "Returning" || mission.status === "Recalled") {
+    return { detail: `Return leg lands ${formatMissionTime(mission.returnAt, now)}.`, label: mission.status, tone: "warning" };
+  }
+  return { detail: "The mission has no active outbound or return leg.", label: mission.status || "Completed", tone: "neutral" };
+}
+
+function missionRelationship(mission: FleetMissionSummary, account?: string | undefined): string {
+  if (!account) return "Public mission";
+  return mission.owner.toLowerCase() === account.toLowerCase() ? "Your mission" : "Visible mission";
+}
+
+function missionActionContext(mission: FleetMissionSummary, now: number, account?: string | undefined): MissionActionContext {
+  if (mission.status === "Returning" || mission.status === "Recalled") return "returning";
+  if (mission.status === "Outbound" && isMissionDue(mission, now)) return "due";
+  if (account && mission.owner.toLowerCase() === account.toLowerCase()) return "outgoing";
+  return "incoming";
+}
+
+function isMissionDue(mission: FleetMissionSummary, now: number): boolean {
+  const arrival = timestampToMs(mission.arrivalAt);
+  return arrival != null && arrival <= now;
+}
+
+function isNoFleetReturned(mission: FleetMissionSummary): boolean {
+  return !["Outbound", "Returning", "Recalled"].includes(mission.status) && Object.values(mission.ships).every((value) => Number(value) <= 0);
+}
+
+function isCombatMission(mission: FleetMissionSummary): boolean {
+  return ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType);
+}
+
+function formatMissionTime(value: string, now: number): string {
+  const ms = timestampToMs(value);
+  if (ms == null || ms <= 0) return "Not scheduled";
+  const absolute = formatUserTimestamp(value);
+  const relative = formatDurationUntil(ms, now);
+  return `${absolute} (${relative})`;
+}
+
+function planetLabel(planet: FleetMissionSummary["originPlanet"], fallbackId: string): string {
+  if (!planet) return `Planet #${fallbackId}`;
+  const name = planet.name ? `${planet.name} ` : "";
+  return `${name}[${planet.coordinates}]`;
+}
+
+function missionTypeLabel(value: string): string {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+function battleOutcomeLabel(outcome: BattleReport["outcome"]): string {
+  if (outcome === "AttackerWin") return "Attacker victory";
+  if (outcome === "DefenderWin") return "Defender victory";
+  return "Draw";
+}
+
+function formatResources(resources: { metal: string; crystal: string; deuterium?: string }): string {
+  const deuterium = resources.deuterium ? ` / ${formatResource(resources.deuterium)} deuterium` : "";
+  return `${formatResource(resources.metal)} metal / ${formatResource(resources.crystal)} crystal${deuterium}`;
+}
+
+function formatResource(value: string): string {
+  return Number(value).toLocaleString();
+}
+
+const shipLabels: Record<string, string> = {
+  battlecruiser: "Battlecruiser",
+  battleship: "Battleship",
+  bomber: "Bomber",
+  colonyShip: "Colony Ship",
+  cruiser: "Cruiser",
+  deathstar: "Deathstar",
+  destroyer: "Destroyer",
+  espionageProbe: "Espionage Probe",
+  heavyFighter: "Heavy Fighter",
+  largeCargo: "Large Cargo",
+  lightFighter: "Light Fighter",
+  recycler: "Recycler",
+  smallCargo: "Small Cargo",
+  solarSatellite: "Solar Satellite",
+};
+
+const civilShipKeys = new Set(["smallCargo", "largeCargo", "colonyShip", "recycler", "espionageProbe", "solarSatellite"]);
+
+function formatShips(ships: Record<string, string>): string {
+  const entries = Object.entries(ships)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([key, count]) => `${shipLabels[key] ?? missionTypeLabel(key)} x${formatResource(count)}`);
+  return entries.length > 0 ? entries.join(", ") : "None";
+}
+
+function formatShipsByKind(ships: Record<string, string>, kind: "civil" | "combat"): string {
+  const filtered = Object.fromEntries(
+    Object.entries(ships).filter(([key]) => kind === "civil" ? civilShipKeys.has(key) : !civilShipKeys.has(key))
+  );
+  return formatShips(filtered);
+}
+
+function shortHash(value: string): string {
+  return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
+}
