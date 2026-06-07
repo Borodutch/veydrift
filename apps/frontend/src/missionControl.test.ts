@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage } from "./components/MissionControlPage";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
-import { fetchBattleReports, fetchMission, type BattleReport, type FleetMissionSummary } from "./walletFlow";
+import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionSummary } from "./walletFlow";
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
@@ -55,6 +55,44 @@ describe("Mission Control battle reports", () => {
         battleReport: { missionId: "42" },
       });
       expect(requestedUrls).toEqual(["https://api.example.test/mission/42"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches wallet mission archive with server-side pagination", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+    const wallet = "0x1111111111111111111111111111111111111111";
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({
+        wallet,
+        homePlanetId: "7",
+        rows: [{ kind: "battleReport", report: battleReport("42") }],
+        pagination: {
+          page: 2,
+          pageSize: 25,
+          totalEntries: 26,
+          totalPages: 2,
+          hasPreviousPage: true,
+          hasNextPage: false,
+        },
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(fetchFleetMissionArchive("https://api.example.test/", wallet, { page: 2, pageSize: 25 })).resolves.toMatchObject({
+        rows: [{ kind: "battleReport", report: { missionId: "42" } }],
+        pagination: { page: 2, pageSize: 25 },
+      });
+      expect(requestedUrls).toEqual([
+        `https://api.example.test/wallet/${wallet}/missions?status=completed&page=2&pageSize=25`,
+      ]);
     } finally {
       globalThis.fetch = originalFetch;
     }

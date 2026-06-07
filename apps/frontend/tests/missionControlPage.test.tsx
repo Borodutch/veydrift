@@ -118,6 +118,8 @@ describe("MissionControlPage", () => {
     expect(text).toContain("External coordinates unavailable");
     expect(text).toContain("0x3333...3333");
     expect(text).toContain("Report 0xabc...");
+    expect(text).not.toContain("Fleets 3/?");
+    expect(text).not.toContain("Reload");
     expect(text).not.toContain("Fleet Operations");
     expect(text).not.toContain("MISSION CONTROL");
     expect(text).not.toContain("Galaxy");
@@ -338,20 +340,41 @@ describe("MissionControlPage", () => {
         returning: [],
         joinableAttacks: [],
         completedMissions: [],
-        battleReports: Array.from({ length: 7 }, (_, index) => battleReport((index + 1).toString())),
+        battleReports: Array.from({ length: 26 }, (_, index) => battleReport((index + 1).toString())),
       },
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Past missions 7");
+    expect(text).toContain("Past missions 26");
     expect(text).toContain("Mission # 1");
-    expect(text).toContain("Mission # 6");
-    expect(text).not.toContain("Mission # 7");
+    expect(text).toContain("Mission # 25");
+    expect(text).not.toContain("Mission # 26");
     expect(text).toContain("Page 1 of 2");
-    expect(text).toContain("Previous");
-    expect(text).toContain("Next");
+    expect(text).toContain("1-25 of 26");
+    expect(text).toContain("Completed Mission Route / target Result Details");
     expect(text).not.toContain("Open list");
     expect(text).not.toContain("Battle reports");
+  });
+
+  test("keeps completed mission summaries and matching battle reports in the archive", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [mission({ missionId: "77", status: "Returned" })],
+        battleReports: [battleReport("77")],
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Past missions 2");
+    expect(text).toContain("Attack Mission # 77");
+    expect(text).toContain("Battle report");
+    expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
   });
 
   test("renders joinable attacks in the unified active mission list", () => {

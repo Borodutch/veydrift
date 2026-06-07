@@ -16,6 +16,7 @@ import {
   ensureBaseSepoliaNetwork,
   fetchAllianceState,
   fetchDefenseState,
+  fetchFleetMissionArchive,
   fetchFleetMissionVisibility,
   fetchHighscores,
   fetchInfrastructureState,
@@ -2026,6 +2027,8 @@ describe("walletFlow", () => {
       await fetchResearchState("https://api.example.test", account, "7");
       await fetchResearchState("https://api.example.test", account, "7");
       await fetchFleetMissionVisibility("https://api.example.test", account);
+      await fetchFleetMissionVisibility("https://api.example.test", account, { includeArchive: false });
+      await fetchFleetMissionArchive("https://api.example.test", account, { page: 2, pageSize: 25 });
       await fetchShipyardState("https://api.example.test", account, "4");
       await fetchShipyardState("https://api.example.test", account, "4");
       await fetchShipyardState("https://api.example.test", account, "8:37:9");
@@ -2133,6 +2136,22 @@ describe("walletFlow", () => {
       },
       {
         url: `https://api.example.test/wallet/${account}/fleet-visibility`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/fleet-visibility?archive=none`,
+        init: {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: true,
+        },
+      },
+      {
+        url: `https://api.example.test/wallet/${account}/missions?status=completed&page=2&pageSize=25`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },

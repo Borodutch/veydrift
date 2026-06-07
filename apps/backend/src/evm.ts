@@ -283,6 +283,24 @@ export type FleetMissionVisibility = {
   battleReports: BattleReport[];
 };
 
+export type FleetMissionArchiveEntry =
+  | { kind: "mission"; mission: FleetMissionSummary }
+  | { kind: "battleReport"; report: BattleReport };
+
+export type FleetMissionArchiveResponse = {
+  wallet: Address;
+  homePlanetId: string | null;
+  rows: FleetMissionArchiveEntry[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalEntries: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+};
+
 export type FleetMissionSummary = {
   missionId: string;
   status: string;

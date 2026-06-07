@@ -107,6 +107,7 @@ import {
   fetchResearchState,
   fetchRiftState,
   fetchWalletPlanets,
+  fetchFleetMissionArchive,
   fetchFleetMissionVisibility,
   fetchMission,
   fetchBattleReport,
@@ -166,6 +167,7 @@ import {
   type BattleReport,
   type Eip1193Provider,
   type FleetMissionVisibilityResponse,
+  type FleetMissionArchiveResponse,
   type MissionDetailResponse,
   type OnChainResources,
   type PendingWithdrawal,
@@ -1334,7 +1336,7 @@ export async function loadWalletPlanetSyncSnapshot(
     const queuesResultPromise = indexedPlanetsExposeResearchQueue(planetsResult)
       ? Promise.resolve({ status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>)
       : settlePromise(fetchWalletQueues(apiBaseUrl, account, activePlanetId));
-    const visibilityResultPromise = settlePromise(fetchFleetMissionVisibility(apiBaseUrl, account));
+    const visibilityResultPromise = settlePromise(fetchFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }));
     const [queuesResult, visibilityResult] = await Promise.all([queuesResultPromise, visibilityResultPromise]);
     return walletPlanetSyncSnapshotFromResults(
       account,
@@ -1350,7 +1352,7 @@ export async function loadWalletPlanetSyncSnapshot(
   const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
     fetchWalletSettlement(apiBaseUrl, account),
     fetchWalletQueues(apiBaseUrl, account, activePlanetId),
-    fetchFleetMissionVisibility(apiBaseUrl, account),
+    fetchFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }),
   ]);
 
   const settlement = settlementResult.status === "fulfilled"
@@ -1653,6 +1655,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
   const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
+  const [missionArchive, setMissionArchive] = useState<FleetMissionArchiveResponse | undefined>();
+  const [missionArchivePage, setMissionArchivePage] = useState(1);
+  const [missionArchiveLoading, setMissionArchiveLoading] = useState(false);
+  const [missionArchiveError, setMissionArchiveError] = useState<string | undefined>();
   const [publicBattleReports, setPublicBattleReports] = useState<BattleReport[]>([]);
   const [publicBattleReportsLoading, setPublicBattleReportsLoading] = useState(false);
   const [publicBattleReportsError, setPublicBattleReportsError] = useState<string | undefined>();
@@ -2351,6 +2357,39 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setOnChainStatus("error");
     }
   }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, isWalletConnected, selectedPlanetId]);
+
+  const loadMissionArchive = useCallback(async (page: number) => {
+    if (!apiBaseUrl || !account) {
+      setMissionArchive(undefined);
+      setMissionArchiveError(undefined);
+      setMissionArchiveLoading(false);
+      return;
+    }
+
+    setMissionArchiveLoading(true);
+    setMissionArchiveError(undefined);
+    try {
+      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, { page, pageSize: 25 });
+      setMissionArchive(nextArchive);
+      setMissionArchivePage(nextArchive.pagination.page);
+    } catch (error) {
+      console.error(error);
+      setMissionArchiveError(error instanceof Error ? error.message : "Mission archive could not be loaded.");
+    } finally {
+      setMissionArchiveLoading(false);
+    }
+  }, [account, apiBaseUrl]);
+
+  useEffect(() => {
+    if (page === "mission-control") {
+      void loadMissionArchive(1);
+    }
+  }, [account, apiBaseUrl, loadMissionArchive, page]);
+
+  const refreshMissionControl = useCallback(() => {
+    void refreshOnChainState();
+    void loadMissionArchive(missionArchivePage);
+  }, [loadMissionArchive, missionArchivePage, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
     if (!apiBaseUrl || !account) {
@@ -4711,6 +4750,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           canTransact={Boolean(provider && account && gameContract)}
           fleetVisibility={fleetVisibility}
           loading={isWalletConnected && onChainStatus === "loading"}
+          missionArchive={missionArchive}
+          missionArchiveError={missionArchiveError}
+          missionArchiveLoading={missionArchiveLoading}
           now={now}
           onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
@@ -4719,11 +4761,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}
-          onRefresh={() => void refreshOnChainState()}
+          onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
+          onRefresh={refreshMissionControl}
           onResolve={handleResolveMission}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}
-          fleetSlots={shipyardState?.fleetSlots}
           walletPlanets={walletPlanets}
         />
       );

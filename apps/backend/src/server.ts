@@ -12,6 +12,9 @@ import {
   type AttackProtectionStatus,
   type ChainReader,
   type DefenseState,
+  type FleetMissionArchiveEntry,
+  type FleetMissionArchiveResponse,
+  type FleetMissionSummary,
   type FleetMissionVisibility,
   type InfrastructureState,
   type MoonChanceReportEvent,
@@ -326,7 +329,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "fleet visibility", indexedFleetVisibility, {
+        const includeArchive = url.searchParams.get("archive") !== "none";
+        return await indexedWalletStateResponse(url, indexer, "fleet visibility", (wallet, settlement, planet, detail, indexer) =>
+          indexedFleetVisibility(wallet, settlement, planet, detail, indexer, { includeArchive }), {
+          includeSelectedPlanet: false
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) {
+      try {
+        return await indexedWalletStateResponse(url, indexer, "mission archive", (wallet, _settlement, _planet, _detail, indexer) =>
+          indexedMissionArchive(wallet, url, indexer), {
           includeSelectedPlanet: false
         });
       } catch (error) {
@@ -1124,9 +1140,76 @@ function indexedFleetVisibility(
   _settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
   _planet: SettledPlanetEvent | null,
   _unavailableReason: string,
-  indexer: SettlementIndexer
+  indexer: SettlementIndexer,
+  options: { includeArchive?: boolean } = {}
 ): FleetMissionVisibility {
-  return indexer.fleetMissionVisibility(wallet);
+  const visibility = indexer.fleetMissionVisibility(wallet);
+  if (options.includeArchive === false) {
+    return {
+      ...visibility,
+      completedMissions: [],
+      battleReports: []
+    };
+  }
+  return visibility;
+}
+
+function indexedMissionArchive(
+  wallet: `0x${string}`,
+  url: URL,
+  indexer: SettlementIndexer
+): FleetMissionArchiveResponse {
+  const visibility = indexer.fleetMissionVisibility(wallet);
+  const rows = chronologicalMissionArchiveRows(visibility.completedMissions, visibility.battleReports);
+  const requested = missionArchivePagination(url);
+  const totalEntries = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
+  const page = Math.min(requested.page, totalPages);
+  const offset = (page - 1) * requested.pageSize;
+
+  return {
+    wallet,
+    homePlanetId: visibility.homePlanetId,
+    rows: rows.slice(offset, offset + requested.pageSize),
+    pagination: {
+      page,
+      pageSize: requested.pageSize,
+      totalEntries,
+      totalPages,
+      hasPreviousPage: page > 1,
+      hasNextPage: page < totalPages
+    }
+  };
+}
+
+function missionArchivePagination(url: URL): { page: number; pageSize: number } {
+  const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
+  const pageSize = Number.parseInt(url.searchParams.get("pageSize") ?? "25", 10) || 25;
+  return {
+    page: Math.max(page, 1),
+    pageSize: Math.min(Math.max(pageSize, 1), 100)
+  };
+}
+
+function chronologicalMissionArchiveRows(
+  completedMissions: FleetMissionSummary[],
+  battleReports: FleetMissionVisibility["battleReports"]
+): FleetMissionArchiveEntry[] {
+  return [
+    ...completedMissions.map((mission): FleetMissionArchiveEntry => ({ kind: "mission", mission })),
+    ...battleReports.map((report): FleetMissionArchiveEntry => ({ kind: "battleReport", report })),
+  ].sort((left, right) => missionArchiveTimestamp(right) - missionArchiveTimestamp(left));
+}
+
+function missionArchiveTimestamp(row: FleetMissionArchiveEntry): number {
+  if (row.kind === "battleReport") return Number(row.report.blockNumber || "0");
+  const mission = row.mission;
+  const rawTimestamp = mission.status === "Returned" ? mission.returnAt : mission.arrivalAt;
+  const numericTimestamp = Number(rawTimestamp);
+  if (Number.isFinite(numericTimestamp) && numericTimestamp > 0) {
+    return numericTimestamp > 10_000_000_000 ? numericTimestamp : numericTimestamp * 1_000;
+  }
+  return Number(mission.blockNumber || "0");
 }
 
 function indexedInfrastructureState(
