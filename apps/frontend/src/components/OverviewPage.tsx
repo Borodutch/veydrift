@@ -1211,8 +1211,8 @@ export function FleetsSummary({
     <section aria-label="Fleets" className="min-w-0 rounded-lg border border-white/10 bg-white/[0.04] p-3 sm:p-4">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Fleets</h2>
-          <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-200">
+          <h2 className="inline-flex h-5 items-center text-xs font-semibold uppercase leading-none tracking-[0.14em] text-slate-400">Fleets</h2>
+          <span className="inline-flex h-5 shrink-0 items-center rounded-full bg-white/10 px-2 text-[11px] font-semibold leading-none tabular-nums text-slate-200">
             {`${summary.activeCount} active`}
           </span>
         </div>
