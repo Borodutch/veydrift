@@ -92,6 +92,7 @@ import {
   type GalaxyAction,
   type MissionShips,
 } from "./galaxyActions";
+import { resolveInitialGalaxyNav } from "./galaxyNav";
 import {
   type FleetDriveLevels,
   fleetMissionAvailableCargoCapacity,
@@ -1672,6 +1673,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
     return { galaxy: 1, system: 1 };
   });
+  const galaxyNavInitializedRef = useRef(false);
 
   const fallbackHomeCoords = useMemo<Coordinates | undefined>(() => {
     if (!planet?.coordinates) return undefined;
@@ -2459,9 +2461,19 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshResearchState]);
 
+  // Initialize the galaxy view to the home system once, the first time home
+  // coordinates become available. Background data polls refresh
+  // `onChainSettlement`, which churns the derived `homeCoords` reference; we
+  // must not let those refreshes reset the view after the user has navigated
+  // elsewhere (VEY-358).
   useEffect(() => {
-    if (homeCoords) {
-      setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
+    const nextNav = resolveInitialGalaxyNav({
+      homeCoords,
+      alreadyInitialized: galaxyNavInitializedRef.current,
+    });
+    if (nextNav) {
+      galaxyNavInitializedRef.current = true;
+      setGalaxyNav(nextNav);
     }
   }, [homeCoords]);
 
