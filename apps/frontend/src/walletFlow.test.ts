@@ -81,6 +81,10 @@ import {
 const account = "0x1111111111111111111111111111111111111111";
 const contract = "0x2222222222222222222222222222222222222222";
 
+function customErrorData(selector: string, args: Array<number | bigint> = []): string {
+  return selector + args.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("");
+}
+
 describe("walletFlow", () => {
   test("classifies Base Sepolia chain ids", () => {
     expect(isBaseSepoliaChain("0x14a34")).toBe(true);
@@ -682,6 +686,14 @@ describe("walletFlow", () => {
         }],
       },
       {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: colonyData,
+        }, "latest"],
+      },
+      {
         method: "eth_sendTransaction",
         params: [{
           from: account,
@@ -706,6 +718,68 @@ describe("walletFlow", () => {
         }],
       },
     ]);
+  });
+
+  test("preflights public Galaxy colonize attempts and reports missing colony ships before wallet submit", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") {
+        throw {
+          code: 3,
+          message: "execution reverted",
+          data: customErrorData("0x705f508b", [3, 0, 1]),
+        };
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10, 40))
+      .rejects.toThrow("Build or keep a Colony Ship");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeLaunchFleetMissionCall({
+            originPlanetId: "7",
+            targetPlanetId: encodeColonizationTargetId(2, 44, 10),
+            missionType: 2,
+            ships: {
+              smallCargo: 0,
+              lightFighter: 0,
+              recycler: 0,
+              colonyShip: 1,
+              largeCargo: 0,
+              heavyFighter: 0,
+              cruiser: 0,
+              battleship: 0,
+              bomber: 0,
+              destroyer: 0,
+              deathstar: 0,
+              battlecruiser: 0,
+              reaper: 0,
+              pathfinder: 0,
+            },
+            speedPercent: 40,
+          }),
+        }, "latest"],
+      },
+    ]);
+  });
+
+  test("reports occupied Galaxy colony slots before opening wallet submit", async () => {
+    const provider = mockProvider(async ({ method }) => {
+      if (method === "eth_call") {
+        throw { code: 3, message: "execution reverted", data: "0x13b7fff2" };
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10, 40))
+      .rejects.toThrow("This position is already occupied");
   });
 
   test("preflights fleet launches and reports stale ship counts before opening wallet submit", async () => {
@@ -1309,7 +1383,13 @@ describe("walletFlow", () => {
     expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
       "wallet could not read the current game contract state"
     );
-    expect(walletRequestErrorMessage(new Error("execution reverted"))).toContain("indexed spendable balance");
+    expect(walletRequestErrorMessage({ message: "execution reverted", data: customErrorData("0x2ab0f96f", [0, 0, 0]) }))
+      .toContain("indexed spendable balance");
+    expect(walletRequestErrorMessage({ message: "execution reverted", data: "0x13b7fff2" }))
+      .toContain("position is already occupied");
+    expect(walletRequestErrorMessage({ message: "execution reverted", data: "0x791438b6" }))
+      .toContain("colony limit");
+    expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("indexed spendable balance");
     expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("reconnect your wallet");
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
       "Unlock or reconnect your wallet"

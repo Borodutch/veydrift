@@ -807,15 +807,20 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/execution reverted/i.test(message)) {
-    return "The game contract rejected this transaction. Refresh the latest backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.";
+    return "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
   }
 
   return message;
 }
 
-const fleetMissionRevertReasons: Record<string, string> = {
-  "0x705f508b": "Selected origin planet does not have the requested ships. Refresh shipyard state and retry.",
-  "0x2ab0f96f": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and retry.",
+const COLONY_SHIP_ID = 3n;
+
+type FleetMissionRevertContext = {
+  missionType?: number | string | bigint | undefined;
+};
+
+const contractRevertReasons: Record<string, string> = {
+  "0x2ab0f96f": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.",
   "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Add cargo-capable ships, reduce cargo, slow the mission, or choose a closer target.",
   "0x57aab7e3": "All fleet slots are already in use. Wait for a fleet to return, then retry.",
   "0x400d5197": "You cannot attack your own planet.",
@@ -823,6 +828,9 @@ const fleetMissionRevertReasons: Record<string, string> = {
   "0x9a3d4eb9": "The selected target planet no longer exists. Refresh galaxy state and choose a target again.",
   "0xab2bcfd3": "This wallet does not own the selected origin planet. Refresh planets and retry.",
   "0x524f409b": "Select at least one valid ship for this mission.",
+  "0x13b7fff2": "This position is already occupied. Refresh Galaxy state and choose an empty slot.",
+  "0x179a0545": "Choose a valid colonization slot within galaxy 1-9, system 1-499, position 1-15.",
+  "0x791438b6": "Your colony limit has been reached. Research Astrophysics or abandon a colony before colonizing another planet.",
   "0x65dba1c3": "This target has reached the attack bashing limit. Choose another target or retry later.",
   "0x3570048f": "This target is protected by score rules and cannot be attacked.",
   "0x1fbd4a7a": "You cannot attack a planet owned by your alliance.",
@@ -838,9 +846,6 @@ const fleetMissionRevertReasons: Record<string, string> = {
   "0xbee20108": "The recall cutoff has passed for this mission. Wait for arrival and resolve it instead.",
   "0x4ba3e176": "You cannot join an attack against your own planet.",
   "0xdfa1a408": "The selected mission or target no longer matches current chain state. Refresh mission control and retry.",
-  "0x13b7fff2": "Those coordinates are already occupied. Refresh galaxy state and choose another target.",
-  "0x179a0545": "Choose valid galaxy coordinates for this mission.",
-  "0x791438b6": "Your planet limit has been reached. Upgrade astrophysics or choose a different mission.",
   "0x1f38cd02": "Attack battle randomness is not configured for this deployment yet.",
 };
 
@@ -852,6 +857,18 @@ const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.resolveFleetMission,
 ]);
 
+function isColonizeMissionContext(context: FleetMissionRevertContext | undefined): boolean {
+  if (context?.missionType === undefined) {
+    return false;
+  }
+
+  try {
+    return BigInt(context.missionType) === BigInt(COLONIZE_MISSION_TYPE);
+  } catch {
+    return false;
+  }
+}
+
 function revertSelector(error: unknown): string | undefined {
   const data = errorData(error);
   return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
@@ -859,7 +876,31 @@ function revertSelector(error: unknown): string | undefined {
     : undefined;
 }
 
-function fleetMissionRevertReason(error: unknown): string | undefined {
+function revertUintArg(error: unknown, index: number): bigint | undefined {
+  const data = errorData(error);
+  if (typeof data !== "string") return undefined;
+  const wordStart = 10 + index * 64;
+  const word = data.slice(wordStart, wordStart + 64);
+  if (!/^[a-fA-F0-9]{64}$/.test(word)) return undefined;
+  return BigInt(`0x${word}`);
+}
+
+function contractRevertReason(error: unknown, context?: FleetMissionRevertContext): string | undefined {
+  const selector = revertSelector(error);
+  if (selector === "0x705f508b") {
+    return revertUintArg(error, 0) === COLONY_SHIP_ID || isColonizeMissionContext(context)
+      ? "Build or keep a Colony Ship on the origin planet before colonizing."
+      : "Selected origin planet does not have the requested ships. Refresh shipyard state and retry.";
+  }
+
+  if (selector === "0x524f409b" && isColonizeMissionContext(context)) {
+    return "Include exactly one Colony Ship for colonization.";
+  }
+
+  return contractRevertReasons[selector ?? ""];
+}
+
+function fleetMissionRevertReason(error: unknown, context?: FleetMissionRevertContext): string | undefined {
   const message = errorMessage(error);
   if (/INVALID_MISSION_SPEED/i.test(message)) {
     return "Choose a valid mission speed between 10% and 100%.";
@@ -874,7 +915,7 @@ function fleetMissionRevertReason(error: unknown): string | undefined {
     return `Game contract rejected this fleet action: ${decodedMessage}.`;
   }
 
-  return fleetMissionRevertReasons[revertSelector(error) ?? ""];
+  return contractRevertReason(error, context);
 }
 
 function isFleetMissionPreflightRevert(error: unknown): boolean {
@@ -896,6 +937,7 @@ async function assertFleetMissionCallSucceeds(
   from: string,
   to: string,
   data: string,
+  context?: FleetMissionRevertContext,
 ): Promise<void> {
   try {
     await provider.request({
@@ -903,7 +945,7 @@ async function assertFleetMissionCallSucceeds(
       params: [{ from, to, data }, "latest"],
     });
   } catch (error) {
-    const reason = fleetMissionRevertReason(error);
+    const reason = fleetMissionRevertReason(error, context);
     if (reason) {
       throw new Error(reason);
     }
@@ -1891,7 +1933,7 @@ export async function sendLaunchFleetMissionTransaction(
   params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
-  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data);
+  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data, params);
 
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -1975,31 +2017,35 @@ export async function sendCreateColonyTransaction(
   position: number,
   speedPercent = 100
 ): Promise<string> {
+  const params: Parameters<typeof encodeLaunchFleetMissionCall>[0] = {
+    originPlanetId,
+    targetPlanetId: encodeColonizationTargetId(galaxy, system, position),
+    missionType: COLONIZE_MISSION_TYPE,
+    ships: {
+      smallCargo: 0,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 1,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    },
+    speedPercent,
+  };
+  const data = encodeLaunchFleetMissionCall(params);
+  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data, params);
+
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeLaunchFleetMissionCall({
-      originPlanetId,
-      targetPlanetId: encodeColonizationTargetId(galaxy, system, position),
-      missionType: COLONIZE_MISSION_TYPE,
-      ships: {
-        smallCargo: 0,
-        lightFighter: 0,
-        recycler: 0,
-        colonyShip: 1,
-        largeCargo: 0,
-        heavyFighter: 0,
-        cruiser: 0,
-        battleship: 0,
-        bomber: 0,
-        destroyer: 0,
-        deathstar: 0,
-        battlecruiser: 0,
-        reaper: 0,
-        pathfinder: 0,
-      },
-      speedPercent,
-    })
+    data,
   });
 }
 
