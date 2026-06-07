@@ -99,6 +99,24 @@ describe("overview planet hero image", () => {
 });
 
 describe("overview queue progress display", () => {
+  test("keeps overview mission cards route-first with compact actions and Mission Control navigation", () => {
+    expect(overviewSource).toContain("Fleet missions");
+    expect(overviewSource).toContain('onNavigate("mission-control")');
+    expect(overviewSource).toContain("function OverviewMissionCard");
+    expect(overviewSource).toContain("missionPlanetLabel(mission.originPlanet, mission.originPlanetId)");
+    expect(overviewSource).toContain("missionPlanetLabel(mission.targetPlanet, mission.targetPlanetId)");
+    expect(overviewSource).toContain("overviewMissionTimingLabel(mission, now)");
+    expect(overviewSource).toContain("function OverviewMissionActionButton");
+    expect(overviewSource).toContain("Group defend");
+    expect(overviewSource).toContain("Intercept");
+    expect(overviewSource).toContain("Join attack");
+    expect(overviewSource).toContain("Resolve now");
+    expect(overviewSource).toContain("more in Mission Control");
+    expect(overviewSource).not.toContain('{mission.originPlanetId} {"->"} {mission.targetPlanetId}');
+    expect(overviewSource).not.toContain("Arrival {formatMissionSnapshotTime");
+    expect(overviewSource).not.toContain("Return {formatMissionSnapshotTime");
+  });
+
   test("renders an accessible planet effects info control beside Overview stats", () => {
     expect(overviewSource).toContain('aria-label="Show planet effects"');
     expect(overviewSource).toContain('aria-controls="overview-planet-effects"');

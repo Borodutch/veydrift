@@ -1,6 +1,6 @@
 import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ArrowRight, Check, Info, Pencil, Trash2, X } from "lucide-preact";
+import { ArrowRight, Check, ExternalLink, Info, Pencil, Shield, Swords, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
 import {
   buildingQueueAsset,
@@ -25,6 +25,7 @@ import type { Planet } from "../types";
 import {
   playerDisplayLabel,
   validatePlayerDisplayName,
+  type FleetMissionPlanetReference,
   type FleetMissionVisibilityResponse,
   type PlanetSummary,
   type PlayerProfile,
@@ -42,6 +43,7 @@ import {
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
+import type { Page } from "./NavBar";
 
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
@@ -88,7 +90,7 @@ interface OverviewPageProps {
   isResearchActionPending?: boolean | undefined;
   onFinishResearch?: (() => void) | undefined;
   researchAction?: OverviewResearchActionState | undefined;
-  onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard") => void;
+  onNavigate: (page: Extract<Page, "defenses" | "infrastructure" | "mission-control" | "research" | "shipyard">) => void;
   onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
   onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
   onRenamePlanet?: ((name: string) => void) | undefined;
@@ -599,26 +601,41 @@ export function OverviewPage({
       )}
 
       {isWalletConnected && fleetVisibility && (
-        <div className="grid gap-3 lg:grid-cols-4">
-          <MissionPanel
-            label="Incoming"
-            tone="danger"
-            missions={fleetVisibility.incoming}
-            now={now}
-            onCounterplay={onCounterplay}
-            onResolveMission={onResolveMission}
-          />
-          <MissionPanel label="Returning" tone="warning" missions={fleetVisibility.returning} now={now} onResolveMission={onResolveMission} />
-          <MissionPanel label="Outbound" tone="neutral" missions={fleetVisibility.outgoing} now={now} onResolveMission={onResolveMission} />
-          <MissionPanel
-            label="Joinable"
-            tone="neutral"
-            missions={fleetVisibility.joinableAttacks}
-            now={now}
-            onJoinAttack={onJoinAttack}
-            onResolveMission={onResolveMission}
-          />
-        </div>
+        <section className="grid gap-3 rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-white">Fleet missions</h3>
+            </div>
+            <button
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-cyan-300/35 bg-cyan-300/10 px-2.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 focus:outline-none focus:ring-2 focus:ring-cyan-300/45"
+              onClick={() => onNavigate("mission-control")}
+              type="button"
+            >
+              <ExternalLink aria-hidden="true" size={13} strokeWidth={2} />
+              Mission Control
+            </button>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-4">
+            <MissionPanel
+              label="Incoming"
+              tone="danger"
+              missions={fleetVisibility.incoming}
+              now={now}
+              onCounterplay={onCounterplay}
+              onResolveMission={onResolveMission}
+            />
+            <MissionPanel label="Returning" tone="warning" missions={fleetVisibility.returning} now={now} onResolveMission={onResolveMission} />
+            <MissionPanel label="Outbound" tone="neutral" missions={fleetVisibility.outgoing} now={now} onResolveMission={onResolveMission} />
+            <MissionPanel
+              label="Joinable"
+              tone="neutral"
+              missions={fleetVisibility.joinableAttacks}
+              now={now}
+              onJoinAttack={onJoinAttack}
+              onResolveMission={onResolveMission}
+            />
+          </div>
+        </section>
       )}
 
       {/* Contract production queues */}
@@ -1168,65 +1185,145 @@ function MissionPanel({
       ) : (
         <div className="grid gap-2">
           {missions.slice(0, 3).map((mission) => (
-            <div key={mission.missionId} className="min-w-0 rounded-md border border-white/10 bg-black/20 p-2">
-              <div className="flex items-center justify-between gap-2 text-xs">
-                <span className="font-medium text-slate-200">{mission.missionType} #{mission.missionId}</span>
-                <span className="text-slate-400">{mission.status}</span>
-              </div>
-              <p className="mt-1 truncate text-[11px] text-slate-500">
-                {mission.originPlanetId} {"->"} {mission.targetPlanetId}
-              </p>
-              <p className="mt-1 text-[11px] text-slate-400">
-                Arrival {formatMissionSnapshotTime(mission.arrivalAt, now)} · Return {formatMissionSnapshotTime(mission.returnAt, now)}
-              </p>
-              {mission.attackGroupId ? (
-                <p className="mt-1 text-[11px] text-cyan-100/70">
-                  Group #{mission.attackGroupId}
-                  {mission.joinedAttackMissionIds.length > 0 ? ` · ${mission.joinedAttackMissionIds.length} joined` : ""}
-                </p>
-              ) : null}
-              {onCounterplay && mission.status === "Outbound" && mission.missionType === "Attack" ? (
-                <div className="mt-2 grid grid-cols-2 gap-1">
-                  <button
-                    className="rounded border border-cyan-200/20 bg-cyan-300/10 px-2 py-1 text-[11px] font-medium text-cyan-100 hover:bg-cyan-300/15"
-                    onClick={() => onCounterplay(mission.missionId, "acsDefend")}
-                    type="button"
-                  >
-                    Group defend
-                  </button>
-                  <button
-                    className="rounded border border-amber-200/20 bg-amber-300/10 px-2 py-1 text-[11px] font-medium text-amber-100 hover:bg-amber-300/15"
-                    onClick={() => onCounterplay(mission.missionId, "intercept")}
-                    type="button"
-                  >
-                    Intercept
-                  </button>
-                </div>
-              ) : null}
-              {onJoinAttack && mission.status === "Outbound" && mission.missionType === "Attack" ? (
-                <button
-                  className="mt-2 w-full rounded border border-cyan-200/20 bg-cyan-300/10 px-2 py-1 text-[11px] font-medium text-cyan-100 hover:bg-cyan-300/15"
-                  onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId)}
-                  type="button"
-                >
-                  Join attack
-                </button>
-              ) : null}
-              {onResolveMission && mission.needsResolution ? (
-                <button
-                  className="mt-2 w-full rounded border border-lime-200/25 bg-lime-300/10 px-2 py-1 text-[11px] font-medium text-lime-100 hover:bg-lime-300/15"
-                  onClick={() => onResolveMission(mission.missionId)}
-                  type="button"
-                >
-                  Resolve now
-                </button>
-              ) : null}
-            </div>
+            <OverviewMissionCard
+              key={mission.missionId}
+              mission={mission}
+              now={now}
+              onCounterplay={onCounterplay}
+              onJoinAttack={onJoinAttack}
+              onResolveMission={onResolveMission}
+            />
           ))}
+          {missions.length > 3 ? (
+            <p className="text-[11px] text-slate-500">+{missions.length - 3} more in Mission Control.</p>
+          ) : null}
         </div>
       )}
     </div>
   );
+}
+
+function OverviewMissionCard({
+  mission,
+  now,
+  onCounterplay,
+  onJoinAttack,
+  onResolveMission,
+}: {
+  mission: MissionList[number];
+  now: number;
+  onCounterplay?: ((missionId: string, mode: "acsDefend" | "intercept") => void) | undefined;
+  onJoinAttack?: ((missionId: string, targetPlanetId: string) => void) | undefined;
+  onResolveMission?: ((missionId: string) => void) | undefined;
+}) {
+  const canCounterplay = Boolean(onCounterplay && mission.status === "Outbound" && mission.missionType === "Attack");
+  const canJoinAttack = Boolean(onJoinAttack && mission.status === "Outbound" && mission.missionType === "Attack");
+  const canResolve = Boolean(onResolveMission && mission.needsResolution);
+  const hasActions = canCounterplay || canJoinAttack || canResolve;
+  const joinedAttackCount = mission.joinedAttackMissionIds.length;
+
+  return (
+    <article className="min-w-0 rounded-md border border-white/10 bg-black/20 p-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="min-w-0 truncate text-xs font-semibold text-slate-100">
+          {mission.missionType} #{mission.missionId}
+        </h4>
+        <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-slate-400">
+          {mission.status}
+        </span>
+      </div>
+
+      <div className="mt-2 grid gap-1.5">
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-slate-200">
+          <span className="min-w-0 truncate">{missionPlanetLabel(mission.originPlanet, mission.originPlanetId)}</span>
+          <ArrowRight aria-hidden="true" className="shrink-0 text-slate-500" size={12} strokeWidth={2} />
+          <span className="min-w-0 truncate">{missionPlanetLabel(mission.targetPlanet, mission.targetPlanetId)}</span>
+        </div>
+        <p className="text-[11px] text-slate-400">{overviewMissionTimingLabel(mission, now)}</p>
+        {mission.attackGroupId || joinedAttackCount > 0 ? (
+          <p className="text-[11px] text-cyan-100/70">
+            {mission.attackGroupId ? `Group #${mission.attackGroupId}` : "Group attack"}
+            {joinedAttackCount > 0 ? ` · ${joinedAttackCount} joined` : ""}
+          </p>
+        ) : null}
+      </div>
+
+      {hasActions ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {canCounterplay ? (
+            <>
+              <OverviewMissionActionButton
+                className="border-cyan-200/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/15"
+                onClick={() => onCounterplay?.(mission.missionId, "acsDefend")}
+              >
+                <Shield aria-hidden="true" size={12} strokeWidth={2} />
+                Group defend
+              </OverviewMissionActionButton>
+              <OverviewMissionActionButton
+                className="border-amber-200/20 bg-amber-300/10 text-amber-100 hover:bg-amber-300/15"
+                onClick={() => onCounterplay?.(mission.missionId, "intercept")}
+              >
+                <Swords aria-hidden="true" size={12} strokeWidth={2} />
+                Intercept
+              </OverviewMissionActionButton>
+            </>
+          ) : null}
+          {canJoinAttack ? (
+            <OverviewMissionActionButton
+              className="border-cyan-200/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/15"
+              onClick={() => onJoinAttack?.(mission.missionId, mission.targetPlanetId)}
+            >
+              <Swords aria-hidden="true" size={12} strokeWidth={2} />
+              Join attack
+            </OverviewMissionActionButton>
+          ) : null}
+          {canResolve ? (
+            <OverviewMissionActionButton
+              className="border-lime-200/25 bg-lime-300/10 text-lime-100 hover:bg-lime-300/15"
+              onClick={() => onResolveMission?.(mission.missionId)}
+            >
+              <Check aria-hidden="true" size={12} strokeWidth={2} />
+              Resolve now
+            </OverviewMissionActionButton>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function OverviewMissionActionButton({
+  children,
+  className,
+  onClick,
+}: {
+  children: preact.ComponentChildren;
+  className: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`inline-flex h-7 items-center justify-center gap-1 rounded border px-2 text-[11px] font-medium transition ${className}`}
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
+function missionPlanetLabel(planet: FleetMissionPlanetReference | null | undefined, fallbackPlanetId: string): string {
+  if (!planet) return `Planet #${fallbackPlanetId}`;
+  const label = planet.name?.trim() || `Planet #${planet.planetId}`;
+  return `${label} [${planet.coordinates}]`;
+}
+
+function overviewMissionTimingLabel(mission: MissionList[number], now: number): string {
+  if (mission.needsResolution) return `Ready to resolve · Arrived ${formatMissionSnapshotTime(mission.arrivalAt, now)}`;
+  if (mission.status === "Returning" || mission.status === "Recalled") {
+    return `Returns ${formatMissionSnapshotTime(mission.returnAt, now)}`;
+  }
+  return `Arrives ${formatMissionSnapshotTime(mission.arrivalAt, now)}`;
 }
 
 function planetKeyFromCoordinates(coordinates: { galaxy: number; system: number; position: number }): string {
