@@ -58,7 +58,10 @@ creation reverts instead of accepting entropy that could be chosen after the req
 
 ## Backend Worker
 
-apps/backend/src/randomness.ts contains the legacy testable fulfillment loop:
+apps/backend/src/randomness.ts contains two testable loops:
+
+`RandomnessFulfillmentWorker` is the legacy fulfill-only loop (for deployments with
+`precommitRequired == false`):
 
 - polls a chain client for pending RandomnessRequested events;
 - generates a non-zero uint256 using node:crypto;
@@ -66,8 +69,28 @@ apps/backend/src/randomness.ts contains the legacy testable fulfillment loop:
 - records fulfilled and failed attempts;
 - exposes alert strings for pending request age and failed fulfillments.
 
-Production wiring for a hardened deployment must add the precommit step above before game requests
-are allowed to depend on the engine, then continue surfacing the returned RandomnessOperationalStatus
-in service health/monitoring. If an operator disables precommit mode, the deployment must record
-that the fulfiller can again choose the word after seeing the request and that the model is accepted
-only for non-value-bearing testing.
+`RandomnessCommitmentWorker` implements the hardened precommit lifecycle (Fulfiller Runbook steps
+1-6) and is required whenever `precommitRequired == true` (the deployment default). Each `tick()`:
+
+- reveals any request that has consumed a tracked commitment, using the **exact committed word**
+  (a fresh word would fail `RandomnessCommitmentMismatch`);
+- keeps exactly one pending commitment available on-chain — it only posts a new `commitRandomness`
+  when none is pending, so it never trips `RandomnessCommitmentAlreadyPending`;
+- persists the secret word↔commitment pair through an injected `RandomnessCommitmentStore`
+  **before** broadcasting the commit tx, so a crash can never strand a request that later consumes
+  that commitment (`FileRandomnessCommitmentStore` writes atomically for production;
+  `InMemoryRandomnessCommitmentStore` is for tests);
+- surfaces operational alerts: no pending commitment available, stale pending requests, an on-chain
+  pending commitment whose reveal word is not tracked, and commit failures — plus the pending
+  commitment age in blocks (`pendingCommitmentAgeBlocks`).
+
+The contract enforces a one-block delay between commit and consumption, so a freshly committed word
+is only consumable from the next block onward; the worker does not need to block on this, it simply
+keeps a commitment ready.
+
+Production wiring for a hardened deployment must run `RandomnessCommitmentWorker` against the live
+engine from the configured fulfiller account, backed by a durable `RandomnessCommitmentStore`, and
+surface the returned `RandomnessCommitmentStatus` in service health/monitoring. If an operator
+disables precommit mode, the deployment may fall back to `RandomnessFulfillmentWorker` but must
+record that the fulfiller can again choose the word after seeing the request and that the model is
+accepted only for non-value-bearing testing.
