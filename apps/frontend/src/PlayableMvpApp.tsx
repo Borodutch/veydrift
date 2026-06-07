@@ -126,9 +126,9 @@ import {
   sendFinishResearchTransaction,
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
-  sendJoinAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
+  sendJoinAttackMissionTransaction,
   sendFinishMoonBuildingUpgradeTransaction,
   sendJumpGateJumpTransaction,
   sendRecallFleetMissionTransaction,
@@ -4138,31 +4138,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
-  const handleCounterplay = useCallback((hostileMissionId: string, mode: "acsDefend" | "intercept") => {
-    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
-      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
-      return;
-    }
-
-    const ships = selectCounterplayShips(shipyardState);
-    if (!ships) {
-      setGalaxyAction({ status: "error", label: "No ships available for counterplay." });
-      return;
-    }
-
-    void runGalaxyTransaction(mode === "acsDefend" ? "Group defend mission" : "Intercept mission", () => sendLaunchFleetMissionTransaction(
-      provider,
-      account,
-      gameContract,
-      {
-        originPlanetId: onChainSettlement.homePlanetId ?? "0",
-        targetPlanetId: hostileMissionId,
-        missionType: missionTypeId(mode),
-        ships,
-      },
-    ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
-
   const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
       setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
@@ -4816,8 +4791,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         onChainQueues={overviewOnChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
-        onCounterplay={handleCounterplay}
-        onJoinAttack={handleJoinAttack}
         buildingActionNotice={infrastructureActionNotice}
         buildingActionPendingLabel={infrastructureActionPendingLabel}
         isDefenseActionPending={defenseAction.status === "pending"}
@@ -4830,7 +4803,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
         onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
-        onResolveMission={handleResolveMission}
         playerProfile={playerProfile}
         playerProfileAction={playerProfileAction}
         homePlanet={homePlanetIdentity}
