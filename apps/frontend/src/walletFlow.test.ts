@@ -800,6 +800,89 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("submits fleet launches when the preflight simulation cannot reach the RPC", async () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const data = encodeLaunchFleetMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    });
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") {
+        throw { code: -32603, message: "Internal JSON-RPC error." };
+      }
+      return "0xfleet";
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    })).resolves.toBe("0xfleet");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [{ from: account, to: contract, data }, "latest"],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{ from: account, to: contract, data }],
+      },
+    ]);
+  });
+
+  test("still blocks fleet launches when the preflight reverts without a known selector", async () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const provider = mockProvider(async ({ method }) => {
+      if (method === "eth_call") {
+        throw { code: 3, message: "execution reverted", data: "0xdeadbeef" };
+      }
+      throw new Error("eth_sendTransaction should not be called");
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    })).rejects.toThrow("rejected this transaction");
+  });
+
   test("encodes mission ships, cargo, and randomness in contract ABI order", () => {
     const ships = {
       smallCargo: 1,

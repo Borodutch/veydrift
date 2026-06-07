@@ -838,6 +838,20 @@ function fleetMissionRevertReason(error: unknown): string | undefined {
   return fleetMissionRevertReasons[revertSelector(error) ?? ""];
 }
 
+function isFleetMissionPreflightRevert(error: unknown): boolean {
+  // A real contract revert carries revert data (a 4-byte selector), the EVM
+  // revert code 3, or an "execution reverted" message. Anything else (internal
+  // JSON-RPC errors, RPC/node unavailability, read timeouts) means the
+  // simulation could not run, not that the mission is invalid.
+  if (revertSelector(error) !== undefined) {
+    return true;
+  }
+  if (errorCode(error) === 3 || errorCode(error) === "3") {
+    return true;
+  }
+  return /execution reverted/i.test(errorMessage(error));
+}
+
 async function assertFleetMissionCallSucceeds(
   provider: Eip1193Provider,
   from: string,
@@ -851,7 +865,16 @@ async function assertFleetMissionCallSucceeds(
     });
   } catch (error) {
     const reason = fleetMissionRevertReason(error);
-    throw new Error(reason ?? walletRequestErrorMessage(error));
+    if (reason) {
+      throw new Error(reason);
+    }
+    if (isFleetMissionPreflightRevert(error)) {
+      throw new Error(walletRequestErrorMessage(error));
+    }
+    // The preflight simulation could not reach the game contract (RPC/node
+    // unavailable, internal JSON-RPC error, or a read timeout). This is a
+    // best-effort guard, not a validity gate — don't block the mission. Let
+    // the wallet submit the transaction and re-simulate it on send.
   }
 }
 
