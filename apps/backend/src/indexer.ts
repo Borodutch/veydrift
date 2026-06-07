@@ -273,6 +273,7 @@ export class SettlementIndexer {
         | "getPlayerQueues"
         | "getResearchState"
         | "getShipyardState"
+        | "listAllianceDirectoryState"
         | "listAllianceLogs"
         | "listCurrentPlanets"
     >,
@@ -1066,6 +1067,9 @@ export class SettlementIndexer {
     const allianceLogs = this.chainReader.listAllianceLogs
       ? await this.chainReader.listAllianceLogs(this.fromBlock, "latest")
       : [];
+    const allianceDirectory = this.chainReader.listAllianceDirectoryState
+      ? await this.chainReader.listAllianceDirectoryState()
+      : [];
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();
@@ -1086,6 +1090,7 @@ export class SettlementIndexer {
         this.recordLogIfMissing(log);
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
+      this.applyAllianceDirectorySnapshot(allianceDirectory);
       const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents, ...allianceLogs]);
       this.recordSuccessfulAllianceReconciliation();
       this.touch();
@@ -2631,6 +2636,60 @@ export class SettlementIndexer {
     this.touch();
   }
 
+  private applyAllianceDirectorySnapshot(directory: readonly AllianceState["directory"][number][]): void {
+    for (const alliance of directory) {
+      this.db.query(`
+        INSERT INTO contract_alliances (
+          alliance_id, active, tag, name, description, owner, created_at, member_count, event_json
+        )
+        VALUES (?, ?, ?, ?, ?, lower(?), ?, ?, ?)
+        ON CONFLICT(alliance_id) DO UPDATE SET
+          active = excluded.active,
+          tag = excluded.tag,
+          name = excluded.name,
+          description = excluded.description,
+          owner = excluded.owner,
+          created_at = excluded.created_at,
+          member_count = excluded.member_count,
+          event_json = excluded.event_json
+      `).run(
+        alliance.allianceId,
+        alliance.active ? 1 : 0,
+        alliance.tag,
+        alliance.name,
+        alliance.description,
+        alliance.owner,
+        alliance.createdAt,
+        alliance.memberCount,
+        JSON.stringify({
+          eventName: "AllianceDirectorySnapshot",
+          allianceId: alliance.allianceId,
+          active: alliance.active,
+          tag: alliance.tag,
+          name: alliance.name,
+          description: alliance.description,
+          owner: alliance.owner,
+          createdAt: alliance.createdAt,
+          memberCount: alliance.memberCount
+        })
+      );
+
+      if (!alliance.members) continue;
+      this.db.query("DELETE FROM contract_alliance_members WHERE alliance_id = ?").run(alliance.allianceId);
+      for (const member of alliance.members) {
+        this.db.query(`
+          INSERT INTO contract_alliance_members (alliance_id, wallet, role_id, joined_at)
+          VALUES (?, lower(?), ?, ?)
+          ON CONFLICT(alliance_id, wallet) DO UPDATE SET
+            role_id = excluded.role_id,
+            joined_at = excluded.joined_at
+        `).run(alliance.allianceId, member.address, allianceRoleId(member.role), member.joinedAt);
+      }
+    }
+
+    if (directory.length > 0) this.touch();
+  }
+
   private touch(): void {
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
@@ -3073,6 +3132,13 @@ function allianceRoleName(roleId: number): AllianceState["membership"]["role"] {
   if (roleId === 2) return "officer";
   if (roleId === 3) return "owner";
   return "none";
+}
+
+function allianceRoleId(role: AllianceState["membership"]["role"]): number {
+  if (role === "member") return 1;
+  if (role === "officer") return 2;
+  if (role === "owner") return 3;
+  return 0;
 }
 
 function decodeIntegerString(value: string): bigint {

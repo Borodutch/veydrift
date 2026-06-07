@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, DebrisFieldEvent, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, SettledPlanetEvent } from "./evm";
+import type { Address, AllianceState, DebrisFieldEvent, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
@@ -1569,6 +1569,67 @@ describe("SettlementIndexer", () => {
       members: [
         { address: player, role: "owner", joinedAt: String(0x69801c81) },
         { address: officer, role: "officer", joinedAt: String(0x69801c83) }
+      ]
+    });
+  });
+
+  test("rebuild overlays imported alliance contract directory snapshots into the DB read model", async () => {
+    const owner = "0x3333333333333333333333333333333333333333" as Address;
+    const officer = "0x4444444444444444444444444444444444444444" as Address;
+    const directory: AllianceState["directory"] = Array.from({ length: 15 }, (_, index) => {
+      const allianceId = (index + 1).toString();
+      const isImportedAlliance = allianceId === "15";
+      return {
+        allianceId,
+        active: true,
+        tag: isImportedAlliance ? "SWTS" : `A${allianceId.padStart(2, "0")}`,
+        name: isImportedAlliance ? "Swets Empire" : `Alliance ${allianceId}`,
+        description: isImportedAlliance ? "Imported from on-chain snapshot" : "",
+        owner: isImportedAlliance ? owner : player,
+        createdAt: (1770000000 + index).toString(),
+        memberCount: isImportedAlliance ? 2 : 1,
+        members: isImportedAlliance
+          ? [
+            { address: owner, role: "owner", joinedAt: "1770000015" },
+            { address: officer, role: "officer", joinedAt: "1770000016" }
+          ]
+          : [
+            { address: player, role: "owner", joinedAt: (1770000000 + index).toString() }
+          ]
+      };
+    });
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listAllianceLogs() { return []; },
+      async listAllianceDirectoryState() {
+        return directory;
+      }
+    }, 100n);
+
+    await indexer.rebuild();
+
+    const state = indexer.allianceState(owner);
+    expect(indexer.snapshot()).toMatchObject({
+      allianceStaleReason: null,
+      safeToServeAllianceState: true
+    });
+    expect(state.directory.map((alliance) => alliance.allianceId)).toEqual([
+      "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"
+    ]);
+    expect(state).toMatchObject({
+      membership: { allianceId: "15", role: "owner", joinedAt: "1770000015" },
+      profile: {
+        tag: "SWTS",
+        name: "Swets Empire",
+        description: "Imported from on-chain snapshot",
+        owner,
+        memberCount: 2
+      },
+      members: [
+        { address: owner, role: "owner", joinedAt: "1770000015" },
+        { address: officer, role: "officer", joinedAt: "1770000016" }
       ]
     });
   });
