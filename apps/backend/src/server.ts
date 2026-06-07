@@ -319,10 +319,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        if (!requestsLiveState(url)) {
-          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "player queues", indexedPlayerQueues);
-          if (indexed) return indexed;
-        }
+        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "player queues", indexedPlayerQueues);
+        if (indexed) return indexed;
         return indexedReadNotReadyResponse("player queues", indexer);
       } catch (error) {
         return errorResponse(error, 400);
@@ -333,10 +331,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        if (!requestsLiveState(url)) {
-          const indexed = await indexedWarmResponse(indexer, wallet, undefined, "fleet visibility", indexedFleetVisibility);
-          if (indexed) return indexed;
-        }
+        const indexed = await indexedWarmResponse(indexer, wallet, undefined, "fleet visibility", indexedFleetVisibility);
+        if (indexed) return indexed;
         return indexedReadNotReadyResponse("fleet visibility", indexer);
       } catch (error) {
         return errorResponse(error, 400);
@@ -409,10 +405,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        if (!requestsLiveState(url)) {
-          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "shipyard", indexedShipyardState);
-          if (indexed) return indexed;
-        }
+        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "shipyard", indexedShipyardState);
+        if (indexed) return indexed;
         return indexedReadNotReadyResponse("shipyard", indexer);
       } catch (error) {
         return errorResponse(error, 400);
@@ -424,10 +418,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        if (!requestsLiveState(url)) {
-          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "defenses", indexedDefenseState);
-          if (indexed) return indexed;
-        }
+        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "defenses", indexedDefenseState);
+        if (indexed) return indexed;
         return indexedReadNotReadyResponse("defenses", indexer);
       } catch (error) {
         return errorResponse(error, 400);
@@ -439,10 +431,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        if (!requestsLiveState(url)) {
-          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "research", indexedResearchState);
-          if (indexed) return indexed;
-        }
+        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "research", indexedResearchState);
+        if (indexed) return indexed;
         return indexedReadNotReadyResponse("research", indexer);
       } catch (error) {
         return errorResponse(error, 400);
@@ -464,10 +454,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        if (!requestsLiveState(url)) {
-          const indexed = await indexedWarmResponse(indexer, wallet, planetId, "rift", indexedRiftState);
-          if (indexed) return indexed;
-        }
+        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "rift", indexedRiftState);
+        if (indexed) return indexed;
         return indexedReadNotReadyResponse("rift", indexer);
       } catch (error) {
         return errorResponse(error, 400);
@@ -515,14 +503,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const pagination = highscorePagination(url);
         let planetsByOwner: Map<string, SettledPlanetEvent[]>;
         let entries: HighscoreEntry[];
-        let source: "contract-state-indexer" | "live-chain-reader";
+        const source = "contract-state-indexer";
 
         if (indexer) {
           const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
           if (indexNotReady) return indexNotReady;
           planetsByOwner = indexer.settledPlanetsByOwner();
           entries = indexer.highscoreEntriesForOwners(planetsByOwner);
-          source = "contract-state-indexer";
         } else {
           return indexedReadNotReadyResponse("highscores", indexer);
         }
@@ -894,9 +881,8 @@ function indexedWalletSettlementWarmResponse(
   const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
   return Response.json({
     ...withPlayerProfile(settlement, indexer, wallet),
-    detail: "wallet settlement loaded from DB-indexed contract state before live RPC.",
+    detail: "wallet settlement loaded from DB-indexed contract state.",
     indexer: snapshot,
-    liveReadSkippedAt: new Date().toISOString(),
     source: "contract-state-indexer",
     stale: !snapshot.safeToServeIndexedState
   }, {
@@ -916,9 +902,8 @@ function indexedWalletPlanetsWarmResponse(
   const snapshot = indexer.snapshot();
   return Response.json({
     ...withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet),
-    detail: "wallet planets loaded from DB-indexed contract state before live RPC.",
+    detail: "wallet planets loaded from DB-indexed contract state.",
     indexer: snapshot,
-    liveReadSkippedAt: new Date().toISOString(),
     source: "contract-state-indexer",
     stale: !snapshot.safeToServeIndexedState
   }, {
@@ -932,7 +917,6 @@ function indexedWalletPlanetsWarmResponse(
 type IndexedWarmBody<T extends object> = T & {
   detail: string;
   indexer: ReturnType<SettlementIndexer["snapshot"]>;
-  liveReadSkippedAt: string;
   source: "contract-state-indexer";
   stale: boolean;
 };
@@ -965,13 +949,12 @@ async function indexedWarmResponse<T extends object>(
   const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
   if (!settlement?.planet) return null;
 
-  const detail = `${surface} loaded from DB-indexed contract state before live RPC.`;
+  const detail = `${surface} loaded from DB-indexed contract state.`;
   const snapshot = indexer.snapshot();
   const body: IndexedWarmBody<T> = {
     ...build(wallet, settlement.settlement, settlement.planet, detail, indexer),
     detail,
     indexer: snapshot,
-    liveReadSkippedAt: new Date().toISOString(),
     source: "contract-state-indexer",
     stale: !snapshot.safeToServeIndexedState
   };
@@ -1097,10 +1080,6 @@ function accruedPlanetState<T extends PlanetState | null>(
     ...planet,
     resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
   };
-}
-
-function requestsLiveState(_url: URL): boolean {
-  return false;
 }
 
 function indexedPlayerQueues(
@@ -1988,7 +1967,7 @@ function rankedHighscoreHomePlanet(
 
 function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer | undefined): Response {
   const snapshot = indexer?.snapshot() ?? null;
-  console.warn("Frontend read skipped request-time live chain fallback", {
+  console.warn("Frontend indexed read is not ready", {
     surface,
     indexer: snapshot,
     source: "contract-state-indexer"
@@ -1999,15 +1978,13 @@ function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer
       error: "indexed_read_not_ready",
       detail: `${surface} is not available from indexed contract state yet. Refresh shortly.`,
       indexer: snapshot,
-      liveReadSkippedAt: new Date().toISOString(),
       retryable: true,
       source: "contract-state-indexer"
     },
     {
       headers: {
         ...corsHeaders,
-        "x-veydrift-index-state": snapshot ? "not-ready" : "unavailable",
-        "x-veydrift-live-read": "skipped"
+        "x-veydrift-index-state": snapshot ? "not-ready" : "unavailable"
       },
       status: 503
     }
@@ -2016,7 +1993,7 @@ function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer
 
 function indexedSettlementFundingUnavailableResponse(indexer: SettlementIndexer | undefined): Response {
   const snapshot = indexer?.snapshot() ?? null;
-  console.warn("Frontend read skipped request-time live chain fallback", {
+  console.warn("Frontend indexed read is not ready", {
     surface: "settlement funding",
     indexer: snapshot,
     source: "contract-state-indexer"
@@ -2028,17 +2005,15 @@ function indexedSettlementFundingUnavailableResponse(indexer: SettlementIndexer 
       balanceWei: null,
       contractKind: "game",
       startPriceWei: null,
-      unavailableReason: "Settlement funding requires indexed funding state; live contract balance reads are disabled for frontend API requests.",
+      unavailableReason: "Settlement funding requires indexed funding state.",
       indexer: snapshot,
-      liveReadSkippedAt: new Date().toISOString(),
       source: "contract-state-indexer",
       stale: true
     },
     {
       headers: {
         ...corsHeaders,
-        "x-veydrift-index-state": snapshot ? "not-ready" : "unavailable",
-        "x-veydrift-live-read": "skipped"
+        "x-veydrift-index-state": snapshot ? "not-ready" : "unavailable"
       }
     }
   );
@@ -2053,9 +2028,8 @@ function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndex
   return Response.json(
     {
       ...indexer.allianceState(wallet),
-      detail: "Alliance state loaded from DB-indexed contract state before live RPC.",
+      detail: "Alliance state loaded from DB-indexed contract state.",
       indexer: snapshot,
-      liveReadSkippedAt: new Date().toISOString(),
       source: "contract-state-indexer",
       stale: !snapshot.safeToServeAllianceState || !snapshot.safeToServeIndexedState
     },
@@ -2064,8 +2038,7 @@ function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndex
         ...corsHeaders,
         "x-veydrift-index-state": snapshot.safeToServeAllianceState
           ? (snapshot.safeToServeIndexedState ? "healthy" : "alliance-healthy")
-          : "stale",
-        "x-veydrift-live-read": "skipped"
+          : "stale"
       }
     }
   );
@@ -2091,8 +2064,7 @@ function indexedAttackProtectionResponse(
       {
         headers: {
           ...corsHeaders,
-          "x-veydrift-index-state": "not-ready",
-          "x-veydrift-live-read": "skipped"
+          "x-veydrift-index-state": "not-ready"
         },
         status: 404
       }
@@ -2107,7 +2079,6 @@ function indexedAttackProtectionResponse(
   const scoreProtected = attackerScore > 0n && (defenderScore < attackerScore / 5n || defenderScore > attackerScore * 5n);
 
   const body: AttackProtectionStatus & {
-    liveReadSkippedAt: string;
     source: "contract-state-indexer";
   } = {
     wallet,
@@ -2119,15 +2090,13 @@ function indexedAttackProtectionResponse(
     defenderHonorStatus: "neutral",
     plunderBps: scoreProtected ? 0 : 5000,
     defenderInactive: false,
-    liveReadSkippedAt: new Date().toISOString(),
     source: "contract-state-indexer"
   };
 
   return Response.json(body, {
     headers: {
       ...corsHeaders,
-      "x-veydrift-index-state": indexer.snapshot().safeToServeIndexedState ? "healthy" : "stale",
-      "x-veydrift-live-read": "skipped"
+      "x-veydrift-index-state": indexer.snapshot().safeToServeIndexedState ? "healthy" : "stale"
     }
   });
 }
