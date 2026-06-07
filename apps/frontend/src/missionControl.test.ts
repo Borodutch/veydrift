@@ -52,6 +52,7 @@ describe("Mission Control battle reports", () => {
       now,
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
+      onJoinAttack: () => undefined,
       onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,

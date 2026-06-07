@@ -33,6 +33,7 @@ interface MissionControlPageProps {
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
   onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
@@ -52,6 +53,7 @@ export function MissionControlPage({
   now,
   onCompleteReturn,
   onCounterplay,
+  onJoinAttack,
   onOpenBattleReport,
   onOpenReport,
   onOpenReportList,
@@ -65,12 +67,14 @@ export function MissionControlPage({
   const incoming = fleetVisibility?.incoming ?? [];
   const outgoing = fleetVisibility?.outgoing ?? [];
   const returning = fleetVisibility?.returning ?? [];
+  const joinableAttacks = fleetVisibility?.joinableAttacks ?? [];
   const battleReports = fleetVisibility?.battleReports ?? [];
   const due = [...incoming, ...outgoing].filter((mission) => isMissionDue(mission, now));
-  const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...(fleetVisibility?.joinableAttacks ?? [])]);
+  const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks]);
   const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
   const activeCount = incoming.length + outgoing.length + returning.length;
+  const visibleMissionCount = activeCount + joinableAttacks.length;
   const initialLoading = loading && !fleetVisibility;
 
   return (
@@ -92,11 +96,12 @@ export function MissionControlPage({
         <VeydriftLoader label="Mapping missions" />
       ) : (
         <>
-          <div className="grid gap-3 md:grid-cols-4">
-            <Metric label="Active missions" value={activeCount.toString()} />
+          <div className="grid gap-3 md:grid-cols-5">
+            <Metric label="Visible missions" value={visibleMissionCount.toString()} />
             <Metric label="Due resolvers" value={due.length.toString()} />
             <Metric label="Hostile inbound" value={incoming.length.toString()} />
             <Metric label="Returns" value={returning.length.toString()} />
+            <Metric label="Joinable attacks" value={joinableAttacks.length.toString()} />
           </div>
 
           {reportMissionId ? (
@@ -109,7 +114,7 @@ export function MissionControlPage({
             />
           ) : null}
 
-          {activeCount === 0 ? (
+          {visibleMissionCount === 0 ? (
             <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
               No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.
             </div>
@@ -130,6 +135,7 @@ export function MissionControlPage({
                 now={now}
                 onCompleteReturn={onCompleteReturn}
                 onCounterplay={onCounterplay}
+                onJoinAttack={onJoinAttack}
                 onOpenReport={onOpenReport}
                 onRecall={onRecall}
                 onResolve={onResolve}
@@ -140,7 +146,7 @@ export function MissionControlPage({
             </section>
           ) : null}
 
-          <div className="grid gap-3 xl:grid-cols-3">
+          <div className="grid gap-3 xl:grid-cols-4">
             <MissionSection
               actionContext="incoming"
               canTransact={canTransact}
@@ -149,6 +155,7 @@ export function MissionControlPage({
               now={now}
               onCompleteReturn={onCompleteReturn}
               onCounterplay={onCounterplay}
+              onJoinAttack={onJoinAttack}
               onOpenReport={onOpenReport}
               onRecall={onRecall}
               onResolve={onResolve}
@@ -164,6 +171,7 @@ export function MissionControlPage({
               now={now}
               onCompleteReturn={onCompleteReturn}
               onCounterplay={onCounterplay}
+              onJoinAttack={onJoinAttack}
               onOpenReport={onOpenReport}
               onRecall={onRecall}
               onResolve={onResolve}
@@ -179,12 +187,29 @@ export function MissionControlPage({
               now={now}
               onCompleteReturn={onCompleteReturn}
               onCounterplay={onCounterplay}
+              onJoinAttack={onJoinAttack}
               onOpenReport={onOpenReport}
               onRecall={onRecall}
               onResolve={onResolve}
               planetLookup={planetLookup}
               title="Returning fleets"
               tone="warning"
+            />
+            <MissionSection
+              actionContext="joinable"
+              canTransact={canTransact}
+              empty="No joinable attacks."
+              missions={joinableAttacks}
+              now={now}
+              onCompleteReturn={onCompleteReturn}
+              onCounterplay={onCounterplay}
+              onJoinAttack={onJoinAttack}
+              onOpenReport={onOpenReport}
+              onRecall={onRecall}
+              onResolve={onResolve}
+              planetLookup={planetLookup}
+              title="Joinable attacks"
+              tone="info"
             />
           </div>
 
@@ -205,7 +230,7 @@ export function missionLifecycleActions({
   now,
 }: {
   canTransact: boolean;
-  context: "due" | "incoming" | "outgoing" | "returning";
+  context: MissionSectionContext;
   mission: FleetMissionSummary;
   now: number;
 }): MissionLifecycleAction[] {
@@ -249,8 +274,19 @@ export function missionLifecycleActions({
     });
   }
 
+  if (context === "joinable" && mission.status === "Outbound" && mission.missionType === "Attack") {
+    actions.push({
+      enabled: canTransact && !due,
+      kind: "counterplay",
+      label: "Join attack",
+      reason: due ? "Mission is already due for resolution." : walletReason(canTransact),
+    });
+  }
+
   return actions;
 }
+
+type MissionSectionContext = "due" | "incoming" | "outgoing" | "returning" | "joinable";
 
 function MissionSection({
   actionContext,
@@ -260,6 +296,7 @@ function MissionSection({
   now,
   onCompleteReturn,
   onCounterplay,
+  onJoinAttack,
   onOpenReport,
   onRecall,
   onResolve,
@@ -267,25 +304,28 @@ function MissionSection({
   title,
   tone,
 }: {
-  actionContext: "due" | "incoming" | "outgoing" | "returning";
+  actionContext: MissionSectionContext;
   canTransact: boolean;
   empty?: string | undefined;
   missions: FleetMissionSummary[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   title: string;
-  tone: "danger" | "neutral" | "warning";
+  tone: "danger" | "info" | "neutral" | "warning";
 }) {
   const border = tone === "danger"
     ? "border-red-300/25 bg-red-400/10"
     : tone === "warning"
       ? "border-amber-300/25 bg-amber-300/10"
-      : "border-white/10 bg-[#101624]";
+      : tone === "info"
+        ? "border-cyan-300/20 bg-cyan-300/10"
+        : "border-white/10 bg-[#101624]";
   return (
     <section className={`min-w-0 rounded-lg border p-3 ${border}`}>
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -305,6 +345,7 @@ function MissionSection({
               now={now}
               onCompleteReturn={onCompleteReturn}
               onCounterplay={onCounterplay}
+              onJoinAttack={onJoinAttack}
               onOpenReport={onOpenReport}
               onRecall={onRecall}
               onResolve={onResolve}
@@ -324,17 +365,19 @@ function MissionCard({
   now,
   onCompleteReturn,
   onCounterplay,
+  onJoinAttack,
   onOpenReport,
   onRecall,
   onResolve,
   planetLookup,
 }: {
   canTransact: boolean;
-  context: "due" | "incoming" | "outgoing" | "returning";
+  context: MissionSectionContext;
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -371,7 +414,7 @@ function MissionCard({
 
       {actions.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {actions.map((action) => action.kind === "counterplay" ? (
+          {actions.map((action) => action.kind === "counterplay" && context === "incoming" ? (
             <span className="contents" key={action.kind}>
               <ActionButton
                 action={{ ...action, label: "Group defend" }}
@@ -390,6 +433,7 @@ function MissionCard({
                 if (action.kind === "resolve") onResolve(mission.missionId);
                 if (action.kind === "recall") onRecall(mission.missionId);
                 if (action.kind === "completeReturn") onCompleteReturn(mission.missionId);
+                if (action.kind === "counterplay" && context === "joinable") onJoinAttack(mission.missionId, mission.targetPlanetId);
               }}
             />
           ))}

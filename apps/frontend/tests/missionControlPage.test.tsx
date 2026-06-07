@@ -74,6 +74,7 @@ describe("MissionControlPage", () => {
       now: 1_770_000_700_000,
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
+      onJoinAttack: () => undefined,
       onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
@@ -87,10 +88,11 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Mission Control");
     expect(text).toContain("Watch inbound attacks");
-    expect(text).toContain("Active missions 3");
+    expect(text).toContain("Visible missions 3");
     expect(text).toContain("Incoming attacks 1");
     expect(text).toContain("Outgoing fleets 1");
     expect(text).toContain("Returning fleets 1");
+    expect(text).toContain("Joinable attacks 0");
     expect(text).toContain("Resolved battle reports 0");
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Origin Planet #7");
@@ -239,6 +241,40 @@ describe("MissionControlPage", () => {
     expect(attackerText).not.toContain("Intercept");
   });
 
+  test("renders joinable attacks instead of the empty Mission Control state", () => {
+    const joinedMissionIds: string[] = [];
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x2222222222222222222222222222222222222222",
+        homePlanetId: "8",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [mission({
+          missionId: "91",
+          missionType: "Attack",
+          owner: "0x1111111111111111111111111111111111111111",
+          originPlanetId: "7",
+          targetPlanetId: "9",
+        })],
+        battleReports: [],
+      },
+      onJoinAttack: (missionId) => {
+        joinedMissionIds.push(missionId);
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Visible missions 1");
+    expect(text).toContain("Joinable attacks 1");
+    expect(text).toContain("Attack # 91");
+    expect(text).toContain("Join attack");
+    expect(text).not.toContain("No active missions for this wallet");
+
+    clickButton(page, "Join attack");
+    expect(joinedMissionIds).toEqual(["91"]);
+  });
+
   test("renders a shareable battle report detail with OGame-style operational fields", () => {
     const page = missionControlPage({
       fleetVisibility: {
@@ -351,6 +387,7 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
     now: 1_770_000_700_000,
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
+    onJoinAttack: () => undefined,
     onOpenBattleReport: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
@@ -445,6 +482,36 @@ function battleReport(missionId: string): BattleReport {
 
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function clickButton(node: ComponentChildren, label: string): void {
+  const button = findButton(node, label);
+  expect(button).toBeDefined();
+  button?.props?.onClick?.();
+}
+
+function findButton(node: ComponentChildren, label: string): VNode | undefined {
+  if (node === null || node === undefined || typeof node === "boolean") return undefined;
+  if (typeof node === "string" || typeof node === "number") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const button = findButton(child as ComponentChildren, label);
+      if (button) return button;
+    }
+    return undefined;
+  }
+
+  const vnode = node as VNode;
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
+      return undefined;
+    }
+    return findButton(vnode.type(vnode.props), label);
+  }
+  if (vnode.type === "button" && visibleText(vnode.props?.children as ComponentChildren) === label) {
+    return vnode;
+  }
+  return findButton(vnode.props?.children as ComponentChildren, label);
 }
 
 function textParts(node: ComponentChildren): string[] {
