@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { FleetMissionsSection } from "./components/OverviewPage";
+import { FleetsSummary, summarizeFleets } from "./components/OverviewPage";
 import type { FleetMissionPlanetReference, FleetMissionSummary, FleetMissionVisibilityResponse } from "./walletFlow";
 
 const PLAYER_WALLET = "0x1111111111111111111111111111111111111111";
 const ENEMY_WALLET = "0x2222222222222222222222222222222222222222";
 
-describe("Overview fleet mission cards", () => {
-  test("renders origin/target names + coordinates instead of raw planet ids, with a Mission Control link", () => {
+describe("Overview fleets summary", () => {
+  test("summarizes active counts and a one-line description per mission (type + direction + ETA)", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const fleetVisibility = visibility({
       outgoing: [
@@ -19,92 +19,134 @@ describe("Overview fleet mission cards", () => {
           originPlanetId: "1",
           targetPlanetId: "40",
           arrivalMs: now + 13 * 60_000,
-          originPlanet: planetRef("1", PLAYER_WALLET, "New Zion", 6, 9, 1, "Nikita"),
-          targetPlanet: planetRef("40", ENEMY_WALLET, "1517", 5, 407, 4, "Rival"),
+          targetPlanet: planetRef("40", ENEMY_WALLET, "1517", 5, 407, 4),
         }),
       ],
-    });
-
-    const text = collectText(FleetMissionsSection({
-      fleetVisibility,
-      now,
-      onCounterplay: () => undefined,
-      onJoinAttack: () => undefined,
-      onOpenMissionControl: () => undefined,
-      onRecall: () => undefined,
-      onResolveMission: () => undefined,
-    })).join(" ");
-
-    // Clear origin -> target with names + coordinates (not bare ids).
-    expect(text).toContain("New Zion [6:9:1]");
-    expect(text).toContain("1517 [5:407:4]");
-    // The old "1 -> 40" raw-id rendering must be gone.
-    expect(text).not.toContain("1 -> 40");
-    // "You" marks the player's own planet (origin here).
-    expect(text).toContain("You");
-    // Concise timing line for outbound.
-    expect(text).toContain("Arrival in 13m");
-    // Mission Control entry point present.
-    expect(text).toContain("Open Mission Control");
-  });
-
-  test("surfaces Recall fleet for an own outbound mission that has not arrived", () => {
-    const now = Date.parse("2026-06-07T22:00:00.000Z");
-    const fleetVisibility = visibility({
-      outgoing: [
+      returning: [
         mission({
           missionId: "2",
-          missionType: "Attack",
-          status: "Outbound",
+          missionType: "Transport",
+          status: "Returning",
           owner: PLAYER_WALLET,
           originPlanetId: "1",
-          targetPlanetId: "40",
-          arrivalMs: now + 5 * 60_000,
-          recallCost: "25",
-          originPlanet: planetRef("1", PLAYER_WALLET, "New Zion", 6, 9, 1, "Nikita"),
-          targetPlanet: planetRef("40", ENEMY_WALLET, "1517", 5, 407, 4, "Rival"),
+          targetPlanetId: "9",
+          arrivalMs: now - 60_000,
+          returnMs: now + 5 * 60_000,
+          targetPlanet: planetRef("9", ENEMY_WALLET, "Outpost", 6, 12, 3),
         }),
       ],
     });
 
-    const text = collectText(FleetMissionsSection({
+    const summary = summarizeFleets(fleetVisibility, now);
+    expect(summary.activeCount).toBe(2);
+    expect(summary.underAttack).toBeNull();
+    expect(summary.lines.map((line) => line.text)).toEqual([
+      "Attack → 1517 [5:407:4] · arrives in 13m",
+      "Transport returning from Outpost [6:12:3] · lands in 5m",
+    ]);
+
+    const text = collectText(FleetsSummary({
       fleetVisibility,
       now,
       onOpenMissionControl: () => undefined,
-      onRecall: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("Recall fleet");
+    expect(text).toContain("2 active");
+    expect(text).toContain("Attack → 1517 [5:407:4] · arrives in 13m");
+    expect(text).toContain("Open Mission Control");
+    // No per-panel splitting labels on Overview anymore.
+    expect(text).not.toContain("Incoming");
+    expect(text).not.toContain("Outbound");
+    expect(text).not.toContain("Joinable");
+    // No raw "1 -> 40" id rendering.
+    expect(text).not.toContain("1 -> 40");
+  });
+
+  test("raises a prominent under-attack alert for hostile inbound attacks with the soonest ETA", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const fleetVisibility = visibility({
+      incoming: [
+        mission({
+          missionId: "10",
+          missionType: "Attack",
+          status: "Outbound",
+          owner: ENEMY_WALLET,
+          originPlanetId: "40",
+          targetPlanetId: "1",
+          arrivalMs: now + 8 * 60_000,
+          originPlanet: planetRef("40", ENEMY_WALLET, "Raider", 5, 407, 4),
+        }),
+        mission({
+          missionId: "11",
+          missionType: "Attack",
+          status: "Outbound",
+          owner: ENEMY_WALLET,
+          originPlanetId: "41",
+          targetPlanetId: "1",
+          arrivalMs: now + 3 * 60_000,
+          originPlanet: planetRef("41", ENEMY_WALLET, "Reaver", 5, 407, 9),
+        }),
+      ],
+    });
+
+    const summary = summarizeFleets(fleetVisibility, now);
+    expect(summary.underAttack).toEqual({ count: 2, soonestLabel: "in 3m" });
+
+    const text = collectText(FleetsSummary({
+      fleetVisibility,
+      now,
+      onOpenMissionControl: () => undefined,
+    })).join(" ");
+
+    expect(text).toContain("Under attack");
+    expect(text).toContain("2 hostile fleets inbound");
+    expect(text).toContain("soonest in 3m");
+  });
+
+  test("caps the visible list and offers a Mission Control overflow link", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const outgoing: FleetMissionSummary[] = Array.from({ length: 6 }, (_unused, index) =>
+      mission({
+        missionId: `o${index}`,
+        missionType: "Transport",
+        status: "Outbound",
+        owner: PLAYER_WALLET,
+        originPlanetId: "1",
+        targetPlanetId: `${index}`,
+        arrivalMs: now + (index + 1) * 60_000,
+        targetPlanet: planetRef(`${index}`, ENEMY_WALLET, `T${index}`, 1, 1, index),
+      }),
+    );
+    const summary = summarizeFleets(visibility({ outgoing }), now);
+    expect(summary.activeCount).toBe(6);
+    expect(summary.lines.length).toBe(4);
+    expect(summary.hiddenCount).toBe(2);
+
+    const text = collectText(FleetsSummary({
+      fleetVisibility: visibility({ outgoing }),
+      now,
+      onOpenMissionControl: () => undefined,
+    })).join(" ");
+    expect(text).toContain("+2 more — open Mission Control");
   });
 
   test("falls back to a coordinate-free planet id when the planet reference is missing", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
-    const fleetVisibility = visibility({
-      returning: [
+    const summary = summarizeFleets(visibility({
+      outgoing: [
         mission({
-          missionId: "3",
-          missionType: "Transport",
-          status: "Returning",
+          missionId: "1",
+          missionType: "Deploy",
+          status: "Outbound",
           owner: PLAYER_WALLET,
-          originPlanetId: "7",
-          targetPlanetId: "12",
-          arrivalMs: now - 60_000,
-          returnMs: now + 4 * 60_000,
-          originPlanet: null,
+          originPlanetId: "1",
+          targetPlanetId: "77",
+          arrivalMs: now + 60_000,
           targetPlanet: null,
         }),
       ],
-    });
-
-    const text = collectText(FleetMissionsSection({
-      fleetVisibility,
-      now,
-      onOpenMissionControl: () => undefined,
-    })).join(" ");
-
-    expect(text).toContain("Planet #7");
-    expect(text).toContain("Planet #12");
-    expect(text).toContain("Returns in 4m");
+    }), now);
+    expect(summary.lines[0]?.text).toBe("Deploy → Planet #77 · arrives in 1m");
   });
 });
 
@@ -143,12 +185,11 @@ function planetRef(
   galaxy: number,
   system: number,
   position: number,
-  ownerDisplayName?: string | null,
 ): FleetMissionPlanetReference {
   return {
     planetId,
     owner,
-    ownerDisplayName: ownerDisplayName ?? null,
+    ownerDisplayName: null,
     name,
     galaxy,
     system,
@@ -166,7 +207,6 @@ function mission(input: {
   targetPlanetId: string;
   arrivalMs: number;
   returnMs?: number;
-  recallCost?: string | null;
   originPlanet?: FleetMissionPlanetReference | null;
   targetPlanet?: FleetMissionPlanetReference | null;
 }): FleetMissionSummary {
@@ -182,7 +222,7 @@ function mission(input: {
     arrivalAt: Math.floor(input.arrivalMs / 1_000).toString(),
     returnAt: Math.floor((input.returnMs ?? input.arrivalMs + 60_000) / 1_000).toString(),
     fuelCost: "100",
-    recallCost: input.recallCost ?? null,
+    recallCost: null,
     attackGroupId: null,
     joinedAttackMissionIds: [],
     cargo: { metal: "0", crystal: "0", deuterium: "0" },
