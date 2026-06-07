@@ -7,6 +7,7 @@ import {
   rankingsPageSize,
   rankingsPaginationLabel,
   rankingsRefreshButtonState,
+  RankingsCurrentPlayerIndicator,
   RankingsPagination,
   RankingsPageHeader,
   RankingsTable,
@@ -384,6 +385,66 @@ describe("RankingsPage", () => {
   test("uses the refresh button as the rankings background refresh indicator", () => {
     expect(rankingsRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
     expect(rankingsRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
+  });
+
+  test("renders a top current-player rank indicator with the visible active-category score", () => {
+    const visited: string[] = [];
+    const indicator = RankingsCurrentPlayerIndicator({
+      currentPlayerPage: { rank: 42, page: 2 },
+      currentScore: "1500",
+      currentWallet: "0x1111111111111111111111111111111111111111",
+      hasLoadedData: true,
+      loading: false,
+      onCurrentPlayer: () => visited.push("current"),
+    });
+    const button = buttonWithTitle(indicator, "Go to your rank");
+
+    expect(visibleText(indicator)).toContain("Your rank: # 42 1,500");
+    expect(button?.props?.["aria-label"]).toBe("Your rank is 42");
+    expect(button?.props?.disabled).toBe(false);
+    button?.props?.onClick?.();
+    expect(visited).toEqual(["current"]);
+  });
+
+  test("updates the current-player rank indicator from the selected category payload", () => {
+    const totalIndicator = RankingsCurrentPlayerIndicator({
+      currentPlayerPage: { rank: 9, page: 1 },
+      currentScore: "1500",
+      currentWallet: "0x1111111111111111111111111111111111111111",
+      hasLoadedData: true,
+      loading: false,
+      onCurrentPlayer: () => undefined,
+    });
+    const fleetIndicator = RankingsCurrentPlayerIndicator({
+      currentPlayerPage: { rank: 3, page: 1 },
+      currentScore: "200",
+      currentWallet: "0x1111111111111111111111111111111111111111",
+      hasLoadedData: true,
+      loading: false,
+      onCurrentPlayer: () => undefined,
+    });
+
+    expect(visibleText(totalIndicator)).toContain("Your rank: # 9 1,500");
+    expect(visibleText(fleetIndicator)).toContain("Your rank: # 3 200");
+  });
+
+  test("handles unranked and no-wallet current-player indicator states", () => {
+    const unranked = RankingsCurrentPlayerIndicator({
+      currentPlayerPage: null,
+      currentWallet: "0x1111111111111111111111111111111111111111",
+      hasLoadedData: true,
+      loading: false,
+      onCurrentPlayer: () => undefined,
+    });
+
+    expect(visibleText(unranked)).toContain("Your rank: Unranked");
+    expect(buttonWithTitle(unranked, "Your rank is unavailable")?.props?.disabled).toBe(true);
+    expect(RankingsCurrentPlayerIndicator({
+      currentPlayerPage: { rank: 1, page: 1 },
+      currentWallet: undefined,
+      hasLoadedData: true,
+      loading: false,
+    })).toBeNull();
   });
 
   test("renders compact pagination controls from highscore metadata", () => {
