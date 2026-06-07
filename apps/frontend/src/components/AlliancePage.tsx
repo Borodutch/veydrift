@@ -1,20 +1,18 @@
-import { Crown, RefreshCw, Shield, UserRound, Users, X } from "lucide-preact";
+import { Crown, Shield, UserRound, Users, X } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
+import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 
 export const allianceRosterPageSize = 10;
 export const allianceDirectoryPageSize = 10;
 
 export function allianceRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return {
-    disabled: loading,
-    label: loading ? "Refreshing" : "Refresh",
-  };
+  return refreshButtonState(loading);
 }
 
 type AllianceActionState =
@@ -122,7 +120,6 @@ export function AlliancePage({
   const selectedAlliance = findAllianceEntry(directory, activeAllianceId, currentAlliance);
   const inspectedAlliance = selectedAlliance?.allianceId === currentAllianceId ? null : selectedAlliance;
   const initialLoading = shouldShowAllianceInitialLoader({ allianceState, loading });
-  const refreshButton = allianceRefreshButtonState(loading);
   const openPlayer = onOpenPlayer ?? setSelectedPlayer;
   const openAlliance = onOpenAlliance ?? setActiveAllianceId;
   const exitAction = allianceExitActionState(allianceState);
@@ -169,26 +166,12 @@ export function AlliancePage({
 
   return (
     <section className="grid min-h-0 gap-4">
-      <header className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-white">Alliance</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            {isMember && profile ? allianceDisplayName(profile) : "Create an alliance or scan the public directory."}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={onRefresh}
-            type="button"
-            disabled={refreshButton.disabled}
-            title="Refresh alliance state"
-          >
-            <RefreshCw aria-hidden="true" size={14} />
-            {refreshButton.label}
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh alliance state" />}
+        subtitle={isMember && profile ? allianceDisplayName(profile) : "Create an alliance or scan the public directory."}
+        title="Alliance"
+        titleSize="xl"
+      />
 
       {error ? <Notice tone="error">{error}</Notice> : null}
       {allianceState?.allianceAvailable === false ? (

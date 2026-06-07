@@ -15,6 +15,7 @@ import {
   type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
+import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
 import { VeydriftLoader } from "./VeydriftLoader";
 
@@ -50,10 +51,7 @@ const groupLabels = {
 } as const;
 
 export function shipyardRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return {
-    disabled: loading,
-    label: loading ? "Refreshing" : "Refresh",
-  };
+  return refreshButtonState(loading);
 }
 
 export function shouldShowShipyardInitialLoader({
@@ -92,32 +90,18 @@ export function ShipyardPage({
   const queue = activeProductionQueue(shipyardState?.queue, overviewQueue, "ship");
   const productionAvailable = shipyardState?.productionAvailable !== false;
   const initialLoading = shouldShowShipyardInitialLoader({ loading, shipyardState });
-  const refreshButton = shipyardRefreshButtonState(loading);
 
   return (
     <div className="grid gap-4">
-      <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Shipyard</h2>
-          <p className="mt-1 text-xs text-slate-400">
-            {shipyardState?.homePlanetId
-              ? `Planet #${shipyardState.planetId ?? shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
-              : productionAvailable
-                ? "On-chain VeydriftGame planet required for ship production"
-                : "Ship production contract unavailable on this deployment"}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={refreshButton.disabled}
-            onClick={onRefresh}
-            type="button"
-          >
-            {refreshButton.label}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh shipyard state" />}
+        subtitle={shipyardState?.homePlanetId
+          ? `Planet #${shipyardState.planetId ?? shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
+          : productionAvailable
+            ? "On-chain VeydriftGame planet required for ship production"
+            : "Ship production contract unavailable on this deployment"}
+        title="Shipyard"
+      />
 
       <StatusPanel
         actionState={actionState}
