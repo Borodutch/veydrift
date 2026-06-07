@@ -28,9 +28,12 @@ import {
   fetchWalletQueues,
   getAvailableWalletProvider,
   getAvailableWalletProviderDetails,
+  getChainId,
+  getCurrentAccounts,
   getInjectedProvider,
   confirmTransactionReceipt,
   isBaseSepoliaChain,
+  isTransientWalletBootstrapError,
   isUserRejected,
   miniAppUnsupportedChainMessage,
   mergePlayerProfile,
@@ -116,6 +119,34 @@ describe("walletFlow", () => {
       transactionHash: "0xok"
     });
     expect(polls).toBe(2);
+  });
+
+  test("classifies stalled bootstrap wallet reads as transient and retryable", () => {
+    expect(isTransientWalletBootstrapError(
+      new Error("Timed out reading wallet accounts from the wallet after 6 seconds.")
+    )).toBe(true);
+    expect(isTransientWalletBootstrapError(
+      new Error("Timed out reading wallet network from the wallet after 6 seconds.")
+    )).toBe(true);
+    expect(isTransientWalletBootstrapError({ code: -32603, message: "Internal JSON-RPC error." })).toBe(true);
+    expect(isTransientWalletBootstrapError(new Error("Failed to fetch"))).toBe(true);
+  });
+
+  test("does not retry bootstrap on user rejection or a locked wallet", () => {
+    expect(isTransientWalletBootstrapError({ code: 4001, message: "User rejected the request." })).toBe(false);
+    expect(isTransientWalletBootstrapError(
+      new Error("Wallet is locked. Please unlock your wallet and try again.")
+    )).toBe(false);
+    expect(isTransientWalletBootstrapError(new Error("Settlement state is unavailable because the game API is not configured."))).toBe(false);
+  });
+
+  test("applies a custom shorter timeout to bootstrap account and chain reads", async () => {
+    const stalledProvider = mockProvider(async () => {
+      await new Promise(() => {}); // never resolves
+      return [];
+    });
+    await expect(getCurrentAccounts(stalledProvider, 30)).rejects.toThrow(/timed out reading wallet accounts/i);
+    await expect(getChainId(stalledProvider, 30)).rejects.toThrow(/timed out reading wallet network/i);
   });
 
   test("keeps polling when a receipt read transiently fails before the transaction is mined", async () => {
