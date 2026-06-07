@@ -135,6 +135,7 @@ describe("Mission Control battle reports", () => {
     })).join(" ");
 
     expect(text).toContain("Mission #42");
+    expect(text).not.toContain("Mission Detail");
     expect(text).toContain("Needs resolution");
     expect(text).toContain("Resolve battle");
     expect(text).toContain("OGame-Style Battle Report");
