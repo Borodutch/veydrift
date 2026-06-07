@@ -128,9 +128,9 @@ import {
   sendFinishResearchTransaction,
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
-  sendJoinAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
+  sendJoinAttackMissionTransaction,
   sendFinishMoonBuildingUpgradeTransaction,
   sendJumpGateJumpTransaction,
   sendRecallFleetMissionTransaction,
@@ -900,6 +900,33 @@ export function homeGalaxySystemSyncKey(homeCoords: Coordinates | undefined): st
   return `${homeCoords.galaxy}:${homeCoords.system}`;
 }
 
+export function homePlanetIdentityRefreshKey({
+  apiBaseUrl,
+  homeCoords,
+  ownerDisplayName,
+  settlementPlanet,
+}: {
+  apiBaseUrl: string | undefined;
+  homeCoords: Coordinates | undefined;
+  ownerDisplayName: string | null | undefined;
+  settlementPlanet: WalletSettlementResponse["planet"] | undefined;
+}): string | undefined {
+  if (!homeCoords) return undefined;
+
+  return JSON.stringify({
+    apiBaseUrl: apiBaseUrl ?? null,
+    displayName: ownerDisplayName?.trim() || null,
+    fields: settlementPlanet?.fields ?? null,
+    galaxy: homeCoords.galaxy,
+    name: settlementPlanet?.name?.trim() || null,
+    owner: settlementPlanet?.owner ?? null,
+    planetId: settlementPlanet?.planetId ?? null,
+    position: homeCoords.position,
+    system: homeCoords.system,
+    temperature: settlementPlanet?.temperature ?? null,
+  });
+}
+
 export function topBarEnergyFor({
   infrastructureChainState,
   isWalletConnected,
@@ -1557,6 +1584,7 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
     outgoing: [],
     returning: [],
     joinableAttacks: [],
+    completedMissions: [],
     battleReports: [],
   };
 }
@@ -1770,7 +1798,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     apiBaseUrl,
     hydratedWalletSnapshotKey,
   });
+  const settlementPlanet = onChainSettlement?.planet;
   const homeGalaxyNavSyncKey = homeGalaxySystemSyncKey(homeCoords);
+  const homePlanetIdentitySyncKey = homePlanetIdentityRefreshKey({
+    apiBaseUrl,
+    homeCoords,
+    ownerDisplayName: playerProfile?.displayName,
+    settlementPlanet,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2555,8 +2590,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [homeGalaxyNavSyncKey]);
 
   useEffect(() => {
-    const settlementPlanet = onChainSettlement?.planet;
-
     if (!homeCoords) {
       setHomePlanetIdentity(undefined);
       return;
@@ -2601,7 +2634,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, homeCoords, onChainSettlement?.planet, playerProfile?.displayName]);
+  }, [homePlanetIdentitySyncKey]);
 
   useEffect(() => {
     void refreshOnChainState();
@@ -4186,31 +4219,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
-  const handleCounterplay = useCallback((hostileMissionId: string, mode: "acsDefend" | "intercept") => {
-    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
-      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
-      return;
-    }
-
-    const ships = selectCounterplayShips(shipyardState);
-    if (!ships) {
-      setGalaxyAction({ status: "error", label: "No ships available for counterplay." });
-      return;
-    }
-
-    void runGalaxyTransaction(mode === "acsDefend" ? "Group defend mission" : "Intercept mission", () => sendLaunchFleetMissionTransaction(
-      provider,
-      account,
-      gameContract,
-      {
-        originPlanetId: onChainSettlement.homePlanetId ?? "0",
-        targetPlanetId: hostileMissionId,
-        missionType: missionTypeId(mode),
-        ships,
-      },
-    ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
-
   const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
       setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
@@ -4706,6 +4714,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
+          onJoinAttack={handleJoinAttack}
           onOpenBattleReport={handleOpenBattleReport}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
@@ -4714,6 +4723,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onResolve={handleResolveMission}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}
+          fleetSlots={shipyardState?.fleetSlots}
           walletPlanets={walletPlanets}
         />
       );
@@ -4894,8 +4904,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         onChainQueues={overviewOnChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
-        onCounterplay={handleCounterplay}
-        onJoinAttack={handleJoinAttack}
         buildingActionNotice={infrastructureActionNotice}
         buildingActionPendingLabel={infrastructureActionPendingLabel}
         isDefenseActionPending={defenseAction.status === "pending"}
@@ -4908,7 +4916,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
         onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
-        onResolveMission={handleResolveMission}
         playerProfile={playerProfile}
         playerProfileAction={playerProfileAction}
         homePlanet={homePlanetIdentity}

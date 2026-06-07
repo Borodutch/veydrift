@@ -64,13 +64,13 @@ describe("overview planet hero image", () => {
   test("renders commander identity before the current planet block", () => {
     const commanderIndex = overviewSource.indexOf(">Commander<");
     const planetHeroIndex = overviewSource.indexOf("Planet hero");
-    const missionPanelIndex = overviewSource.indexOf("<MissionPanel");
+    const fleetsSummaryIndex = overviewSource.indexOf("<FleetsSummary");
 
     expect(commanderIndex).toBeGreaterThanOrEqual(0);
     expect(planetHeroIndex).toBeGreaterThanOrEqual(0);
-    expect(missionPanelIndex).toBeGreaterThanOrEqual(0);
+    expect(fleetsSummaryIndex).toBeGreaterThanOrEqual(0);
     expect(commanderIndex).toBeLessThan(planetHeroIndex);
-    expect(planetHeroIndex).toBeLessThan(missionPanelIndex);
+    expect(planetHeroIndex).toBeLessThan(fleetsSummaryIndex);
   });
 
   test("uses the disconnected default only for local preview state", () => {

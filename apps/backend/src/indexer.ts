@@ -701,6 +701,9 @@ export class SettlementIndexer {
           && mission.missionType === "Attack"
           && mission.status === "Outbound"
       ),
+      completedMissions: summaries
+        .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
+        .sort(compareFleetMissionsNewestFirst),
       battleReports: battleReports.filter((report) =>
         report.attacker.toLowerCase() === walletLower || ownedPlanetIds.has(report.targetPlanetId)
       )
@@ -3121,6 +3124,28 @@ function levelRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; l
 
 function countRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; count: number }> {
   return (rows ?? []).map((row) => ({ id: row.id, count: row.value }));
+}
+
+function isVisibleCompletedMission(
+  mission: FleetMissionSummary,
+  walletLower: string,
+  ownedPlanetIds: ReadonlySet<string>
+): boolean {
+  if (mission.status !== "Resolved" && mission.status !== "Returned") return false;
+  return mission.owner.toLowerCase() === walletLower || ownedPlanetIds.has(mission.targetPlanetId);
+}
+
+function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: FleetMissionSummary): number {
+  const leftTime = Number(left.status === "Returned" ? left.returnAt : left.arrivalAt);
+  const rightTime = Number(right.status === "Returned" ? right.returnAt : right.arrivalAt);
+  if (leftTime !== rightTime) return rightTime - leftTime;
+  const leftBlock = BigInt(left.blockNumber);
+  const rightBlock = BigInt(right.blockNumber);
+  if (leftBlock !== rightBlock) return rightBlock > leftBlock ? 1 : -1;
+  const leftMission = BigInt(left.missionId);
+  const rightMission = BigInt(right.missionId);
+  if (leftMission === rightMission) return 0;
+  return rightMission > leftMission ? 1 : -1;
 }
 
 const moonBuildingRows = [

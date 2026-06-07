@@ -253,6 +253,7 @@ export type FleetMissionVisibilityResponse = {
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
   joinableAttacks: FleetMissionSummary[];
+  completedMissions: FleetMissionSummary[];
   battleReports: BattleReport[];
 };
 
