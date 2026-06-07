@@ -13,6 +13,7 @@ import {
   failedBuildingFinishSyncReasonFor,
   galaxyMissionActionErrorLabel,
   homeGalaxySystemSyncKey,
+  homePlanetIdentityRefreshKey,
   hasInfrastructureDisplayState,
   infrastructureBackendSyncPausedLabel,
   infrastructureBackendSyncPausedReasonFor,
@@ -120,6 +121,46 @@ describe("Playable MVP app display helpers", () => {
     expect(homeGalaxySystemSyncKey({ galaxy: 2, system: 44, position: 7 })).toBe("2:44");
     expect(homeGalaxySystemSyncKey({ galaxy: 2, system: 44, position: 9 })).toBe("2:44");
     expect(homeGalaxySystemSyncKey(undefined)).toBeUndefined();
+  });
+
+  test("keys home identity refresh by display identity instead of wallet poll churn", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const firstSnapshot = indexedPlanet(wallet);
+    const refreshedSnapshot = {
+      ...firstSnapshot,
+      lastSettledAt: "1770000300",
+      resources: {
+        metal: "5100",
+        crystal: "5000",
+        deuterium: "4900",
+      },
+    };
+    const homeCoords = { galaxy: 2, system: 44, position: 9 };
+    const key = homePlanetIdentityRefreshKey({
+      apiBaseUrl: "https://api.test",
+      homeCoords,
+      ownerDisplayName: "Explorer",
+      settlementPlanet: firstSnapshot,
+    });
+
+    expect(homePlanetIdentityRefreshKey({
+      apiBaseUrl: "https://api.test",
+      homeCoords,
+      ownerDisplayName: "Explorer",
+      settlementPlanet: refreshedSnapshot,
+    })).toBe(key);
+    expect(homePlanetIdentityRefreshKey({
+      apiBaseUrl: "https://api.test",
+      homeCoords: { galaxy: 2, system: 45, position: 9 },
+      ownerDisplayName: "Explorer",
+      settlementPlanet: refreshedSnapshot,
+    })).not.toBe(key);
+    expect(homePlanetIdentityRefreshKey({
+      apiBaseUrl: "https://api.test",
+      homeCoords: undefined,
+      ownerDisplayName: "Explorer",
+      settlementPlanet: refreshedSnapshot,
+    })).toBeUndefined();
   });
 
   test("turns shipyard load failures into explicit mission-action blockers", () => {
