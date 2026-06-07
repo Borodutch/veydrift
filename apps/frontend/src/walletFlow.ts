@@ -257,6 +257,12 @@ export type FleetMissionVisibilityResponse = {
   battleReports: BattleReport[];
 };
 
+export type MissionDetailResponse = {
+  mission: FleetMissionSummary;
+  battleReport: BattleReport | null;
+  source?: string;
+};
+
 export type BattleOutcomeName = "Draw" | "AttackerWin" | "DefenderWin";
 
 export type CombatRoundReport = {
@@ -2226,6 +2232,12 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId
 
 export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<FleetMissionVisibilityResponse> {
   return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, withWalletReadOptions("fleet-visibility", undefined, options), "Fleet visibility");
+}
+
+export async function fetchMission(apiUrl: string, missionId: string): Promise<MissionDetailResponse> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Mission"));
+  return response.json() as Promise<MissionDetailResponse>;
 }
 
 export async function fetchBattleReport(apiUrl: string, missionId: string): Promise<BattleReport> {

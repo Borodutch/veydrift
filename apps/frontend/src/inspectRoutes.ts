@@ -3,6 +3,7 @@ import type { Page } from "./components/NavBar";
 export type InspectRoute =
   | { kind: "page"; page: Page }
   | { kind: "battle-report"; missionId: string }
+  | { kind: "mission"; missionId: string }
   | { kind: "player"; wallet: string }
   | { kind: "alliance"; allianceId: string }
   | { kind: "mission-report"; missionId: string };
@@ -37,6 +38,9 @@ export function parseInspectRoute(hash: string): InspectRoute {
   if (kind === "battle-report" && value && /^[0-9]+$/.test(decodeURIComponent(value))) {
     return { kind: "battle-report", missionId: decodeURIComponent(value) };
   }
+  if (kind === "mission" && value && /^[0-9]+$/.test(decodeURIComponent(value))) {
+    return { kind: "mission", missionId: decodeURIComponent(value) };
+  }
   if (kind === "mission-control" && value === "report" && detailId) {
     return { kind: "mission-report", missionId: decodeURIComponent(detailId) };
   }
@@ -50,6 +54,7 @@ export function buildInspectHash(route: InspectRoute): string {
   if (route.kind === "player") return `#/player/${encodeURIComponent(route.wallet)}`;
   if (route.kind === "alliance") return `#/alliance/${encodeURIComponent(route.allianceId)}`;
   if (route.kind === "battle-report") return `#/battle-report/${encodeURIComponent(route.missionId)}`;
+  if (route.kind === "mission") return `#/mission/${encodeURIComponent(route.missionId)}`;
   if (route.kind === "mission-report") return `#/mission-control/report/${encodeURIComponent(route.missionId)}`;
   return route.page === "overview" ? "#/" : `#/${route.page}`;
 }

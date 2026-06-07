@@ -10,6 +10,7 @@ import {
 } from "./contractStateSchema";
 import {
   decodeAllianceLog,
+  decodeBattleReports,
   decodeCompleteFleetMissionLogs,
   decodeDebrisFieldLog,
   decodeIndexedQueueCompletedLog,
@@ -22,6 +23,7 @@ import {
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
   isDebrisFieldLog,
+  isBattleReportLog,
   isFleetMissionLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
@@ -37,6 +39,7 @@ import {
   type Address,
   type AllianceIdentity,
   type AllianceState,
+  type BattleReport,
   type DebrisFieldEvent,
   type DefenseState,
   type FleetMissionPlanetReference,
@@ -674,6 +677,7 @@ export class SettlementIndexer {
         .map((planet) => planet.planetId)
     );
     const summaries = this.indexedFleetMissionSummaries().map((mission) => this.withFleetMissionPlanetReferences(mission));
+    const battleReports = this.indexedBattleReports();
 
     return {
       wallet,
@@ -700,8 +704,24 @@ export class SettlementIndexer {
       completedMissions: summaries
         .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
         .sort(compareFleetMissionsNewestFirst),
-      battleReports: []
+      battleReports: battleReports.filter((report) =>
+        report.attacker.toLowerCase() === walletLower || ownedPlanetIds.has(report.targetPlanetId)
+      )
     };
+  }
+
+  fleetMission(missionId: string): FleetMissionSummary | null {
+    const mission = this.indexedFleetMissionSummaries()
+      .find((summary) => summary.missionId === missionId);
+    return mission ? this.withFleetMissionPlanetReferences(mission) : null;
+  }
+
+  battleReport(missionId: string): BattleReport | null {
+    return this.indexedBattleReports().find((report) => report.missionId === missionId) ?? null;
+  }
+
+  battleReports(): BattleReport[] {
+    return this.indexedBattleReports();
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
@@ -2823,6 +2843,19 @@ export class SettlementIndexer {
       .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
       .filter(isFleetMissionLog);
     return decodeCompleteFleetMissionLogs(logs);
+  }
+
+  private indexedBattleReports(): BattleReport[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+    const logs = rows
+      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
+      .filter(isBattleReportLog);
+    return decodeBattleReports(logs);
   }
 
   private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {
