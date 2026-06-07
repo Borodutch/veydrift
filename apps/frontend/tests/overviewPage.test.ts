@@ -14,6 +14,7 @@ import {
   overviewShipyardFinishAction,
   overviewResearchActionNoticeFor,
   overviewResearchFinishAction,
+  overviewFleetSummaryModel,
   shouldShowOverviewBuildingFinishAction,
 } from "../src/components/OverviewPage";
 import {
@@ -28,6 +29,7 @@ import {
 import { createInitialPlayableState, defenseCatalog, queueProgressPercent, shipCatalog } from "../src/playableMvp";
 import { timestampToMs } from "../src/timestampFormat";
 import type { Planet } from "../src/types";
+import type { FleetMissionSummary, FleetMissionVisibilityResponse } from "../src/walletFlow";
 
 const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.tsx", import.meta.url)).text();
 const buildingCompletionWalletPrompt =
@@ -60,17 +62,63 @@ const homePlanet: Planet = {
   type: "cold-tundra",
 };
 
+function fleetMission(
+  missionId: string,
+  missionType: string,
+  status: string,
+  originPlanetId: string,
+  targetPlanetId: string,
+  arrivalMs: number,
+): FleetMissionSummary {
+  return {
+    missionId,
+    status,
+    missionType,
+    owner: "0x2222222222222222222222222222222222222222",
+    originPlanetId,
+    targetPlanetId,
+    originPlanet: {
+      planetId: originPlanetId,
+      owner: "0x2222222222222222222222222222222222222222",
+      name: null,
+      galaxy: 1,
+      system: 400 + Number(originPlanetId),
+      position: Number(originPlanetId),
+      coordinates: `1:${400 + Number(originPlanetId)}:${originPlanetId}`,
+    },
+    targetPlanet: {
+      planetId: targetPlanetId,
+      owner: "0x1111111111111111111111111111111111111111",
+      name: null,
+      galaxy: 1,
+      system: 400 + Number(targetPlanetId),
+      position: Number(targetPlanetId),
+      coordinates: `1:${400 + Number(targetPlanetId)}:${targetPlanetId}`,
+    },
+    arrivalAt: Math.floor(arrivalMs / 1_000).toString(),
+    returnAt: Math.floor((arrivalMs + 20 * 60_000) / 1_000).toString(),
+    fuelCost: "100",
+    recallCost: null,
+    attackGroupId: null,
+    joinedAttackMissionIds: [],
+    cargo: { metal: "0", crystal: "0", deuterium: "0" },
+    ships: { smallCargo: "1" },
+    transactionHash: "0xabc",
+    blockNumber: "123",
+  };
+}
+
 describe("overview planet hero image", () => {
   test("renders commander identity before the current planet block", () => {
     const commanderIndex = overviewSource.indexOf(">Commander<");
     const planetHeroIndex = overviewSource.indexOf("Planet hero");
-    const missionPanelIndex = overviewSource.indexOf("<MissionPanel");
+    const fleetSummaryIndex = overviewSource.indexOf("<OverviewFleetSummary");
 
     expect(commanderIndex).toBeGreaterThanOrEqual(0);
     expect(planetHeroIndex).toBeGreaterThanOrEqual(0);
-    expect(missionPanelIndex).toBeGreaterThanOrEqual(0);
+    expect(fleetSummaryIndex).toBeGreaterThanOrEqual(0);
     expect(commanderIndex).toBeLessThan(planetHeroIndex);
-    expect(planetHeroIndex).toBeLessThan(missionPanelIndex);
+    expect(planetHeroIndex).toBeLessThan(fleetSummaryIndex);
   });
 
   test("uses the disconnected default only for local preview state", () => {
@@ -99,22 +147,55 @@ describe("overview planet hero image", () => {
 });
 
 describe("overview queue progress display", () => {
-  test("keeps overview mission cards route-first with compact actions and Mission Control navigation", () => {
-    expect(overviewSource).toContain("Fleet missions");
+  test("keeps Overview missions as a compact Fleets summary without panels or actions", () => {
+    expect(overviewSource).toContain("Fleets");
+    expect(overviewSource).toContain("overviewFleetSummaryModel(fleetVisibility)");
+    expect(overviewSource).toContain("active mission");
+    expect(overviewSource).toContain("Under attack");
+    expect(overviewSource).toContain("No hostile fleets inbound.");
     expect(overviewSource).toContain('onNavigate("mission-control")');
-    expect(overviewSource).toContain("function OverviewMissionCard");
-    expect(overviewSource).toContain("missionPlanetLabel(mission.originPlanet, mission.originPlanetId)");
-    expect(overviewSource).toContain("missionPlanetLabel(mission.targetPlanet, mission.targetPlanetId)");
-    expect(overviewSource).toContain("overviewMissionTimingLabel(mission, now)");
-    expect(overviewSource).toContain("function OverviewMissionActionButton");
-    expect(overviewSource).toContain("Group defend");
-    expect(overviewSource).toContain("Intercept");
-    expect(overviewSource).toContain("Join attack");
-    expect(overviewSource).toContain("Resolve now");
-    expect(overviewSource).toContain("more in Mission Control");
-    expect(overviewSource).not.toContain('{mission.originPlanetId} {"->"} {mission.targetPlanetId}');
-    expect(overviewSource).not.toContain("Arrival {formatMissionSnapshotTime");
-    expect(overviewSource).not.toContain("Return {formatMissionSnapshotTime");
+    expect(overviewSource).toContain("Open Mission Control");
+    expect(overviewSource).toContain("+{summary.overflowCount.toLocaleString()} more - open Mission Control");
+    expect(overviewSource).not.toContain("<MissionPanel");
+    expect(overviewSource).not.toContain("function MissionPanel");
+    expect(overviewSource).not.toContain("OverviewMissionActionButton");
+    expect(overviewSource).not.toContain("Group defend");
+    expect(overviewSource).not.toContain("Join attack");
+    expect(overviewSource).not.toContain("Resolve now");
+    expect(overviewSource).not.toContain('label="Incoming"');
+    expect(overviewSource).not.toContain('label="Returning"');
+    expect(overviewSource).not.toContain('label="Outbound"');
+    expect(overviewSource).not.toContain('label="Joinable"');
+  });
+
+  test("summarizes active missions and under-attack state from fleet visibility", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const fleetVisibility: FleetMissionVisibilityResponse = {
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      incoming: [
+        fleetMission("31", "Attack", "Outbound", "8", "7", now + 15 * 60_000),
+        fleetMission("32", "Transport", "Outbound", "9", "7", now + 5 * 60_000),
+      ],
+      outgoing: [
+        fleetMission("33", "Transport", "Outbound", "7", "10", now + 30 * 60_000),
+      ],
+      returning: [
+        fleetMission("34", "Deploy", "Returning", "10", "7", now + 45 * 60_000),
+      ],
+      joinableAttacks: [
+        fleetMission("35", "Attack", "Outbound", "11", "12", now + 60 * 60_000),
+      ],
+      battleReports: [],
+    };
+
+    const summary = overviewFleetSummaryModel(fleetVisibility);
+
+    expect(summary.activeCount).toBe(5);
+    expect(summary.hostileIncomingCount).toBe(1);
+    expect(summary.soonestHostile?.missionId).toBe("31");
+    expect(summary.overflowCount).toBe(1);
+    expect(summary.missions.map((mission) => mission.missionId)).toEqual(["32", "31", "33", "35", "34"]);
   });
 
   test("renders an accessible planet effects info control beside Overview stats", () => {
