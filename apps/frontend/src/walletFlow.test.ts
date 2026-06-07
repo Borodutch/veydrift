@@ -908,6 +908,104 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("decodes nested RPC revert data when fleet launch send returns -32603", async () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const data = encodeLaunchFleetMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    });
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") return "0x";
+      if (method === "eth_sendTransaction") {
+        throw {
+          code: -32603,
+          message: "Internal JSON-RPC error.",
+          data: {
+            originalError: {
+              code: 3,
+              message: "execution reverted",
+              data: "0x705f508b",
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    })).rejects.toThrow("Selected origin planet does not have the requested ships");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [{ from: account, to: contract, data }, "latest"],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{ from: account, to: contract, data }],
+      },
+    ]);
+  });
+
+  test("decodes nested RPC revert data for mission action sends without launch preflight", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_sendTransaction") {
+        throw {
+          code: -32603,
+          message: "Internal JSON-RPC error.",
+          data: {
+            error: {
+              code: 3,
+              data: "0xa8d5807a",
+              message: "execution reverted",
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(
+      sendResolveFleetMissionTransaction(provider, account, contract, "42")
+    ).rejects.toThrow("This fleet has not arrived yet");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0xde09e7cf", [42]),
+        }],
+      },
+    ]);
+  });
+
   test("still blocks fleet launches when the preflight reverts without a known selector", async () => {
     const ships = {
       smallCargo: 1,

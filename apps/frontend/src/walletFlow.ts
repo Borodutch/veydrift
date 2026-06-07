@@ -784,6 +784,11 @@ export function isUserRejected(error: unknown): boolean {
 export function walletRequestErrorMessage(error: unknown): string {
   const message = errorMessage(error);
   const code = errorCode(error);
+  const missionReason = fleetMissionRevertReason(error);
+
+  if (missionReason) {
+    return missionReason;
+  }
 
   if (/wallet is locked|metamask is locked|unlock metamask|unlock your wallet/i.test(message)) {
     return WALLET_LOCKED_MESSAGE;
@@ -823,9 +828,29 @@ const fleetMissionRevertReasons: Record<string, string> = {
   "0x1fbd4a7a": "You cannot attack a planet owned by your alliance.",
   "0xa3ab075a": "The selected debris field is empty. Refresh galaxy state and retry.",
   "0x84c69485": "This mission type is not supported for the selected fleet action.",
-  "0xb85299a2": "The target attack is already too close to arrival for this fleet action.",
+  "0xbacdb922": "The target attack is already too close to arrival for this fleet action.",
   "0xb3439205": "A fleet mission involving this planet still needs resolution. Resolve it before launching another mission.",
+  "0x1c31409a": "This fleet mission is no longer active. Refresh mission control and retry.",
+  "0x828c1183": "This wallet does not own the selected fleet mission. Refresh mission control and retry.",
+  "0xa8d5807a": "This fleet has not arrived yet. Wait for arrival or refresh mission control before retrying.",
+  "0x77c3008c": "This fleet mission is already returning. Refresh mission control before retrying.",
+  "0xb85299a2": "This fleet action is too late because the target mission has already arrived or cannot be joined in time.",
+  "0xbee20108": "The recall cutoff has passed for this mission. Wait for arrival and resolve it instead.",
+  "0x4ba3e176": "You cannot join an attack against your own planet.",
+  "0xdfa1a408": "The selected mission or target no longer matches current chain state. Refresh mission control and retry.",
+  "0x13b7fff2": "Those coordinates are already occupied. Refresh galaxy state and choose another target.",
+  "0x179a0545": "Choose valid galaxy coordinates for this mission.",
+  "0x791438b6": "Your planet limit has been reached. Upgrade astrophysics or choose a different mission.",
+  "0x1f38cd02": "Attack battle randomness is not configured for this deployment yet.",
 };
+
+const fleetMissionTransactionSelectors = new Set<string>([
+  GAME_SELECTORS.completeFleetMissionReturn,
+  GAME_SELECTORS.joinAttackMission,
+  GAME_SELECTORS.launchFleetMission,
+  GAME_SELECTORS.recallFleetMission,
+  GAME_SELECTORS.resolveFleetMission,
+]);
 
 function revertSelector(error: unknown): string | undefined {
   const data = errorData(error);
@@ -838,6 +863,15 @@ function fleetMissionRevertReason(error: unknown): string | undefined {
   const message = errorMessage(error);
   if (/INVALID_MISSION_SPEED/i.test(message)) {
     return "Choose a valid mission speed between 10% and 100%.";
+  }
+
+  const data = errorData(error);
+  const decodedMessage = typeof data === "string" ? decodeStandardRevertReason(data) : undefined;
+  if (decodedMessage) {
+    if (/INVALID_MISSION_SPEED/i.test(decodedMessage)) {
+      return "Choose a valid mission speed between 10% and 100%.";
+    }
+    return `Game contract rejected this fleet action: ${decodedMessage}.`;
   }
 
   return fleetMissionRevertReasons[revertSelector(error) ?? ""];
@@ -986,10 +1020,25 @@ async function sendWalletTransaction(
     await prepareAccountProbeWalletForTransaction(provider, account);
   }
 
-  return provider.request<string>({
-    method: "eth_sendTransaction",
-    params: [transaction]
-  });
+  try {
+    return await provider.request<string>({
+      method: "eth_sendTransaction",
+      params: [transaction]
+    });
+  } catch (error) {
+    if (isFleetMissionTransactionData(transaction.data)) {
+      const reason = fleetMissionRevertReason(error);
+      if (reason) {
+        throw new Error(reason);
+      }
+    }
+
+    throw error;
+  }
+}
+
+function isFleetMissionTransactionData(data: string): boolean {
+  return fleetMissionTransactionSelectors.has(data.slice(0, 10).toLowerCase());
 }
 
 function isAccountProbeWallet(provider: Eip1193Provider): boolean {
@@ -2024,15 +2073,78 @@ export function isTransientWalletBootstrapError(error: unknown): boolean {
 }
 
 function errorData(error: unknown): unknown {
-  if (typeof error !== "object" || error === null) return undefined;
-  if ("data" in error) return (error as { data: unknown }).data;
-  if ("error" in error) {
-    const nested = (error as { error: unknown }).error;
-    if (typeof nested === "object" && nested !== null && "data" in nested) {
-      return (nested as { data: unknown }).data;
+  return nestedErrorData(error, new Set());
+}
+
+function nestedErrorData(value: unknown, seen: Set<object>): string | undefined {
+  const direct = revertDataFromString(value);
+  if (direct) return direct;
+
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return undefined;
+  }
+  seen.add(value);
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["data", "error", "originalError", "cause", "message"]) {
+    if (key in record) {
+      const nested = nestedErrorData(record[key], seen);
+      if (nested) return nested;
     }
   }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = nestedErrorData(item, seen);
+      if (nested) return nested;
+    }
+  }
+
   return undefined;
+}
+
+function revertDataFromString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+
+  if (/^0x[a-fA-F0-9]{8}[a-fA-F0-9]*$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^[{[]/.test(trimmed)) {
+    try {
+      return nestedErrorData(JSON.parse(trimmed), new Set());
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (/revert/i.test(trimmed)) {
+    const match = trimmed.match(/0x[a-fA-F0-9]{8}[a-fA-F0-9]*/);
+    return match?.[0];
+  }
+
+  return undefined;
+}
+
+function decodeStandardRevertReason(data: string): string | undefined {
+  const clean = data.replace(/^0x/, "");
+  if (!clean.startsWith("08c379a0") || clean.length < 8 + 64 + 64) {
+    return undefined;
+  }
+
+  try {
+    const lengthOffset = 8 + 64;
+    const byteLength = Number(BigInt(`0x${clean.slice(lengthOffset, lengthOffset + 64)}`));
+    if (!Number.isSafeInteger(byteLength) || byteLength < 0) return undefined;
+    const bodyOffset = lengthOffset + 64;
+    const body = clean.slice(bodyOffset, bodyOffset + byteLength * 2);
+    if (body.length !== byteLength * 2) return undefined;
+    const bytes = new Uint8Array(body.match(/.{1,2}/g)?.map((byte) => Number.parseInt(byte, 16)) ?? []);
+    return new TextDecoder().decode(bytes).trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function fetchWalletSettlement(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
