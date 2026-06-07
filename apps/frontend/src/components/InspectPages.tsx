@@ -93,7 +93,7 @@ export function PlayerInspectPage({
   const isCurrentWallet = currentWallet?.toLowerCase() === wallet.toLowerCase();
   const alliance = state.status === "loaded" ? state.highscore?.alliance ?? null : null;
   const scoreItems = state.status === "loaded" ? playerInspectScoreItems(state.highscore) : [];
-  const originLabel = originCoords ? `[${originCoords.galaxy}:${originCoords.system}:${originCoords.position}]` : undefined;
+  const homePlanetLabel = state.status === "loaded" ? playerProfileHomePlanetLabel(state.planets, state.highscore) : undefined;
 
   return (
     <InspectShell
@@ -118,7 +118,7 @@ export function PlayerInspectPage({
           <div className="flex flex-wrap gap-2 rounded border border-white/10 bg-black/20 px-3 py-2">
             <CompactStat label="Rank" value={state.highscore ? `#${state.highscore.rank}` : "Unranked"} />
             <CompactStat label="Planets" value={String(state.planets?.planets.length ?? state.highscore?.planetCount ?? 0)} />
-            {originLabel ? <CompactStat label="Home planet" value={originLabel} /> : null}
+            {homePlanetLabel ? <CompactStat label="Home planet" value={homePlanetLabel} /> : null}
           </div>
 
           <Panel title="Planets">
@@ -557,6 +557,33 @@ export function playerInspectScoreItems(highscore: HighscoreEntry | null): Array
   ];
 }
 
+export function playerProfileHomePlanetLabel(
+  planets: WalletPlanetsResponse | null,
+  highscore: HighscoreEntry | null,
+): string | undefined {
+  const homePlanetId = highscore?.homePlanetId ?? planets?.homePlanetId ?? null;
+  const indexedHomePlanet = homePlanetId
+    ? planets?.planets.find((planet) => planet.planetId === homePlanetId)
+    : undefined;
+  if (indexedHomePlanet) return coordinateLabel(indexedHomePlanet);
+
+  const highscoreHomePlanet = homePlanetId
+    ? [
+        ...(highscore?.planets ?? []),
+        ...(highscore?.homePlanet ? [highscore.homePlanet] : []),
+      ].find((planet) => planet.planetId === homePlanetId)
+    : highscore?.homePlanet ?? undefined;
+  if (highscoreHomePlanet) return coordinateLabel(highscoreHomePlanet.coordinates);
+
+  const firstIndexedPlanet = planets?.planets[0];
+  if (firstIndexedPlanet) return coordinateLabel(firstIndexedPlanet);
+
+  const firstHighscorePlanet = highscore?.planets?.[0] ?? highscore?.homePlanet ?? undefined;
+  if (firstHighscorePlanet) return coordinateLabel(firstHighscorePlanet.coordinates);
+
+  return undefined;
+}
+
 export function playerPlanetTacticalSignals(
   planet: ManagedPlanetResponse,
   originCoords: Coordinates | undefined,
@@ -580,6 +607,10 @@ export function playerPlanetTacticalSignals(
 
 export function playerInspectPlanetImage(planet: Pick<ManagedPlanetResponse, "temperature">): string {
   return planetImageForType(planetTypeFromTemperature(planet.temperature));
+}
+
+function coordinateLabel(coordinates: Coordinates): string {
+  return `[${coordinates.galaxy}:${coordinates.system}:${coordinates.position}]`;
 }
 
 function formatResources(resources: OnChainResources): string {

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { playerPlanetTacticalSignals, playerProfileHomePlanetLabel } from "./components/InspectPages";
 import { publicCommanderRows } from "./components/PlanetDetail";
 import type { Planet } from "./types";
-import { playerDisplayLabel, validatePlayerDisplayName } from "./walletFlow";
+import { playerDisplayLabel, validatePlayerDisplayName, type HighscoreEntry, type ManagedPlanetResponse, type WalletPlanetsResponse } from "./walletFlow";
 
 const wallet = "0x1111111111111111111111111111111111111111";
 
@@ -45,6 +46,37 @@ describe("player profile display helpers", () => {
       value: "Nova Prime"
     });
   });
+
+  test("uses profile owner home coordinates while keeping distance relative to viewer origin", () => {
+    const ownerPlanet = managedPlanet({
+      planetId: "72",
+      name: "Nal Hutta",
+      galaxy: 2,
+      system: 72,
+      position: 5
+    });
+    const planets: WalletPlanetsResponse = {
+      wallet: "0xf3d95ca6cc810ab74b5670955a1cc0b68e55a1a4",
+      homePlanetId: "72",
+      planets: [ownerPlanet]
+    };
+    const highscore = highscoreEntry({
+      homePlanetId: "72",
+      homePlanet: {
+        planetId: "72",
+        name: "Nal Hutta",
+        coordinates: { galaxy: 2, system: 72, position: 5 },
+        archetype: "temperate-ocean"
+      },
+      planetCount: 1
+    });
+
+    expect(playerProfileHomePlanetLabel(planets, highscore)).toBe("[2:72:5]");
+    expect(playerProfileHomePlanetLabel(null, null)).toBeUndefined();
+
+    const signals = playerPlanetTacticalSignals(ownerPlanet, { galaxy: 6, system: 9, position: 1 }, null);
+    expect(signals).toContainEqual({ label: "Distance", value: "80,000" });
+  });
 });
 
 function testPlanet(overrides: Partial<Planet> = {}): Planet {
@@ -75,6 +107,73 @@ function testPlanet(overrides: Partial<Planet> = {}): Planet {
     diameter: 12_800,
     fields: 211,
     hasMoon: false,
+    ...overrides
+  };
+}
+
+function highscoreEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
+  return {
+    rank: 2,
+    wallet,
+    alliance: null,
+    attackProtection: null,
+    displayName: "Jabba",
+    homePlanetId: null,
+    homePlanet: null,
+    planetCount: 0,
+    score: {
+      total: "0",
+      economy: "0",
+      research: "0",
+      researchLevels: "0",
+      military: "0",
+      fleet: "0",
+      fleetCount: "0",
+      defense: "0"
+    },
+    ...overrides
+  };
+}
+
+function managedPlanet(overrides: Partial<ManagedPlanetResponse> = {}): ManagedPlanetResponse {
+  return {
+    planetId: "1",
+    owner: wallet,
+    name: "Eos",
+    galaxy: 1,
+    system: 1,
+    position: 1,
+    fields: 211,
+    temperature: 20,
+    metalMultiplierBps: 10_000,
+    crystalMultiplierBps: 10_000,
+    deuteriumMultiplierBps: 10_000,
+    lastSettledAt: "0",
+    resources: {
+      metal: "0",
+      crystal: "0",
+      deuterium: "0"
+    },
+    coordinates: "[1:1:1]",
+    isHomePlanet: true,
+    fieldsUsed: 0,
+    fieldsCapacity: 211,
+    keyLevels: {
+      metalMine: 0,
+      crystalMine: 0,
+      deuteriumSynthesizer: 0,
+      solarPlant: 0,
+      roboticsFactory: 0,
+      shipyard: 0,
+      researchLab: 0,
+      terraformer: 0
+    },
+    queues: {
+      building: null,
+      defense: null,
+      ship: null
+    },
+    moon: null,
     ...overrides
   };
 }
