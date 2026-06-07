@@ -892,6 +892,11 @@ export function displayHomeCoordinates(
   return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
 }
 
+export function homeGalaxySystemSyncKey(homeCoords: Coordinates | undefined): string | undefined {
+  if (!homeCoords) return undefined;
+  return `${homeCoords.galaxy}:${homeCoords.system}`;
+}
+
 export function topBarEnergyFor({
   infrastructureChainState,
   isWalletConnected,
@@ -1752,6 +1757,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     apiBaseUrl,
     hydratedWalletSnapshotKey,
   });
+  const homeGalaxyNavSyncKey = homeGalaxySystemSyncKey(homeCoords);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2463,7 +2469,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (homeCoords) {
       setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
     }
-  }, [homeCoords]);
+  }, [homeGalaxyNavSyncKey]);
 
   useEffect(() => {
     const settlementPlanet = onChainSettlement?.planet;

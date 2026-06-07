@@ -12,6 +12,7 @@ import {
   defenseCompletionPlanetIdFor,
   failedBuildingFinishSyncReasonFor,
   galaxyMissionActionErrorLabel,
+  homeGalaxySystemSyncKey,
   hasInfrastructureDisplayState,
   infrastructureBackendSyncPausedLabel,
   infrastructureBackendSyncPausedReasonFor,
@@ -113,6 +114,12 @@ describe("Playable MVP app display helpers", () => {
       apiBaseUrl,
       hydratedWalletSnapshotKey: undefined,
     })).toBe(true);
+  });
+
+  test("keys galaxy home sync by coordinates instead of background snapshot identity", () => {
+    expect(homeGalaxySystemSyncKey({ galaxy: 2, system: 44, position: 7 })).toBe("2:44");
+    expect(homeGalaxySystemSyncKey({ galaxy: 2, system: 44, position: 9 })).toBe("2:44");
+    expect(homeGalaxySystemSyncKey(undefined)).toBeUndefined();
   });
 
   test("turns shipyard load failures into explicit mission-action blockers", () => {
