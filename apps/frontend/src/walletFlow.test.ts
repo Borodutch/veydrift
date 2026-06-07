@@ -118,6 +118,32 @@ describe("walletFlow", () => {
     expect(polls).toBe(2);
   });
 
+  test("keeps polling when a receipt read transiently fails before the transaction is mined", async () => {
+    let polls = 0;
+    const provider = mockProvider(async () => {
+      polls += 1;
+      if (polls === 1) throw { code: -32603, message: "Internal JSON-RPC error." };
+      if (polls === 2) return null;
+      return { status: "0x1", transactionHash: "0xok" };
+    });
+
+    await expect(confirmTransactionReceipt(provider, "0xok", { pollMs: 1, timeoutMs: 200 })).resolves.toMatchObject({
+      status: "0x1",
+      transactionHash: "0xok",
+    });
+    expect(polls).toBe(3);
+  });
+
+  test("reports a benign timeout when receipt reads keep failing after submission", async () => {
+    const provider = mockProvider(async () => {
+      throw { code: -32603, message: "Internal JSON-RPC error." };
+    });
+
+    await expect(confirmTransactionReceipt(provider, "0xok", { pollMs: 1, timeoutMs: 20 })).rejects.toThrow(
+      "Transaction submitted, but the chain did not confirm it yet"
+    );
+  });
+
   test("selects Rabby from a multi-provider injected wallet", () => {
     const metamaskProvider = mockProvider(async () => []);
     const rabbyProvider = {

@@ -2130,10 +2130,20 @@ export async function confirmTransactionReceipt(
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const receipt = await provider.request<TransactionReceipt | null>({
-      method: "eth_getTransactionReceipt",
-      params: [transactionHash],
-    });
+    let receipt: TransactionReceipt | null;
+    try {
+      receipt = await provider.request<TransactionReceipt | null>({
+        method: "eth_getTransactionReceipt",
+        params: [transactionHash],
+      });
+    } catch {
+      // The transaction was already submitted; the RPC node can still fail an
+      // individual receipt read transiently (internal JSON-RPC error, timeout)
+      // while the transaction is mining. Don't treat that as a launch failure —
+      // keep polling until the receipt arrives or the overall timeout elapses.
+      await delay(pollMs);
+      continue;
+    }
     if (receipt) {
       if (isRevertedReceiptStatus(receipt.status)) {
         throw new Error(TRANSACTION_REVERTED_MESSAGE);
