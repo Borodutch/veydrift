@@ -49,7 +49,7 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
-import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
+import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
@@ -1811,6 +1811,7 @@ describe("Playable MVP app display helpers", () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0x2222222222222222222222222222222222222222";
     const requestedPaths: string[] = [];
+    const activeMission = fleetMission({ missionId: "42", owner: wallet, originPlanetId: "7", targetPlanetId: "9" });
 
     globalThis.fetch = ((input: RequestInfo | URL) => {
       const url = new URL(String(input));
@@ -1826,6 +1827,18 @@ describe("Playable MVP app display helpers", () => {
           homePlanetId: "7",
           queues: { research: null },
           planets: [indexedPlanet(wallet)],
+        }));
+      }
+
+      if (url.pathname.endsWith("/fleet-visibility")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          incoming: [],
+          outgoing: [activeMission],
+          returning: [],
+          joinableAttacks: [],
+          battleReports: [],
         }));
       }
 
@@ -1849,10 +1862,11 @@ describe("Playable MVP app display helpers", () => {
         },
       });
       expect(snapshot.planetsResponse.planets).toHaveLength(1);
+      expect(snapshot.fleetVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["42"]);
       expect(requestedPaths).toContain(`/wallet/${wallet}/planets`);
+      expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility`);
       expect(requestedPaths).not.toContain(`/wallet/${wallet}/settlement`);
       expect(requestedPaths).not.toContain(`/wallet/${wallet}/queues`);
-      expect(requestedPaths).not.toContain(`/wallet/${wallet}/fleet-visibility`);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1880,6 +1894,18 @@ describe("Playable MVP app display helpers", () => {
         }));
       }
 
+      if (url.pathname.endsWith("/fleet-visibility")) {
+        return Promise.resolve(Response.json({
+          wallet,
+          homePlanetId: "7",
+          incoming: [],
+          outgoing: [],
+          returning: [],
+          joinableAttacks: [],
+          battleReports: [],
+        }));
+      }
+
       return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
     }) as typeof fetch;
 
@@ -1889,7 +1915,7 @@ describe("Playable MVP app display helpers", () => {
       expect(snapshot.settlement.homePlanetId).toBe("7");
       expect(snapshot.settlement.planet?.resources.metal).toBe("5000");
       expect(snapshot.planetsResponse.planets).toHaveLength(1);
-      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`]);
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`, `/wallet/${wallet}/fleet-visibility`]);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1983,7 +2009,7 @@ describe("Playable MVP app display helpers", () => {
       const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
 
       expect(snapshot.queues.research).toEqual(activeResearch);
-      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`]);
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`, `/wallet/${wallet}/fleet-visibility`]);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2041,7 +2067,7 @@ describe("Playable MVP app display helpers", () => {
       const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
 
       expect(snapshot.queues.research).toEqual(activeResearch);
-      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`, `/wallet/${wallet}/queues`]);
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`, `/wallet/${wallet}/queues`, `/wallet/${wallet}/fleet-visibility`]);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2170,6 +2196,30 @@ describe("Playable MVP app display helpers", () => {
     }
   });
 });
+
+function fleetMission(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
+  return {
+    missionId: "1",
+    status: "Outbound",
+    missionType: "Attack",
+    owner: "0x1111111111111111111111111111111111111111",
+    originPlanetId: "7",
+    targetPlanetId: "9",
+    arrivalAt: "1770000300",
+    returnAt: "1770000600",
+    fuelCost: "25",
+    recallCost: null,
+    attackGroupId: null,
+    joinedAttackMissionIds: [],
+    cargo: { metal: "0", crystal: "0", deuterium: "0" },
+    ships: {
+      lightFighter: "1",
+    },
+    transactionHash: "0xabc",
+    blockNumber: "1",
+    ...overrides,
+  };
+}
 
 function infrastructureState({
   degraded,

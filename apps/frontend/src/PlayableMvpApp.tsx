@@ -1301,9 +1301,11 @@ export async function loadWalletPlanetSyncSnapshot(
       activePlanetId,
       planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
     );
-    const queuesResult = indexedPlanetsExposeResearchQueue(planetsResult)
-      ? { status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>
-      : await settlePromise(fetchWalletQueues(apiBaseUrl, account, activePlanetId));
+    const queuesResultPromise = indexedPlanetsExposeResearchQueue(planetsResult)
+      ? Promise.resolve({ status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>)
+      : settlePromise(fetchWalletQueues(apiBaseUrl, account, activePlanetId));
+    const visibilityResultPromise = settlePromise(fetchFleetMissionVisibility(apiBaseUrl, account));
+    const [queuesResult, visibilityResult] = await Promise.all([queuesResultPromise, visibilityResultPromise]);
     return walletPlanetSyncSnapshotFromResults(
       account,
       indexedSettlement,
@@ -1311,7 +1313,7 @@ export async function loadWalletPlanetSyncSnapshot(
       queuesResult.status === "fulfilled"
         ? { status: "fulfilled", value: mergeIndexedPlayerQueues(indexedQueues, queuesResult.value) }
         : { status: "fulfilled", value: indexedQueues },
-      { status: "fulfilled", value: emptyFleetVisibility(account, indexedSettlement.homePlanetId) },
+      visibilityResult,
     );
   }
 
