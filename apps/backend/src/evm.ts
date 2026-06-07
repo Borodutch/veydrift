@@ -678,6 +678,7 @@ export interface ChainReader {
   getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   getHighscoresForWallets?(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]>;
+  listAllianceDirectoryState?(): Promise<AllianceState["directory"]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
   listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
@@ -1703,13 +1704,8 @@ export class VeydriftGameReader implements ChainReader {
     const allianceId = decodeUintWord(wordAt(membershipWords, 0));
     const role = allianceRoleName(Number(decodeUintWord(wordAt(membershipWords, 1))));
     const joinedAt = decodeUintWord(wordAt(membershipWords, 2)).toString();
-    const allianceIds = decodeUintArray(await this.callContract(this.allianceContractAddress, "0xf0bab901", []));
-    const profileResults = await this.batchCallContract(
-      this.allianceContractAddress,
-      allianceIds.map((id) => ({ selector: "0x79c76adf", args: [encodeUint(id)] }))
-    );
-    const directory = allianceIds.map((id, index) => decodeAllianceDirectoryEntry(id, splitWords(profileResults[index] ?? "0x")))
-      .filter((entry) => entry.active);
+    const allianceIds = await this.listAllianceIds();
+    const directoryWithMembers = await this.allianceDirectoryState(allianceIds);
     const [inviteResults, walletJoinRequestResults] = await Promise.all([
       this.batchCallContract(
         this.allianceContractAddress,
@@ -1740,43 +1736,12 @@ export class VeydriftGameReader implements ChainReader {
         }]
         : [];
     });
-    const directoryMemberAddressResults = await this.batchCallContract(
-      this.allianceContractAddress,
-      directory.map((alliance) => ({ selector: "0x2a1ef311", args: [encodeUint(BigInt(alliance.allianceId))] }))
-    );
     const directoryMemberAddresses = new Map<string, Address[]>(
-      directory.map((alliance, index) => [
+      directoryWithMembers.map((alliance) => [
         alliance.allianceId,
-        decodeAddressArray(directoryMemberAddressResults[index] ?? "0x")
+        (alliance.members ?? []).map((member) => member.address)
       ])
     );
-    const uniqueDirectoryMembers = Array.from(new Set(
-      [...directoryMemberAddresses.values()].flat().map((address) => address.toLowerCase() as Address)
-    ));
-    const directoryMemberMembershipResults = await this.batchCallContract(
-      this.allianceContractAddress,
-      uniqueDirectoryMembers.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
-    );
-    const directoryMemberMemberships = new Map<string, { role: AllianceRoleName; joinedAt: string }>(
-      uniqueDirectoryMembers.map((address, index) => {
-        const words = splitWords(directoryMemberMembershipResults[index] ?? "0x");
-        return [address, {
-          role: allianceRoleName(Number(decodeUintWord(wordAt(words, 1)))),
-          joinedAt: decodeUintWord(wordAt(words, 2)).toString()
-        }];
-      })
-    );
-    const directoryWithMembers = directory.map((alliance) => ({
-      ...alliance,
-      members: (directoryMemberAddresses.get(alliance.allianceId) ?? []).map((address) => {
-        const membership = directoryMemberMemberships.get(address.toLowerCase());
-        return {
-          address,
-          role: membership?.role ?? "member",
-          joinedAt: membership?.joinedAt ?? "0"
-        };
-      })
-    }));
 
     if (allianceId === 0n) {
       return {
@@ -1857,6 +1822,67 @@ export class VeydriftGameReader implements ChainReader {
         };
       })
     };
+  }
+
+  async listAllianceDirectoryState(): Promise<AllianceState["directory"]> {
+    if (!this.allianceContractAddress) return [];
+
+    const allianceIds = await this.listAllianceIds();
+    return this.allianceDirectoryState(allianceIds);
+  }
+
+  private async allianceDirectoryState(allianceIds: readonly bigint[]): Promise<AllianceState["directory"]> {
+    if (!this.allianceContractAddress) return [];
+
+    const profileResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      allianceIds.map((id) => ({ selector: "0x79c76adf", args: [encodeUint(id)] }))
+    );
+    const directory = allianceIds.map((id, index) => decodeAllianceDirectoryEntry(id, splitWords(profileResults[index] ?? "0x")))
+      .filter((entry) => entry.active);
+    const directoryMemberAddressResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      directory.map((alliance) => ({ selector: "0x2a1ef311", args: [encodeUint(BigInt(alliance.allianceId))] }))
+    );
+    const directoryMemberAddresses = new Map<string, Address[]>(
+      directory.map((alliance, index) => [
+        alliance.allianceId,
+        decodeAddressArray(directoryMemberAddressResults[index] ?? "0x")
+      ])
+    );
+    const uniqueDirectoryMembers = Array.from(new Set(
+      [...directoryMemberAddresses.values()].flat().map((address) => address.toLowerCase() as Address)
+    ));
+    const directoryMemberMembershipResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      uniqueDirectoryMembers.map((address) => ({ selector: "0xad642b52", args: [encodeAddress(address)] }))
+    );
+    const directoryMemberMemberships = new Map<string, { role: AllianceRoleName; joinedAt: string }>(
+      uniqueDirectoryMembers.map((address, index) => {
+        const words = splitWords(directoryMemberMembershipResults[index] ?? "0x");
+        return [address, {
+          role: allianceRoleName(Number(decodeUintWord(wordAt(words, 1)))),
+          joinedAt: decodeUintWord(wordAt(words, 2)).toString()
+        }];
+      })
+    );
+
+    return directory.map((alliance) => ({
+      ...alliance,
+      members: (directoryMemberAddresses.get(alliance.allianceId) ?? []).map((address) => {
+        const membership = directoryMemberMemberships.get(address.toLowerCase());
+        return {
+          address,
+          role: membership?.role ?? "member",
+          joinedAt: membership?.joinedAt ?? "0"
+        };
+      })
+    }));
+  }
+
+  private async listAllianceIds(): Promise<bigint[]> {
+    if (!this.allianceContractAddress) return [];
+    return decodeUintArray(await this.callContract(this.allianceContractAddress, "0xf0bab901", []));
   }
 
   async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {

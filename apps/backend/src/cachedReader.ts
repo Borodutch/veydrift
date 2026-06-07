@@ -114,6 +114,14 @@ export class CachedChainReader implements ChainReader {
     );
   }
 
+  listAllianceDirectoryState(): Promise<AllianceState["directory"]> {
+    if (!this.inner.listAllianceDirectoryState) {
+      return Promise.resolve([]);
+    }
+
+    return this.cached("alliance-directory", () => this.inner.listAllianceDirectoryState!());
+  }
+
   getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
     return this.cached(
       `attack-protection:${wallet.toLowerCase()}:${targetPlanetId.toString()}`,
