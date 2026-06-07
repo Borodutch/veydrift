@@ -1,7 +1,8 @@
-import { ArrowLeft, Copy, ExternalLink, RefreshCw, Swords } from "lucide-preact";
+import { ArrowLeft, Copy, ExternalLink, Swords } from "lucide-preact";
 import { useState } from "preact/hooks";
 
 import type { BattleReport } from "../walletFlow";
+import { PageHeader, RefreshButton } from "./PageHeader";
 
 interface BattleReportsPageProps {
   error?: string | undefined;
@@ -36,31 +37,24 @@ export function BattleReportsPage({
 
   return (
     <section className="grid gap-4">
-      <header className="flex flex-col gap-3 border-b border-white/10 pb-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300/80">
-            Battle Reports
-          </p>
-          <h2 className="mt-1 text-lg font-semibold text-white">Public Combat Archive</h2>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-            Shareable combat outcomes, losses, loot, debris, and round snapshots from resolved attacks.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <PageHeader
+        actions={(
+          <>
           <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
             <ArrowLeft aria-hidden="true" size={15} />
             Mission Control
           </button>
-          <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onRetry} type="button">
-            <RefreshCw aria-hidden="true" size={15} />
-            Refresh
-          </button>
+          <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh battle reports" />
           <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20" onClick={copyShareUrl} type="button">
             <Copy aria-hidden="true" size={15} />
             {copied ? "Copied" : "Copy list link"}
           </button>
-        </div>
-      </header>
+          </>
+        )}
+        eyebrow="Battle Reports"
+        subtitle="Shareable combat outcomes, losses, loot, debris, and round snapshots from resolved attacks."
+        title="Public Combat Archive"
+      />
 
       {loading ? (
         <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">

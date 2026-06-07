@@ -7,6 +7,7 @@ import type { ChainMoonState } from "../walletFlow";
 import { formatCost } from "../buildingDetails";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { PageHeader, RefreshButton } from "./PageHeader";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 interface MoonPageProps {
@@ -36,26 +37,16 @@ export function MoonPage({
   const hasMoon = Boolean(moon?.exists);
   const unavailableReason = moonState?.unavailableReason;
   const moonUnavailable = moonState?.moonAvailable === false;
+  const isLoading = Boolean(loading);
 
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-white">Moon</h2>
-          <p className="text-xs text-slate-400">
-            Lunar structures and fleet support for the selected home planet.
-          </p>
-        </div>
-        {onRefresh ? (
-          <button
-            className="h-9 rounded-md border border-white/10 bg-white/[0.03] px-3 text-xs font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100"
-            onClick={onRefresh}
-            type="button"
-          >
-            Refresh
-          </button>
-        ) : null}
-      </div>
+      <PageHeader
+        actions={onRefresh ? <RefreshButton loading={isLoading} onRefresh={onRefresh} title="Refresh moon state" /> : undefined}
+        bordered={false}
+        subtitle="Lunar structures and fleet support for the selected home planet."
+        title="Moon"
+      />
 
       {hasMoon && moon ? (
         <>

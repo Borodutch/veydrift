@@ -34,6 +34,7 @@ import {
   SingleItemQueueProgress,
   useInspectDetailSelection,
 } from "./InspectProgressLayout";
+import { RefreshButton, refreshButtonState } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -140,7 +141,6 @@ export function InfrastructurePage({
     queue: activeBuildingQueue,
   });
   const headerFinishAction = infrastructureHeaderFinishAction(finishAction);
-  const refreshButton = infrastructureRefreshButtonState(loading);
 
   const { detailPanelRef, selectInspectItem: handleSelectBuilding } = useInspectDetailSelection<BuildingKey>((key) => {
     setLocalSelectedKey(key);
@@ -152,14 +152,7 @@ export function InfrastructurePage({
       <div className="grid gap-4">
         <InspectPageHeader
           actions={onRefresh ? (
-            <button
-              className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={refreshButton.disabled}
-              onClick={onRefresh}
-              type="button"
-            >
-              {refreshButton.label}
-            </button>
+            <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh infrastructure state" />
           ) : undefined}
           description="Building levels and production are hidden until live infrastructure state loads."
           title="Infrastructure"
@@ -192,14 +185,7 @@ export function InfrastructurePage({
             </button>
           ) : null}
           {onRefresh ? (
-            <button
-              className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={refreshButton.disabled}
-              onClick={onRefresh}
-              type="button"
-            >
-              {refreshButton.label}
-            </button>
+            <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh infrastructure state" />
           ) : null}
           </>
         )}
@@ -267,10 +253,7 @@ export function shouldShowInfrastructureInitialLoadError({
 }
 
 export function infrastructureRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return {
-    disabled: loading,
-    label: loading ? "Refreshing" : "Refresh",
-  };
+  return refreshButtonState(loading);
 }
 
 export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {

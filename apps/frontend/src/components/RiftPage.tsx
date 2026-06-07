@@ -2,6 +2,7 @@ import { useMemo, useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey } from "../playableMvp";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceState } from "../walletFlow";
+import { PageHeader, RefreshButton } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
@@ -63,24 +64,12 @@ export function RiftPage({
 
   return (
     <section className="grid gap-4">
-      <header className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300/80">
-            Veydrift Rift Stabilizer
-          </p>
-          <h2 className="mt-1 text-lg font-semibold text-white">Resource Bridge</h2>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-            Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day Veydrift withdrawal window.
-          </p>
-        </div>
-        <button
-          className="inline-flex h-9 items-center justify-center rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
-          onClick={onRefresh}
-          type="button"
-        >
-          Refresh
-        </button>
-      </header>
+      <PageHeader
+        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
+        eyebrow="Veydrift Rift Stabilizer"
+        subtitle="Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day Veydrift withdrawal window."
+        title="Resource Bridge"
+      />
 
       {actionState.status !== "idle" && (
         <Notice tone={actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "info"}>

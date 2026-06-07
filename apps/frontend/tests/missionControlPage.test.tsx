@@ -134,9 +134,8 @@ describe("MissionControlPage", () => {
 
     expect(visibleText(idlePage)).toContain("Refresh");
     expect(visibleText(refreshingPage)).toContain("Refreshing");
-    expect(source).toContain("h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200");
+    expect(source).toContain("<RefreshButton");
     expect(source).not.toContain("RefreshCw");
-    expect(source).not.toContain("inline-flex h-9 items-center justify-center gap-2");
   });
 
   test("renders attacker and defender attack views with side-specific controls", () => {

@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List, Swords } from
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import type { BattleReport, FleetMissionPlanetReference, FleetMissionSummary, FleetMissionVisibilityResponse, ManagedPlanetResponse } from "../walletFlow";
+import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
 type MissionControlActionState =
@@ -21,10 +22,7 @@ export type MissionLifecycleAction = {
 };
 
 export function missionControlRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return {
-    disabled: loading,
-    label: loading ? "Refreshing" : "Refresh",
-  };
+  return refreshButtonState(loading);
 }
 
 interface MissionControlPageProps {
@@ -74,28 +72,14 @@ export function MissionControlPage({
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
   const activeCount = incoming.length + outgoing.length + returning.length;
   const initialLoading = loading && !fleetVisibility;
-  const refreshButton = missionControlRefreshButtonState(loading);
 
   return (
     <section className="grid gap-4">
-      <header className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Mission Control</h2>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-            Watch inbound attacks, active launches, returning fleets, and time-critical battle actions from one command table.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={refreshButton.disabled}
-            onClick={onRefresh}
-            type="button"
-          >
-            {refreshButton.label}
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh missions" />}
+        subtitle="Watch inbound attacks, active launches, returning fleets, and time-critical battle actions from one command table."
+        title="Mission Control"
+      />
 
       {actionState.status !== "idle" && (
         <Notice tone={actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "info"}>

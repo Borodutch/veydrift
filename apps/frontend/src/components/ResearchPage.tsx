@@ -31,6 +31,7 @@ import {
   SingleItemQueueProgress,
   useInspectDetailSelection,
 } from "./InspectProgressLayout";
+import { RefreshButton, refreshButtonState } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { VeydriftLoader } from "./VeydriftLoader";
 
@@ -62,10 +63,7 @@ const researchDescriptions: Partial<Record<ResearchKey, string>> = {
 };
 
 export function researchRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return {
-    disabled: loading,
-    label: loading ? "Refreshing" : "Refresh",
-  };
+  return refreshButtonState(loading);
 }
 
 interface ResearchPageProps {
@@ -124,7 +122,6 @@ export function ResearchPage({
     now,
     queue,
   });
-  const refreshButton = researchRefreshButtonState(loading);
   const { detailPanelRef, selectInspectItem: handleSelectResearch } = useInspectDetailSelection<ResearchKey>((key) => {
     setLocalSelectedKey(key);
     onSelectResearch?.(key);
@@ -145,14 +142,7 @@ export function ResearchPage({
               {completionButton.label}
             </button>
           )}
-          <button
-            className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={refreshButton.disabled}
-            onClick={onRefresh}
-            type="button"
-          >
-            {refreshButton.label}
-          </button>
+          <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh research state" />
           </>
         )}
         description="Select a technology to inspect real levels, prerequisites, cost, and on-chain action state."

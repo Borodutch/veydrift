@@ -1,10 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
-import { ChevronLeft, ChevronRight, RotateCw, UserRound } from "lucide-preact";
+import { ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
+import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 
 type RankingsPageProps = {
@@ -50,10 +51,7 @@ export function shouldShowRankingsInitialLoader({
 }
 
 export function rankingsRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return {
-    disabled: loading,
-    label: loading ? "Refreshing" : "Refresh",
-  };
+  return refreshButtonState(loading);
 }
 
 export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
@@ -162,21 +160,12 @@ export function RankingsPageHeader({
   loading: boolean;
   onRefresh: () => void;
 }) {
-  const refreshButton = rankingsRefreshButtonState(loading);
-
   return (
-    <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
-      <h1 className="text-2xl font-semibold text-white">Rankings</h1>
-      <button
-        className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={refreshButton.disabled}
-        onClick={onRefresh}
-        type="button"
-      >
-        <RotateCw aria-hidden="true" size={14} />
-        {refreshButton.label}
-      </button>
-    </div>
+    <PageHeader
+      actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh rankings" />}
+      title="Rankings"
+      titleSize="xl"
+    />
   );
 }
 

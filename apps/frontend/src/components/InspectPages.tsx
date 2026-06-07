@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { ArrowLeft, Crown, RefreshCw, UserRound } from "lucide-preact";
+import { ArrowLeft, Crown, UserRound } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { planetImageForType, planetTypeFromTemperature } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
@@ -18,7 +18,6 @@ import {
 import {
   AllianceMemberActions,
   AllianceSummary,
-  allianceRefreshButtonState,
   allianceRosterPageSize,
   allianceDisplayName,
   allianceExitActionState,
@@ -30,6 +29,7 @@ import {
   rosterPageRows,
 } from "./AlliancePage";
 import { OptimizedImage } from "./OptimizedImage";
+import { PageHeader, RefreshButton } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 
 type PlayerInspectState =
@@ -269,7 +269,6 @@ export function AllianceInspectPage({
   const isOwner = isCurrentAlliance && role === "owner";
   const busy = disabled || actionBusy || !canTransact;
   const exitAction = allianceExitActionState(isCurrentAlliance ? allianceState : null);
-  const refreshButton = allianceRefreshButtonState(disabled);
 
   return (
     <InspectShell
@@ -277,16 +276,7 @@ export function AllianceInspectPage({
       subtitle={alliance?.description || "Public alliance details"}
       onBack={onBack}
       action={(
-        <button
-          className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={refreshButton.disabled || actionBusy}
-          onClick={onRefresh}
-          type="button"
-          title="Refresh alliance state"
-        >
-          <RefreshCw aria-hidden="true" size={14} />
-          {refreshButton.label}
-        </button>
+        <RefreshButton disabled={actionBusy} loading={disabled} onRefresh={onRefresh} title="Refresh alliance state" />
       )}
     >
       {!allianceState ? <VeydriftLoader label="Loading alliance" /> : null}
@@ -413,20 +403,24 @@ function InspectShell({ action, children, eyebrow, onBack, subtitle, title, titl
   return (
     <section className="min-h-0 overflow-auto">
       <div className="mx-auto grid w-full max-w-7xl gap-4 p-4">
-        <header className="flex flex-col gap-3 border-b border-white/10 pb-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0">
+        <PageHeader
+          actions={action}
+          beforeTitle={(
             <button className="mb-3 inline-flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-cyan-100" onClick={onBack} type="button">
               <ArrowLeft size={14} /> Back
             </button>
-            {eyebrow ? <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-200/70">{eyebrow}</p> : null}
-            <h1 className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-2xl font-semibold text-white">
+          )}
+          bordered
+          eyebrow={eyebrow}
+          subtitle={subtitle}
+          title={(
+            <span className="flex min-w-0 flex-wrap items-center gap-2">
               {titlePrefix}
               <span className="min-w-0 truncate">{title}</span>
-            </h1>
-            <p className="mt-1 break-all text-sm text-slate-400">{subtitle}</p>
-          </div>
-          {action}
-        </header>
+            </span>
+          )}
+          titleSize="xl"
+        />
         {children}
       </div>
     </section>

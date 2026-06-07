@@ -4,6 +4,7 @@ import { formatDurationUntil } from "../durationFormat";
 import { queueProgressPercent, type QueueTimeline } from "../playableMvp";
 import { formatUserTimestamp } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
+import { PageHeader } from "./PageHeader";
 
 const loadedDetailImageKeys = new Set<string>();
 
@@ -38,21 +39,12 @@ export function InspectPageHeader({
   description: string;
   title: string;
 }) {
-  return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0 max-w-full">
-        <h2 className="text-lg font-semibold text-white">{title}</h2>
-        <p className="break-words text-xs leading-5 text-slate-400">
-          {description}
-        </p>
-      </div>
-      {actions ? (
-        <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end">
-          {actions}
-        </div>
-      ) : null}
-    </div>
-  );
+  return PageHeader({
+    actions,
+    bordered: false,
+    subtitle: description,
+    title,
+  });
 }
 
 export function InspectTwoColumnLayout({
