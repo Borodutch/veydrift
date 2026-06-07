@@ -897,6 +897,33 @@ export function homeGalaxySystemSyncKey(homeCoords: Coordinates | undefined): st
   return `${homeCoords.galaxy}:${homeCoords.system}`;
 }
 
+export function homePlanetIdentityRefreshKey({
+  apiBaseUrl,
+  homeCoords,
+  ownerDisplayName,
+  settlementPlanet,
+}: {
+  apiBaseUrl: string | undefined;
+  homeCoords: Coordinates | undefined;
+  ownerDisplayName: string | null | undefined;
+  settlementPlanet: WalletSettlementResponse["planet"] | undefined;
+}): string | undefined {
+  if (!homeCoords) return undefined;
+
+  return JSON.stringify({
+    apiBaseUrl: apiBaseUrl ?? null,
+    displayName: ownerDisplayName?.trim() || null,
+    fields: settlementPlanet?.fields ?? null,
+    galaxy: homeCoords.galaxy,
+    name: settlementPlanet?.name?.trim() || null,
+    owner: settlementPlanet?.owner ?? null,
+    planetId: settlementPlanet?.planetId ?? null,
+    position: homeCoords.position,
+    system: homeCoords.system,
+    temperature: settlementPlanet?.temperature ?? null,
+  });
+}
+
 export function topBarEnergyFor({
   infrastructureChainState,
   isWalletConnected,
@@ -1759,7 +1786,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     apiBaseUrl,
     hydratedWalletSnapshotKey,
   });
+  const settlementPlanet = onChainSettlement?.planet;
   const homeGalaxyNavSyncKey = homeGalaxySystemSyncKey(homeCoords);
+  const homePlanetIdentitySyncKey = homePlanetIdentityRefreshKey({
+    apiBaseUrl,
+    homeCoords,
+    ownerDisplayName: playerProfile?.displayName,
+    settlementPlanet,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2474,8 +2508,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [homeGalaxyNavSyncKey]);
 
   useEffect(() => {
-    const settlementPlanet = onChainSettlement?.planet;
-
     if (!homeCoords) {
       setHomePlanetIdentity(undefined);
       return;
@@ -2520,7 +2552,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, homeCoords, onChainSettlement?.planet, playerProfile?.displayName]);
+  }, [homePlanetIdentitySyncKey]);
 
   useEffect(() => {
     void refreshOnChainState();
