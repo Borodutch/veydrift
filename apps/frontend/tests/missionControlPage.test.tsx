@@ -55,6 +55,16 @@ describe("MissionControlPage", () => {
       ["resolve", false],
       ["counterplay", true],
     ]);
+
+    expect(missionLifecycleActions({
+      canTransact: true,
+      context: "joinable",
+      mission: mission({ arrivalAt: "1770000300", missionId: "5", missionType: "Attack", status: "Outbound" }),
+      now,
+    }).map((action) => [action.kind, action.enabled])).toEqual([
+      ["resolve", false],
+      ["joinAttack", true],
+    ]);
   });
 
   test("renders player-facing mission control rows without implementation copy", () => {
@@ -68,12 +78,14 @@ describe("MissionControlPage", () => {
         outgoing: [mission({ missionId: "9", missionType: "Transport" })],
         returning: [mission({ missionId: "10", status: "Returning" })],
         joinableAttacks: [],
+        completedMissions: [],
         battleReports: [],
       },
       loading: false,
       now: 1_770_000_700_000,
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
+      onJoinAttack: () => undefined,
       onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
@@ -88,11 +100,14 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Mission Control");
     expect(text).toContain("Watch inbound attacks");
     expect(text).toContain("Active missions 3");
-    expect(text).toContain("Incoming attacks 1");
-    expect(text).toContain("Outgoing fleets 1");
-    expect(text).toContain("Returning fleets 1");
-    expect(text).toContain("Resolved battle reports 0");
+    expect(text).toContain("Due resolvers 3");
+    expect(text).toContain("Hostile inbound 1");
+    expect(text).toContain("Returns 1");
+    expect(text).toContain("Past missions 0");
+    expect(text).toContain("Fleet movement");
+    expect(text).toContain("Countdown Mission Origin -> Target Return Fleet / cargo Orders");
     expect(text).toContain("Attack # 8");
+    expect(text).toContain("Hostile inbound");
     expect(text).toContain("Origin Planet #7");
     expect(text).toContain("Target Planet #9");
     expect(text).toContain("Transport # 9");
@@ -172,6 +187,7 @@ describe("MissionControlPage", () => {
         outgoing: [],
         returning: [],
         joinableAttacks: [],
+        completedMissions: [],
         battleReports: [battleReport("77")],
       },
       walletPlanets: [managedPlanet({
@@ -183,12 +199,13 @@ describe("MissionControlPage", () => {
     });
     const defenderText = visibleText(defenderPage);
 
-    expect(defenderText).toContain("Incoming attacks 1");
+    expect(defenderText).toContain("Hostile inbound 1");
     expect(defenderText).toContain("Astra (0x1111...1111)");
-    expect(defenderText).toContain("New Eos [2:44:9] -> Red Haven [4:55:11]");
+    expect(defenderText).toContain("New Eos [2:44:9]");
+    expect(defenderText).toContain("Red Haven [4:55:11]");
     expect(defenderText).toContain("Group defend");
     expect(defenderText).toContain("Intercept");
-    expect(defenderText).toContain("Resolved battle reports 1");
+    expect(defenderText).toContain("Past missions 1");
     expect(defenderText).not.toContain("Recall fleet");
 
     const attackerPage = missionControlPage({
@@ -224,17 +241,18 @@ describe("MissionControlPage", () => {
         })],
         returning: [],
         joinableAttacks: [],
+        completedMissions: [],
         battleReports: [battleReport("77")],
       },
       walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
     });
     const attackerText = visibleText(attackerPage);
 
-    expect(attackerText).toContain("Outgoing fleets 1");
+    expect(attackerText).toContain("Active missions 1");
     expect(attackerText).toContain("Recall fleet");
     expect(attackerText).toContain("View report");
     expect(attackerText).toContain("Copy report");
-    expect(attackerText).toContain("Resolved battle reports 1");
+    expect(attackerText).toContain("Past missions 1");
     expect(attackerText).not.toContain("Group defend");
     expect(attackerText).not.toContain("Intercept");
   });
@@ -262,6 +280,7 @@ describe("MissionControlPage", () => {
         })],
         returning: [],
         joinableAttacks: [],
+        completedMissions: [],
         battleReports: [],
       },
       reportMissionId: "12",
@@ -296,6 +315,7 @@ describe("MissionControlPage", () => {
         outgoing: [mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Attack" })],
         returning: [],
         joinableAttacks: [],
+        completedMissions: [],
         battleReports: [],
       },
       now: 1_770_000_700_000,
@@ -303,12 +323,12 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Needs orders now");
-    expect(text).toContain("Resolve battles or land fleets");
-    expect(text).toContain("Ready to resolve 1");
+    expect(text).toContain("Due resolvers 1");
+    expect(text).toContain("Needs orders now 1");
     expect(text).toContain("Resolve battle");
   });
 
-  test("paginates resolved battle reports inline without a separate list action", () => {
+  test("paginates past missions inline without a separate list action", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -317,12 +337,13 @@ describe("MissionControlPage", () => {
         outgoing: [],
         returning: [],
         joinableAttacks: [],
+        completedMissions: [],
         battleReports: Array.from({ length: 7 }, (_, index) => battleReport((index + 1).toString())),
       },
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Resolved battle reports 7");
+    expect(text).toContain("Past missions 7");
     expect(text).toContain("Mission # 1");
     expect(text).toContain("Mission # 6");
     expect(text).not.toContain("Mission # 7");
@@ -331,6 +352,33 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Next");
     expect(text).not.toContain("Open list");
     expect(text).not.toContain("Battle reports");
+  });
+
+  test("renders joinable attacks in the unified active mission list", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [mission({
+          missionId: "88",
+          missionType: "Attack",
+          owner: "0x3333333333333333333333333333333333333333",
+          originPlanetId: "12",
+          targetPlanetId: "99",
+        })],
+        completedMissions: [],
+        battleReports: [],
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Active missions 1");
+    expect(text).toContain("Joinable attack");
+    expect(text).toContain("Join attack");
+    expect(text).not.toContain("Group defend");
   });
 });
 
@@ -345,12 +393,14 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
       outgoing: [],
       returning: [],
       joinableAttacks: [],
+      completedMissions: [],
       battleReports: [],
     },
     loading: false,
     now: 1_770_000_700_000,
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
+    onJoinAttack: () => undefined,
     onOpenBattleReport: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,

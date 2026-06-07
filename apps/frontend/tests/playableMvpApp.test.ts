@@ -1879,6 +1879,7 @@ describe("Playable MVP app display helpers", () => {
           outgoing: [activeMission],
           returning: [],
           joinableAttacks: [],
+          completedMissions: [],
           battleReports: [],
         }));
       }
@@ -1943,6 +1944,7 @@ describe("Playable MVP app display helpers", () => {
           outgoing: [],
           returning: [],
           joinableAttacks: [],
+          completedMissions: [],
           battleReports: [],
         }));
       }
@@ -2217,6 +2219,8 @@ describe("Playable MVP app display helpers", () => {
           outgoing: [],
           returning: [],
           joinableAttacks: [],
+          completedMissions: [],
+          battleReports: [],
         }));
       }
 
