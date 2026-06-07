@@ -140,7 +140,7 @@ export function MissionControlPage({
             </section>
           ) : null}
 
-          <div className="grid gap-3 xl:grid-cols-3">
+          <div className="grid gap-3">
             <MissionSection
               actionContext="incoming"
               canTransact={canTransact}
@@ -287,37 +287,57 @@ function MissionSection({
       ? "border-amber-300/25 bg-amber-300/10"
       : "border-white/10 bg-[#101624]";
   return (
-    <section className={`min-w-0 rounded-lg border p-3 ${border}`}>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-white">{title}</h3>
-        <span className="text-xs tabular-nums text-slate-400">{missions.length}</span>
+    <section className={`min-w-0 overflow-hidden rounded-lg border ${border}`}>
+      <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Fleet movement</p>
+          <h3 className="mt-0.5 text-sm font-semibold text-white">{title}</h3>
+        </div>
+        <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-xs tabular-nums text-slate-300">
+          {missions.length}
+        </span>
       </div>
       {missions.length === 0 ? (
-        <p className="text-xs text-slate-500">{empty ?? "No missions."}</p>
+        <p className="px-3 py-4 text-xs text-slate-500">{empty ?? "No missions."}</p>
       ) : (
-        <div className="grid gap-2">
-          {missions.map((mission) => (
-            <MissionCard
-              canTransact={canTransact}
-              context={actionContext}
-              key={`${actionContext}:${mission.missionId}`}
-              mission={mission}
-              now={now}
-              onCompleteReturn={onCompleteReturn}
-              onCounterplay={onCounterplay}
-              onOpenReport={onOpenReport}
-              onRecall={onRecall}
-              onResolve={onResolve}
-              planetLookup={planetLookup}
-            />
-          ))}
+        <div className="overflow-x-auto">
+          <table className="min-w-[56rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+            <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              <tr>
+                <th className="w-[8.5rem] px-3 py-2">Mission</th>
+                <th className="w-[11rem] px-3 py-2">Origin</th>
+                <th className="w-[11rem] px-3 py-2">Destination</th>
+                <th className="w-[9rem] px-3 py-2">Arrival</th>
+                <th className="w-[9rem] px-3 py-2">Return</th>
+                <th className="w-[13rem] px-3 py-2">Fleet / cargo</th>
+                <th className="w-[15rem] px-3 py-2">Orders</th>
+              </tr>
+            </thead>
+            <tbody>
+              {missions.map((mission) => (
+                <MissionRow
+                  canTransact={canTransact}
+                  context={actionContext}
+                  key={`${actionContext}:${mission.missionId}`}
+                  mission={mission}
+                  now={now}
+                  onCompleteReturn={onCompleteReturn}
+                  onCounterplay={onCounterplay}
+                  onOpenReport={onOpenReport}
+                  onRecall={onRecall}
+                  onResolve={onResolve}
+                  planetLookup={planetLookup}
+                />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
   );
 }
 
-function MissionCard({
+function MissionRow({
   canTransact,
   context,
   mission,
@@ -343,34 +363,29 @@ function MissionCard({
   const actions = missionLifecycleActions({ canTransact, context, mission, now });
   const report = missionReport(mission, now, planetLookup);
   return (
-    <article className="min-w-0 rounded-md border border-white/10 bg-black/20 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h4 className="truncate text-sm font-semibold text-white">
-            {missionTypeLabel(mission.missionType)} #{mission.missionId}
-          </h4>
-          <p className="mt-1 text-xs text-slate-500">
-            {report.routeSummary} / {missionStatusLabel(mission.status)}
-          </p>
-        </div>
-        <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-medium text-slate-300">
-          Fuel {formatResource(mission.fuelCost)} D
-        </span>
-      </div>
-
-      <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <MissionDatum label="Origin" value={`Planet #${mission.originPlanetId}`} />
-        <MissionDatum label="Target" value={`Planet #${mission.targetPlanetId}`} />
-        <MissionDatum label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
-        <MissionDatum label="Return" value={formatMissionTime(mission.returnAt, now)} />
-        <MissionDatum label="Cargo" value={formatCargo(mission.cargo)} />
-        <MissionDatum label="Ships" value={formatShips(mission.ships)} />
-        <MissionDatum label="Commander" value={commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId))} />
-        <MissionDatum label="Report" value={missionReportLabel(mission)} />
-      </dl>
-
-      {actions.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
+      <td className="border-t border-white/10 px-3 py-3">
+        <p className="font-semibold text-white">{missionTypeLabel(mission.missionType)} #{mission.missionId}</p>
+        <p className="mt-1 text-slate-500">{missionStatusLabel(mission.status)}</p>
+        <p className="mt-1 text-slate-500">Report {missionReportLabel(mission)}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <MissionCellLabel label={`Origin Planet #${mission.originPlanetId}`} value={report.origin} />
+        <p className="mt-2 text-slate-500">{`Commander ${commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId))}`}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <MissionCellLabel label={`Target Planet #${mission.targetPlanetId}`} value={report.target} />
+        <p className="mt-2 text-slate-500">{report.routeSummary}</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">{formatMissionTime(mission.arrivalAt, now)}</td>
+      <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">{formatMissionTime(mission.returnAt, now)}</td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <MissionCellLabel label="Ships" value={formatShips(mission.ships)} />
+        <p className="mt-2 text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
+        <p className="mt-1 text-slate-500">Fuel {formatResource(mission.fuelCost)} D</p>
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <div className="flex flex-wrap gap-1.5">
           {actions.map((action) => action.kind === "counterplay" ? (
             <span className="contents" key={action.kind}>
               <ActionButton
@@ -393,28 +408,36 @@ function MissionCard({
               }}
             />
           ))}
+          <button
+            className="inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+            onClick={() => onOpenReport(mission.missionId)}
+            title="Open the shareable battle report"
+            type="button"
+          >
+            <ExternalLink aria-hidden="true" size={13} />
+            View report
+          </button>
+          <button
+            className="inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+            onClick={() => copyMissionReport(mission, now, planetLookup)}
+            title="Copy this battle report for chat"
+            type="button"
+          >
+            <Clipboard aria-hidden="true" size={13} />
+            Copy report
+          </button>
         </div>
-      ) : null}
+      </td>
+    </tr>
+  );
+}
 
-      <button
-        className="mt-3 inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
-        onClick={() => onOpenReport(mission.missionId)}
-        title="Open the shareable battle report"
-        type="button"
-      >
-        <ExternalLink aria-hidden="true" size={13} />
-        View report
-      </button>
-      <button
-        className="ml-2 mt-3 inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
-        onClick={() => copyMissionReport(mission, now, planetLookup)}
-        title="Copy this battle report for chat"
-        type="button"
-      >
-        <Clipboard aria-hidden="true" size={13} />
-        Copy report
-      </button>
-    </article>
+function MissionCellLabel({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="font-medium text-slate-100">{label}</p>
+      <p className="mt-1 break-words text-slate-400">{value}</p>
+    </div>
   );
 }
 

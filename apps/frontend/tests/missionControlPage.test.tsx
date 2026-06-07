@@ -92,6 +92,8 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Outgoing fleets 1");
     expect(text).toContain("Returning fleets 1");
     expect(text).toContain("Resolved battle reports 0");
+    expect(text).toContain("Fleet movement");
+    expect(text).toContain("Mission Origin Destination Arrival Return Fleet / cargo Orders");
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Origin Planet #7");
     expect(text).toContain("Target Planet #9");
