@@ -4783,6 +4783,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         onCounterplay={handleCounterplay}
         onJoinAttack={handleJoinAttack}
+        onRecall={handleRecallMission}
         buildingActionNotice={infrastructureActionNotice}
         buildingActionPendingLabel={infrastructureActionPendingLabel}
         isDefenseActionPending={defenseAction.status === "pending"}
