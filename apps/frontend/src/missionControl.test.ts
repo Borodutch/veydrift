@@ -400,6 +400,8 @@ describe("Mission Control battle reports", () => {
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
     })).join(" ");
 
     expect(text).toContain("Round-by-round combat");
