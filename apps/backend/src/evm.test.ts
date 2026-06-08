@@ -854,6 +854,7 @@ const readerConfig: BackendConfig = {
   deploymentMode: "test",
   gameContractAddress: "0x1111111111111111111111111111111111111111",
   indexDbPath: ":memory:",
+  randomnessCommitmentStorePath: ".data/test-randomness.json",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {},
