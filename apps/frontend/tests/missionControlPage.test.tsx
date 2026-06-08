@@ -103,9 +103,9 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Due resolvers");
     expect(text).not.toContain("Returns 1");
     expect(text).toContain("No completed missions are visible for this wallet yet.");
-    // Section header labels are dropped; the tables convey grouping on their own.
+    // The active "Fleet movement" label is dropped; the past missions table keeps its header.
     expect(text).not.toContain("Fleet movement");
-    expect(text).not.toContain("Past missions");
+    expect(text).toContain("Past missions");
     expect(text).toContain("Countdown Mission Origin -> Target Return Fleet / cargo Orders");
     // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
     expect(text).toContain("Incoming attack # 8");
@@ -215,7 +215,7 @@ describe("MissionControlPage", () => {
     expect(defenderText).toContain("Group defend");
     expect(defenderText).toContain("Intercept");
     expect(defenderText).toContain("Battle report");
-    expect(defenderText).not.toContain("Past missions");
+    expect(defenderText).toContain("Past missions");
     expect(defenderText).not.toContain("Recall fleet");
 
     const attackerPage = missionControlPage({
@@ -264,7 +264,7 @@ describe("MissionControlPage", () => {
     expect(attackerText).toContain("Open mission");
     expect(attackerText).toContain("Copy report");
     expect(attackerText).toContain("Battle report");
-    expect(attackerText).not.toContain("Past missions");
+    expect(attackerText).toContain("Past missions");
     expect(attackerText).not.toContain("Group defend");
     expect(attackerText).not.toContain("Intercept");
   });
@@ -356,13 +356,16 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).not.toContain("Past missions");
-    expect(text).toContain("Mission # 1");
-    expect(text).toContain("Mission # 25");
-    expect(text).not.toContain("Mission # 26");
+    expect(text).toContain("Past missions");
+    // 25 battle-report rows render on the visible first page; the 26th is on the hidden second page.
+    // Each row exposes a single "Open mission" button (Details + Report merged in VEY-374).
+    expect(text.split("Open mission").length - 1).toBe(25);
     expect(text).toContain("Page 1 of 2");
     expect(text).toContain("1-25 of 26");
-    expect(text).toContain("Completed Mission Route / target Result Details");
+    // The dedicated "Completed" column header is gone; the compact table keeps the remaining columns.
+    expect(text).toContain("Mission Route / target Result Details");
+    expect(text).not.toContain("Completed");
+    expect(text).not.toContain("Mission #");
     expect(text).not.toContain("Open list");
     expect(text).not.toContain("Battle reports");
   });
@@ -382,10 +385,12 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).not.toContain("Past missions");
-    // Mission #77 collapses to a single row with one button to the unified mission detail screen.
-    expect(text).toContain("Attack Mission # 77");
-    expect(text.split("Mission # 77").length - 1).toBe(1);
+    // VEY-371 restores the "Past missions" header on the compact table.
+    expect(text).toContain("Past missions");
+    // Mission 77 collapses to a single row; the bare outgoing "Attack" label is kept.
+    expect(text).toContain("Attack");
+    // Mission-number text is no longer rendered in the compact past rows (VEY-371).
+    expect(text).not.toContain("Mission #");
     // A single "Open mission" button replaces the old split "Open details" / "Open report" pair.
     expect(text).toContain("Open mission");
     expect(text.split("Open mission").length - 1).toBe(1);
@@ -411,7 +416,11 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Battle report");
-    expect(text).toContain("Mission # 90");
+    // VEY-371 restores the "Past missions" header and renders the target planet inline.
+    expect(text).toContain("Past missions");
+    expect(text).toContain("Planet # 7");
+    // Mission-number text is no longer rendered in the compact past rows (VEY-371).
+    expect(text).not.toContain("Mission #");
     // Standalone battle-report rows also lead to the single unified mission detail screen.
     expect(text).toContain("Open mission");
     expect(text).not.toContain("Open report");
@@ -451,10 +460,12 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     // Outgoing past mission keeps the bare action and hides the always-me commander.
-    expect(text).toContain("Transport Mission # 77");
+    // (Mission-number text is dropped from the compact past rows per VEY-371.)
+    expect(text).toContain("Transport");
+    expect(text).not.toContain("Mission #");
     expect(text).not.toContain("Commander 0x1111...1111");
     // Incoming past mission is prefixed and keeps the foreign commander identity.
-    expect(text).toContain("Incoming attack Mission # 88");
+    expect(text).toContain("Incoming attack");
     expect(text).toContain("Commander 0x3333...3333");
   });
 

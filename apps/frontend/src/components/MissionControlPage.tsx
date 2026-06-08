@@ -684,49 +684,59 @@ function PastMissionSection({
 
   return (
     <section
-      className="min-w-0 rounded-lg border border-white/10 bg-[#101624] p-3"
+      className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]"
       data-past-page-current={String(currentPagination.page - 1)}
       data-past-page-size={String(currentPagination.pageSize)}
       data-past-page-total={String(currentPagination.totalEntries)}
     >
-      {error ? <Notice tone="danger">{error}</Notice> : null}
+      <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Past missions</h3>
+        {currentPagination.totalEntries > 0 ? (
+          <span className="text-[11px] tabular-nums text-slate-500">{currentPagination.totalEntries}</span>
+        ) : null}
+      </div>
+      {error ? <div className="px-3 pt-3"><Notice tone="danger">{error}</Notice></div> : null}
       {rows.length === 0 ? (
-        <p className="text-xs text-slate-500">No completed missions are visible for this wallet yet.</p>
+        <p className="px-3 py-4 text-xs text-slate-500">No completed missions are visible for this wallet yet.</p>
       ) : (
         <>
-          {visiblePages.map((pageRows, pageIndex) => (
-            <div
-              className="grid gap-2"
-              data-past-page={pageIndex}
-              hidden={!pagination && pageIndex !== 0}
-              key={`past-mission-page:${pageIndex}`}
-            >
-              <div className="hidden rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 lg:grid lg:grid-cols-[9rem_11rem_minmax(0,1.4fr)_minmax(0,1fr)_8rem] lg:gap-3">
-                <span>Completed</span>
-                <span>Mission</span>
-                <span>Route / target</span>
-                <span>Result</span>
-                <span>Details</span>
-              </div>
-              {pageRows.map((row) => row.kind === "mission" ? (
-                <PastMissionSummaryRow
-                  key={`past-mission:${row.mission.missionId}`}
-                  mission={row.mission}
-                  now={now}
-                  onOpenReport={onOpenReport}
-                  planetLookup={planetLookup}
-                  wallet={wallet}
-                  walletPlanetIds={walletPlanetIds}
-                />
-              ) : (
-                <PastBattleReportRow
-                  key={`past-report:${row.report.missionId}`}
-                  onOpenReport={onOpenReport}
-                  report={row.report}
-                />
+          <div className="overflow-x-auto">
+            <table className="min-w-[44rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+              <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                <tr>
+                  <th className="w-[12rem] px-2.5 py-1.5">Mission</th>
+                  <th className="w-[18rem] px-2.5 py-1.5">Route / target</th>
+                  <th className="w-[13rem] px-2.5 py-1.5">Result</th>
+                  <th className="w-[9rem] px-2.5 py-1.5">Details</th>
+                </tr>
+              </thead>
+              {visiblePages.map((pageRows, pageIndex) => (
+                <tbody
+                  data-past-page={pageIndex}
+                  hidden={!pagination && pageIndex !== 0}
+                  key={`past-mission-page:${pageIndex}`}
+                >
+                  {pageRows.map((row) => row.kind === "mission" ? (
+                    <PastMissionSummaryRow
+                      key={`past-mission:${row.mission.missionId}`}
+                      mission={row.mission}
+                      now={now}
+                      onOpenReport={onOpenReport}
+                      planetLookup={planetLookup}
+                      wallet={wallet}
+                      walletPlanetIds={walletPlanetIds}
+                    />
+                  ) : (
+                    <PastBattleReportRow
+                      key={`past-report:${row.report.missionId}`}
+                      onOpenReport={onOpenReport}
+                      report={row.report}
+                    />
+                  ))}
+                </tbody>
               ))}
-            </div>
-          ))}
+            </table>
+          </div>
           {hasPages ? (
             <ClientPaginationControl
               loading={loading}
@@ -761,29 +771,28 @@ function PastMissionSummaryRow({
   const report = missionReport(mission, now, planetLookup);
   const missionDirection = resolveMissionDirection({ mission, wallet, walletPlanetIds });
   return (
-    <div className="grid min-w-0 gap-3 rounded border border-white/10 bg-black/10 p-3 text-xs text-slate-300 lg:grid-cols-[9rem_11rem_minmax(0,1.4fr)_minmax(0,1fr)_8rem] lg:items-start">
-      <ArchiveField label="Completed" valueClassName="whitespace-pre-line tabular-nums">
-        {completedAt === undefined ? "Unknown" : formatMissionTime(String(Math.floor(completedAt / 1_000)), now)}
-      </ArchiveField>
-      <ArchiveField label="Mission">
-        <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
+    <tr className="align-top text-xs text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
+      <td className="border-t border-white/10 px-2.5 py-2">
+        <span className={`inline-flex rounded border px-2 py-0.5 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
           {directionalMissionTypeLabel(mission.missionType, missionDirection)}
         </span>
-        <p className="mt-2 font-semibold text-white">Mission #{mission.missionId}</p>
+        <p className="mt-1 whitespace-pre-line tabular-nums text-slate-400">
+          {completedAt === undefined ? "Unknown" : formatMissionTime(String(Math.floor(completedAt / 1_000)), now)}
+        </p>
         <p className="mt-1 text-slate-500">{missionStatusLabel(mission.status)}</p>
-      </ArchiveField>
-      <ArchiveField label="Route / target" valueClassName="break-words">
+      </td>
+      <td className="border-t border-white/10 px-2.5 py-2 break-words">
         <p className="font-medium text-slate-100">{report.routeSummary}</p>
         {missionDirection === "outgoing" ? null : (
           <p className="mt-1 break-all text-slate-500">Commander {report.attacker}</p>
         )}
-      </ArchiveField>
-      <ArchiveField label="Result" valueClassName="break-words">
+      </td>
+      <td className="border-t border-white/10 px-2.5 py-2 break-words">
         <p className="font-medium text-slate-100">{report.outcome}</p>
         <p className="mt-1 text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
         {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
-      </ArchiveField>
-      <ArchiveField label="Details">
+      </td>
+      <td className="border-t border-white/10 px-2.5 py-2">
         <button
           className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
           onClick={() => onOpenReport(mission.missionId)}
@@ -792,8 +801,8 @@ function PastMissionSummaryRow({
         >
           Open mission
         </button>
-      </ArchiveField>
-    </div>
+      </td>
+    </tr>
   );
 }
 
@@ -805,26 +814,25 @@ function PastBattleReportRow({
   report: BattleReport;
 }) {
   return (
-    <div className="grid min-w-0 gap-3 rounded border border-white/10 bg-black/10 p-3 text-xs text-slate-300 lg:grid-cols-[9rem_11rem_minmax(0,1.4fr)_minmax(0,1fr)_8rem] lg:items-start">
-      <ArchiveField label="Completed" valueClassName="tabular-nums">Block {report.blockNumber || "unknown"}</ArchiveField>
-      <ArchiveField label="Mission">
-        <span className="inline-flex rounded border border-red-300/25 bg-red-400/10 px-2 py-1 text-[11px] font-semibold text-red-100">
+    <tr className="align-top text-xs text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
+      <td className="border-t border-white/10 px-2.5 py-2">
+        <span className="inline-flex rounded border border-red-300/25 bg-red-400/10 px-2 py-0.5 text-[11px] font-semibold text-red-100">
           Battle report
         </span>
-        <p className="mt-2 font-semibold text-white">Mission #{report.missionId}</p>
+        <p className="mt-1 tabular-nums text-slate-400">Block {report.blockNumber || "unknown"}</p>
         <p className="mt-1 text-slate-500">{battleOutcomeLabel(report.outcome)}</p>
-      </ArchiveField>
-      <ArchiveField label="Route / target" valueClassName="break-words">
+      </td>
+      <td className="border-t border-white/10 px-2.5 py-2 break-words">
         <p className="font-medium text-slate-100">
           Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
         </p>
         <p className="mt-1 text-slate-500">Rounds {report.rounds}</p>
-      </ArchiveField>
-      <ArchiveField label="Result" valueClassName="break-words">
+      </td>
+      <td className="border-t border-white/10 px-2.5 py-2 break-words">
         <p className="font-medium text-slate-100">Loot {formatCargo(report.loot)}</p>
         <p className="mt-1 text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
-      </ArchiveField>
-      <ArchiveField label="Details">
+      </td>
+      <td className="border-t border-white/10 px-2.5 py-2">
         <button
           className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
           onClick={() => onOpenReport(report.missionId)}
@@ -833,25 +841,8 @@ function PastBattleReportRow({
         >
           Open mission
         </button>
-      </ArchiveField>
-    </div>
-  );
-}
-
-function ArchiveField({
-  children,
-  label,
-  valueClassName = "",
-}: {
-  children: preact.ComponentChildren;
-  label: string;
-  valueClassName?: string | undefined;
-}) {
-  return (
-    <div className="min-w-0">
-      <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 lg:hidden">{label}</p>
-      <div className={`min-w-0 ${valueClassName}`}>{children}</div>
-    </div>
+      </td>
+    </tr>
   );
 }
 
