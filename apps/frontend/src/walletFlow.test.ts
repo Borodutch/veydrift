@@ -3,6 +3,7 @@ import {
   BASE_SEPOLIA,
   assertWalletUnlocked,
   decodeBoolResult,
+  decodeColonizationTargetId,
   decodeUintResult,
   encodeQuantity,
   encodeAddressUintCall,
@@ -2477,6 +2478,27 @@ describe("walletFlow", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("decodeColonizationTargetId", () => {
+  test("round-trips coordinates encoded by encodeColonizationTargetId", () => {
+    expect(decodeColonizationTargetId(encodeColonizationTargetId(2, 44, 10))).toEqual({
+      galaxy: 2,
+      system: 44,
+      position: 10,
+      coordinates: "2:44:10",
+    });
+  });
+
+  test("returns null for real planet ids without the colonization flag", () => {
+    expect(decodeColonizationTargetId("9")).toBeNull();
+    expect(decodeColonizationTargetId("0")).toBeNull();
+    expect(decodeColonizationTargetId(7)).toBeNull();
+  });
+
+  test("returns null for non-numeric input", () => {
+    expect(decodeColonizationTargetId("not-a-number")).toBeNull();
   });
 });
 

@@ -2,7 +2,7 @@ import { ArrowLeft, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import type { BattleReport, FleetMissionSummary, MissionDetailResponse } from "../walletFlow";
+import { type BattleReport, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
 import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
@@ -63,12 +63,14 @@ export function MissionDetailPage({
   return (
     <section className="grid gap-4">
       <PageHeader
+        beforeTitle={(
+          <button className="mb-3 inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
+            <ArrowLeft aria-hidden="true" size={15} />
+            Mission Control
+          </button>
+        )}
         actions={(
           <>
-            <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
-              <ArrowLeft aria-hidden="true" size={15} />
-              Mission Control
-            </button>
             <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
             <button
               aria-label={copyLabel}
@@ -434,7 +436,11 @@ function formatMissionTime(value: string, now: number): string {
 }
 
 function planetLabel(planet: FleetMissionSummary["originPlanet"], fallbackId: string): string {
-  if (!planet) return `Planet #${fallbackId}`;
+  if (!planet) {
+    const colonyTarget = decodeColonizationTargetId(fallbackId);
+    if (colonyTarget) return `Uncharted [${colonyTarget.coordinates}]`;
+    return `Planet #${fallbackId}`;
+  }
   const name = planet.name ? `${planet.name} ` : "";
   return `${name}[${planet.coordinates}]`;
 }
