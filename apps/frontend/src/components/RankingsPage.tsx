@@ -100,38 +100,37 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
     <section className="space-y-4">
       <RankingsPageHeader loading={loading} onRefresh={() => load(page)} />
 
+      <RankingsCurrentPlayerIndicator
+        currentPlayerPage={currentPlayerPage}
+        currentScore={currentPlayerScore}
+        currentWallet={currentWallet}
+        hasLoadedData={Boolean(data)}
+        loading={loading}
+        onCurrentPlayer={() => currentPlayerPage ? setPage(currentPlayerPage.page) : undefined}
+      />
+
       {error ? (
         <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
           {error}
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-3 rounded-md border border-white/10 bg-white/[0.02] p-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-2">
-          {categories.map((category) => (
-            <button
-              aria-pressed={active === category.key}
-              className={`h-9 rounded border px-3 text-xs font-semibold transition ${
-                active === category.key
-                  ? "border-cyan-300/60 bg-cyan-300/10 text-cyan-100"
-                  : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
-              }`}
-              key={category.key}
-              onClick={() => setActive(category.key)}
-              type="button"
-            >
-              {category.label}
-            </button>
-          ))}
-        </div>
-        <RankingsCurrentPlayerIndicator
-          currentPlayerPage={currentPlayerPage}
-          currentScore={currentPlayerScore}
-          currentWallet={currentWallet}
-          hasLoadedData={Boolean(data)}
-          loading={loading}
-          onCurrentPlayer={() => currentPlayerPage ? setPage(currentPlayerPage.page) : undefined}
-        />
+      <div className="flex flex-wrap gap-2 rounded-md border border-white/10 bg-white/[0.02] p-2">
+        {categories.map((category) => (
+          <button
+            aria-pressed={active === category.key}
+            className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+              active === category.key
+                ? "border-cyan-300/60 bg-cyan-300/10 text-cyan-100"
+                : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
+            }`}
+            key={category.key}
+            onClick={() => setActive(category.key)}
+            type="button"
+          >
+            {category.label}
+          </button>
+        ))}
       </div>
 
       <RankingsTable
@@ -189,18 +188,18 @@ export function RankingsCurrentPlayerIndicator({
   return (
     <button
       aria-label={currentPlayerPage ? `Your rank is ${currentPlayerPage.rank}` : "Your rank is unranked"}
-      className="inline-flex min-h-9 w-full min-w-0 items-center justify-center gap-2 rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-left text-xs text-cyan-100 transition hover:border-cyan-200/50 hover:bg-cyan-300/15 disabled:cursor-default disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-slate-400 sm:w-auto sm:justify-start"
+      className="inline-flex min-h-11 w-full min-w-0 items-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-4 py-2.5 text-left text-sm text-cyan-100 transition hover:border-cyan-200/60 hover:bg-cyan-300/15 disabled:cursor-default disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-slate-400"
       disabled={loading || !canJumpToCurrentPlayer}
       onClick={onCurrentPlayer}
       title={currentPlayerPage ? "Go to your rank" : "Your rank is unavailable"}
       type="button"
     >
-      <UserRound aria-hidden="true" className="shrink-0" size={14} />
+      <UserRound aria-hidden="true" className="shrink-0" size={16} />
       <span className="min-w-0">
-        <span className="mr-1 text-slate-400">Your rank:</span>
+        <span className="mr-1 text-slate-300">Your rank:</span>
         {currentPlayerPage ? (
           <>
-            <span className="font-mono font-semibold">#{currentPlayerPage.rank}</span>
+            <span className="font-mono text-base font-semibold">#{currentPlayerPage.rank}</span>
             {currentScore ? (
               <span className="ml-2 whitespace-nowrap font-mono text-cyan-200/80">{formatScore(currentScore)}</span>
             ) : null}
@@ -209,6 +208,9 @@ export function RankingsCurrentPlayerIndicator({
           <span className="font-semibold">Unranked</span>
         )}
       </span>
+      {canJumpToCurrentPlayer ? (
+        <span className="ml-auto hidden whitespace-nowrap text-xs text-cyan-200/70 sm:inline">Jump to your row →</span>
+      ) : null}
     </button>
   );
 }
