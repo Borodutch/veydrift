@@ -153,7 +153,7 @@ function ResourcePip({
       className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
       title={resourceTitle(label, value, rate, cap)}
     >
-      <span className="inline-flex min-w-0 items-baseline gap-0.5 sm:gap-1.5">
+      <span className="inline-flex min-w-0 items-center gap-0.5 sm:gap-1.5">
         <span className={`text-[10px] font-semibold leading-none sm:text-xs ${color}`}>
           <span className="sm:hidden">{abbr}</span>
           <span className="hidden sm:inline">{label}</span>
@@ -195,7 +195,7 @@ function EnergyPip({
         ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%`
         : `${format(produced)} produced / ${format(required)} required`}
     >
-      <span className="inline-flex min-w-0 items-baseline gap-0.5 sm:gap-1.5">
+      <span className="inline-flex min-w-0 items-center gap-0.5 sm:gap-1.5">
         <span className={`text-[10px] font-semibold leading-none sm:text-xs ${tone}`}>
           <span className="sm:hidden">E</span>
           <span className="hidden sm:inline">Energy</span>
@@ -211,7 +211,7 @@ function EnergyPip({
             <span className="hidden sm:inline">{productionPercent}% output</span>
           </span>
         )}
-        <details className="group relative inline-flex shrink-0">
+        <details className="group relative ml-0.5 inline-flex shrink-0 sm:ml-1">
           <summary
             aria-label={energyExplanation}
             className="inline-grid h-5 w-5 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
