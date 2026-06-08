@@ -454,7 +454,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Commander 0x3333...3333");
   });
 
-  test("renders joinable attacks in the unified active mission list", () => {
+  test("surfaces joinable attacks under the Alliance tab (no stat-card row)", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -475,11 +475,11 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    // The summary stat-card row was removed; the joinable attack still appears in the active list.
+    // The summary stat-card row was removed; the joinable attack is now surfaced in the
+    // Alliance tab (My missions / Alliance split from VEY-375), not a unified list.
     expect(text).not.toContain("Active missions 1");
-    expect(text).toContain("Joinable attack");
-    expect(text).toContain("Join attack");
-    expect(text).not.toContain("Group defend");
+    expect(text).toContain("My missions (0)");
+    expect(text).toContain("Alliance (1)");
   });
 });
 

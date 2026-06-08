@@ -294,6 +294,8 @@ function ActiveMissionSection({
     onRecall,
     onResolve,
     planetLookup,
+    wallet,
+    walletPlanetIds,
   };
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={ACTIVE_MISSION_DEFAULT_TAB}>
@@ -340,6 +342,8 @@ function ActiveMissionTable({
   onResolve,
   planetLookup,
   rows,
+  wallet,
+  walletPlanetIds,
 }: {
   canTransact: boolean;
   emptyLabel: string;
@@ -352,6 +356,8 @@ function ActiveMissionTable({
   onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   rows: ActiveMissionRow[];
+  wallet?: string | undefined;
+  walletPlanetIds: ReadonlySet<string>;
 }) {
   if (rows.length === 0) {
     return <p className="px-3 py-4 text-xs text-slate-500">{emptyLabel}</p>;
