@@ -128,10 +128,11 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("Mission Control");
     expect(text).toContain("Watch inbound attacks");
-    expect(text).toContain("Fleet movement");
     expect(text).toContain("Hostile inbound");
     expect(text).toContain("Returns");
-    expect(text).toContain("Past missions");
+    // Section header labels are dropped; grouping is conveyed by the tables themselves.
+    expect(text).not.toContain("Fleet movement");
+    expect(text).not.toContain("Past missions");
     expect(text).toContain("Commander 0x2222...2222");
     expect(text).toContain("Origin Planet #8");
     expect(text).toContain("Target Planet #7");
@@ -145,6 +146,44 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("contract-supported");
     expect(text).not.toContain("Contract-indexed");
     expect(text).not.toContain("ACS");
+  });
+
+  test("dedupes duplicate server archive rows from polling or re-renders", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const duplicateRow = { kind: "battleReport" as const, report: battleReport("61") };
+    const text = collectText(MissionControlPage({
+      actionState: { status: "idle" },
+      canTransact: true,
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      missionArchive: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        rows: [duplicateRow, duplicateRow],
+        pagination: { page: 1, pageSize: 25, totalEntries: 2, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+      loading: false,
+      now,
+      onCompleteReturn: () => undefined,
+      onCounterplay: () => undefined,
+      onJoinAttack: () => undefined,
+      onOpenBattleReport: () => undefined,
+      onOpenReport: () => undefined,
+      onOpenReportList: () => undefined,
+      onRecall: () => undefined,
+      onRefresh: () => undefined,
+      onResolve: () => undefined,
+    }));
+
+    expect(countOccurrences(text.join(""), "Mission #61")).toBe(1);
   });
 
   test("renders shareable mission detail stages, actions, and OGame-style report structure", () => {
@@ -243,6 +282,10 @@ describe("Mission Control battle reports", () => {
     expect(failed).toContain("Copy failed");
   });
 });
+
+function countOccurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
 
 function collectText(node: unknown): string[] {
   if (node === null || node === undefined || typeof node === "boolean") return [];

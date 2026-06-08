@@ -103,8 +103,10 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Due resolvers 3");
     expect(text).toContain("Hostile inbound 1");
     expect(text).toContain("Returns 1");
-    expect(text).toContain("Past missions 0");
-    expect(text).toContain("Fleet movement");
+    expect(text).toContain("No completed missions are visible for this wallet yet.");
+    // Section header labels are dropped; the tables convey grouping on their own.
+    expect(text).not.toContain("Fleet movement");
+    expect(text).not.toContain("Past missions");
     expect(text).toContain("Countdown Mission Origin -> Target Return Fleet / cargo Orders");
     expect(text).toContain("Attack # 8");
     expect(text).toContain("Hostile inbound");
@@ -207,7 +209,8 @@ describe("MissionControlPage", () => {
     expect(defenderText).toContain("Red Haven [4:55:11]");
     expect(defenderText).toContain("Group defend");
     expect(defenderText).toContain("Intercept");
-    expect(defenderText).toContain("Past missions 1");
+    expect(defenderText).toContain("Battle report");
+    expect(defenderText).not.toContain("Past missions");
     expect(defenderText).not.toContain("Recall fleet");
 
     const attackerPage = missionControlPage({
@@ -254,7 +257,8 @@ describe("MissionControlPage", () => {
     expect(attackerText).toContain("Recall fleet");
     expect(attackerText).toContain("View report");
     expect(attackerText).toContain("Copy report");
-    expect(attackerText).toContain("Past missions 1");
+    expect(attackerText).toContain("Battle report");
+    expect(attackerText).not.toContain("Past missions");
     expect(attackerText).not.toContain("Group defend");
     expect(attackerText).not.toContain("Intercept");
   });
@@ -345,7 +349,7 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Past missions 26");
+    expect(text).not.toContain("Past missions");
     expect(text).toContain("Mission # 1");
     expect(text).toContain("Mission # 25");
     expect(text).not.toContain("Mission # 26");
@@ -356,7 +360,7 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Battle reports");
   });
 
-  test("keeps completed mission summaries and matching battle reports in the archive", () => {
+  test("collapses a completed mission and its matching battle report into one archive row", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -371,10 +375,34 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Past missions 2");
+    expect(text).not.toContain("Past missions");
+    // Mission #77 collapses to a single row that links to both the detail and the report.
     expect(text).toContain("Attack Mission # 77");
+    expect(text.split("Mission # 77").length - 1).toBe(1);
+    expect(text).toContain("Open details");
+    expect(text).toContain("Open report");
+    // The standalone battle-report row is collapsed away.
+    expect(text).not.toContain("Battle report");
+  });
+
+  test("renders a standalone battle report row when no completed mission matches", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [battleReport("90")],
+      },
+    });
+    const text = visibleText(page);
+
     expect(text).toContain("Battle report");
-    expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
+    expect(text).toContain("Mission # 90");
+    expect(text).toContain("Open report");
   });
 
   test("renders joinable attacks in the unified active mission list", () => {

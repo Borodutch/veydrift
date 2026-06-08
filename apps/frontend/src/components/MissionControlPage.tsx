@@ -12,7 +12,7 @@ import type {
   ManagedPlanetResponse,
 } from "../walletFlow";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { VeydriftLoader } from "./VeydriftLoader";
 
 type MissionControlActionState =
   | { status: "idle" }
@@ -90,7 +90,9 @@ export function MissionControlPage({
   const due = activeMissionRows.filter(({ mission }) => isMissionDue(mission, now) || isMissionReturned(mission, now));
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
-  const pastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
+  const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
+  const battleReportMissionIds = battleReportMissionIdSet(rawPastMissionRows);
+  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
   const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
   const activeCount = activeMissionRows.length;
@@ -99,7 +101,7 @@ export function MissionControlPage({
   return (
     <section className="grid gap-4">
       <PageHeader
-        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh missions" />}
+        actions={<RefreshButton loading={loading || missionArchiveLoading} onRefresh={onRefresh} title="Refresh missions" />}
         subtitle="Watch inbound attacks, active launches, returning fleets, and time-critical battle actions from one command table."
         title="Mission Control"
       />
@@ -109,8 +111,6 @@ export function MissionControlPage({
           {actionState.label}
         </Notice>
       )}
-      {loading && fleetVisibility ? <InlineSyncIndicator label="Refreshing missions" /> : null}
-
       {initialLoading ? (
         <VeydriftLoader label="Mapping missions" />
       ) : (
@@ -152,6 +152,7 @@ export function MissionControlPage({
           />
 
           <PastMissionSection
+            battleReportMissionIds={battleReportMissionIds}
             error={missionArchiveError}
             loading={missionArchiveLoading}
             now={now}
@@ -268,19 +269,13 @@ function ActiveMissionSection({
 }) {
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-      <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Fleet movement</p>
-          <h3 className="mt-0.5 text-sm font-semibold text-white">Active missions</h3>
+      {dueCount > 0 ? (
+        <div className="flex items-center justify-end gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
+          <span className="rounded border border-red-300/25 bg-red-400/10 px-2 py-1 text-xs font-medium text-red-100">
+            Needs orders now {dueCount}
+          </span>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {dueCount > 0 ? (
-            <span className="rounded border border-red-300/25 bg-red-400/10 px-2 py-1 text-xs font-medium text-red-100">
-              Needs orders now {dueCount}
-            </span>
-          ) : null}
-        </div>
-      </div>
+      ) : null}
       {missions.length === 0 ? (
         <p className="px-3 py-4 text-xs text-slate-500">No active missions.</p>
       ) : (
@@ -559,6 +554,7 @@ function MissionReportDetail({
 }
 
 function PastMissionSection({
+  battleReportMissionIds,
   error,
   loading,
   now,
@@ -569,6 +565,7 @@ function PastMissionSection({
   planetLookup,
   rows,
 }: {
+  battleReportMissionIds: ReadonlySet<string>;
   error?: string | undefined;
   loading: boolean;
   now: number;
@@ -594,14 +591,6 @@ function PastMissionSection({
       data-past-page-size={String(currentPagination.pageSize)}
       data-past-page-total={String(currentPagination.totalEntries)}
     >
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Archive</p>
-          <h3 className="mt-0.5 text-sm font-semibold text-white">Past missions</h3>
-        </div>
-        <span className="text-xs tabular-nums text-slate-400">{currentPagination.totalEntries}</span>
-      </div>
-      {loading ? <InlineSyncIndicator label="Refreshing archive" /> : null}
       {error ? <Notice tone="danger">{error}</Notice> : null}
       {rows.length === 0 ? (
         <p className="text-xs text-slate-500">No completed missions are visible for this wallet yet.</p>
@@ -623,9 +612,11 @@ function PastMissionSection({
               </div>
               {pageRows.map((row) => row.kind === "mission" ? (
                 <PastMissionSummaryRow
+                  hasBattleReport={battleReportMissionIds.has(row.mission.missionId)}
                   key={`past-mission:${row.mission.missionId}`}
                   mission={row.mission}
                   now={now}
+                  onOpenBattleReport={onOpenBattleReport}
                   onOpenReport={onOpenReport}
                   planetLookup={planetLookup}
                 />
@@ -677,13 +668,17 @@ function PastMissionSection({
 }
 
 function PastMissionSummaryRow({
+  hasBattleReport,
   mission,
   now,
+  onOpenBattleReport,
   onOpenReport,
   planetLookup,
 }: {
+  hasBattleReport: boolean;
   mission: FleetMissionSummary;
   now: number;
+  onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
 }) {
@@ -711,13 +706,24 @@ function PastMissionSummaryRow({
         {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
       </ArchiveField>
       <ArchiveField label="Details">
-        <button
-          className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
-          onClick={() => onOpenReport(mission.missionId)}
-          type="button"
-        >
-          Open details
-        </button>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+            onClick={() => onOpenReport(mission.missionId)}
+            type="button"
+          >
+            Open details
+          </button>
+          {hasBattleReport ? (
+            <button
+              className="inline-flex h-8 items-center justify-center rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+              onClick={() => onOpenBattleReport(mission.missionId)}
+              type="button"
+            >
+              Open report
+            </button>
+          ) : null}
+        </div>
       </ArchiveField>
     </div>
   );
@@ -922,6 +928,32 @@ function chronologicalPastMissionRows(completedMissions: FleetMissionSummary[], 
     ...completedMissions.map((mission): PastMissionRow => ({ kind: "mission", mission })),
     ...battleReports.map((report): PastMissionRow => ({ kind: "battleReport", report })),
   ].sort((left, right) => pastRowTimestamp(right) - pastRowTimestamp(left));
+}
+
+function pastRowMissionId(row: PastMissionRow): string {
+  return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
+}
+
+function battleReportMissionIdSet(rows: PastMissionRow[]): Set<string> {
+  return new Set(rows.filter((row) => row.kind === "battleReport").map((row) => row.report.missionId));
+}
+
+function dedupePastMissionRows(rows: PastMissionRow[]): PastMissionRow[] {
+  const missionSummaryIds = new Set(
+    rows.filter((row) => row.kind === "mission").map((row) => pastRowMissionId(row))
+  );
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const missionId = pastRowMissionId(row);
+    // Collapse a battle report into its mission summary row when both exist, so each mission
+    // appears once with links to both the mission detail and its battle report.
+    if (row.kind === "battleReport" && missionSummaryIds.has(missionId)) return false;
+    // Drop exact duplicate rows that slip in from re-renders, polling, or overlapping updates.
+    const key = `${row.kind}:${missionId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function uniqueMissionRows(rows: ActiveMissionRow[]): ActiveMissionRow[] {
