@@ -838,6 +838,24 @@ export function walletRequestErrorMessage(error: unknown): string {
   return message;
 }
 
+const INSUFFICIENT_RESOURCES_REVERT_SELECTOR = "0x2ab0f96f";
+export const INSUFFICIENT_RESOURCES_SPEND_MESSAGE =
+  "You don't have enough resources for this action. Your spendable balance may still be catching up with recent spending — refresh resources and try again once you can cover the cost.";
+
+/**
+ * Error message for spend transactions (building / research / ship / defense
+ * starts). Maps the on-chain `InsufficientResources` revert (`0x2ab0f96f`) to a
+ * clear, action-neutral message as a backstop in case affordability gating let
+ * an unaffordable action through; otherwise falls back to the generic
+ * wallet-request handling.
+ */
+export function spendTransactionErrorMessage(error: unknown): string {
+  if (revertSelector(error) === INSUFFICIENT_RESOURCES_REVERT_SELECTOR) {
+    return INSUFFICIENT_RESOURCES_SPEND_MESSAGE;
+  }
+  return walletRequestErrorMessage(error);
+}
+
 const COLONY_SHIP_ID = 3n;
 
 type FleetMissionRevertContext = {

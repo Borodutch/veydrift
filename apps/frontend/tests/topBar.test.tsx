@@ -79,6 +79,28 @@ describe("TopBar", () => {
     expect(panelText).toContain("Insufficient energy reduces mine output to 80%");
   });
 
+  test("vertically centers M/C/D/E values and spaces the energy info icon", () => {
+    const topBar = renderTopBar();
+    const nodes = elementNodes(topBar);
+    const pipRows = nodes.filter(
+      (node) =>
+        typeof node.props?.className === "string" &&
+        node.props.className.includes("inline-flex") &&
+        node.props.className.includes("gap-0.5 sm:gap-1.5")
+    );
+
+    // Three resource pips (M/C/D) plus the energy pip (E) all share the inner row.
+    expect(pipRows).toHaveLength(4);
+    for (const row of pipRows) {
+      expect(row.props.className).toContain("items-center");
+      expect(row.props.className).not.toContain("items-baseline");
+    }
+
+    const energyDetails = nodes.find((node) => node.type === "details");
+    expect(energyDetails?.props?.className).toContain("ml-0.5");
+    expect(energyDetails?.props?.className).toContain("sm:ml-1");
+  });
+
   test("does not render pending collectable deltas next to resources", () => {
     const topBar = renderTopBar();
     const text = visibleText(topBar).replace(/\s+/g, "");
