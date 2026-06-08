@@ -133,7 +133,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     dependencies.chainSync ??
     (loaded.problems.length === 0 ? new ChainSyncService(loaded.config, indexer) : undefined);
   const resolutionReader = rawChainReader?.listResolvableFleetMissions
-    ? { listResolvableFleetMissions: rawChainReader.listResolvableFleetMissions.bind(rawChainReader) }
+    ? {
+        listResolvableFleetMissions: rawChainReader.listResolvableFleetMissions.bind(rawChainReader),
+        ...(rawChainReader.listReturnableFleetMissions
+          ? { listReturnableFleetMissions: rawChainReader.listReturnableFleetMissions.bind(rawChainReader) }
+          : {})
+      }
     : undefined;
   const missionResolver =
     dependencies.missionResolver ??

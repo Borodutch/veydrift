@@ -1,8 +1,9 @@
 import type { BackendConfig } from "./config";
-import { HttpJsonRpcTransport, type Address, type ResolvableFleetMission } from "./evm";
+import { HttpJsonRpcTransport, type Address, type ResolvableFleetMission, type ReturnableFleetMission } from "./evm";
 
 export type MissionResolutionReader = {
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]>;
+  listReturnableFleetMissions?(): Promise<ReturnableFleetMission[]>;
 };
 
 type MissionResolutionTransport = Pick<HttpJsonRpcTransport, "request">;
@@ -17,11 +18,13 @@ export type MissionResolutionSnapshot = {
 };
 
 const resolveFleetMissionSelector = "0xde09e7cf";
+const completeFleetMissionReturnSelector = "0xc2472852";
 const defaultIntervalMs = 30_000;
 
 export class MissionResolutionService {
   private readonly enabled: boolean;
-  private readonly submittedMissionIds = new Set<string>();
+  private readonly resolvedMissionIds = new Set<string>();
+  private readonly completedReturnMissionIds = new Set<string>();
   private inFlight = false;
   private lastError: string | null = null;
   private lastRunAt: string | null = null;
@@ -72,7 +75,7 @@ export class MissionResolutionService {
     return {
       enabled: this.enabled,
       resolverConfigured: Boolean(this.config.missionResolverAddress),
-      submittedCount: this.submittedMissionIds.size,
+      submittedCount: this.resolvedMissionIds.size + this.completedReturnMissionIds.size,
       lastError: this.lastError,
       lastRunAt: this.lastRunAt,
       lastSubmittedMissionId: this.lastSubmittedMissionId
@@ -94,16 +97,37 @@ export class MissionResolutionService {
     this.inFlight = true;
     this.lastRunAt = new Date().toISOString();
     try {
-      const missions = await this.reader.listResolvableFleetMissions();
-      for (const mission of missions) {
-        if (this.submittedMissionIds.has(mission.missionId)) {
+      const resolver = this.config.missionResolverAddress;
+      const contractAddress = this.config.gameContractAddress;
+
+      // Arrival leg: resolve Outbound missions whose arrival has passed. This delivers Transport
+      // cargo / credits Deploy ships to the target and runs combat for Attack/Harvest/Colonize.
+      const resolvable = await this.reader.listResolvableFleetMissions();
+      for (const mission of resolvable) {
+        if (this.resolvedMissionIds.has(mission.missionId)) {
           continue;
         }
 
-        await this.submitResolution(this.config.missionResolverAddress, this.config.gameContractAddress, mission);
-        this.submittedMissionIds.add(mission.missionId);
+        await this.submitCall(resolver, contractAddress, encodeResolveFleetMissionCall(BigInt(mission.missionId)));
+        this.resolvedMissionIds.add(mission.missionId);
         this.lastSubmittedMissionId = mission.missionId;
       }
+
+      // Return leg: complete Returning missions whose return has passed so surviving ships and
+      // carried loot/cargo are credited back to the origin planet without manual action.
+      const returnable = this.reader.listReturnableFleetMissions
+        ? await this.reader.listReturnableFleetMissions()
+        : [];
+      for (const mission of returnable) {
+        if (this.completedReturnMissionIds.has(mission.missionId)) {
+          continue;
+        }
+
+        await this.submitCall(resolver, contractAddress, encodeCompleteFleetMissionReturnCall(BigInt(mission.missionId)));
+        this.completedReturnMissionIds.add(mission.missionId);
+        this.lastSubmittedMissionId = mission.missionId;
+      }
+
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
@@ -112,12 +136,12 @@ export class MissionResolutionService {
     }
   }
 
-  private async submitResolution(resolver: Address, contractAddress: Address, mission: ResolvableFleetMission): Promise<void> {
+  private async submitCall(resolver: Address, contractAddress: Address, data: string): Promise<void> {
     await this.transport?.request<string>("eth_sendTransaction", [
       {
         from: resolver,
         to: contractAddress,
-        data: encodeResolveFleetMissionCall(BigInt(mission.missionId))
+        data
       }
     ]);
   }
@@ -125,4 +149,8 @@ export class MissionResolutionService {
 
 export function encodeResolveFleetMissionCall(missionId: bigint): string {
   return `${resolveFleetMissionSelector}${missionId.toString(16).padStart(64, "0")}`;
+}
+
+export function encodeCompleteFleetMissionReturnCall(missionId: bigint): string {
+  return `${completeFleetMissionReturnSelector}${missionId.toString(16).padStart(64, "0")}`;
 }
