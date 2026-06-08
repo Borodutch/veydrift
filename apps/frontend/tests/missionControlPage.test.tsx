@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions } from "../src/components/MissionControlPage";
+import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
@@ -159,6 +160,94 @@ describe("MissionControlPage", () => {
     expect(visibleText(refreshingPage)).toContain("Refreshing");
     expect(source).toContain("<RefreshButton");
     expect(source).not.toContain("RefreshCw");
+  });
+
+  test("resolves colonize-mission target coordinates instead of an unavailable fallback", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({
+          missionId: "42",
+          missionType: "Colonize",
+          originPlanetId: "7",
+          targetPlanetId: encodeColonizationTargetId(2, 44, 10),
+        })],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Uncharted [2:44:10]");
+    expect(text).not.toContain("External coordinates unavailable");
+  });
+
+  test("resolves past-archive mission target coordinates that are absent from the live feed", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "6:9:1", name: "New Zion" })],
+      missionArchive: {
+        wallet,
+        homePlanetId: "7",
+        rows: [{
+          kind: "mission",
+          mission: mission({
+            missionId: "1",
+            missionType: "Attack",
+            status: "Returned",
+            originPlanetId: "7",
+            targetPlanetId: "40",
+            originPlanet: {
+              planetId: "7",
+              owner: wallet,
+              ownerDisplayName: "borodutch",
+              name: "New Zion",
+              galaxy: 6,
+              system: 9,
+              position: 1,
+              coordinates: "6:9:1",
+            },
+            targetPlanet: {
+              planetId: "40",
+              owner: "0xa278b3943c7c58eb0d26be397507285adf6490ed",
+              ownerDisplayName: null,
+              name: "1517",
+              galaxy: 5,
+              system: 407,
+              position: 4,
+              coordinates: "5:407:4",
+            },
+          }),
+        }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 1,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("1517 [5:407:4]");
+    expect(text).not.toContain("External coordinates unavailable");
   });
 
   test("renders attacker and defender attack views with side-specific controls", () => {
