@@ -4802,6 +4802,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onRecall={handleRecallMission}
           onResolve={handleResolveMission}
           onRetry={loadMissionDetail}
+          onSelectCoordinates={handleSelectPlanet}
+          onSelectPlayer={handleSelectPlayer}
         />
       );
     }
