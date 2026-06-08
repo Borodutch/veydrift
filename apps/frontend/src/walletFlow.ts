@@ -838,6 +838,24 @@ export function walletRequestErrorMessage(error: unknown): string {
   return message;
 }
 
+const INSUFFICIENT_RESOURCES_REVERT_SELECTOR = "0x2ab0f96f";
+export const INSUFFICIENT_RESOURCES_SPEND_MESSAGE =
+  "You don't have enough resources for this action. Your spendable balance may still be catching up with recent spending — refresh resources and try again once you can cover the cost.";
+
+/**
+ * Error message for spend transactions (building / research / ship / defense
+ * starts). Maps the on-chain `InsufficientResources` revert (`0x2ab0f96f`) to a
+ * clear, action-neutral message as a backstop in case affordability gating let
+ * an unaffordable action through; otherwise falls back to the generic
+ * wallet-request handling.
+ */
+export function spendTransactionErrorMessage(error: unknown): string {
+  if (revertSelector(error) === INSUFFICIENT_RESOURCES_REVERT_SELECTOR) {
+    return INSUFFICIENT_RESOURCES_SPEND_MESSAGE;
+  }
+  return walletRequestErrorMessage(error);
+}
+
 const COLONY_SHIP_ID = 3n;
 
 type FleetMissionRevertContext = {
@@ -1267,6 +1285,36 @@ export function encodeColonizationTargetId(galaxy: number, system: number, posit
     | (BigInt(galaxy) << 24n)
     | (BigInt(system) << 8n)
     | BigInt(position)).toString();
+}
+
+export type DecodedColonizationTarget = {
+  galaxy: number;
+  system: number;
+  position: number;
+  coordinates: string;
+};
+
+// Colonize-mission targets are empty, unsettled coordinates, so the indexer has no
+// planet to resolve them against. The target planet id is not a real planet id (those
+// are small sequential integers) but the destination coordinates packed behind the
+// colonization flag bit by `encodeColonizationTargetId`. Decoding it lets us show the
+// real coordinates instead of an opaque "unavailable" fallback. Returns null for any
+// id without the flag bit, which covers every real planet id.
+export function decodeColonizationTargetId(
+  planetId: string | bigint | number,
+): DecodedColonizationTarget | null {
+  let value: bigint;
+  try {
+    value = BigInt(planetId);
+  } catch {
+    return null;
+  }
+  if ((value & COLONIZATION_COORDINATE_FLAG) === 0n) return null;
+
+  const galaxy = Number((value >> 24n) & 0xffffn);
+  const system = Number((value >> 8n) & 0xffffn);
+  const position = Number(value & 0xffn);
+  return { galaxy, system, position, coordinates: `${galaxy}:${system}:${position}` };
 }
 
 export function encodeJoinAttackMissionCall({

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ComponentChildren, VNode } from "preact";
 import { formatProductionPrice, selectedProductionItem } from "../src/components/ProductionCatalog";
 import {
   defenseProductionItems,
@@ -6,9 +7,67 @@ import {
   getDefenseRequirementStates,
   getQueueBlocker,
   shouldShowDefenseInitialLoader,
+  StatusPanel,
 } from "../src/components/DefensePage";
 import { defenseCatalog } from "../src/playableMvp";
 import type { ChainDefenseState } from "../src/walletFlow";
+
+describe("Defense status panel surfaces only failures", () => {
+  test("does not render success or pending action banners", () => {
+    for (const status of ["success", "pending"] as const) {
+      const panel = StatusPanel({
+        actionState: { status, label: `Defense ${status} banner` },
+        defenseState: defenseState(),
+        error: undefined,
+        loading: false,
+      });
+      expect(visibleText(panel)).toBe("");
+    }
+  });
+
+  test("still renders error action banners", () => {
+    const panel = StatusPanel({
+      actionState: { status: "error", label: "Defense build failed" },
+      defenseState: defenseState(),
+      error: undefined,
+      loading: false,
+    });
+    expect(visibleText(panel)).toContain("Defense build failed");
+  });
+
+  test("keeps the last notice visible during a refresh instead of blinking to null", () => {
+    const panel = StatusPanel({
+      actionState: { status: "error", label: "Defense build failed" },
+      defenseState: defenseState(),
+      error: undefined,
+      loading: true,
+    });
+    expect(visibleText(panel)).toContain("Defense build failed");
+  });
+});
+
+function visibleText(node: ComponentChildren): string {
+  const parts: string[] = [];
+  const walk = (current: ComponentChildren): void => {
+    if (current === null || current === undefined || typeof current === "boolean") return;
+    if (typeof current === "string" || typeof current === "number") {
+      parts.push(String(current));
+      return;
+    }
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+    const vnode = current as VNode;
+    if (typeof vnode.type === "function") {
+      walk(vnode.type(vnode.props));
+      return;
+    }
+    walk(vnode.props?.children as ComponentChildren);
+  };
+  walk(node);
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
 
 describe("Defense page display helpers", () => {
   test("formats defense prices like building cost rows", () => {
