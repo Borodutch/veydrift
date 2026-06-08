@@ -151,6 +151,52 @@ describe("Mission Control battle reports", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
       account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          needsResolution: true,
+        },
+        battleReport: battleReport("42"),
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onOpenBattleReport: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      shareUrl: "https://test.veydrift.com/#/mission/42",
+    })).join(" ");
+
+    expect(text).toContain("Mission #42");
+    expect(text).not.toContain("Mission Detail");
+    expect(text).toContain("Needs resolution");
+    expect(text).toContain("Resolve battle");
+    expect(text).toContain("Copy link");
+    expect(text).toContain("OGame-Style Battle Report");
+    expect(text).toContain("Attacker victory");
+    expect(text).toContain("Combatants");
+    expect(text).toContain("Attacker Fleet");
+    expect(text).toContain("Fleet Losses");
+    expect(text).toContain("Plunder And Debris");
+    expect(text).toContain("Recyclers to clear debris");
+    expect(text).toContain("Combat Proof");
+    expect(text).toContain("Round-by-round combat");
+    // The on-chain log does not expose these fields, so they must not be rendered as empty cells.
+    expect(text).not.toContain("Not indexed yet");
+  });
+
+  test("surfaces share-link copy feedback and mission action status on the detail page", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const baseProps = {
+      account: "0x1111111111111111111111111111111111111111",
       canTransact: true,
       detail: {
         mission: {
@@ -164,23 +210,37 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
       onCounterplay: () => undefined,
       onOpenBattleReport: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
       shareUrl: "https://test.veydrift.com/#/mission/42",
-    })).join(" ");
+    } as const;
 
-    expect(text).toContain("Mission #42");
-    expect(text).not.toContain("Mission Detail");
-    expect(text).toContain("Needs resolution");
-    expect(text).toContain("Resolve battle");
-    expect(text).toContain("OGame-Style Battle Report");
-    expect(text).toContain("Attacker vs Defender");
-    expect(text).toContain("Combat Classes");
-    expect(text).toContain("Ships And Defences");
-    expect(text).toContain("Debris to recyclers");
+    const copied = collectText(MissionDetailPage({
+      ...baseProps,
+      actionState: { status: "idle" },
+      copyState: "copied",
+    })).join(" ");
+    expect(copied).toContain("Copied!");
+    expect(copied).not.toContain("Copy link");
+
+    const pending = collectText(MissionDetailPage({
+      ...baseProps,
+      actionState: { status: "pending", label: "Resolve mission #42: waiting for wallet confirmation." },
+      copyState: "idle",
+    })).join(" ");
+    expect(pending).toContain("waiting for wallet confirmation");
+
+    const failed = collectText(MissionDetailPage({
+      ...baseProps,
+      actionState: { status: "error", label: "Resolve mission #42 transaction failed." },
+      copyState: "error",
+    })).join(" ");
+    expect(failed).toContain("transaction failed");
+    expect(failed).toContain("Copy failed");
   });
 });
 
