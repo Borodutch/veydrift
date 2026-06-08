@@ -94,7 +94,6 @@ export function MissionDetailPage({
             </button>
           </>
         )}
-        subtitle="Shareable mission state, current stage, available orders, and combat report when the indexed battle log exposes one."
         title={(
           <span className="inline-flex flex-wrap items-center gap-2">
             {missionId ? `Mission #${missionId}` : "Mission"}
@@ -275,10 +274,6 @@ function MissionRoute({
           timing={{ label: "Arrival", value: formatMissionTime(mission.arrivalAt, now) }}
         />
       </div>
-      <p className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-3 text-xs text-slate-400">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Needs resolution</span>
-        <span className="text-slate-300">{mission.needsResolution ? "Yes" : "No"}</span>
-      </p>
     </section>
   );
 }
@@ -341,7 +336,6 @@ function CommanderLink({
 }) {
   return (
     <p className="mt-0.5 text-xs text-slate-400">
-      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Commander</span>{" "}
       {commander ? (
         <button
           className="rounded text-left text-slate-200 underline decoration-white/20 underline-offset-2 transition hover:text-white hover:decoration-white/40"
