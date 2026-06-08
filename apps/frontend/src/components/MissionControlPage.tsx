@@ -714,7 +714,7 @@ function PastMissionSection({
               <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 <tr>
                   <th className="w-[12rem] px-2.5 py-1.5">Mission</th>
-                  <th className="w-[18rem] px-2.5 py-1.5">Route / target</th>
+                  <th className="w-[18rem] px-2.5 py-1.5">Route</th>
                   <th className="w-[13rem] px-2.5 py-1.5">Result</th>
                   <th className="w-[9rem] px-2.5 py-1.5">Details</th>
                 </tr>
@@ -785,10 +785,10 @@ function PastMissionSummaryRow({
         <span className={`inline-flex rounded border px-2 py-0.5 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
           {directionalMissionTypeLabel(mission.missionType, missionDirection)}
         </span>
-        <p className="mt-1 whitespace-pre-line tabular-nums text-slate-400">
-          {completedAt === undefined ? "Unknown" : formatMissionTime(String(Math.floor(completedAt / 1_000)), now)}
+        <p className="mt-1 tabular-nums text-slate-400">
+          {missionStatusLabel(mission.status)}
+          {completedAt === undefined ? "" : ` · ${formatUserTimestamp(completedAt)}`}
         </p>
-        <p className="mt-1 text-slate-500">{missionStatusLabel(mission.status)}</p>
       </td>
       <td className="border-t border-white/10 px-2.5 py-2 break-words">
         <p className="font-medium text-slate-100">{report.routeSummary}</p>
