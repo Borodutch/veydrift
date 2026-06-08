@@ -342,9 +342,9 @@ function Panel({ children, title }: { children: preact.ComponentChildren; title:
 // Compact two-column table row for a Panel: muted label on the left, value on the right.
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <tr className="border-t border-white/5 align-top first:border-t-0">
-      <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-top text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</th>
-      <td className="py-1.5 text-left align-top break-words text-sm text-slate-300">{value}</td>
+    <tr className="border-t border-white/5 align-middle first:border-t-0">
+      <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-middle text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</th>
+      <td className="py-1.5 text-left align-middle break-words text-sm text-slate-300">{value}</td>
     </tr>
   );
 }
