@@ -258,6 +258,34 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("1-25 of 26");
   });
 
+  test("excludes Alliance joinable attacks from the \"Needs orders now\" count", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // A joinable alliance attack that has already arrived (would be "due" on its own), but the
+    // player has no own missions needing action. Joining is opt-in, never an obligation.
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
+      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 60_000)],
+    }))).join(" ");
+
+    expect(text).toContain("Alliance (1)");
+    expect(text).not.toContain("Needs orders now");
+  });
+
+  test("counts only the player's own due missions in \"Needs orders now\"", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // One own outbound mission already arrived (due), plus two due joinable alliance attacks that
+    // must not inflate the count.
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000)],
+      joinableAttacks: [
+        mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 60_000),
+        mission("35", "Attack", "Outbound", "0x4444444444444444444444444444444444444444", "5", "6", now - 60_000),
+      ],
+    }))).join(" ").replace(/\s+/g, " ");
+
+    expect(text).toContain("Needs orders now 1");
+  });
+
   test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
@@ -282,7 +310,6 @@ describe("Mission Control battle reports", () => {
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
-      shareUrl: "https://test.veydrift.com/#/mission/42",
     })).join(" ");
 
     expect(text).toContain("Mission #42");
@@ -309,6 +336,8 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Public report");
     // VEY-388: descriptive ship-class subtext was removed.
     expect(text).not.toContain("Ship classes");
+    // VEY-380: the page URL is the shareable public URL, so the redundant "Share URL" field is dropped.
+    expect(text).not.toContain("Share URL");
   });
 
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
@@ -333,7 +362,6 @@ describe("Mission Control battle reports", () => {
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
-      shareUrl: "https://test.veydrift.com/#/mission/42",
     } as const;
 
     const copied = collectText(MissionDetailPage({
