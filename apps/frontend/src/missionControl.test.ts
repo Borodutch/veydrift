@@ -128,7 +128,7 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("Mission Control");
     expect(text).toContain("Watch inbound attacks");
-    expect(text).toContain("Hostile inbound");
+    expect(text).toContain("Incoming attack");
     expect(text).toContain("Returns");
     // Section header labels are dropped; grouping is conveyed by the tables themselves.
     expect(text).not.toContain("Fleet movement");

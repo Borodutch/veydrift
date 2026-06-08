@@ -1855,6 +1855,58 @@ describe("SettlementIndexer", () => {
     expect(attackerVisibility.returning).toEqual([]);
   });
 
+  test("resolves mission planet coordinates from the galaxy index when not in contract_planets", () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const db = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database: db });
+    const attackerPlanet: SettledPlanetEvent = {
+      ...planet,
+      planetId: "99",
+      owner: attacker,
+      name: "Spearhead",
+      galaxy: 3,
+      system: 12,
+      position: 4
+    };
+    indexer.applyEvent(planet);
+    indexer.applyEvent(attackerPlanet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xfleet",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(44n), addressTopic(attacker), topic(3n)],
+      data: abiWords(99n, 7n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xfleet",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(44n)],
+      data: abiWords(0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    // Simulate a target planet that the wallet-scoped contract_planets table does not hold (an
+    // external defender), while the broad galaxy index still knows its coordinates.
+    db.query("DELETE FROM contract_planets WHERE planet_id = ?").run("99");
+    expect(indexer.planet("99")).toBeNull();
+    expect(indexer.indexedPlanet("99")).not.toBeNull();
+
+    const incoming = indexer.fleetMissionVisibility(player).incoming[0];
+    expect(incoming?.originPlanetId).toBe("99");
+    expect(incoming?.originPlanet).toMatchObject({
+      planetId: "99",
+      name: "Spearhead",
+      galaxy: 3,
+      system: 12,
+      position: 4,
+      coordinates: "3:12:4"
+    });
+  });
+
   test("removed duplicate log marks reorg health instead of being ignored", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

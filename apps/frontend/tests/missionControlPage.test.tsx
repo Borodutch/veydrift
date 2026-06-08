@@ -107,17 +107,24 @@ describe("MissionControlPage", () => {
     // Section header labels are dropped; the tables convey grouping on their own.
     expect(text).not.toContain("Fleet movement");
     expect(text).not.toContain("Past missions");
+    expect(text).toContain("My missions 3");
+    expect(text).toContain("Alliance 0");
     expect(text).toContain("Countdown Mission Origin -> Target Return Fleet / cargo Orders");
-    expect(text).toContain("Attack # 8");
-    expect(text).toContain("Hostile inbound");
+    // Incoming missions are prefixed and keep the commander identity.
+    expect(text).toContain("Incoming attack # 8");
+    expect(text).toContain("Commander 0x3333...3333");
     expect(text).toContain("Origin Planet #7");
     expect(text).toContain("Target Planet #9");
+    // Outgoing missions show the bare action and drop the redundant self-commander line.
     expect(text).toContain("Transport # 9");
+    expect(text).not.toContain("Commander 0x1111...1111");
     expect(text).toContain("Land fleet");
     expect(text).toContain("View report");
     expect(text).toContain("Copy report");
     expect(text).toContain("New Eos [2:44:9]");
-    expect(text).toContain("External coordinates unavailable");
+    // The "External coordinates unavailable" placeholder is replaced by a planet reference.
+    expect(text).not.toContain("External coordinates unavailable");
+    expect(text).toContain("Planet #9");
     expect(text).toContain("0x3333...3333");
     expect(text).toContain("Report 0xabc...");
     expect(text).not.toContain("Fleets 3/?");
@@ -405,7 +412,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Open report");
   });
 
-  test("renders joinable attacks in the unified active mission list", () => {
+  test("routes joinable attacks to the Alliance tab, defaulting to an empty My missions tab", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -426,10 +433,94 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
+    // Joinable attacks belong to the Alliance tab; My missions defaults open and is empty here.
     expect(text).toContain("Active missions 1");
-    expect(text).toContain("Joinable attack");
-    expect(text).toContain("Join attack");
-    expect(text).not.toContain("Group defend");
+    expect(text).toContain("My missions 0");
+    expect(text).toContain("Alliance 1");
+    expect(text).toContain("No active missions.");
+    expect(text).not.toContain("Joinable attack");
+
+    // The joinable attack and its join control live in the (hidden) Alliance tab panel.
+    const hiddenAware = allText(page);
+    expect(hiddenAware).toContain("Joinable attack # 88");
+    expect(hiddenAware).toContain("Join attack");
+  });
+
+  test("shows the Alliance empty state when there are no joinable attacks", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({ missionId: "9", missionType: "Transport" })],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+    });
+
+    expect(allText(page)).toContain("No joinable alliance attacks.");
+  });
+
+  test("splits active missions across My missions / Alliance tabs", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [mission({ missionId: "8", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333" })],
+        outgoing: [mission({ missionId: "9", missionType: "Transport" })],
+        returning: [mission({ missionId: "10", status: "Returning" })],
+        joinableAttacks: [
+          mission({ missionId: "20", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333", originPlanetId: "12", targetPlanetId: "99" }),
+          mission({ missionId: "21", missionType: "Attack", owner: "0x4444444444444444444444444444444444444444", originPlanetId: "13", targetPlanetId: "98" }),
+        ],
+        completedMissions: [],
+        battleReports: [],
+      },
+    });
+
+    const text = visibleText(page);
+    expect(text).toContain("My missions 3");
+    expect(text).toContain("Alliance 2");
+    // My missions (default) shows the player's missions, not the joinable ones.
+    expect(text).toContain("Incoming attack # 8");
+    expect(text).toContain("Transport # 9");
+    expect(text).not.toContain("# 20");
+    expect(text).not.toContain("# 21");
+
+    // Both joinable attacks render in the Alliance panel.
+    const hiddenAware = allText(page);
+    expect(hiddenAware).toContain("Joinable attack # 20");
+    expect(hiddenAware).toContain("Joinable attack # 21");
+  });
+
+  test("paginates each active tab at 25 rows per page", () => {
+    const outgoing = Array.from({ length: 27 }, (_unused, index) =>
+      mission({ missionId: `${100 + index}`, missionType: "Transport", arrivalAt: `${1_770_000_300 + index}` }));
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing,
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+    });
+
+    const text = visibleText(page);
+    // 27 missions -> two pages; the first visible page caps at 25 and the pager reports the split.
+    expect(text).toContain("My missions 27");
+    expect(text).toContain("Page 1 of 2");
+    expect(text).toContain("1-25 of 27");
+    expect(text).toContain("# 124"); // 25th row on page 1
+    expect(text).not.toContain("# 125"); // 26th row lives on the hidden page 2
+
+    const hiddenAware = allText(page);
+    expect(hiddenAware).toContain("# 126"); // 27th row, present on page 2
   });
 });
 
@@ -572,4 +663,33 @@ function textParts(node: ComponentChildren): string[] {
     return [];
   }
   return textParts(vnode.props?.children as ComponentChildren);
+}
+
+// Like visibleText but also walks hidden panels/pages, so tests can assert content that lives on a
+// non-default tab (Alliance) or a paginated page that is hidden until navigated to.
+function allText(node: ComponentChildren): string {
+  return allTextParts(node).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function allTextParts(node: ComponentChildren): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return [];
+  }
+
+  if (typeof node === "string" || typeof node === "number") {
+    return [String(node)];
+  }
+
+  if (Array.isArray(node)) {
+    return node.flatMap(allTextParts);
+  }
+
+  const vnode = node as VNode;
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
+      return [];
+    }
+    return allTextParts(vnode.type(vnode.props));
+  }
+  return allTextParts(vnode.props?.children as ComponentChildren);
 }

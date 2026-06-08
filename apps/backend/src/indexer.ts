@@ -398,6 +398,15 @@ export class SettlementIndexer {
     return row ? this.withResourceSnapshot(parseEvent<SettledPlanetEvent>(row.event_json)) : null;
   }
 
+  // Resolve a settled planet from the broad galaxy index when it is not one of the connected
+  // wallet's own planets. Mission origins/targets frequently point at other players' planets,
+  // which live in indexed_planets (not contract_planets); without this fallback their coordinates
+  // render as "External coordinates unavailable".
+  indexedPlanet(planetId: string): SettledPlanetEvent | null {
+    const row = this.db.query("SELECT event_json FROM indexed_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
+    return row ? parseEvent<SettledPlanetEvent>(row.event_json) : null;
+  }
+
   hasPendingPlanetResources(planetId: string): boolean {
     const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
     if (!row) return false;
@@ -2867,7 +2876,7 @@ export class SettlementIndexer {
   }
 
   private fleetMissionPlanetReference(planetId: string): FleetMissionPlanetReference | null {
-    const planet = this.planet(planetId);
+    const planet = this.planet(planetId) ?? this.indexedPlanet(planetId);
     if (!planet) return null;
     return {
       planetId: planet.planetId,

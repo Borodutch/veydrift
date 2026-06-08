@@ -95,6 +95,7 @@ export function MissionControlPage({
   const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
   const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
+  const connectedWallet = fleetVisibility?.wallet;
   const activeCount = activeMissionRows.length;
   const initialLoading = loading && !fleetVisibility;
 
@@ -153,6 +154,7 @@ export function MissionControlPage({
 
           <PastMissionSection
             battleReportMissionIds={battleReportMissionIds}
+            connectedWallet={connectedWallet}
             error={missionArchiveError}
             loading={missionArchiveLoading}
             now={now}
@@ -242,22 +244,8 @@ type ActiveMissionRow = {
 
 type PastMissionRow = FleetMissionArchiveEntry;
 
-function ActiveMissionSection({
-  canTransact,
-  dueCount,
-  missions,
-  now,
-  onCompleteReturn,
-  onCounterplay,
-  onJoinAttack,
-  onOpenReport,
-  onRecall,
-  onResolve,
-  planetLookup,
-}: {
+type ActiveMissionRowProps = {
   canTransact: boolean;
-  dueCount: number;
-  missions: ActiveMissionRow[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
@@ -266,20 +254,89 @@ function ActiveMissionSection({
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+};
+
+const ACTIVE_MISSIONS_PAGE_SIZE = 25;
+
+function ActiveMissionSection({
+  dueCount,
+  missions,
+  ...rowProps
+}: ActiveMissionRowProps & {
+  dueCount: number;
+  missions: ActiveMissionRow[];
 }) {
+  // "My missions" is the player's own activity (outbound, incoming hostile, returning); "Alliance"
+  // is the joinable attacks surfaced from other players. Each tab paginates independently at 25/page.
+  const myMissions = missions.filter((row) => row.context !== "joinable");
+  const allianceMissions = missions.filter((row) => row.context === "joinable");
+
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-      {dueCount > 0 ? (
-        <div className="flex items-center justify-end gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
+    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab="mine">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
+        <div className="flex gap-1" role="tablist">
+          <ActiveTabButton active count={myMissions.length} label="My missions" tab="mine" />
+          <ActiveTabButton active={false} count={allianceMissions.length} label="Alliance" tab="alliance" />
+        </div>
+        {dueCount > 0 ? (
           <span className="rounded border border-red-300/25 bg-red-400/10 px-2 py-1 text-xs font-medium text-red-100">
             Needs orders now {dueCount}
           </span>
-        </div>
-      ) : null}
-      {missions.length === 0 ? (
-        <p className="px-3 py-4 text-xs text-slate-500">No active missions.</p>
-      ) : (
-        <div className="overflow-x-auto">
+        ) : null}
+      </div>
+      <div data-active-tab-panel="mine">
+        <ActiveMissionTabPanel emptyLabel="No active missions." idPrefix="active-mine" rows={myMissions} {...rowProps} />
+      </div>
+      <div data-active-tab-panel="alliance" hidden>
+        <ActiveMissionTabPanel emptyLabel="No joinable alliance attacks." idPrefix="active-alliance" rows={allianceMissions} {...rowProps} />
+      </div>
+    </section>
+  );
+}
+
+function ActiveTabButton({ active, count, label, tab }: { active: boolean; count: number; label: string; tab: "alliance" | "mine" }) {
+  return (
+    <button
+      className={`rounded px-3 py-1.5 text-xs font-semibold transition ${
+        active ? "bg-cyan-300/15 text-cyan-100" : "text-slate-400 hover:text-slate-200"
+      }`}
+      data-active-tab-active={active ? "true" : "false"}
+      data-active-tab-button={tab}
+      onClick={(event) => showActiveTab(event, tab)}
+      role="tab"
+      type="button"
+    >
+      {label} {count}
+    </button>
+  );
+}
+
+function ActiveMissionTabPanel({
+  emptyLabel,
+  idPrefix,
+  rows,
+  ...rowProps
+}: ActiveMissionRowProps & {
+  emptyLabel: string;
+  idPrefix: string;
+  rows: ActiveMissionRow[];
+}) {
+  if (rows.length === 0) {
+    return <p className="px-3 py-4 text-xs text-slate-500">{emptyLabel}</p>;
+  }
+  const pages = paginatedRows(rows, ACTIVE_MISSIONS_PAGE_SIZE);
+  const pagination = paginationForRows(rows, ACTIVE_MISSIONS_PAGE_SIZE);
+  const firstEntry = (pagination.page - 1) * pagination.pageSize + 1;
+  const lastEntry = Math.min(pagination.page * pagination.pageSize, pagination.totalEntries);
+
+  return (
+    <div
+      data-past-page-current="0"
+      data-past-page-size={String(ACTIVE_MISSIONS_PAGE_SIZE)}
+      data-past-page-total={String(rows.length)}
+    >
+      {pages.map((pageRows, pageIndex) => (
+        <div className="overflow-x-auto" data-past-page={pageIndex} hidden={pageIndex !== 0} key={`${idPrefix}-page:${pageIndex}`}>
           <table className="min-w-[58rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
             <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
               <tr>
@@ -292,35 +349,72 @@ function ActiveMissionSection({
               </tr>
             </thead>
             <tbody>
-              {missions.map(({ context, direction, mission }) => (
-                <MissionRow
-                  canTransact={canTransact}
-                  context={context}
-                  direction={direction}
-                  key={`${context}:${mission.missionId}`}
-                  mission={mission}
-                  now={now}
-                  onCompleteReturn={onCompleteReturn}
-                  onCounterplay={onCounterplay}
-                  onJoinAttack={onJoinAttack}
-                  onOpenReport={onOpenReport}
-                  onRecall={onRecall}
-                  onResolve={onResolve}
-                  planetLookup={planetLookup}
-                />
+              {pageRows.map(({ context, mission }) => (
+                <MissionRow context={context} key={`${context}:${mission.missionId}`} mission={mission} {...rowProps} />
               ))}
             </tbody>
           </table>
         </div>
-      )}
-    </section>
+      ))}
+      {pagination.totalPages > 1 ? (
+        <div className="mt-3 flex flex-col gap-2 border-t border-white/10 px-3 pb-3 pt-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            <span data-past-page-label>Page {pagination.page} of {pagination.totalPages}</span>
+            <span className="ml-2 text-slate-600" data-past-page-range>{`${firstEntry}-${lastEntry} of ${pagination.totalEntries}`}</span>
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              aria-label="Previous active missions page"
+              className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              data-past-page-prev
+              disabled
+              onClick={(event) => showPastMissionPage(event, "previous")}
+              title="Previous page"
+              type="button"
+            >
+              <ChevronLeft aria-hidden="true" size={14} />
+            </button>
+            <button
+              aria-label="Next active missions page"
+              className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              data-past-page-next
+              onClick={(event) => showPastMissionPage(event, "next")}
+              title="Next page"
+              type="button"
+            >
+              <ChevronRight aria-hidden="true" size={14} />
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
+}
+
+function showActiveTab(event: Event, tab: "alliance" | "mine") {
+  const button = event.currentTarget;
+  if (!(button instanceof HTMLElement)) return;
+
+  const section = button.closest<HTMLElement>("[data-active-tab]");
+  if (!section) return;
+
+  section.dataset.activeTab = tab;
+  section.querySelectorAll<HTMLElement>("[data-active-tab-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.activeTabPanel !== tab;
+  });
+  section.querySelectorAll<HTMLButtonElement>("[data-active-tab-button]").forEach((tabButton) => {
+    const isActive = tabButton.dataset.activeTabButton === tab;
+    tabButton.dataset.activeTabActive = isActive ? "true" : "false";
+    tabButton.classList.toggle("bg-cyan-300/15", isActive);
+    tabButton.classList.toggle("text-cyan-100", isActive);
+    tabButton.classList.toggle("text-slate-400", !isActive);
+    tabButton.classList.toggle("hover:text-slate-200", !isActive);
+  });
 }
 
 function MissionRow({
   canTransact,
   context,
-  direction,
   mission,
   now,
   onCompleteReturn,
@@ -333,7 +427,6 @@ function MissionRow({
 }: {
   canTransact: boolean;
   context: ActiveMissionContext;
-  direction: string;
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
@@ -347,6 +440,7 @@ function MissionRow({
   const actions = missionLifecycleActions({ canTransact, context, mission, now });
   const report = missionReport(mission, now, planetLookup);
   const timing = missionTiming(mission, now);
+  const direction = directionFromContext(context);
   return (
     <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
       <td className="border-t border-white/10 px-3 py-3">
@@ -355,10 +449,9 @@ function MissionRow({
       </td>
       <td className="border-t border-white/10 px-3 py-3">
         <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
-          {missionTypeLabel(mission.missionType)}
+          {directionAwareMissionLabel(mission.missionType, direction)}
         </span>
         <p className="mt-2 font-semibold text-white">#{mission.missionId}</p>
-        <p className="mt-1 text-slate-500">{direction}</p>
         <p className="mt-1 text-slate-500">Report {missionReportLabel(mission)}</p>
       </td>
       <td className="border-t border-white/10 px-3 py-3">
@@ -372,7 +465,9 @@ function MissionRow({
           </div>
           <MissionCellLabel label={`Target Planet #${mission.targetPlanetId}`} value={report.target} />
         </div>
-        <p className="mt-2 text-slate-500">{`Commander ${commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId))}`}</p>
+        {direction === "outgoing" ? null : (
+          <p className="mt-2 text-slate-500">{`Commander ${commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId))}`}</p>
+        )}
       </td>
       <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">{formatMissionTime(mission.returnAt, now)}</td>
       <td className="border-t border-white/10 px-3 py-3">
@@ -555,6 +650,7 @@ function MissionReportDetail({
 
 function PastMissionSection({
   battleReportMissionIds,
+  connectedWallet,
   error,
   loading,
   now,
@@ -566,6 +662,7 @@ function PastMissionSection({
   rows,
 }: {
   battleReportMissionIds: ReadonlySet<string>;
+  connectedWallet?: string | undefined;
   error?: string | undefined;
   loading: boolean;
   now: number;
@@ -612,6 +709,7 @@ function PastMissionSection({
               </div>
               {pageRows.map((row) => row.kind === "mission" ? (
                 <PastMissionSummaryRow
+                  connectedWallet={connectedWallet}
                   hasBattleReport={battleReportMissionIds.has(row.mission.missionId)}
                   key={`past-mission:${row.mission.missionId}`}
                   mission={row.mission}
@@ -668,6 +766,7 @@ function PastMissionSection({
 }
 
 function PastMissionSummaryRow({
+  connectedWallet,
   hasBattleReport,
   mission,
   now,
@@ -675,6 +774,7 @@ function PastMissionSummaryRow({
   onOpenReport,
   planetLookup,
 }: {
+  connectedWallet?: string | undefined;
   hasBattleReport: boolean;
   mission: FleetMissionSummary;
   now: number;
@@ -684,6 +784,7 @@ function PastMissionSummaryRow({
 }) {
   const completedAt = missionCompletionTimestamp(mission);
   const report = missionReport(mission, now, planetLookup);
+  const direction = directionFromOwnership(mission.owner, connectedWallet);
   return (
     <div className="grid min-w-0 gap-3 rounded border border-white/10 bg-black/10 p-3 text-xs text-slate-300 lg:grid-cols-[9rem_11rem_minmax(0,1.4fr)_minmax(0,1fr)_8rem] lg:items-start">
       <ArchiveField label="Completed" valueClassName="whitespace-pre-line tabular-nums">
@@ -691,14 +792,16 @@ function PastMissionSummaryRow({
       </ArchiveField>
       <ArchiveField label="Mission">
         <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
-          {missionTypeLabel(mission.missionType)}
+          {directionAwareMissionLabel(mission.missionType, direction)}
         </span>
         <p className="mt-2 font-semibold text-white">Mission #{mission.missionId}</p>
         <p className="mt-1 text-slate-500">{missionStatusLabel(mission.status)}</p>
       </ArchiveField>
       <ArchiveField label="Route / target" valueClassName="break-words">
         <p className="font-medium text-slate-100">{report.routeSummary}</p>
-        <p className="mt-1 break-all text-slate-500">Commander {report.attacker}</p>
+        {direction === "outgoing" ? null : (
+          <p className="mt-1 break-all text-slate-500">Commander {report.attacker}</p>
+        )}
       </ArchiveField>
       <ArchiveField label="Result" valueClassName="break-words">
         <p className="font-medium text-slate-100">{report.outcome}</p>
@@ -786,7 +889,7 @@ function ArchiveField({
   );
 }
 
-function paginationForRows(rows: PastMissionRow[], pageSize: number): FleetMissionArchiveResponse["pagination"] {
+function paginationForRows(rows: { length: number }, pageSize: number): FleetMissionArchiveResponse["pagination"] {
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
   return {
@@ -1104,10 +1207,39 @@ function missionTypeLabel(missionType: string): string {
   return missionType.replace(/([A-Z])/g, " $1").trim();
 }
 
+type MissionDirection = "incoming" | "joinable" | "outgoing";
+
+// Active-mission rows already carry their direction in `context`; returning fleets are the
+// player's own outbound fleets coming home, so they read as outgoing.
+function directionFromContext(context: ActiveMissionContext): MissionDirection {
+  if (context === "incoming") return "incoming";
+  if (context === "joinable") return "joinable";
+  return "outgoing";
+}
+
+// Past missions have no context, so direction is derived from ownership: a mission the connected
+// wallet launched is outgoing, anything else arriving at the player's planets is incoming.
+function directionFromOwnership(missionOwner: string, connectedWallet: string | undefined): MissionDirection {
+  if (connectedWallet && missionOwner.toLowerCase() === connectedWallet.toLowerCase()) return "outgoing";
+  return "incoming";
+}
+
+// Direction-aware label: outgoing missions show the bare action ("Attack", "Transport", "Harvest"),
+// while incoming/joinable missions are prefixed so the player can tell who is acting on whom.
+export function directionAwareMissionLabel(missionType: string, direction: MissionDirection): string {
+  const base = missionTypeLabel(missionType);
+  if (direction === "outgoing") return base;
+  const prefix = direction === "joinable" ? "Joinable" : "Incoming";
+  return `${prefix} ${base.toLowerCase()}`;
+}
+
 function planetReference(planetId: string, lookup: ReadonlyMap<string, MissionPlanetIdentity>): string {
   const planet = lookup.get(planetId);
   if (planet) return `${planet.displayName} [${planet.coordinates}]`;
-  return "External coordinates unavailable";
+  // The backend resolves coordinates for both the wallet's planets and the broader galaxy index,
+  // so this only falls through for a planet the indexer has not seen yet. Reference it by id rather
+  // than the old "External coordinates unavailable" placeholder.
+  return `Planet #${planetId}`;
 }
 
 function commanderLabel(address: string, planet: MissionPlanetIdentity | undefined): string {
