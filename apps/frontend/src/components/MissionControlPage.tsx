@@ -45,7 +45,6 @@ interface MissionControlPageProps {
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string) => void;
-  onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
   onMissionArchivePageChange?: ((page: number) => void) | undefined;
@@ -69,7 +68,6 @@ export function MissionControlPage({
   onCompleteReturn,
   onCounterplay,
   onJoinAttack,
-  onOpenBattleReport,
   onOpenReport,
   onOpenReportList,
   onMissionArchivePageChange,
@@ -92,7 +90,6 @@ export function MissionControlPage({
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
-  const battleReportMissionIds = battleReportMissionIdSet(rawPastMissionRows);
   const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
   const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
@@ -151,11 +148,9 @@ export function MissionControlPage({
           />
 
           <PastMissionSection
-            battleReportMissionIds={battleReportMissionIds}
             error={missionArchiveError}
             loading={missionArchiveLoading}
             now={now}
-            onOpenBattleReport={onOpenBattleReport}
             onOpenReport={onOpenReport}
             onPageChange={onMissionArchivePageChange}
             pagination={missionArchive?.pagination}
@@ -514,11 +509,11 @@ function MissionRow({
           <button
             className="inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
             onClick={() => onOpenReport(mission.missionId)}
-            title="Open the shareable battle report"
+            title="Open the full mission detail screen"
             type="button"
           >
             <ExternalLink aria-hidden="true" size={13} />
-            View report
+            Open mission
           </button>
           <button
             className="inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
@@ -659,11 +654,9 @@ function MissionReportDetail({
 }
 
 function PastMissionSection({
-  battleReportMissionIds,
   error,
   loading,
   now,
-  onOpenBattleReport,
   onOpenReport,
   onPageChange,
   pagination,
@@ -672,11 +665,9 @@ function PastMissionSection({
   wallet,
   walletPlanetIds,
 }: {
-  battleReportMissionIds: ReadonlySet<string>;
   error?: string | undefined;
   loading: boolean;
   now: number;
-  onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   onPageChange?: ((page: number) => void) | undefined;
   pagination?: FleetMissionArchiveResponse["pagination"] | undefined;
@@ -719,11 +710,9 @@ function PastMissionSection({
               </div>
               {pageRows.map((row) => row.kind === "mission" ? (
                 <PastMissionSummaryRow
-                  hasBattleReport={battleReportMissionIds.has(row.mission.missionId)}
                   key={`past-mission:${row.mission.missionId}`}
                   mission={row.mission}
                   now={now}
-                  onOpenBattleReport={onOpenBattleReport}
                   onOpenReport={onOpenReport}
                   planetLookup={planetLookup}
                   wallet={wallet}
@@ -732,7 +721,7 @@ function PastMissionSection({
               ) : (
                 <PastBattleReportRow
                   key={`past-report:${row.report.missionId}`}
-                  onOpenBattleReport={onOpenBattleReport}
+                  onOpenReport={onOpenReport}
                   report={row.report}
                 />
               ))}
@@ -754,19 +743,15 @@ function PastMissionSection({
 }
 
 function PastMissionSummaryRow({
-  hasBattleReport,
   mission,
   now,
-  onOpenBattleReport,
   onOpenReport,
   planetLookup,
   wallet,
   walletPlanetIds,
 }: {
-  hasBattleReport: boolean;
   mission: FleetMissionSummary;
   now: number;
-  onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   wallet?: string | undefined;
@@ -799,34 +784,24 @@ function PastMissionSummaryRow({
         {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
       </ArchiveField>
       <ArchiveField label="Details">
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
-            onClick={() => onOpenReport(mission.missionId)}
-            type="button"
-          >
-            Open details
-          </button>
-          {hasBattleReport ? (
-            <button
-              className="inline-flex h-8 items-center justify-center rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
-              onClick={() => onOpenBattleReport(mission.missionId)}
-              type="button"
-            >
-              Open report
-            </button>
-          ) : null}
-        </div>
+        <button
+          className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+          onClick={() => onOpenReport(mission.missionId)}
+          title="Open the full mission detail screen"
+          type="button"
+        >
+          Open mission
+        </button>
       </ArchiveField>
     </div>
   );
 }
 
 function PastBattleReportRow({
-  onOpenBattleReport,
+  onOpenReport,
   report,
 }: {
-  onOpenBattleReport: (missionId: string) => void;
+  onOpenReport: (missionId: string) => void;
   report: BattleReport;
 }) {
   return (
@@ -852,10 +827,11 @@ function PastBattleReportRow({
       <ArchiveField label="Details">
         <button
           className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
-          onClick={() => onOpenBattleReport(report.missionId)}
+          onClick={() => onOpenReport(report.missionId)}
+          title="Open the full mission detail screen"
           type="button"
         >
-          Open report
+          Open mission
         </button>
       </ArchiveField>
     </div>
@@ -1098,10 +1074,6 @@ function chronologicalPastMissionRows(completedMissions: FleetMissionSummary[], 
 
 function pastRowMissionId(row: PastMissionRow): string {
   return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
-}
-
-function battleReportMissionIdSet(rows: PastMissionRow[]): Set<string> {
-  return new Set(rows.filter((row) => row.kind === "battleReport").map((row) => row.report.missionId));
 }
 
 function dedupePastMissionRows(rows: PastMissionRow[]): PastMissionRow[] {
