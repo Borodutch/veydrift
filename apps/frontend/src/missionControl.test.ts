@@ -316,15 +316,27 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Mission Detail");
     expect(text).toContain("Needs resolution");
     expect(text).toContain("Resolve battle");
-    expect(text).toContain("Copy link");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");
-    expect(text).toContain("Combatants");
-    expect(text).toContain("Attacker Fleet");
-    expect(text).toContain("Fleet Losses");
-    expect(text).toContain("Plunder And Debris");
-    expect(text).toContain("Recyclers to clear debris");
-    expect(text).toContain("Round-by-round combat");
+    // VEY-396: two-sided attacker | defender report with per-side fleet/losses/loot.
+    expect(text).toContain("Attacker");
+    expect(text).toContain("Defender");
+    expect(text).toContain("Loot grabbed");
+    expect(text).toContain("Loot left");
+    expect(text).toContain("Debris field created");
+    // VEY-395: route band shows origin/target with arrival near target and return near origin.
+    expect(text).toContain("Origin");
+    expect(text).toContain("Target");
+    expect(text).toContain("Arrival");
+    expect(text).toContain("Return");
+    // VEY-395: the "Mission id" field was removed from the route layout.
+    expect(text).not.toContain("Mission id");
+    // VEY-396: the recyclers-to-clean-debris section was removed entirely.
+    expect(text).not.toContain("Recyclers");
+    expect(text).not.toContain("recyclers");
+    // VEY-396: round-by-round is hidden when there are no round snapshots (this fixture has none).
+    expect(text).not.toContain("Round-by-round combat");
+    expect(text).not.toContain("No round-by-round snapshots");
     // The on-chain log does not expose these fields, so they must not be rendered as empty cells.
     expect(text).not.toContain("Not indexed yet");
     // VEY-389: no "OGame" anywhere in rendered copy.
@@ -338,6 +350,37 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Ship classes");
     // VEY-380: the page URL is the shareable public URL, so the redundant "Share URL" field is dropped.
     expect(text).not.toContain("Share URL");
+  });
+
+  test("renders the round-by-round section only when round snapshots exist", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const withRounds = collectText(MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+        battleReport: {
+          ...battleReport("42"),
+          roundReports: [
+            { round: 1, attackerUnits: "10", defenderUnits: "8", attackerLosses: { metal: "1", crystal: "0", deuterium: "0" }, defenderLosses: { metal: "2", crystal: "0", deuterium: "0" } },
+          ],
+        },
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+    })).join(" ");
+
+    expect(withRounds).toContain("Round-by-round combat");
   });
 
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
@@ -364,14 +407,9 @@ describe("Mission Control battle reports", () => {
       onRetry: () => undefined,
     } as const;
 
-    const copied = collectText(MissionDetailPage({
-      ...baseProps,
-      actionState: { status: "idle" },
-      copyState: "copied",
-    })).join(" ");
-    expect(copied).toContain("Copied!");
-    expect(copied).not.toContain("Copy link");
-
+    // The share/copy control is an icon-only button (label lives in aria-label/title), so its
+    // copied/failed feedback is not part of the rendered text. The mission action status below
+    // is rendered as a visible Notice and is what we assert here.
     const pending = collectText(MissionDetailPage({
       ...baseProps,
       actionState: { status: "pending", label: "Resolve mission #42: waiting for wallet confirmation." },
@@ -385,7 +423,6 @@ describe("Mission Control battle reports", () => {
       copyState: "error",
     })).join(" ");
     expect(failed).toContain("transaction failed");
-    expect(failed).toContain("Copy failed");
   });
 });
 

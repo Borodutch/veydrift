@@ -1,8 +1,9 @@
-import { ArrowLeft, Check, RefreshCw, Share2, Swords } from "lucide-preact";
+import { ArrowLeft, ArrowRight, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
+import { buildInspectHash } from "../inspectRoutes";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import { type BattleReport, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
+import { type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
 import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
@@ -15,9 +16,6 @@ export type MissionDetailActionState =
   | { status: "error"; label: string };
 
 export type MissionShareCopyState = "copied" | "error" | "idle";
-
-// Each recycler hauls 20,000 units of debris; used to estimate recyclers needed.
-const RECYCLER_CARGO_CAPACITY = 20_000;
 
 interface MissionDetailPageProps {
   account?: string | undefined;
@@ -124,7 +122,8 @@ export function MissionDetailPage({
               {actionState.label}
             </Notice>
           ) : null}
-          <MissionFacts mission={mission} now={now} />
+          <RouteTimingBand mission={mission} now={now} />
+          <MissionFleetCargo mission={mission} />
           <MissionBattleReport mission={mission} report={report} />
         </>
       ) : (
@@ -187,32 +186,152 @@ function MissionActions({
   );
 }
 
-function MissionFacts({ mission, now }: { mission: FleetMissionSummary; now: number }) {
+// Full-width origin -> target route band with the arrival/return timing folded in
+// beside each end (arrival near the target, return near the origin). Coordinates and
+// commander names are clickable: coordinates navigate the Galaxy to those coords,
+// commander names open that player's profile.
+function RouteTimingBand({ mission, now }: { mission: FleetMissionSummary; now: number }) {
   const noFleetReturned = isNoFleetReturned(mission);
+  const origin = routeEndpoint({
+    caption: "Origin",
+    commanderFallbackWallet: mission.owner,
+    planet: mission.originPlanet,
+    planetId: mission.originPlanetId,
+    timingLabel: "Return",
+    timingValue: noFleetReturned ? "Completed, no fleet returned" : formatMissionTime(mission.returnAt, now),
+  });
+  const target = routeEndpoint({
+    caption: "Target",
+    commanderFallbackWallet: undefined,
+    planet: mission.targetPlanet,
+    planetId: mission.targetPlanetId,
+    timingLabel: "Arrival",
+    timingValue: formatMissionTime(mission.arrivalAt, now),
+  });
   return (
-    <section className="grid gap-3 lg:grid-cols-2">
-      <Panel title="Route">
-        <Row label="Origin" value={planetLabel(mission.originPlanet, mission.originPlanetId)} />
-        <Row label="Target" value={planetLabel(mission.targetPlanet, mission.targetPlanetId)} />
-        <Row label="Commander" value={shortHash(mission.owner)} />
-        <Row label="Mission id" value={mission.missionId} />
-      </Panel>
-      <Panel title="Timing">
-        <Row label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
-        {noFleetReturned ? (
-          <Row label="Return" value="Completed, no fleet returned" />
-        ) : (
-          <Row label="Return" value={formatMissionTime(mission.returnAt, now)} />
-        )}
-        <Row label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
-      </Panel>
-      <Panel title="Fleet And Cargo">
-        <Row label="Ships" value={formatShips(mission.ships)} />
-        <Row label="Cargo" value={formatResources(mission.cargo)} />
-        <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
-        <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
-      </Panel>
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+      <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <RouteEndpoint endpoint={origin} />
+        <div className="grid place-items-center text-slate-500">
+          <ArrowRight aria-hidden="true" className="rotate-90 md:rotate-0" size={22} />
+        </div>
+        <RouteEndpoint endpoint={target} />
+      </div>
     </section>
+  );
+}
+
+type RouteEndpointData = {
+  caption: string;
+  commanderName: string | null;
+  commanderWallet: string | null;
+  coordinates: string | null;
+  coords: { galaxy: number; position: number; system: number } | null;
+  timingLabel: string;
+  timingValue: string;
+  title: string;
+};
+
+function routeEndpoint({
+  caption,
+  commanderFallbackWallet,
+  planet,
+  planetId,
+  timingLabel,
+  timingValue,
+}: {
+  caption: string;
+  commanderFallbackWallet: string | undefined;
+  planet: FleetMissionPlanetReference | null | undefined;
+  planetId: string;
+  timingLabel: string;
+  timingValue: string;
+}): RouteEndpointData {
+  const colony = planet ? null : decodeColonizationTargetId(planetId);
+  const coords = planet
+    ? { galaxy: planet.galaxy, position: planet.position, system: planet.system }
+    : colony
+      ? { galaxy: colony.galaxy, position: colony.position, system: colony.system }
+      : null;
+  const commanderWallet = planet?.owner ?? commanderFallbackWallet ?? null;
+  return {
+    caption,
+    commanderName: planet?.ownerDisplayName?.trim() || (commanderWallet ? shortHash(commanderWallet) : null),
+    commanderWallet,
+    coordinates: planet?.coordinates ?? colony?.coordinates ?? null,
+    coords,
+    timingLabel,
+    timingValue,
+    title: planet?.name?.trim() || (colony ? "Uncharted" : `Planet #${planetId}`),
+  };
+}
+
+function RouteEndpoint({ endpoint }: { endpoint: RouteEndpointData }) {
+  return (
+    <div className="grid content-start gap-1.5 rounded-md border border-white/5 bg-black/20 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{endpoint.caption}</p>
+      <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-sm font-semibold text-white">
+        <span className="break-words">{endpoint.title}</span>
+        {endpoint.coordinates ? (
+          endpoint.coords ? (
+            <CoordLink coordinates={endpoint.coordinates} coords={endpoint.coords} />
+          ) : (
+            <span className="text-slate-400">[{endpoint.coordinates}]</span>
+          )
+        ) : null}
+      </p>
+      {endpoint.commanderName ? (
+        <p className="text-xs text-slate-400">
+          Commander{" "}
+          {endpoint.commanderWallet ? (
+            <PlayerLink name={endpoint.commanderName} wallet={endpoint.commanderWallet} />
+          ) : (
+            <span className="text-slate-300">{endpoint.commanderName}</span>
+          )}
+        </p>
+      ) : null}
+      <p className="text-xs text-slate-500">
+        <span className="font-semibold uppercase tracking-[0.12em] text-slate-600">{endpoint.timingLabel}</span> {endpoint.timingValue}
+      </p>
+    </div>
+  );
+}
+
+// Clickable coordinates that navigate the Galaxy view to those coords.
+function CoordLink({ coordinates, coords }: { coordinates: string; coords: { galaxy: number; position: number; system: number } }) {
+  return (
+    <a
+      className="rounded text-cyan-200 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50"
+      href={buildInspectHash({ coords, kind: "planet" })}
+      title={`Open ${coordinates} in Galaxy`}
+    >
+      [{coordinates}]
+    </a>
+  );
+}
+
+// Clickable commander name that opens that player's profile.
+function PlayerLink({ name, wallet }: { name: string; wallet: string }) {
+  return (
+    <a
+      className="rounded font-medium text-cyan-200 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50"
+      href={buildInspectHash({ kind: "player", wallet })}
+      title={`Open ${name}'s profile`}
+    >
+      {name}
+    </a>
+  );
+}
+
+function MissionFleetCargo({ mission }: { mission: FleetMissionSummary }) {
+  return (
+    <Panel title="Fleet And Cargo">
+      <Row label="Ships" value={formatShips(mission.ships)} />
+      <Row label="Cargo" value={formatResources(mission.cargo)} />
+      <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
+      <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+      <Row label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
+    </Panel>
   );
 }
 
@@ -242,8 +361,14 @@ function MissionBattleReport({
   }
 
   const outcome = battleOutcomeSummary(report.outcome);
-  const debrisTotal = Number(report.debris.metal) + Number(report.debris.crystal);
-  const recyclersNeeded = debrisTotal > 0 ? Math.ceil(debrisTotal / RECYCLER_CARGO_CAPACITY) : 0;
+  const hasDebris = Number(report.debris.metal) > 0 || Number(report.debris.crystal) > 0;
+  // The attacker fleet comes from the mission. The defender's commander resolves from
+  // the target planet reference; the defender's surviving composition is not part of the
+  // on-chain combat log, so it is flagged rather than shown as empty fields.
+  const attackerName = mission.originPlanet?.ownerDisplayName?.trim() || shortHash(report.attacker);
+  const defenderPlanet = mission.targetPlanet;
+  const defenderWallet = defenderPlanet?.owner ?? null;
+  const defenderName = defenderPlanet?.ownerDisplayName?.trim() || (defenderWallet ? shortHash(defenderWallet) : `Planet #${report.targetPlanetId}`);
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -263,49 +388,76 @@ function MissionBattleReport({
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <Panel title="Combatants">
-          <Row label="Attacker" value={shortHash(report.attacker)} />
-          <Row label="Defender" value={`Planet #${report.targetPlanetId}`} />
-          <Row label="Outcome" value={outcome.label} />
-          <Row label="Rounds fought" value={report.rounds.toString()} />
-        </Panel>
-        <Panel title="Attacker Fleet">
-          <Row label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
-          <Row label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
-          <Row label="Full fleet" value={formatShips(mission.ships)} />
-        </Panel>
-        <Panel title="Fleet Losses">
-          <Row label="Attacker losses" value={formatResources(report.attackerLosses)} />
-          <Row label="Defender losses" value={formatResources(report.defenderLosses)} />
-        </Panel>
-        <Panel title="Plunder And Debris">
-          <Row label="Loot plundered" value={formatResources(report.loot)} />
-          <Row label="Debris field" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
-          <Row
-            label="Recyclers to clear debris"
-            value={recyclersNeeded > 0 ? `${formatResource(recyclersNeeded.toString())} (${formatResource(debrisTotal.toString())} debris)` : "No debris field"}
-          />
-        </Panel>
+        <CombatSidePanel accent="border-cyan-300/25 bg-cyan-300/[0.06]" caption="Attacker" name={attackerName} wallet={report.attacker}>
+          <SideRow label="Fleet">{formatShips(mission.ships)}</SideRow>
+          <SideRow label="Losses">{formatResources(report.attackerLosses)}</SideRow>
+          <SideRow label="Loot grabbed">{formatResources(report.loot)}</SideRow>
+        </CombatSidePanel>
+        <CombatSidePanel accent="border-red-300/25 bg-red-400/[0.06]" caption="Defender" name={defenderName} wallet={defenderWallet}>
+          <SideRow label="Fleet / defenses">Not exposed in the on-chain combat log.</SideRow>
+          <SideRow label="Losses">{formatResources(report.defenderLosses)}</SideRow>
+          <SideRow label="Loot left">{outcome.label === "Attacker victory" ? "Plunder grabbed by the attacker." : "Held by the defender."}</SideRow>
+        </CombatSidePanel>
       </div>
 
-      <div className="mt-4">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round-by-round combat</p>
-        <div className="grid gap-2">
-          {report.roundReports.length === 0 ? (
-            <Notice>No round-by-round snapshots were indexed for this battle.</Notice>
-          ) : report.roundReports.map((round) => (
-            <article className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
-                <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
-              </div>
-              <Datum label="Attacker firepower / losses" value={`${formatResource(round.attackerUnits)} units fired; ${formatResources(round.attackerLosses)} lost`} />
-              <Datum label="Defender firepower / losses" value={`${formatResource(round.defenderUnits)} units fired; ${formatResources(round.defenderLosses)} lost`} />
-            </article>
-          ))}
-        </div>
+      <div className="mt-3 rounded-md border border-white/10 bg-black/20 p-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Debris field created</p>
+        <p className="mt-0.5 text-sm text-slate-300">
+          {hasDebris ? `${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal` : "No debris field"}
+        </p>
       </div>
+
+      {report.roundReports.length > 0 ? (
+        <div className="mt-4">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round-by-round combat</p>
+          <div className="grid gap-2">
+            {report.roundReports.map((round) => (
+              <article className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
+                  <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
+                </div>
+                <Datum label="Attacker firepower / losses" value={`${formatResource(round.attackerUnits)} units fired; ${formatResources(round.attackerLosses)} lost`} />
+                <Datum label="Defender firepower / losses" value={`${formatResource(round.defenderUnits)} units fired; ${formatResources(round.defenderLosses)} lost`} />
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+function CombatSidePanel({
+  accent,
+  caption,
+  children,
+  name,
+  wallet,
+}: {
+  accent: string;
+  caption: string;
+  children: preact.ComponentChildren;
+  name: string;
+  wallet: string | null;
+}) {
+  return (
+    <section className={`rounded-lg border p-4 ${accent}`}>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{caption}</p>
+      <p className="mt-1 mb-3 text-sm font-semibold text-white">
+        {wallet ? <PlayerLink name={name} wallet={wallet} /> : name}
+      </p>
+      <dl className="grid gap-2.5">{children}</dl>
+    </section>
+  );
+}
+
+function SideRow({ children, label }: { children: preact.ComponentChildren; label: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</dt>
+      <dd className="mt-0.5 break-words text-sm text-slate-300">{children}</dd>
+    </div>
   );
 }
 
@@ -399,16 +551,6 @@ function formatMissionTime(value: string, now: number): string {
   return `${absolute} (${relative})`;
 }
 
-function planetLabel(planet: FleetMissionSummary["originPlanet"], fallbackId: string): string {
-  if (!planet) {
-    const colonyTarget = decodeColonizationTargetId(fallbackId);
-    if (colonyTarget) return `Uncharted [${colonyTarget.coordinates}]`;
-    return `Planet #${fallbackId}`;
-  }
-  const name = planet.name ? `${planet.name} ` : "";
-  return `${name}[${planet.coordinates}]`;
-}
-
 function missionTypeLabel(value: string): string {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
@@ -449,20 +591,11 @@ const shipLabels: Record<string, string> = {
   solarSatellite: "Solar Satellite",
 };
 
-const civilShipKeys = new Set(["smallCargo", "largeCargo", "colonyShip", "recycler", "espionageProbe", "solarSatellite"]);
-
 function formatShips(ships: Record<string, string>): string {
   const entries = Object.entries(ships)
     .filter(([, count]) => Number(count) > 0)
     .map(([key, count]) => `${shipLabels[key] ?? missionTypeLabel(key)} x${formatResource(count)}`);
   return entries.length > 0 ? entries.join(", ") : "None";
-}
-
-function formatShipsByKind(ships: Record<string, string>, kind: "civil" | "combat"): string {
-  const filtered = Object.fromEntries(
-    Object.entries(ships).filter(([key]) => kind === "civil" ? civilShipKeys.has(key) : !civilShipKeys.has(key))
-  );
-  return formatShips(filtered);
 }
 
 function shortHash(value: string): string {
