@@ -133,7 +133,7 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Due resolvers");
     // Section header labels are dropped; grouping is conveyed by the tables themselves.
     expect(text).not.toContain("Fleet movement");
-    expect(text).not.toContain("Past missions");
+    expect(text).toContain("Past missions");
     expect(text).toContain("Commander 0x2222...2222");
     expect(text).toContain("Origin Planet #8");
     expect(text).toContain("Target Planet #7");
@@ -185,7 +185,9 @@ describe("Mission Control battle reports", () => {
       onResolve: () => undefined,
     }));
 
-    expect(countOccurrences(text.join(""), "Mission #61")).toBe(1);
+    // Mission numbers are no longer rendered in past rows; a single deduped battle-report
+    // row exposes exactly one "Open mission" action (Details + Report merged in VEY-374).
+    expect(countOccurrences(text.join(""), "Open mission")).toBe(1);
   });
 
   test("partitions active rows into My missions (own fleets) and Alliance (joinable attacks)", () => {
