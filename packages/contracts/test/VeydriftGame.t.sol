@@ -1890,8 +1890,9 @@ contract VeydriftGameTest is Test {
         game.resolveFleetMission(attackMissionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(attackMissionId);
-        assertEq(attackCargo.metal, 4_500);
-        assertEq(game.planet(targetPlanetId).resources.metal, 1_500);
+        // Flat 50% classic plunder loots half of the 6,000 metal left after the save run.
+        assertEq(attackCargo.metal, 3_000);
+        assertEq(game.planet(targetPlanetId).resources.metal, 3_000);
 
         (, uint64 saveArrivalAt, uint64 saveReturnAt,) = _fleetMission(saveMissionId);
         uint64 currentTestTime = attackArrivalAt;
@@ -2013,7 +2014,8 @@ contract VeydriftGameTest is Test {
         _setHonorPoints(defender, -500);
         (reason, flags, plunderBps) = _attackProtectionStatus(player, targetPlanetId);
         assertEq(flags & ATTACK_BANDIT_FLAG, ATTACK_BANDIT_FLAG);
-        assertEq(plunderBps, 10_000);
+        // Classic raiding caps loot at 50% regardless of the bandit flag.
+        assertEq(plunderBps, 5_000);
 
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 1;
@@ -2751,10 +2753,11 @@ contract VeydriftGameTest is Test {
         game.resolveFleetMission(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
-        assertEq(cargo.metal, 675);
-        assertEq(cargo.crystal, 675);
-        assertEq(cargo.deuterium, 675);
-        assertEq(game.planet(targetPlanetId).resources.metal, 225);
+        // Flat 50% classic plunder: half of each small balance is looted.
+        assertEq(cargo.metal, 450);
+        assertEq(cargo.crystal, 450);
+        assertEq(cargo.deuterium, 450);
+        assertEq(game.planet(targetPlanetId).resources.metal, 450);
     }
 
     function testAttackResolutionSettlesTargetResourcesAtImpactNotLateResolverTime() public {
@@ -3275,22 +3278,23 @@ contract VeydriftGameTest is Test {
         ) = _fleetMission(joinedMissionId);
         assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
         assertEq(uint8(joinedStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(attackCargo.metal, 3_750);
-        assertEq(attackCargo.crystal, 1_250);
-        assertEq(attackCargo.deuterium, 0);
-        assertEq(joinedCargo.metal, 3_750);
-        assertEq(joinedCargo.crystal, 1_250);
-        assertEq(joinedCargo.deuterium, 0);
+        // Flat 50% classic plunder of 10,000/4,000/3,000 fits both cargos and splits evenly.
+        assertEq(attackCargo.metal, 2_500);
+        assertEq(attackCargo.crystal, 1_000);
+        assertEq(attackCargo.deuterium, 750);
+        assertEq(joinedCargo.metal, 2_500);
+        assertEq(joinedCargo.crystal, 1_000);
+        assertEq(joinedCargo.deuterium, 750);
 
         vm.warp(joinedReturnAt);
         game.completeFleetMissionReturn(joinedMissionId);
         assertEq(game.shipCount(allyPlanetId, Ship.SmallCargo), 1);
-        assertEq(game.planet(allyPlanetId).resources.metal, 13_750);
+        assertEq(game.planet(allyPlanetId).resources.metal, 12_500);
 
         vm.warp(attackReturnAt);
         game.completeFleetMissionReturn(attackMissionId);
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
-        assertEq(game.planet(originPlanetId).resources.metal, 13_750);
+        assertEq(game.planet(originPlanetId).resources.metal, 12_500);
     }
 
     function testAcsAttackMultipleParticipantsSplitLootOnceInMissionOrder() public {
