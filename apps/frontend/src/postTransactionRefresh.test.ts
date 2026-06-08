@@ -4,10 +4,12 @@ import {
   isFinishedBuildingStateVisible,
   isFinishedResearchStateVisible,
   isAllianceApplicationCleared,
+  isStartedBuildingStateVisible,
   isStartedDefenseProductionVisible,
   isStartedShipProductionVisible,
   isStartedResearchStateVisible,
   waitForFinishedResearchState,
+  waitForStartedBuildingState,
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
   waitForStartedShipProductionState,
@@ -16,6 +18,7 @@ import {
   waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
   type FinishedResearchSnapshot,
+  type StartedBuildingSnapshot,
   type StartedDefenseProductionSnapshot,
   type StartedShipProductionSnapshot,
   type StartedResearchSnapshot,
@@ -285,6 +288,72 @@ describe("post-transaction refresh reconciliation", () => {
     })).toBe(true);
   });
 
+  test("does not accept a stale building snapshot without the started upgrade", () => {
+    expect(isStartedBuildingStateVisible(staleStartedBuildingSnapshot(), {
+      itemId: 3,
+      planetId: "7",
+      targetLevel: 2,
+    })).toBe(false);
+  });
+
+  test("accepts the started building snapshot once the queue reflects the upgrade", () => {
+    expect(isStartedBuildingStateVisible(startedBuildingSnapshot(), {
+      itemId: 3,
+      planetId: "7",
+      targetLevel: 2,
+    })).toBe(true);
+  });
+
+  test("accepts started building while the Infrastructure page endpoint catches up", () => {
+    const snapshot = startedBuildingSnapshot();
+
+    expect(isStartedBuildingStateVisible({
+      ...snapshot,
+      infrastructure: {
+        ...snapshot.infrastructure,
+        queue: null,
+      },
+    }, {
+      itemId: 3,
+      planetId: "7",
+      targetLevel: 2,
+    })).toBe(true);
+  });
+
+  test("polls past a stale first response after starting a building upgrade", async () => {
+    const snapshots = [
+      staleStartedBuildingSnapshot(),
+      startedBuildingSnapshot(),
+    ];
+    const loads: StartedBuildingSnapshot[] = [];
+
+    const result = await waitForStartedBuildingState(
+      async () => {
+        const snapshot = snapshots.shift() ?? startedBuildingSnapshot();
+        loads.push(snapshot);
+        return snapshot;
+      },
+      { itemId: 3, planetId: "7", targetLevel: 2 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.infrastructure.queue?.itemId).toBe(3);
+    expect(result.infrastructure.queue?.targetLevel).toBe(2);
+    expect(result.queues.building?.itemId).toBe(3);
+    expect(result.queues.building?.targetLevel).toBe(2);
+  });
+
+  test("times out with a syncing message when the started building queue never appears", async () => {
+    await expect(
+      waitForStartedBuildingState(
+        async () => staleStartedBuildingSnapshot(),
+        { itemId: 3, planetId: "7", targetLevel: 2 },
+        { attempts: 2, intervalMs: 1, delay: async () => undefined },
+      ),
+    ).rejects.toThrow(/indexed building queue state is still syncing/);
+  });
+
   test("polls until started research is visible on Research and Overview state", async () => {
     expect(isStartedResearchStateVisible(staleStartedResearchSnapshot(), {
       itemId: 4,
@@ -426,6 +495,76 @@ describe("post-transaction refresh reconciliation", () => {
     )).rejects.toThrow("game API did not hydrate a complete planet");
   });
 });
+
+function staleStartedBuildingSnapshot(): StartedBuildingSnapshot {
+  return {
+    infrastructure: {
+      wallet,
+      homePlanetId: "7",
+      planetId: "7",
+      infrastructureAvailable: true,
+      resources: { metal: "5000", crystal: "4900", deuterium: "4800" },
+      productionPerHour: { metal: "30", crystal: "15", deuterium: "0" },
+      energyBalance: null,
+      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
+      buildings: [
+        { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
+        { id: 3, level: 1, cost: { metal: "150", crystal: "60", deuterium: "0" } },
+      ],
+      queue: null,
+    },
+    queues: {
+      wallet,
+      homePlanetId: "7",
+      building: null,
+      defense: null,
+      ship: null,
+      research: null,
+    },
+  };
+}
+
+function startedBuildingSnapshot(): StartedBuildingSnapshot {
+  return {
+    infrastructure: {
+      wallet,
+      homePlanetId: "7",
+      planetId: "7",
+      infrastructureAvailable: true,
+      resources: { metal: "4850", crystal: "4840", deuterium: "4800" },
+      productionPerHour: { metal: "30", crystal: "15", deuterium: "0" },
+      energyBalance: null,
+      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
+      buildings: [
+        { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
+        { id: 3, level: 1, cost: { metal: "150", crystal: "60", deuterium: "0" } },
+      ],
+      queue: {
+        active: true,
+        kind: "building",
+        itemId: 3,
+        targetLevel: 2,
+        readyAt: "1770000060",
+        cost: { metal: "150", crystal: "60", deuterium: "0" },
+      },
+    },
+    queues: {
+      wallet,
+      homePlanetId: "7",
+      building: {
+        active: true,
+        kind: "building",
+        itemId: 3,
+        targetLevel: 2,
+        readyAt: "1770000060",
+        cost: { metal: "150", crystal: "60", deuterium: "0" },
+      },
+      defense: null,
+      ship: null,
+      research: null,
+    },
+  };
+}
 
 function staleSolarPlantSnapshot(): FinishedBuildingSnapshot {
   return {

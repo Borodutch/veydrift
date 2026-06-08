@@ -74,12 +74,14 @@ import {
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
   waitForStartedShipProductionState,
+  waitForStartedBuildingState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
   type AllianceApplicationExpectation,
   type FinishedResearchExpectation,
+  type StartedBuildingExpectation,
   type StartedDefenseProductionExpectation,
   type StartedShipProductionExpectation,
   type StartedResearchExpectation,
@@ -2536,6 +2538,53 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshResearchState]);
 
+  const refreshStartedBuildingState = useCallback(async (expectation: StartedBuildingExpectation) => {
+    if (!apiBaseUrl || !account) {
+      void refreshOnChainState();
+      await refreshInfrastructureState();
+      return;
+    }
+
+    const requestId = beginRefreshRequest(infrastructureRefreshGate);
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setInfrastructureLoading(true);
+    setInfrastructureError(undefined);
+
+    try {
+      const snapshot = await waitForStartedBuildingState(
+        async () => {
+          const [infrastructure, queues] = await Promise.all([
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+          ]);
+
+          return { infrastructure, queues };
+        },
+        expectation,
+      );
+
+      if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return;
+      latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        latestInfrastructureResourceSnapshot.current,
+        resourceSnapshotFreshnessForInfrastructure(snapshot.infrastructure),
+      );
+      setInfrastructureChainState(snapshot.infrastructure);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load started building state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setInfrastructureError(message);
+      throw error;
+    } finally {
+      if (canApplyRefreshRequest(infrastructureRefreshGate, requestId)) {
+        setInfrastructureLoading(false);
+      }
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
+
   const refreshFinishedResearchState = useCallback(async (expectation: FinishedResearchExpectation) => {
     if (!apiBaseUrl || !account) {
       refreshResearchState();
@@ -3065,8 +3114,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
         await confirmSubmittedTransaction(txHash);
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
-        await refreshOnChainState();
-        await refreshInfrastructureState();
+        const currentLevel = liveInfrastructure?.buildings.find((row) => row.id === building)?.level ?? 0;
+        await refreshStartedBuildingState({
+          itemId: building,
+          planetId,
+          targetLevel: currentLevel + 1,
+        });
         setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
       } catch (error) {
         console.error(error);
@@ -3089,8 +3142,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainSettlement?.homePlanetId,
     provider,
     refreshLiveInfrastructureState,
-    refreshInfrastructureState,
-    refreshOnChainState,
+    refreshStartedBuildingState,
     runtimeConfig.status,
     transactionActionGate,
   ]);

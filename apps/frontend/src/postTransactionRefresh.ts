@@ -7,6 +7,7 @@ import type {
   ChainAllianceState,
   ManagedPlanetResponse,
   PlayerQueuesResponse,
+  QueueStateResponse,
   WalletSettlementResponse,
   WalletPlanetsResponse,
 } from "./walletFlow";
@@ -20,6 +21,17 @@ export type FinishedBuildingSnapshot = {
   infrastructure: ChainInfrastructureState;
   queues: PlayerQueuesResponse;
   settlement: WalletSettlementResponse;
+};
+
+export type StartedBuildingExpectation = {
+  itemId: number;
+  planetId?: string | undefined;
+  targetLevel?: number | undefined;
+};
+
+export type StartedBuildingSnapshot = {
+  infrastructure: ChainInfrastructureState;
+  queues: PlayerQueuesResponse;
 };
 
 export type StartedDefenseProductionExpectation = {
@@ -126,6 +138,19 @@ export function hydratedWalletPlanetSnapshot(
   };
 }
 
+export function isStartedBuildingStateVisible(
+  snapshot: StartedBuildingSnapshot,
+  expectation: StartedBuildingExpectation,
+): boolean {
+  if (expectation.planetId) {
+    const planetId = snapshot.infrastructure.planetId ?? snapshot.infrastructure.homePlanetId;
+    if (planetId && planetId !== expectation.planetId) return false;
+  }
+
+  return buildingQueueMatches(snapshot.infrastructure.queue, expectation)
+    || buildingQueueMatches(snapshot.queues.building, expectation);
+}
+
 export function isStartedDefenseProductionVisible(
   snapshot: StartedDefenseProductionSnapshot,
   expectation: StartedDefenseProductionExpectation,
@@ -178,6 +203,17 @@ export function isAllianceApplicationCleared(
   return !snapshot.allianceJoinRequests.some((request) =>
     request.allianceId === expectation.allianceId
       && request.requester.toLowerCase() === expectation.requester.toLowerCase()
+  );
+}
+
+function buildingQueueMatches(
+  queue: QueueStateResponse | null | undefined,
+  expectation: StartedBuildingExpectation,
+): boolean {
+  return Boolean(
+    queue?.active
+      && queue.itemId === expectation.itemId
+      && (expectation.targetLevel === undefined || (queue.targetLevel ?? 0) >= expectation.targetLevel),
   );
 }
 
@@ -256,6 +292,30 @@ export async function waitForFinishedBuildingState(
   }
 
   throw new Error(finishedBuildingTimeoutMessage(latest, expectation, lastError));
+}
+
+export async function waitForStartedBuildingState(
+  load: () => Promise<StartedBuildingSnapshot>,
+  expectation: StartedBuildingExpectation,
+  options: WaitOptions = {},
+): Promise<StartedBuildingSnapshot> {
+  const attempts = options.attempts ?? 8;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: StartedBuildingSnapshot | undefined;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    latest = await load();
+    if (isStartedBuildingStateVisible(latest, expectation)) {
+      return latest;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(startedBuildingTimeoutMessage(latest, expectation));
 }
 
 export async function waitForStartedDefenseProductionState(
@@ -476,6 +536,23 @@ function transientGameStateReadFailureMessage(error: unknown): string | undefine
 export function isTransientGameStateReadFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
   return /failed to fetch|load failed|network|err_http2|timed out reading .+ from the game api|api failed: 5\d\d|backend_not_configured|rpc http|rate limit|too many requests/i.test(message);
+}
+
+function startedBuildingTimeoutMessage(
+  snapshot: StartedBuildingSnapshot | undefined,
+  expectation: StartedBuildingExpectation,
+): string {
+  const infrastructureQueue = snapshot?.infrastructure.queue;
+  const overviewQueue = snapshot?.queues.building;
+  const infrastructureTarget = infrastructureQueue?.active && infrastructureQueue.itemId === expectation.itemId
+    ? infrastructureQueue.targetLevel ?? "unknown"
+    : "missing";
+  const overviewTarget = overviewQueue?.active && overviewQueue.itemId === expectation.itemId
+    ? overviewQueue.targetLevel ?? "unknown"
+    : "missing";
+  const target = expectation.targetLevel === undefined ? "the next level" : `Level ${expectation.targetLevel}`;
+
+  return `Building transaction confirmed, but indexed building queue state is still syncing. Expected item ${expectation.itemId} ${target}; Infrastructure page target: ${infrastructureTarget}; Overview target: ${overviewTarget}. Try refreshing in a few seconds.`;
 }
 
 function startedDefenseProductionTimeoutMessage(
