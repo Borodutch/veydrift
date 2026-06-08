@@ -232,9 +232,14 @@ const buildingWalletConfirmationLabel = (label: string) =>
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 
 type RefreshFreshnessGate = { current: number };
-type ResourceSnapshotFreshness = {
+export type ResourceSnapshotFreshness = {
   planetId: string | null;
   lastSettledAt: string | null;
+};
+
+export type OnChainRefreshPlan = {
+  applyQueues: boolean;
+  applyResourceState: boolean;
 };
 
 export function beginRefreshRequest(gate: RefreshFreshnessGate): number {
@@ -295,6 +300,21 @@ export function recordedResourceSnapshotFreshness(
   }
 
   return next;
+}
+
+// Authoritative on-chain construction queues + fleet visibility are not resource
+// snapshots, so they must apply even when the resource anti-snapback gate rejects
+// an equal/older settlement read (e.g. after a building completes with no fresh
+// spend to settle). Only the resource/settlement state stays behind the gate. The
+// request-ordering gate still guards against out-of-order responses upstream.
+export function planOnChainRefresh(
+  current: ResourceSnapshotFreshness,
+  next: ResourceSnapshotFreshness,
+): OnChainRefreshPlan {
+  return {
+    applyQueues: true,
+    applyResourceState: shouldApplyResourceSnapshot(current, next),
+  };
 }
 
 export function shouldRefreshAllianceStateForPage(page: Page): boolean {
@@ -2287,7 +2307,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         return;
       }
       const nextFreshness = resourceSnapshotFreshnessForSettlement(nextSettlement);
-      if (!shouldApplyResourceSnapshot(latestOnChainResourceSnapshot.current, nextFreshness)) {
+      const plan = planOnChainRefresh(latestOnChainResourceSnapshot.current, nextFreshness);
+      // Construction queues + fleet visibility are authoritative and not resource
+      // snapshots, so apply them regardless of the resource anti-snapback gate.
+      // This is what lets the Overview Buildings card clear a completed build
+      // queue on the periodic poll without waiting for a manual page reload.
+      if (plan.applyQueues) {
+        setOnChainQueues((current) => preserveActiveResearchQueue(current, queues));
+        setFleetVisibility(fleetVisibility);
+        setOnChainError(undefined);
+        setOnChainStatus("ready");
+      }
+      if (!plan.applyResourceState) {
         return;
       }
       latestOnChainResourceSnapshot.current = recordedResourceSnapshotFreshness(
@@ -2300,10 +2331,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
       applyOnChainSettlementSnapshot(nextSettlement);
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
-      setOnChainQueues((current) => preserveActiveResearchQueue(current, queues));
-      setFleetVisibility(fleetVisibility);
-      setOnChainError(undefined);
-      setOnChainStatus("ready");
       setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
     } catch (error) {
       if (!canApplyRefreshRequest(onChainRefreshGate, requestId)) {
