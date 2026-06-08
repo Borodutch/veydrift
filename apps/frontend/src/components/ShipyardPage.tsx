@@ -271,11 +271,8 @@ export function shipProductionItems({
       detailSections: shipDetailSections({
         cost: totalCost,
         durationSeconds,
-        missing,
         owned,
-        requirements,
         ship,
-        statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
       }),
       detailNote: stats || "Production unit",
       disabled,
@@ -312,37 +309,21 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
 function shipDetailSections({
   cost,
   durationSeconds,
-  missing,
   owned,
-  requirements,
   ship,
-  statusLabel,
 }: {
   cost: Resources | undefined;
   durationSeconds: number | undefined;
-  missing: string[];
   owned: number | undefined;
-  requirements: ProductionRequirementState[];
   ship: (typeof shipCatalog)[number];
-  statusLabel: string;
 }): ProductionDetailSection[] {
   const specs = shipSpecRows(ship);
   const stat = (label: string) => specs.find((row) => row.label === label)?.value ?? "-";
-  const metCount = requirements.filter((requirement) => requirement.met).length;
 
   return [
     {
-      title: "Combat",
-      stats: [
-        { label: "Structure", value: stat("Structure") },
-        { label: "Shield", value: stat("Shield") },
-        { label: "Attack", value: stat("Attack") },
-      ],
-    },
-    {
       title: "Logistics",
       stats: [
-        { label: "Cargo", value: formatShipSpecValue(ship, "Cargo", stat("Cargo")) },
         { label: "Base speed", value: formatShipSpecValue(ship, "Base speed", stat("Base speed")) },
         { label: "Fuel use", value: formatShipSpecValue(ship, "Fuel use", stat("Fuel use")) },
       ],
@@ -355,14 +336,6 @@ function shipDetailSections({
         { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
       ],
     },
-    {
-      title: "Requirements",
-      stats: [
-        { label: "Status", value: statusLabel },
-        { label: "Unlocks", value: requirements.length > 0 ? `${metCount}/${requirements.length} met` : "No unlocks" },
-        { label: "Missing", value: missing.length > 0 ? missing.join(", ") : "None", wide: true },
-      ],
-    },
   ];
 }
 
@@ -372,7 +345,6 @@ function formatShipSummaryStat(label: string, value: number | string): string {
 }
 
 function formatShipSpecValue(ship: (typeof shipCatalog)[number], label: string, value: string): string {
-  if (label === "Cargo" && value === "0") return "No cargo";
   if (label === "Fuel use" && value === "None") return "No fuel";
   if (label === "Base speed" && value === "Stationary") return ship.key === "solarSatellite" ? "Stationary energy platform" : "Stationary";
   return value;

@@ -180,17 +180,8 @@ describe("Shipyard page display helpers", () => {
       detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
       detailSections: [
         {
-          title: "Combat",
-          stats: [
-            { label: "Structure", value: "400" },
-            { label: "Shield", value: "10" },
-            { label: "Attack", value: "5" },
-          ],
-        },
-        {
           title: "Logistics",
           stats: [
-            { label: "Cargo", value: "5,000" },
             { label: "Base speed", value: "5,000" },
             { label: "Fuel use", value: "10" },
           ],
@@ -201,14 +192,6 @@ describe("Shipyard page display helpers", () => {
             { label: "Owned", value: "4" },
             { label: "Build time", value: "48m" },
             { label: "Price", value: "Metal 6,000, Crystal 6,000", wide: true },
-          ],
-        },
-        {
-          title: "Requirements",
-          stats: [
-            { label: "Status", value: "Ready" },
-            { label: "Unlocks", value: "2/2 met" },
-            { label: "Missing", value: "None", wide: true },
           ],
         },
       ],
@@ -335,18 +318,11 @@ describe("Shipyard page display helpers", () => {
         "Special: generates energy in orbit and cannot move, haul cargo, or spend fuel.",
       ],
     });
-    expect(solarSatellite?.detailSections?.find((section) => section.title === "Combat")).toEqual({
-      title: "Combat",
-      stats: [
-        { label: "Structure", value: "200" },
-        { label: "Shield", value: "1" },
-        { label: "Attack", value: "1" },
-      ],
-    });
+    expect(solarSatellite?.detailSections?.find((section) => section.title === "Combat")).toBeUndefined();
+    expect(solarSatellite?.detailSections?.find((section) => section.title === "Requirements")).toBeUndefined();
     expect(solarSatellite?.detailSections?.find((section) => section.title === "Logistics")).toEqual({
       title: "Logistics",
       stats: [
-        { label: "Cargo", value: "No cargo" },
         { label: "Base speed", value: "Stationary energy platform" },
         { label: "Fuel use", value: "No fuel" },
       ],
