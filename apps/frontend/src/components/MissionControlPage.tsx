@@ -87,7 +87,9 @@ export function MissionControlPage({
   const battleReports = fleetVisibility?.battleReports ?? [];
   const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, outgoing, returning });
   const { alliance: allianceMissionRows, mine: myMissionRows } = partitionActiveMissionRows(activeMissionRows);
-  const due = activeMissionRows.filter(({ mission }) => isMissionDue(mission, now) || isMissionReturned(mission, now));
+  // "Due"/"Needs orders now" must count only the player's own actionable missions. Alliance joinable
+  // attacks are opt-in and never an obligation for the player, so they are excluded here.
+  const due = myMissionRows.filter(({ mission }) => isMissionDue(mission, now) || isMissionReturned(mission, now));
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
