@@ -14,6 +14,7 @@ const config: BackendConfig = {
   deploymentMode: "test",
   gameContractAddress: "0x3333333333333333333333333333333333333333",
   indexDbPath: ":memory:",
+  randomnessCommitmentStorePath: ".data/test-randomness.json",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {},

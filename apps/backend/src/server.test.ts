@@ -32,6 +32,7 @@ const configuredTestConfig: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
   indexDbPath: ":memory:",
+  randomnessCommitmentStorePath: ".data/test-randomness.json",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {
@@ -716,6 +717,7 @@ describe("Veydrift backend", () => {
         settlementContractConfigured: false,
         moonContractConfigured: false,
         randomnessEngineConfigured: false,
+        randomnessCommitterConfigured: false,
         gameContractConfigured: false
       },
       configured: false,
@@ -731,6 +733,7 @@ describe("Veydrift backend", () => {
       chainSync: null,
       indexer: null,
       missionResolution: null,
+      randomnessCommitter: null,
       rpc: null,
       ok: true,
       service: "veydrift-backend"

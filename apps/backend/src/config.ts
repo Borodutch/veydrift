@@ -12,6 +12,8 @@ export type BackendConfig = {
   missionResolverAddress?: `0x${string}`;
   moonContractAddress?: `0x${string}`;
   randomnessEngineAddress?: `0x${string}`;
+  randomnessFulfillerPrivateKey?: `0x${string}`;
+  randomnessCommitmentStorePath: string;
   resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
@@ -47,6 +49,7 @@ export type SafeConfigSummary = {
   missionResolutionEnabled: boolean;
   missionResolverConfigured: boolean;
   randomnessEngineConfigured: boolean;
+  randomnessCommitterConfigured: boolean;
   resourceTokensConfigured: {
     crystal: boolean;
     deuterium: boolean;
@@ -63,7 +66,9 @@ export type SafeConfigSummary = {
 const defaultChainId = 84532;
 const defaultDeploymentMode: DeploymentMode = "local";
 const defaultIndexDbPath = ".data/contract-state.sqlite";
+const defaultRandomnessCommitmentStorePath = ".data/randomness-commitments.json";
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
+const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
 
 export function loadBackendConfig(env: Record<string, string | undefined> = process.env): ConfigResult {
@@ -104,6 +109,13 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_MISSION_RESOLVER_ADDRESS",
     problems
   );
+  const randomnessFulfillerPrivateKey = parsePrivateKey(
+    env.VEYDRIFT_RANDOMNESS_FULFILLER_KEY,
+    "VEYDRIFT_RANDOMNESS_FULFILLER_KEY",
+    problems
+  );
+  const randomnessCommitmentStorePath =
+    env.VEYDRIFT_RANDOMNESS_COMMITMENT_STORE_PATH ?? defaultRandomnessCommitmentStorePath;
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
   const crystalTokenAddress = parseAddress(
     env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS,
@@ -149,6 +161,8 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(moonContractAddress ? { moonContractAddress } : {}),
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
+      ...(randomnessFulfillerPrivateKey ? { randomnessFulfillerPrivateKey } : {}),
+      randomnessCommitmentStorePath,
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
@@ -172,6 +186,9 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     missionResolutionEnabled: config.missionResolutionEnabled,
     missionResolverConfigured: Boolean(config.missionResolverAddress),
     randomnessEngineConfigured: Boolean(config.randomnessEngineAddress),
+    randomnessCommitterConfigured: Boolean(
+      config.randomnessEngineAddress && config.randomnessFulfillerPrivateKey && config.rpcUrl
+    ),
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),
       deuterium: Boolean(config.resourceTokenAddresses.deuterium),
@@ -273,6 +290,27 @@ function parseAddress(
   }
 
   return value as `0x${string}`;
+}
+
+function parsePrivateKey(
+  value: string | undefined,
+  field: string,
+  problems: ConfigProblem[]
+): `0x${string}` | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.startsWith("0x") ? value : `0x${value}`;
+  if (!privateKeyPattern.test(normalized)) {
+    problems.push({
+      field,
+      message: "Expected a 0x-prefixed 32-byte hex private key."
+    });
+    return undefined;
+  }
+
+  return normalized as `0x${string}`;
 }
 
 function resolveRpcUrl(env: Record<string, string | undefined>): Pick<BackendConfig, "rpcUrl" | "rpcSource"> {

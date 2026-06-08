@@ -10,6 +10,7 @@ const config: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
   indexDbPath: ":memory:",
+  randomnessCommitmentStorePath: ".data/test-randomness.json",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {},

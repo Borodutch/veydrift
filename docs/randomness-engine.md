@@ -88,9 +88,38 @@ The contract enforces a one-block delay between commit and consumption, so a fre
 is only consumable from the next block onward; the worker does not need to block on this, it simply
 keeps a commitment ready.
 
-Production wiring for a hardened deployment must run `RandomnessCommitmentWorker` against the live
-engine from the configured fulfiller account, backed by a durable `RandomnessCommitmentStore`, and
-surface the returned `RandomnessCommitmentStatus` in service health/monitoring. If an operator
-disables precommit mode, the deployment may fall back to `RandomnessFulfillmentWorker` but must
-record that the fulfiller can again choose the word after seeing the request and that the model is
-accepted only for non-value-bearing testing.
+### Production wiring (`RandomnessCommitterService`)
+
+`apps/backend/src/randomnessCommitter.ts` wires `RandomnessCommitmentWorker` into the running
+backend. `createRequestHandler` constructs a `RandomnessCommitterService` whenever the config has no
+problems and calls `.start()` alongside the chain-sync and mission-resolution services, so a hardened
+deployment keeps a pending commitment ready automatically — no separate process or `apps/*` service.
+
+The service:
+
+- builds a viem `RandomnessCommitmentChainClient` (`ViemRandomnessCommitmentChainClient`) that reads
+  engine state over the configured RPC and **signs `commitRandomness` / `fulfillRandomness` locally**
+  with the fulfiller key, so it works against hosted RPC (Base Sepolia / Alchemy) that have no
+  unlocked accounts;
+- resolves each commitment through the on-chain `randomnessCommitment(word)` view (never a client-side
+  keccak) so the committed value is guaranteed to match what `fulfillRandomness` recomputes at reveal;
+- enumerates unfulfilled requests by reading `nextRequestId` and `request(id)`, advancing an in-memory
+  scan floor to the oldest still-unfulfilled id;
+- persists secrets to a `FileRandomnessCommitmentStore` at `VEYDRIFT_RANDOMNESS_COMMITMENT_STORE_PATH`
+  (default `.data/randomness-commitments.json`) so reveals survive restarts;
+- ticks every 15s and surfaces the latest `RandomnessCommitmentStatus` (and `lastError`) under
+  `randomnessCommitter` in `GET /health` and `GET /debug/config`.
+
+Required environment for the committer (in addition to the engine being deployed/authorized):
+
+- `VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS` — deployed `RandomnessEngine` proxy address;
+- `VEYDRIFT_RANDOMNESS_FULFILLER_KEY` — 0x-prefixed 32-byte private key of the engine's `fulfiller`
+  account (least-privilege, funded for gas; **never logged or surfaced in health**);
+- `VEYDRIFT_RPC_URL` (or the existing Alchemy/Base-Sepolia RPC env) and `VEYDRIFT_CHAIN_ID`;
+- optional `VEYDRIFT_RANDOMNESS_COMMITMENT_STORE_PATH` to relocate the durable secret store.
+
+`safeConfigSummary` reports `randomnessCommitterConfigured` (engine + key + RPC all present) so health
+checks can confirm the committer is active. If an operator disables precommit mode, the same service
+still works (the worker reveals a fresh word for zero-commitment requests), but record that the
+fulfiller can again choose the word after seeing the request and that the model is accepted only for
+non-value-bearing testing.

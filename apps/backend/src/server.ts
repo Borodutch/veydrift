@@ -39,6 +39,7 @@ import {
   type IndexerSnapshot
 } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
+import { RandomnessCommitterService } from "./randomnessCommitter";
 import {
   validatePlayerDisplayName,
   verifyPlayerDisplayNameSignature,
@@ -104,6 +105,7 @@ export type ServerDependencies = {
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
   missionResolver?: MissionResolutionService;
+  randomnessCommitter?: RandomnessCommitterService;
   indexer?: SettlementIndexer;
 };
 
@@ -139,8 +141,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? new MissionResolutionService(loaded.config, resolutionReader)
       : undefined);
 
+  const randomnessCommitter =
+    dependencies.randomnessCommitter ??
+    (loaded.problems.length === 0 ? new RandomnessCommitterService(loaded.config) : undefined);
+
   chainSync?.start();
   missionResolver?.start();
+  randomnessCommitter?.start();
   if (!dependencies.indexer && indexer && loaded.problems.length === 0) {
     void indexer.rebuild().catch((error) => {
       console.error("Veydrift index reconciliation failed", error);
@@ -177,6 +184,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           readiness: backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot),
           chainSync: chainSyncSnapshot,
           missionResolution: missionResolutionSnapshot,
+          randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
@@ -198,6 +206,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
           chainSync: chainSync?.snapshot() ?? null,
+          randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexer?.snapshot() ?? null,
           problems: loaded.problems
         },
