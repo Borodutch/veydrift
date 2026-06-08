@@ -24,4 +24,22 @@ describe("inspect routes", () => {
     expect(parseInspectRoute("#/missing/route")).toEqual({ kind: "page", page: "overview" });
     expect(parseInspectRoute("")).toEqual({ kind: "page", page: "overview" });
   });
+
+  test("keeps planet detail coordinates in the route so reloads/deep links persist", () => {
+    expect(parseInspectRoute("#/planet/5/407/4")).toEqual({
+      kind: "planet",
+      coords: { galaxy: 5, system: 407, position: 4 },
+    });
+    expect(buildInspectHash({ kind: "planet", coords: { galaxy: 5, system: 407, position: 4 } })).toBe("#/planet/5/407/4");
+    // Legacy query-string deep links still resolve to the selected planet.
+    expect(parseInspectRoute("#/planet?galaxy=5&system=407&position=4")).toEqual({
+      kind: "planet",
+      coords: { galaxy: 5, system: 407, position: 4 },
+    });
+    // A coordinate-less planet hash degrades to the planet page rather than overview.
+    expect(parseInspectRoute("#/planet")).toEqual({ kind: "page", page: "planet" });
+    // Invalid/partial coordinates do not produce a planet route.
+    expect(parseInspectRoute("#/planet/5/407")).toEqual({ kind: "page", page: "planet" });
+    expect(parseInspectRoute("#/planet/0/407/4")).toEqual({ kind: "page", page: "planet" });
+  });
 });

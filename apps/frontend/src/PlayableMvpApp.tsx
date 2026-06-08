@@ -1618,7 +1618,16 @@ function initialInspectPageState(): {
   if (route.kind === "mission-report") {
     return { page: "mission-control", playerWallet: null, allianceId: null, battleReportMissionId: null, missionDetailId: null, missionReportId: route.missionId };
   }
+  if (route.kind === "planet") {
+    return { page: "planet", playerWallet: null, allianceId: null, battleReportMissionId: null, missionDetailId: null, missionReportId: null };
+  }
   return { page: route.page, playerWallet: null, allianceId: null, battleReportMissionId: null, missionDetailId: null, missionReportId: null };
+}
+
+function initialSelectedCoords(): Coordinates | undefined {
+  if (typeof window === "undefined") return undefined;
+  const route = parseInspectRoute(window.location.hash);
+  return route.kind === "planet" ? route.coords : undefined;
 }
 
 function writeInspectHash(route: InspectRoute): void {
@@ -1643,7 +1652,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [selectedResearchKey, setSelectedResearchKey] = useState<ResearchKey>("energy");
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
   const [selectedShipKey, setSelectedShipKey] = useState<ShipKey>("smallCargo");
-  const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>();
+  const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>(() => initialSelectedCoords());
   const [onChainSettlement, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>();
   const [topBarResourceSnapshotReceivedAtMs, setTopBarResourceSnapshotReceivedAtMs] = useState(() => Date.now());
   const applyOnChainSettlementSnapshot = useCallback((settlement: WalletSettlementResponse | undefined) => {
@@ -1719,6 +1728,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const latestInfrastructureResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
+    const routeCoords = initialSelectedCoords();
+    if (routeCoords) {
+      return { galaxy: routeCoords.galaxy, system: routeCoords.system };
+    }
     if (planet?.coordinates) {
       const [g, s] = planet.coordinates.split(":").map(Number);
       return { galaxy: g || 1, system: s || 1 };
@@ -1870,6 +1883,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setMissionReportId(route.missionId);
         setSelectedCoords(undefined);
         setPage("mission-control");
+        return;
+      }
+      if (route.kind === "planet") {
+        setInspectedPlayerWallet(null);
+        setInspectedAllianceId(null);
+        setBattleReportMissionId(null);
+        setMissionDetailId(null);
+        setMissionReportId(null);
+        setGalaxyNav({ galaxy: route.coords.galaxy, system: route.coords.system });
+        setSelectedCoords(route.coords);
+        setPage("planet");
         return;
       }
       setInspectedPlayerWallet(null);
@@ -4489,7 +4513,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMissionDetailId(null);
     setMissionReportId(null);
     setPage("planet");
-    writeInspectHash({ kind: "page", page: "planet" });
+    writeInspectHash({ kind: "planet", coords });
   }, []);
 
   const handleSelectAlliance = useCallback((allianceId: string) => {
