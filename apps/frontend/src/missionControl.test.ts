@@ -400,6 +400,8 @@ describe("Mission Control battle reports", () => {
     // VEY-399#7: the resolve action label is "Resolve" (shared across the control + detail screens).
     expect(text).toContain("Resolve");
     expect(text).not.toContain("Resolve battle");
+    // VEY-395 rework: the mission-detail page subtitle was removed.
+    expect(text).not.toContain("Shareable mission state");
     expect(text).toContain("Copy link");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");
@@ -594,7 +596,8 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Route");
     expect(text).toContain("Origin");
     expect(text).toContain("Target");
-    expect(text).toContain("Commander");
+    // VEY-395 rework: the "Commander" caption was dropped; just the clickable name remains.
+    expect(text).not.toContain("Commander");
     // Planet names, coordinates, and resolved commander names all surface on the route.
     expect(text).toContain("Helios");
     expect(text).toContain("Borealis");
@@ -605,7 +608,7 @@ describe("Mission Control battle reports", () => {
     // Timing folds beside each endpoint (return near origin, arrival near target).
     expect(text).toContain("Arrival");
     expect(text).toContain("Return");
-    // VEY-KANEO-396 rework (#9636): the internal "Needs resolution" jargon line was removed.
+    // VEY-395 / VEY-KANEO-396 rework: the internal "Needs resolution" route flag was removed entirely.
     expect(text).not.toContain("Needs resolution");
     // The Mission ID field is dropped from the route (requirement 1); it lives in the header.
     expect(text).not.toContain("Mission id");
