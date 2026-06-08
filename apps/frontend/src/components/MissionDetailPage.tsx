@@ -228,8 +228,9 @@ function MissionFacts({
 
 // Full-width "origin -> target" route hero. Replaces the old side-by-side Route and
 // Timing panels: each endpoint shows its planet name, clickable coordinates (opens the
-// galaxy/planet view) and a clickable commander (opens the player profile). Timing and
-// resolution state fold into a meta strip below the route.
+// galaxy/planet view), a clickable commander (opens the player profile), and the timing
+// that belongs to it — return beside the origin, arrival beside the target. The Mission
+// ID field is intentionally dropped (it already shows in the page header).
 function MissionRoute({
   mission,
   now,
@@ -261,6 +262,7 @@ function MissionRoute({
           kind="Origin"
           onSelectCoordinates={onSelectCoordinates}
           onSelectPlayer={onSelectPlayer}
+          timing={{ label: "Return", value: noFleetReturned ? "Completed, no fleet returned" : formatMissionTime(mission.returnAt, now) }}
         />
         <div aria-hidden="true" className="flex items-center justify-center text-slate-500">
           <ArrowRight className="rotate-90 md:rotate-0" size={20} />
@@ -271,14 +273,13 @@ function MissionRoute({
           kind="Target"
           onSelectCoordinates={onSelectCoordinates}
           onSelectPlayer={onSelectPlayer}
+          timing={{ label: "Arrival", value: formatMissionTime(mission.arrivalAt, now) }}
         />
       </div>
-      <dl className="mt-4 grid gap-x-4 gap-y-3 border-t border-white/5 pt-3 sm:grid-cols-2 lg:grid-cols-4">
-        <RouteMeta label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
-        <RouteMeta label="Return" value={noFleetReturned ? "Completed, no fleet returned" : formatMissionTime(mission.returnAt, now)} />
-        <RouteMeta label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
-        <RouteMeta label="Mission id" value={mission.missionId} />
-      </dl>
+      <p className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-3 text-xs text-slate-400">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Needs resolution</span>
+        <span className="text-slate-300">{mission.needsResolution ? "Yes" : "No"}</span>
+      </p>
     </section>
   );
 }
@@ -295,12 +296,14 @@ function RouteEndpoint({
   kind,
   onSelectCoordinates,
   onSelectPlayer,
+  timing,
 }: {
   commander: { displayName: string | null; owner: string } | null;
   endpoint: RouteEndpointData;
   kind: string;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectPlayer: (wallet: string) => void;
+  timing: { label: string; value: string };
 }) {
   const coords = endpoint.coordinates;
   return (
@@ -322,6 +325,10 @@ function RouteEndpoint({
         <span className="font-mono text-xs text-slate-600">Coordinates unavailable</span>
       )}
       <CommanderLink commander={commander} onSelectPlayer={onSelectPlayer} />
+      <p className="mt-1 border-t border-white/5 pt-2 text-xs text-slate-400">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label}</span>{" "}
+        <span className="break-words text-slate-300">{timing.value}</span>
+      </p>
     </div>
   );
 }
@@ -349,15 +356,6 @@ function CommanderLink({
         <span className="text-slate-500">Unsettled</span>
       )}
     </p>
-  );
-}
-
-function RouteMeta({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</dt>
-      <dd className="mt-0.5 break-words text-sm text-slate-300">{value}</dd>
-    </div>
   );
 }
 

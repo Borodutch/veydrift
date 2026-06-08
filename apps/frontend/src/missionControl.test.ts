@@ -443,8 +443,13 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("4:5:6");
     expect(text).toContain("Aria");
     expect(text).toContain("Zane");
-    // Timing folded into the route still exposes the resolution flag.
+    // Timing folds beside each endpoint (return near origin, arrival near target) and the
+    // resolution flag is still exposed.
+    expect(text).toContain("Arrival");
+    expect(text).toContain("Return");
     expect(text).toContain("Needs resolution");
+    // The Mission ID field is dropped from the route (requirement 1); it lives in the header.
+    expect(text).not.toContain("Mission id");
 
     const buttons = findElements(tree, "button");
     const originCoordButton = buttons.find((node) => collectText(node).join("").includes("1:2:3"));
