@@ -303,11 +303,20 @@ export async function waitForStartedBuildingState(
   const intervalMs = options.intervalMs ?? 1_500;
   const delay = options.delay ?? defaultDelay;
   let latest: StartedBuildingSnapshot | undefined;
+  let lastError: unknown;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    latest = await load();
-    if (isStartedBuildingStateVisible(latest, expectation)) {
-      return latest;
+    try {
+      latest = await load();
+      lastError = undefined;
+      if (isStartedBuildingStateVisible(latest, expectation)) {
+        return latest;
+      }
+    } catch (error) {
+      // The backend may be briefly reloading/rebuilding the indexer and return a
+      // transient read failure. Keep polling instead of aborting to a stale,
+      // actionable button; only give up once the attempts are exhausted.
+      lastError = error;
     }
 
     if (attempt < attempts - 1) {
@@ -315,7 +324,7 @@ export async function waitForStartedBuildingState(
     }
   }
 
-  throw new Error(startedBuildingTimeoutMessage(latest, expectation));
+  throw new Error(startedBuildingTimeoutMessage(latest, expectation, lastError));
 }
 
 export async function waitForStartedDefenseProductionState(
@@ -541,7 +550,11 @@ export function isTransientGameStateReadFailure(error: unknown): boolean {
 function startedBuildingTimeoutMessage(
   snapshot: StartedBuildingSnapshot | undefined,
   expectation: StartedBuildingExpectation,
+  lastError?: unknown,
 ): string {
+  const recovery = transientGameStateReadFailureMessage(lastError);
+  if (recovery) return recovery;
+
   const infrastructureQueue = snapshot?.infrastructure.queue;
   const overviewQueue = snapshot?.queues.building;
   const infrastructureTarget = infrastructureQueue?.active && infrastructureQueue.itemId === expectation.itemId

@@ -354,6 +354,44 @@ describe("post-transaction refresh reconciliation", () => {
     ).rejects.toThrow(/indexed building queue state is still syncing/);
   });
 
+  test("polls past a transient backend reload after starting a building upgrade", async () => {
+    const responses: Array<() => StartedBuildingSnapshot> = [
+      () => { throw new Error("api failed: 503"); },
+      () => startedBuildingSnapshot(),
+    ];
+    const attempts: string[] = [];
+
+    const result = await waitForStartedBuildingState(
+      async () => {
+        const next = responses.shift();
+        if (!next) return startedBuildingSnapshot();
+        try {
+          const snapshot = next();
+          attempts.push("ok");
+          return snapshot;
+        } catch (error) {
+          attempts.push("throw");
+          throw error;
+        }
+      },
+      { itemId: 3, planetId: "7", targetLevel: 2 },
+      { attempts: 4, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(attempts).toEqual(["throw", "ok"]);
+    expect(result.infrastructure.queue?.itemId).toBe(3);
+  });
+
+  test("reports a retryable syncing status when the backend stays in reload", async () => {
+    await expect(
+      waitForStartedBuildingState(
+        async () => { throw new Error("api failed: 502"); },
+        { itemId: 3, planetId: "7", targetLevel: 2 },
+        { attempts: 2, intervalMs: 1, delay: async () => undefined },
+      ),
+    ).rejects.toThrow(/temporarily unavailable while the confirmed transaction state is being checked/);
+  });
+
   test("polls until started research is visible on Research and Overview state", async () => {
     expect(isStartedResearchStateVisible(staleStartedResearchSnapshot(), {
       itemId: 4,
