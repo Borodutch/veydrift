@@ -383,7 +383,6 @@ function missionControlProps(
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
     onJoinAttack: () => undefined,
-    onOpenBattleReport: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
     onRecall: () => undefined,
