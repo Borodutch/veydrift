@@ -129,3 +129,86 @@ describe("canonicalSpendableResources", () => {
     ).toBeUndefined();
   });
 });
+
+describe("canonicalSpendableResources (stale backend read / freeze projection)", () => {
+  // Reproduces the VEY-KANEO-392 rework finding: during a backend (infrastructure
+  // /API) outage the snapshots stop refreshing but the displayed-balance clock
+  // (`now`) keeps advancing, so production accrual runs the balance up toward the
+  // storage caps and over-reports (QA saw the top bar climb to the 10,000 cap).
+  const LOW_CAPS = { metal: 10_000, crystal: 10_000, deuterium: 10_000 };
+  const HOUR_MS = 3_600_000;
+
+  test("without freeze, a stale snapshot drifts up toward the storage cap (the bug)", () => {
+    const drifted = canonicalSpendableResources({
+      settlementResources: undefined,
+      infrastructureResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      infrastructureSettledAtMs: 0,
+      rates: RATES,
+      caps: LOW_CAPS,
+      // 100h elapsed with no refresh: production projects the stale read to the cap.
+      now: 100 * HOUR_MS,
+    });
+    expect(drifted).toEqual({ metal: 10_000, crystal: 10_000, deuterium: 2_100 });
+  });
+
+  test("with freeze, the infrastructure read holds its last-known value (no cap drift)", () => {
+    const frozen = canonicalSpendableResources({
+      settlementResources: undefined,
+      infrastructureResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      infrastructureSettledAtMs: 0,
+      rates: RATES,
+      caps: LOW_CAPS,
+      now: 100 * HOUR_MS,
+      freezeProjection: true,
+    });
+    expect(frozen).toEqual({ metal: 2_117, crystal: 2_091, deuterium: 2_100 });
+  });
+
+  test("during an outage the caller passes the unprojected settlement snapshot + freeze, so neither source over-reports", () => {
+    // Mirrors PlayableMvpApp: when stale, `settlementResources` is the raw
+    // snapshot (not the now-projected value) and infrastructure projection is
+    // frozen. The result is the last-known balance, never the storage cap.
+    const settlementSnapshot = { metal: 2_200, crystal: 2_150, deuterium: 2_100 };
+    const canonical = canonicalSpendableResources({
+      settlementResources: settlementSnapshot,
+      infrastructureResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      infrastructureSettledAtMs: 0,
+      rates: RATES,
+      caps: LOW_CAPS,
+      now: 100 * HOUR_MS,
+      freezeProjection: true,
+    });
+    expect(canonical).toEqual({ metal: 2_117, crystal: 2_091, deuterium: 2_100 });
+    expect(canonical!.metal).toBeLessThan(LOW_CAPS.metal);
+  });
+
+  test("freeze still falls back to the (frozen) settlement snapshot when infrastructure is unavailable", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      infrastructureResources: undefined,
+      infrastructureSettledAtMs: 0,
+      rates: RATES,
+      caps: LOW_CAPS,
+      now: 100 * HOUR_MS,
+      freezeProjection: true,
+    });
+    // No infrastructure read to clamp against, but the settlement snapshot is the
+    // unprojected last-known value (caller's responsibility while stale), so it
+    // does not drift to the cap either.
+    expect(canonical).toEqual({ metal: 2_117, crystal: 2_091, deuterium: 2_100 });
+  });
+
+  test("fresh read (no freeze) still ticks production up between settlements", () => {
+    const fresh = canonicalSpendableResources({
+      settlementResources: { metal: 5_000, crystal: 5_000, deuterium: 5_000 },
+      infrastructureResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      infrastructureSettledAtMs: 0,
+      rates: RATES,
+      caps: CAPS,
+      now: 10_000,
+      freezeProjection: false,
+    });
+    // 10s of accrual on the infrastructure base (preserves the merged UX).
+    expect(fresh).toEqual({ metal: 2_127, crystal: 2_096, deuterium: 2_100 });
+  });
+});
