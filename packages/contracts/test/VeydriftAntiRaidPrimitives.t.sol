@@ -42,15 +42,11 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
             2_499
         );
         assertEq(
-            VeydriftAntiRaidPrimitives.raidableResource(
-                8_000, 10_000, protectedAmount, VeydriftAntiRaidPrimitives.HONORABLE_RAID_LOOT_BPS
-            ),
+            VeydriftAntiRaidPrimitives.raidableResource(8_000, 10_000, protectedAmount, 7_500),
             6_000
         );
         assertEq(
-            VeydriftAntiRaidPrimitives.raidableResource(
-                8_000, 10_000, protectedAmount, VeydriftAntiRaidPrimitives.BANDIT_RAID_LOOT_BPS
-            ),
+            VeydriftAntiRaidPrimitives.raidableResource(8_000, 10_000, protectedAmount, 10_000),
             8_000
         );
     }
@@ -100,9 +96,7 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
 
         assertTrue(VeydriftAntiRaidPrimitives.isInactive(1 hours, 8 days));
         assertFalse(VeydriftAntiRaidPrimitives.isInactive(1 hours, 2 hours));
-        assertEq(VeydriftAntiRaidPrimitives.plunderBps(false, false), 5_000);
-        assertEq(VeydriftAntiRaidPrimitives.plunderBps(true, false), 7_500);
-        assertEq(VeydriftAntiRaidPrimitives.plunderBps(true, true), 10_000);
+        assertEq(VeydriftAntiRaidPrimitives.plunderBps(), 5_000);
         assertTrue(VeydriftAntiRaidPrimitives.isHonorableTarget(100_000, 50_000, 0, false));
         assertTrue(VeydriftAntiRaidPrimitives.isHonorableTarget(100_000, 1_000, -500, false));
         assertFalse(VeydriftAntiRaidPrimitives.isHonorableTarget(100_000, 1_000, 0, false));

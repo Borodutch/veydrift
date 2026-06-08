@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Copy, RefreshCw, Swords } from "lucide-preact";
+import { ArrowLeft, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -73,8 +73,9 @@ export function MissionDetailPage({
             </button>
             <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
             <button
+              aria-label={copyLabel}
               aria-live="polite"
-              className={`inline-flex h-9 items-center justify-center gap-2 rounded border px-3 text-sm font-medium transition ${
+              className={`inline-flex h-9 w-9 items-center justify-center rounded border text-sm font-medium transition ${
                 copyState === "copied"
                   ? "border-emerald-300/40 bg-emerald-300/15 text-emerald-100"
                   : copyState === "error"
@@ -82,10 +83,10 @@ export function MissionDetailPage({
                     : "border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
               }`}
               onClick={onCopyShareUrl}
+              title={copyLabel}
               type="button"
             >
-              {copyState === "copied" ? <Check aria-hidden="true" size={15} /> : <Copy aria-hidden="true" size={15} />}
-              {copyLabel}
+              {copyState === "copied" ? <Check aria-hidden="true" size={15} /> : <Share2 aria-hidden="true" size={15} />}
             </button>
           </>
         )}
@@ -167,12 +168,9 @@ function MissionActions({
   const actions = missionLifecycleActions({ canTransact, context, mission, now })
     .filter((action) => action.kind !== "recall" || Boolean(mission.recallCost));
 
+  // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
-    return (
-      <Notice>
-        No wallet action applies at this mission stage.
-      </Notice>
-    );
+    return null;
   }
 
   return (
@@ -205,26 +203,26 @@ function MissionFacts({ mission, now, shareUrl }: { mission: FleetMissionSummary
   return (
     <section className="grid gap-3 lg:grid-cols-2">
       <Panel title="Route">
-        <Datum label="Origin" value={planetLabel(mission.originPlanet, mission.originPlanetId)} />
-        <Datum label="Target" value={planetLabel(mission.targetPlanet, mission.targetPlanetId)} />
-        <Datum label="Commander" value={shortHash(mission.owner)} />
-        <Datum label="Mission id" value={mission.missionId} />
+        <Row label="Origin" value={planetLabel(mission.originPlanet, mission.originPlanetId)} />
+        <Row label="Target" value={planetLabel(mission.targetPlanet, mission.targetPlanetId)} />
+        <Row label="Commander" value={shortHash(mission.owner)} />
+        <Row label="Mission id" value={mission.missionId} />
       </Panel>
       <Panel title="Timing">
-        <Datum label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
+        <Row label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
         {noFleetReturned ? (
-          <Datum label="Return" value="Completed, no fleet returned" />
+          <Row label="Return" value="Completed, no fleet returned" />
         ) : (
-          <Datum label="Return" value={formatMissionTime(mission.returnAt, now)} />
+          <Row label="Return" value={formatMissionTime(mission.returnAt, now)} />
         )}
-        <Datum label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
-        <Datum label="Share URL" value={shareUrl || "Available after navigation"} />
+        <Row label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
+        <Row label="Share URL" value={shareUrl || "Available after navigation"} />
       </Panel>
       <Panel title="Fleet And Cargo">
-        <Datum label="Ships" value={formatShips(mission.ships)} />
-        <Datum label="Cargo" value={formatResources(mission.cargo)} />
-        <Datum label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
-        <Datum label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+        <Row label="Ships" value={formatShips(mission.ships)} />
+        <Row label="Cargo" value={formatResources(mission.cargo)} />
+        <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
+        <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
       </Panel>
     </section>
   );
@@ -278,24 +276,24 @@ function MissionBattleReport({
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel title="Combatants">
-          <Datum label="Attacker" value={shortHash(report.attacker)} />
-          <Datum label="Defender" value={`Planet #${report.targetPlanetId}`} />
-          <Datum label="Outcome" value={outcome.label} />
-          <Datum label="Rounds fought" value={report.rounds.toString()} />
+          <Row label="Attacker" value={shortHash(report.attacker)} />
+          <Row label="Defender" value={`Planet #${report.targetPlanetId}`} />
+          <Row label="Outcome" value={outcome.label} />
+          <Row label="Rounds fought" value={report.rounds.toString()} />
         </Panel>
         <Panel title="Attacker Fleet">
-          <Datum label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
-          <Datum label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
-          <Datum label="Full fleet" value={formatShips(mission.ships)} />
+          <Row label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
+          <Row label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
+          <Row label="Full fleet" value={formatShips(mission.ships)} />
         </Panel>
         <Panel title="Fleet Losses">
-          <Datum label="Attacker losses" value={formatResources(report.attackerLosses)} />
-          <Datum label="Defender losses" value={formatResources(report.defenderLosses)} />
+          <Row label="Attacker losses" value={formatResources(report.attackerLosses)} />
+          <Row label="Defender losses" value={formatResources(report.defenderLosses)} />
         </Panel>
         <Panel title="Plunder And Debris">
-          <Datum label="Loot plundered" value={formatResources(report.loot)} />
-          <Datum label="Debris field" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
-          <Datum
+          <Row label="Loot plundered" value={formatResources(report.loot)} />
+          <Row label="Debris field" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
+          <Row
             label="Recyclers to clear debris"
             value={recyclersNeeded > 0 ? `${formatResource(recyclersNeeded.toString())} (${formatResource(debrisTotal.toString())} debris)` : "No debris field"}
           />
@@ -345,9 +343,21 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
 function Panel({ children, title }: { children: preact.ComponentChildren; title: string }) {
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
-      <h3 className="mb-3 text-sm font-semibold text-white">{title}</h3>
-      <div className="grid gap-3">{children}</div>
+      <h3 className="mb-2 text-sm font-semibold text-white">{title}</h3>
+      <table className="w-full border-collapse">
+        <tbody>{children}</tbody>
+      </table>
     </section>
+  );
+}
+
+// Compact two-column table row for a Panel: muted label on the left, value on the right.
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <tr className="border-t border-white/5 align-top first:border-t-0">
+      <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-top text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</th>
+      <td className="py-1.5 text-left align-top break-words text-sm text-slate-300">{value}</td>
+    </tr>
   );
 }
 
