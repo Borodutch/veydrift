@@ -4805,7 +4805,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
           onJoinAttack={handleJoinAttack}
-          onOpenBattleReport={handleOpenBattleReport}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}

@@ -86,7 +86,6 @@ describe("MissionControlPage", () => {
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
       onJoinAttack: () => undefined,
-      onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
       onRecall: () => undefined,
@@ -116,7 +115,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Target Planet #9");
     expect(text).toContain("Transport # 9");
     expect(text).toContain("Land fleet");
-    expect(text).toContain("View report");
+    expect(text).toContain("Open mission");
     expect(text).toContain("Copy report");
     expect(text).toContain("New Eos [2:44:9]");
     expect(text).toContain("External coordinates unavailable");
@@ -262,7 +261,7 @@ describe("MissionControlPage", () => {
     // The summary stat-card row was removed; the active mission still renders below.
     expect(attackerText).not.toContain("Active missions 1");
     expect(attackerText).toContain("Recall fleet");
-    expect(attackerText).toContain("View report");
+    expect(attackerText).toContain("Open mission");
     expect(attackerText).toContain("Copy report");
     expect(attackerText).toContain("Battle report");
     expect(attackerText).not.toContain("Past missions");
@@ -384,11 +383,14 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).not.toContain("Past missions");
-    // Mission #77 collapses to a single row that links to both the detail and the report.
+    // Mission #77 collapses to a single row with one button to the unified mission detail screen.
     expect(text).toContain("Attack Mission # 77");
     expect(text.split("Mission # 77").length - 1).toBe(1);
-    expect(text).toContain("Open details");
-    expect(text).toContain("Open report");
+    // A single "Open mission" button replaces the old split "Open details" / "Open report" pair.
+    expect(text).toContain("Open mission");
+    expect(text.split("Open mission").length - 1).toBe(1);
+    expect(text).not.toContain("Open details");
+    expect(text).not.toContain("Open report");
     // The standalone battle-report row is collapsed away.
     expect(text).not.toContain("Battle report");
   });
@@ -410,7 +412,9 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Battle report");
     expect(text).toContain("Mission # 90");
-    expect(text).toContain("Open report");
+    // Standalone battle-report rows also lead to the single unified mission detail screen.
+    expect(text).toContain("Open mission");
+    expect(text).not.toContain("Open report");
   });
 
   test("labels past missions by direction and drops the self-commander on outgoing", () => {
@@ -502,7 +506,6 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
     onJoinAttack: () => undefined,
-    onOpenBattleReport: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
     onRecall: () => undefined,
