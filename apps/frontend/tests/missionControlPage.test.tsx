@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions } from "../src/components/MissionControlPage";
+import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
@@ -159,6 +160,31 @@ describe("MissionControlPage", () => {
     expect(visibleText(refreshingPage)).toContain("Refreshing");
     expect(source).toContain("<RefreshButton");
     expect(source).not.toContain("RefreshCw");
+  });
+
+  test("resolves colonize-mission target coordinates instead of an unavailable fallback", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({
+          missionId: "42",
+          missionType: "Colonize",
+          originPlanetId: "7",
+          targetPlanetId: encodeColonizationTargetId(2, 44, 10),
+        })],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Uncharted [2:44:10]");
+    expect(text).not.toContain("External coordinates unavailable");
   });
 
   test("renders attacker and defender attack views with side-specific controls", () => {

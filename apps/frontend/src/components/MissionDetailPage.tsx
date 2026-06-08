@@ -2,7 +2,7 @@ import { ArrowLeft, Check, Copy, RefreshCw, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import type { BattleReport, FleetMissionSummary, MissionDetailResponse } from "../walletFlow";
+import { type BattleReport, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
 import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
@@ -427,7 +427,11 @@ function formatMissionTime(value: string, now: number): string {
 }
 
 function planetLabel(planet: FleetMissionSummary["originPlanet"], fallbackId: string): string {
-  if (!planet) return `Planet #${fallbackId}`;
+  if (!planet) {
+    const colonyTarget = decodeColonizationTargetId(fallbackId);
+    if (colonyTarget) return `Uncharted [${colonyTarget.coordinates}]`;
+    return `Planet #${fallbackId}`;
+  }
   const name = planet.name ? `${planet.name} ` : "";
   return `${name}[${planet.coordinates}]`;
 }

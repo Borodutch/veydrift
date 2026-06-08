@@ -2,14 +2,15 @@ import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import type {
-  BattleReport,
-  FleetMissionArchiveEntry,
-  FleetMissionArchiveResponse,
-  FleetMissionPlanetReference,
-  FleetMissionSummary,
-  FleetMissionVisibilityResponse,
-  ManagedPlanetResponse,
+import {
+  type BattleReport,
+  type FleetMissionArchiveEntry,
+  type FleetMissionArchiveResponse,
+  type FleetMissionPlanetReference,
+  type FleetMissionSummary,
+  type FleetMissionVisibilityResponse,
+  type ManagedPlanetResponse,
+  decodeColonizationTargetId,
 } from "../walletFlow";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
@@ -1287,6 +1288,8 @@ function addressesMatch(left: string | undefined, right: string | undefined): bo
 function planetReference(planetId: string, lookup: ReadonlyMap<string, MissionPlanetIdentity>): string {
   const planet = lookup.get(planetId);
   if (planet) return `${planet.displayName} [${planet.coordinates}]`;
+  const colonyTarget = decodeColonizationTargetId(planetId);
+  if (colonyTarget) return `Uncharted [${colonyTarget.coordinates}]`;
   return "External coordinates unavailable";
 }
 
