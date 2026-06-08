@@ -114,6 +114,7 @@ import {
   fetchPlayerProfile,
   mergePlayerProfile,
   walletRequestErrorMessage,
+  spendTransactionErrorMessage,
   confirmTransactionReceipt,
   sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
@@ -185,6 +186,7 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
+import { canonicalSpendableResources } from "./canonicalResources";
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -2801,9 +2803,35 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       snapshotResources: onChainResources,
     });
   }, [caps, now, onChainResources, rates, topBarResourceSnapshotReceivedAtMs]);
+  // Anchor the displayed/spendable balance to the canonical (accurate) value.
+  // The settlement endpoint can over-report after a spend because it adds
+  // production accrual without subtracting the recent cost; the infrastructure
+  // endpoint reports the true on-chain spendable balance. Taking the
+  // element-wise minimum keeps the UI from ever exceeding the real balance, so
+  // affordability gating cannot let through a tx that would revert with
+  // InsufficientResources.
+  const canonicalOnChainResources = useMemo(() => {
+    return canonicalSpendableResources({
+      settlementResources: liveOnChainResources,
+      infrastructureResources: resourcesFromChain(infrastructureChainState?.resources ?? null),
+      infrastructureSettledAtMs:
+        timestampToMs(infrastructureChainState?.planetLastSettledAt ?? null) ?? topBarResourceSnapshotReceivedAtMs,
+      rates,
+      caps,
+      now,
+    });
+  }, [
+    caps,
+    infrastructureChainState?.planetLastSettledAt,
+    infrastructureChainState?.resources,
+    liveOnChainResources,
+    now,
+    rates,
+    topBarResourceSnapshotReceivedAtMs,
+  ]);
   const spendableResources = useMemo(() => {
-    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: liveOnChainResources });
-  }, [isWalletConnected, liveOnChainResources]);
+    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
+  }, [isWalletConnected, canonicalOnChainResources]);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
@@ -3073,7 +3101,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: backendStateReady ? walletRequestErrorMessage(error) : buildingUpgradeActionErrorLabel(error),
+          label: backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error),
         });
       }
     });
@@ -3249,7 +3277,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           : { status: "pending", label: `${label} confirmed. Rechecking game state after a temporary API/RPC outage.` });
       } catch (error) {
         console.error(error);
-        const message = error instanceof Error ? error.message : `${label} failed.`;
+        const message = spendTransactionErrorMessage(error);
         setShipyardAction({
           status: "error",
           label: `${label} failed: ${message}`,
@@ -3284,7 +3312,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         console.error(error);
         setDefenseAction({
           status: "error",
-          label: error instanceof Error ? error.message : `${label} failed.`,
+          label: spendTransactionErrorMessage(error),
         });
       }
     });
@@ -3357,7 +3385,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         console.error(error);
         setResearchAction({
           status: "error",
-          label: error instanceof Error ? error.message : `${label} failed.`,
+          label: spendTransactionErrorMessage(error),
         });
       }
     });
