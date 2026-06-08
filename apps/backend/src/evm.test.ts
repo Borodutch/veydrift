@@ -701,6 +701,74 @@ describe("moon chance report event decoding", () => {
   });
 });
 
+describe("player queue startedAt", () => {
+  const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
+
+  test("populates an active ship queue startedAt from the ShipQueued log block timestamp", async () => {
+    const wallet = "0x0000000000000000000000000000000000000def" as Address;
+    const abiWords = (...values: bigint[]) => dataWords(values.map(word));
+    const itemId = 0n;
+    const quantity = 2n;
+    const readyAt = 1_700_000_600n;
+    const cost = { metal: 4_000n, crystal: 4_000n, deuterium: 0n };
+    const startedAt = 1_700_000_000n;
+
+    const shipQueuedLog = makeLog({
+      topics: [shipQueuedTopic, topic(7n), topic(itemId)],
+      data: abiWords(quantity, readyAt, cost.metal, cost.crystal, cost.deuterium)
+    });
+
+    let getLogsTopics: unknown;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_call") {
+          const selector = (params[0] as { data: string }).data.slice(0, 10);
+          // building / defense / research queues inactive; ship queue active
+          if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0x5758361d") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0x4f5ed437") return abiWords(0n, 0n) as T;
+          if (selector === "0xb6f4b7b7") {
+            return abiWords(1n, itemId, quantity, readyAt, cost.metal, cost.crystal, cost.deuterium) as T;
+          }
+          if (selector === "0x52b55205") return abiWords(0n, 0n) as T;
+          if (selector === "0x2b98afc7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          throw new Error(`Unexpected eth_call selector ${selector}`);
+        }
+        if (method === "eth_getLogs") {
+          getLogsTopics = (params[0] as { topics?: unknown }).topics;
+          return [shipQueuedLog] as T;
+        }
+        if (method === "eth_getBlockByNumber") {
+          return { timestamp: `0x${startedAt.toString(16)}` } as T;
+        }
+        throw new Error(`Unexpected method ${method}`);
+      }
+    });
+    // Avoid the on-chain settlement lookup; pin the wallet to a known home planet.
+    (reader as unknown as {
+      getGameSettlement: (wallet: Address) => Promise<unknown>;
+    }).getGameSettlement = async () => ({
+      wallet,
+      hasFirstPlanet: true,
+      homePlanetId: "7",
+      planet: null,
+      contractKind: "game"
+    });
+
+    const queues = await reader.getPlayerQueues(wallet);
+
+    expect(queues.ship).toMatchObject({
+      active: true,
+      kind: "ship",
+      itemId: 0,
+      quantity: 2,
+      readyAt: readyAt.toString(),
+      startedAt: startedAt.toString()
+    });
+    expect((getLogsTopics as string[])?.[0]).toBe(shipQueuedTopic);
+  });
+});
+
 describe("fleet mission visibility", () => {
   test("reconstructs attacker and defender mission views plus battle reports from logs", async () => {
     const defender = "0x0000000000000000000000000000000000000def" as Address;
