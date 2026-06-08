@@ -34,6 +34,26 @@ describe("QueueProgressPanel", () => {
     expect(text).toContain("Complete queue");
   });
 
+  test("renders a freshly started ship queue near 0%, not nearly full", () => {
+    const now = 1_700_000_000_000;
+    const startedAt = String(Math.floor(now / 1_000)); // chain seconds: just started
+    const readyAt = String(Math.floor(now / 1_000) + 24 * 60); // +24m build
+    const panel = QueueProgressPanel({
+      label: "Small Cargo",
+      now,
+      quantity: 1,
+      readyAt,
+      startedAt,
+      title: "Active queue",
+      tone: "cyan",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("0%");
+    expect(text).not.toContain("100%");
+    expect(hasClass(panel, "animate-pulse")).toBe(false);
+  });
+
   test("keeps pending queues without a canonical timeline indeterminate", () => {
     const panel = QueueProgressPanel({
       label: "Light Laser",
