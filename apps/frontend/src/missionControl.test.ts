@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
-import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionSummary } from "./walletFlow";
+import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
@@ -288,6 +288,7 @@ describe("Mission Control battle reports", () => {
 
   test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const openedPlayers: string[] = [];
     const text = collectText(MissionDetailPage({
       account: "0x1111111111111111111111111111111111111111",
       actionState: { status: "idle" },
@@ -297,6 +298,8 @@ describe("Mission Control battle reports", () => {
         mission: {
           ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
           needsResolution: true,
+          originPlanet: planetReference("7", "0x1111111111111111111111111111111111111111", "Aggressor", "1:2:3"),
+          targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
         },
         battleReport: battleReport("42"),
       },
@@ -307,6 +310,7 @@ describe("Mission Control battle reports", () => {
       onCompleteReturn: () => undefined,
       onCopyShareUrl: () => undefined,
       onCounterplay: () => undefined,
+      onOpenPlayer: (wallet) => openedPlayers.push(wallet),
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
@@ -323,8 +327,19 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Attacker");
     expect(text).toContain("Defender");
     expect(text).toContain("Debris Field");
-    expect(text).toContain("Loot plundered");
-    expect(text).toContain("Recyclers to clear debris");
+    expect(text).toContain("Debris created");
+    // VEY-KANEO-396: loot is split per side - attacker grabbed, defender kept.
+    expect(text).toContain("Loot grabbed");
+    expect(text).toContain("Loot left");
+    expect(text).toContain("Fleet / defenses");
+    // VEY-KANEO-396: commander names are present for both sides and link to their profiles.
+    expect(text).toContain("Aggressor");
+    expect(text).toContain("Bastion");
+    expect(text).toContain("Open Aggressor (0x22222222...222222) profile");
+    expect(text).toContain("Open Bastion (0x33333333...333333) profile");
+    // VEY-KANEO-396: the recyclers-to-clear-debris section was removed entirely.
+    expect(text).not.toContain("Recyclers to clear debris");
+    expect(text).not.toContain("Loot plundered");
     // The legacy single-list panels were replaced by the two-sided layout.
     expect(text).not.toContain("Combatants");
     expect(text).not.toContain("Attacker Fleet");
@@ -496,6 +511,11 @@ function collectText(node: unknown): string[] {
     ? [vnode.props?.["aria-label"], vnode.props?.title].filter((value): value is string => typeof value === "string")
     : [];
   return [...labels, ...collectText(vnode.props?.children)];
+}
+
+function planetReference(planetId: string, owner: string, ownerDisplayName: string, coordinates: string): FleetMissionPlanetReference {
+  const [galaxy, system, position] = coordinates.split(":").map((part) => Number(part));
+  return { planetId, owner, ownerDisplayName, name: ownerDisplayName, galaxy: galaxy ?? 0, system: system ?? 0, position: position ?? 0, coordinates };
 }
 
 function mission(

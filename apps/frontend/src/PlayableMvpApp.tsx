@@ -4674,6 +4674,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onCompleteReturn={handleCompleteMissionReturn}
           onCopyShareUrl={() => handleCopyMissionShareUrl(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
+          onOpenPlayer={handleSelectPlayer}
           onRecall={handleRecallMission}
           onResolve={handleResolveMission}
           onRetry={loadMissionDetail}

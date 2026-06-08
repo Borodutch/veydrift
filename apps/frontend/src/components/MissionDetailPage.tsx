@@ -16,9 +16,6 @@ export type MissionDetailActionState =
 
 export type MissionShareCopyState = "copied" | "error" | "idle";
 
-// Each recycler hauls 20,000 units of debris; used to estimate recyclers needed.
-const RECYCLER_CARGO_CAPACITY = 20_000;
-
 interface MissionDetailPageProps {
   account?: string | undefined;
   actionState: MissionDetailActionState;
@@ -33,6 +30,7 @@ interface MissionDetailPageProps {
   onCompleteReturn: (missionId: string) => void;
   onCopyShareUrl: () => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onOpenPlayer?: ((wallet: string) => void) | undefined;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
@@ -52,6 +50,7 @@ export function MissionDetailPage({
   onCompleteReturn,
   onCopyShareUrl,
   onCounterplay,
+  onOpenPlayer,
   onRecall,
   onResolve,
   onRetry,
@@ -125,7 +124,7 @@ export function MissionDetailPage({
             </Notice>
           ) : null}
           <MissionFacts mission={mission} now={now} />
-          <MissionBattleReport mission={mission} report={report} />
+          <MissionBattleReport mission={mission} onOpenPlayer={onOpenPlayer} report={report} />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
@@ -218,9 +217,11 @@ function MissionFacts({ mission, now }: { mission: FleetMissionSummary; now: num
 
 function MissionBattleReport({
   mission,
+  onOpenPlayer,
   report,
 }: {
   mission: FleetMissionSummary;
+  onOpenPlayer?: ((wallet: string) => void) | undefined;
   report?: BattleReport | undefined;
 }) {
   if (!isCombatMission(mission)) {
@@ -242,8 +243,9 @@ function MissionBattleReport({
   }
 
   const outcome = battleOutcomeSummary(report.outcome);
-  const debrisTotal = Number(report.debris.metal) + Number(report.debris.crystal);
-  const recyclersNeeded = debrisTotal > 0 ? Math.ceil(debrisTotal / RECYCLER_CARGO_CAPACITY) : 0;
+  // The defender is the owner of the attacked planet; the indexed mission carries that planet
+  // reference (and display name) when the target is charted.
+  const defenderWallet = mission.targetPlanet?.owner ?? null;
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -262,30 +264,38 @@ function MissionBattleReport({
         <p className="text-xs font-medium uppercase tracking-[0.14em] opacity-80">{report.rounds} {report.rounds === 1 ? "round" : "rounds"} fought</p>
       </div>
 
-      {/* Two-sided report: the attacker column carries the offensive fleet, its losses, and what it
-          plundered; the defender column carries the target planet and its losses. */}
+      {/* Two-sided report: the attacker column carries the offensive fleet, its losses, and the loot
+          it grabbed; the defender column carries the target commander, defenses, losses, and the loot
+          it kept. Debris is shown on its own below. */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel title="Attacker">
-          <Row label="Commander" value={shortHash(report.attacker)} />
+          <Row
+            label="Commander"
+            value={<Commander displayName={mission.originPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} wallet={report.attacker} />}
+          />
           <Row label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
           <Row label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
           <Row label="Full fleet" value={formatShips(mission.ships)} />
           <Row label="Fleet losses" value={formatResources(report.attackerLosses)} />
-          <Row label="Loot plundered" value={formatResources(report.loot)} />
+          <Row label="Loot grabbed" value={formatResources(report.loot)} />
         </Panel>
         <Panel title="Defender">
-          <Row label="Planet" value={`Planet #${report.targetPlanetId}`} />
+          <Row
+            label="Commander"
+            value={defenderWallet
+              ? <Commander displayName={mission.targetPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} wallet={defenderWallet} />
+              : `Planet #${report.targetPlanetId} (external commander unavailable)`}
+          />
+          {/* The indexed combat log does not expose the defender's ship/defense composition. */}
+          <Row label="Fleet / defenses" value="Not exposed by the indexed report" />
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
+          <Row label="Loot left" value="Not exposed by the indexed report" />
         </Panel>
       </div>
 
       <div className="mt-3">
         <Panel title="Debris Field">
-          <Row label="Debris" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
-          <Row
-            label="Recyclers to clear debris"
-            value={recyclersNeeded > 0 ? `${formatResource(recyclersNeeded.toString())} (${formatResource(debrisTotal.toString())} debris)` : "No debris field"}
-          />
+          <Row label="Debris created" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
         </Panel>
       </div>
 
@@ -342,12 +352,29 @@ function Panel({ children, title }: { children: preact.ComponentChildren; title:
 }
 
 // Compact two-column table row for a Panel: muted label on the left, value on the right.
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: preact.ComponentChildren }) {
   return (
     <tr className="border-t border-white/5 align-top first:border-t-0">
       <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-top text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</th>
       <td className="py-1.5 text-left align-top break-words text-sm text-slate-300">{value}</td>
     </tr>
+  );
+}
+
+// Commander identity that links to the player's public profile when a navigation handler is wired;
+// falls back to plain text for the shareable/standalone render.
+function Commander({ displayName, onOpenPlayer, wallet }: { displayName?: string | null | undefined; onOpenPlayer?: ((wallet: string) => void) | undefined; wallet: string }) {
+  const label = displayName ? `${displayName} (${shortHash(wallet)})` : shortHash(wallet);
+  if (!onOpenPlayer) return <>{label}</>;
+  return (
+    <button
+      className="text-left font-medium text-cyan-200 underline-offset-2 transition hover:text-cyan-100 hover:underline"
+      onClick={() => onOpenPlayer(wallet)}
+      title={`Open ${label} profile`}
+      type="button"
+    >
+      {label}
+    </button>
   );
 }
 
