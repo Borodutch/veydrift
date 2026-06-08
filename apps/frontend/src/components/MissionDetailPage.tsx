@@ -65,12 +65,14 @@ export function MissionDetailPage({
   return (
     <section className="grid gap-4">
       <PageHeader
+        beforeTitle={(
+          <button className="mb-3 inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
+            <ArrowLeft aria-hidden="true" size={15} />
+            Mission Control
+          </button>
+        )}
         actions={(
           <>
-            <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
-              <ArrowLeft aria-hidden="true" size={15} />
-              Mission Control
-            </button>
             <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
             <button
               aria-label={copyLabel}
