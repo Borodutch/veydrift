@@ -71,8 +71,10 @@ export function RiftPage({
         title="Resource Bridge"
       />
 
-      {actionState.status !== "idle" && (
-        <Notice tone={actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "info"}>
+      {/* Only surface failures. Success/pending action banners are intentionally
+          not rendered so the page does not flash transient status banners. */}
+      {actionState.status === "error" && (
+        <Notice tone="danger">
           {actionState.label}
         </Notice>
       )}

@@ -141,7 +141,7 @@ export function DefensePage({
   );
 }
 
-function StatusPanel({
+export function StatusPanel({
   actionState,
   defenseState,
   error,
@@ -152,7 +152,10 @@ function StatusPanel({
   error: string | undefined;
   loading: boolean;
 }) {
-  if (loading) {
+  // Only suppress notices during the initial load (no state yet). Keeping the
+  // last notice visible across refreshes avoids a blink/layout-jump when state
+  // is silently re-fetched.
+  if (loading && !defenseState) {
     return null;
   }
 
@@ -177,9 +180,10 @@ function StatusPanel({
     );
   }
 
-  if (actionState.status !== "idle") {
-    const tone = actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "neutral";
-    return <Notice tone={tone}>{actionState.label}</Notice>;
+  // Only surface failures. Success/pending action banners are intentionally not
+  // rendered so the page does not flash transient status banners on every action.
+  if (actionState.status === "error") {
+    return <Notice tone="danger">{actionState.label}</Notice>;
   }
 
   return null;
