@@ -451,8 +451,10 @@ describe("MissionControlPage", () => {
     expect(text.split("Open mission").length - 1).toBe(25);
     expect(text).toContain("Page 1 of 2");
     expect(text).toContain("1-25 of 26");
-    // The dedicated "Completed" column header is gone; the compact table keeps the remaining columns.
-    expect(text).toContain("Mission Route / target Result Details");
+    // The dedicated "Completed" column header is gone; the "Route / target" header is shortened to
+    // "Route" (VEY-371 rework). The compact table keeps the remaining columns.
+    expect(text).toContain("Mission Route Result Details");
+    expect(text).not.toContain("Route / target");
     expect(text).not.toContain("Completed");
     expect(text).not.toContain("Mission #");
     expect(text).not.toContain("Open list");
@@ -556,6 +558,9 @@ describe("MissionControlPage", () => {
     // Incoming past mission is prefixed and keeps the foreign commander identity.
     expect(text).toContain("Incoming attack");
     expect(text).toContain("Commander 0x3333...3333");
+    // VEY-371 rework: the completion time now sits next to the status label (e.g.
+    // "Returned · Jun 7, 2026, ..."), not on a separate line or column.
+    expect(text).toContain("Returned · ");
   });
 
   test("surfaces joinable attacks under the Alliance tab (no stat-card row)", () => {
