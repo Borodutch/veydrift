@@ -60,6 +60,22 @@ export function sumPendingSpendCosts(entries: readonly PendingSpend[]): Resource
 }
 
 /**
+ * Subtract a resource cost from a candidate balance, clamped at zero. Returns the
+ * balance unchanged when it is unavailable.
+ */
+export function subtractResourceCost(
+  balance: Resources | undefined,
+  cost: Resources,
+): Resources | undefined {
+  if (!balance) return balance;
+  return {
+    metal: Math.max(0, balance.metal - Math.max(0, cost.metal)),
+    crystal: Math.max(0, balance.crystal - Math.max(0, cost.crystal)),
+    deuterium: Math.max(0, balance.deuterium - Math.max(0, cost.deuterium)),
+  };
+}
+
+/**
  * Subtract the outstanding pending-spend cost from a candidate balance, clamped
  * at zero. Returns the balance unchanged when there are no pending spends.
  */
@@ -68,12 +84,58 @@ export function applyPendingSpends(
   entries: readonly PendingSpend[],
 ): Resources | undefined {
   if (!balance || entries.length === 0) return balance;
-  const sum = sumPendingSpendCosts(entries);
+  return subtractResourceCost(balance, sumPendingSpendCosts(entries));
+}
+
+/** Element-wise maximum of two resource costs. */
+export function maxResourceCost(a: Resources, b: Resources): Resources {
   return {
-    metal: Math.max(0, balance.metal - sum.metal),
-    crystal: Math.max(0, balance.crystal - sum.crystal),
-    deuterium: Math.max(0, balance.deuterium - sum.deuterium),
+    metal: Math.max(a.metal, b.metal),
+    crystal: Math.max(a.crystal, b.crystal),
+    deuterium: Math.max(a.deuterium, b.deuterium),
   };
+}
+
+/**
+ * A spend the backend already shows as an active queue item (build / research /
+ * ship / defense). Unlike the in-session {@link PendingSpend} ledger, these are
+ * re-derived from backend state on every load, so they survive a page reload and
+ * have no TTL. They cover the gap the session ledger misses: a spend started in a
+ * previous session — or one that outlived the ledger TTL — that the resource
+ * snapshot does not yet reflect.
+ */
+export type QueueSpend = {
+  cost: Resources;
+  /** When the spend started on-chain (ms); undefined when unknown. */
+  startedAtMs: number | undefined;
+};
+
+/**
+ * Total cost of active-queue spends that are NOT yet reflected in the accurate
+ * backend resource snapshot.
+ *
+ * A spend with `startedAtMs <= snapshotSettledAtMs` is already baked into the
+ * snapshot, so it is skipped to avoid double-subtracting. When the snapshot
+ * settle time is unknown — the accurate infrastructure read is unavailable or
+ * still warming — the snapshot cannot be trusted to reflect the spend, so it is
+ * subtracted (the conservative, never-over-report direction).
+ */
+export function unsettledQueueSpendCosts(
+  spends: readonly QueueSpend[],
+  snapshotSettledAtMs: number | undefined,
+): Resources {
+  return spends.reduce<Resources>((acc, spend) => {
+    const reflectedInSnapshot =
+      snapshotSettledAtMs !== undefined
+      && spend.startedAtMs !== undefined
+      && spend.startedAtMs <= snapshotSettledAtMs;
+    if (reflectedInSnapshot) return acc;
+    return {
+      metal: acc.metal + Math.max(0, spend.cost.metal),
+      crystal: acc.crystal + Math.max(0, spend.cost.crystal),
+      deuterium: acc.deuterium + Math.max(0, spend.cost.deuterium),
+    };
+  }, zeroResources());
 }
 
 /**
