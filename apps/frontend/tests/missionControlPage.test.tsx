@@ -269,7 +269,7 @@ describe("MissionControlPage", () => {
     expect(attackerText).not.toContain("Intercept");
   });
 
-  test("renders a shareable battle report detail with OGame-style operational fields", () => {
+  test("renders a shareable battle report detail with operational fields", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",

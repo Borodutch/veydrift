@@ -9,8 +9,9 @@ describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
     expect(parseInspectRoute("#/battle-reports")).toEqual({ kind: "page", page: "battle-reports" });
     expect(buildInspectHash({ kind: "page", page: "battle-reports" })).toBe("#/battle-reports");
-    expect(parseInspectRoute("#/battle-report/42")).toEqual({ kind: "battle-report", missionId: "42" });
-    expect(buildInspectHash({ kind: "battle-report", missionId: "42" })).toBe("#/battle-report/42");
+    // Legacy single-report deep links now redirect to the unified mission detail page,
+    // which is itself the shareable public report.
+    expect(parseInspectRoute("#/battle-report/42")).toEqual({ kind: "mission", missionId: "42" });
     expect(parseInspectRoute("#/mission/42")).toEqual({ kind: "mission", missionId: "42" });
     expect(buildInspectHash({ kind: "mission", missionId: "42" })).toBe("#/mission/42");
   });
@@ -257,7 +258,7 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("1-25 of 26");
   });
 
-  test("renders shareable mission detail stages, actions, and OGame-style report structure", () => {
+  test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
       account: "0x1111111111111111111111111111111111111111",
@@ -278,7 +279,6 @@ describe("Mission Control battle reports", () => {
       onCompleteReturn: () => undefined,
       onCopyShareUrl: () => undefined,
       onCounterplay: () => undefined,
-      onOpenBattleReport: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
@@ -290,17 +290,25 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Needs resolution");
     expect(text).toContain("Resolve battle");
     expect(text).toContain("Copy link");
-    expect(text).toContain("OGame-Style Battle Report");
+    expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");
     expect(text).toContain("Combatants");
     expect(text).toContain("Attacker Fleet");
     expect(text).toContain("Fleet Losses");
     expect(text).toContain("Plunder And Debris");
     expect(text).toContain("Recyclers to clear debris");
-    expect(text).toContain("Combat Proof");
     expect(text).toContain("Round-by-round combat");
     // The on-chain log does not expose these fields, so they must not be rendered as empty cells.
     expect(text).not.toContain("Not indexed yet");
+    // VEY-389: no "OGame" anywhere in rendered copy.
+    expect(text).not.toContain("OGame");
+    // VEY-387/386: combat-proof and chain-proof blocks were removed from the page.
+    expect(text).not.toContain("Combat Proof");
+    expect(text).not.toContain("Chain Proof");
+    // VEY-390: the mission detail page is itself the public report, no separate button.
+    expect(text).not.toContain("Public report");
+    // VEY-388: descriptive ship-class subtext was removed.
+    expect(text).not.toContain("Ship classes");
   });
 
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
@@ -322,7 +330,6 @@ describe("Mission Control battle reports", () => {
       onCompleteReturn: () => undefined,
       onCopyShareUrl: () => undefined,
       onCounterplay: () => undefined,
-      onOpenBattleReport: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,

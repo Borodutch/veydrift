@@ -125,7 +125,7 @@ const researchBaseCosts: readonly Cost[] = [
 export const highscoreFormula = {
   pointsDivisor: pointsDivisor.toString(),
   target:
-    "Classic OGame non-lifeform highscore parity: total, economy, research points, research levels, current military points, current fleet points, ship count, and defense points.",
+    "Classic non-lifeform highscore parity: total, economy, research points, research levels, current military points, current fleet points, ship count, and defense points.",
   summary:
     "Veydrift score uses one point per 1,000 resources of completed canonical owned state: planet and moon buildings as economy, research globally, current military, current fleet, and current defenses. Destroyed ships and defenses leave the current-state rankings when contract state removes them.",
   excludedCategories: [
