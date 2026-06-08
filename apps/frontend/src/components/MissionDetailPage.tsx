@@ -36,7 +36,6 @@ interface MissionDetailPageProps {
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
-  shareUrl: string;
 }
 
 export function MissionDetailPage({
@@ -56,7 +55,6 @@ export function MissionDetailPage({
   onRecall,
   onResolve,
   onRetry,
-  shareUrl,
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
   const report = detail?.battleReport ?? undefined;
@@ -116,7 +114,7 @@ export function MissionDetailPage({
               {actionState.label}
             </Notice>
           ) : null}
-          <MissionFacts mission={mission} now={now} shareUrl={shareUrl} />
+          <MissionFacts mission={mission} now={now} />
           <MissionBattleReport mission={mission} report={report} />
         </>
       ) : (
@@ -198,7 +196,7 @@ function MissionActions({
   );
 }
 
-function MissionFacts({ mission, now, shareUrl }: { mission: FleetMissionSummary; now: number; shareUrl: string }) {
+function MissionFacts({ mission, now }: { mission: FleetMissionSummary; now: number }) {
   const noFleetReturned = isNoFleetReturned(mission);
   return (
     <section className="grid gap-3 lg:grid-cols-2">
@@ -216,7 +214,6 @@ function MissionFacts({ mission, now, shareUrl }: { mission: FleetMissionSummary
           <Row label="Return" value={formatMissionTime(mission.returnAt, now)} />
         )}
         <Row label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
-        <Row label="Share URL" value={shareUrl || "Available after navigation"} />
       </Panel>
       <Panel title="Fleet And Cargo">
         <Row label="Ships" value={formatShips(mission.ships)} />
