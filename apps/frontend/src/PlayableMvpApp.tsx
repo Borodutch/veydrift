@@ -74,12 +74,14 @@ import {
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
   waitForStartedShipProductionState,
+  waitForStartedBuildingState,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForAllianceApplicationCleared,
   waitForRenamedWalletPlanet,
   type AllianceApplicationExpectation,
   type FinishedResearchExpectation,
+  type StartedBuildingExpectation,
   type StartedDefenseProductionExpectation,
   type StartedShipProductionExpectation,
   type StartedResearchExpectation,
@@ -232,9 +234,14 @@ const buildingWalletConfirmationLabel = (label: string) =>
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 
 type RefreshFreshnessGate = { current: number };
-type ResourceSnapshotFreshness = {
+export type ResourceSnapshotFreshness = {
   planetId: string | null;
   lastSettledAt: string | null;
+};
+
+export type OnChainRefreshPlan = {
+  applyQueues: boolean;
+  applyResourceState: boolean;
 };
 
 export function beginRefreshRequest(gate: RefreshFreshnessGate): number {
@@ -295,6 +302,21 @@ export function recordedResourceSnapshotFreshness(
   }
 
   return next;
+}
+
+// Authoritative on-chain construction queues + fleet visibility are not resource
+// snapshots, so they must apply even when the resource anti-snapback gate rejects
+// an equal/older settlement read (e.g. after a building completes with no fresh
+// spend to settle). Only the resource/settlement state stays behind the gate. The
+// request-ordering gate still guards against out-of-order responses upstream.
+export function planOnChainRefresh(
+  current: ResourceSnapshotFreshness,
+  next: ResourceSnapshotFreshness,
+): OnChainRefreshPlan {
+  return {
+    applyQueues: true,
+    applyResourceState: shouldApplyResourceSnapshot(current, next),
+  };
 }
 
 export function shouldRefreshAllianceStateForPage(page: Page): boolean {
@@ -2287,7 +2309,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         return;
       }
       const nextFreshness = resourceSnapshotFreshnessForSettlement(nextSettlement);
-      if (!shouldApplyResourceSnapshot(latestOnChainResourceSnapshot.current, nextFreshness)) {
+      const plan = planOnChainRefresh(latestOnChainResourceSnapshot.current, nextFreshness);
+      // Construction queues + fleet visibility are authoritative and not resource
+      // snapshots, so apply them regardless of the resource anti-snapback gate.
+      // This is what lets the Overview Buildings card clear a completed build
+      // queue on the periodic poll without waiting for a manual page reload.
+      if (plan.applyQueues) {
+        setOnChainQueues((current) => preserveActiveResearchQueue(current, queues));
+        setFleetVisibility(fleetVisibility);
+        setOnChainError(undefined);
+        setOnChainStatus("ready");
+      }
+      if (!plan.applyResourceState) {
         return;
       }
       latestOnChainResourceSnapshot.current = recordedResourceSnapshotFreshness(
@@ -2300,10 +2333,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
       applyOnChainSettlementSnapshot(nextSettlement);
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
-      setOnChainQueues((current) => preserveActiveResearchQueue(current, queues));
-      setFleetVisibility(fleetVisibility);
-      setOnChainError(undefined);
-      setOnChainStatus("ready");
       setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
     } catch (error) {
       if (!canApplyRefreshRequest(onChainRefreshGate, requestId)) {
@@ -2537,6 +2566,59 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setResearchLoading(false);
     }
   }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshResearchState]);
+
+  const refreshStartedBuildingState = useCallback(async (expectation: StartedBuildingExpectation) => {
+    if (!apiBaseUrl || !account) {
+      void refreshOnChainState();
+      await refreshInfrastructureState();
+      return;
+    }
+
+    const requestId = beginRefreshRequest(infrastructureRefreshGate);
+    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setInfrastructureLoading(true);
+    setInfrastructureError(undefined);
+
+    try {
+      const snapshot = await waitForStartedBuildingState(
+        async () => {
+          const [infrastructure, queues] = await Promise.all([
+            fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
+            fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+          ]);
+
+          return { infrastructure, queues };
+        },
+        expectation,
+      );
+
+      if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return;
+      latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        latestInfrastructureResourceSnapshot.current,
+        resourceSnapshotFreshnessForInfrastructure(snapshot.infrastructure),
+      );
+      setInfrastructureChainState(snapshot.infrastructure);
+      setOnChainQueues(snapshot.queues);
+      setOnChainError(undefined);
+      setOnChainStatus("ready");
+      // Reconcile the settlement snapshot so the top-bar resources reflect the
+      // amount just spent on the upgrade. Safe to fire here: the indexer is
+      // already confirmed caught up (the queue poll succeeded), and the queue
+      // display prefers infrastructureChainState.queue, so this cannot regress
+      // the freshly-applied build queue.
+      void refreshOnChainState();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load started building state.";
+      setOnChainError(message);
+      setOnChainStatus("error");
+      setInfrastructureError(message);
+      throw error;
+    } finally {
+      if (canApplyRefreshRequest(infrastructureRefreshGate, requestId)) {
+        setInfrastructureLoading(false);
+      }
+    }
+  }, [account, activePlanetId, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
 
   const refreshFinishedResearchState = useCallback(async (expectation: FinishedResearchExpectation) => {
     if (!apiBaseUrl || !account) {
@@ -3093,8 +3175,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
         await confirmSubmittedTransaction(txHash);
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
-        await refreshOnChainState();
-        await refreshInfrastructureState();
+        const currentLevel = liveInfrastructure?.buildings.find((row) => row.id === building)?.level ?? 0;
+        await refreshStartedBuildingState({
+          itemId: building,
+          planetId,
+          targetLevel: currentLevel + 1,
+        });
         setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
       } catch (error) {
         console.error(error);
@@ -3117,8 +3203,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainSettlement?.homePlanetId,
     provider,
     refreshLiveInfrastructureState,
-    refreshInfrastructureState,
-    refreshOnChainState,
+    refreshStartedBuildingState,
     runtimeConfig.status,
     transactionActionGate,
   ]);
