@@ -400,10 +400,24 @@ describe("RankingsPage", () => {
     const button = buttonWithTitle(indicator, "Go to your rank");
 
     expect(visibleText(indicator)).toContain("Your rank: # 42 1,500");
+    expect(visibleText(indicator)).toContain("Jump to your row");
     expect(button?.props?.["aria-label"]).toBe("Your rank is 42");
     expect(button?.props?.disabled).toBe(false);
     button?.props?.onClick?.();
     expect(visited).toEqual(["current"]);
+  });
+
+  test("omits the jump affordance when the current player has no rank to jump to", () => {
+    const indicator = RankingsCurrentPlayerIndicator({
+      currentPlayerPage: null,
+      currentWallet: "0x1111111111111111111111111111111111111111",
+      hasLoadedData: true,
+      loading: false,
+      onCurrentPlayer: () => undefined,
+    });
+
+    expect(visibleText(indicator)).toContain("Your rank: Unranked");
+    expect(visibleText(indicator)).not.toContain("Jump to your row");
   });
 
   test("updates the current-player rank indicator from the selected category payload", () => {
