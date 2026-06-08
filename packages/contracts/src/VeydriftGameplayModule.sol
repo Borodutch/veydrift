@@ -34,6 +34,11 @@ interface IVeydriftAttackTargetQueueSettler {
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
     bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
+    bytes4 private constant LAUNCH_FLEET_MISSION_SELECTOR = bytes4(
+        keccak256(
+            "launchFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,uint256)"
+        )
+    );
 
     using SafeCast for uint256;
 
@@ -79,6 +84,50 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             cargo,
             speedPercent,
             randomnessRequestId
+        );
+    }
+
+    /// @notice Launch an Attack mission with a player-selected loot ratio (metal/crystal/deuterium
+    ///         bps split applied to cargo capacity, with capacity rollover for unfillable shares).
+    /// @dev The three bps shares must sum to exactly `BPS`. The mission itself is created by reusing
+    ///      the standard launch path: this call's calldata is re-dispatched as `launchFleetMission`
+    ///      (with the `Attack` mission type spliced in and the trailing loot ratio dropped) through
+    ///      the game facade, avoiding both a third inlined copy of the large launch routine and any
+    ///      costly struct re-encoding here. The loot ratio is then recorded on the created mission.
+    function launchAttackMission(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        uint256,
+        LootRatio calldata lootRatio
+    ) external returns (uint256 missionId) {
+        if (uint256(lootRatio.metalBps) + lootRatio.crystalBps + lootRatio.deuteriumBps != BPS) {
+            revert InvalidLootRatio();
+        }
+        bytes4 selector = LAUNCH_FLEET_MISSION_SELECTOR;
+        bool ok;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            // origin + target (two words) copied verbatim after the selector
+            calldatacopy(add(ptr, 0x04), 0x04, 0x40)
+            // splice in the Attack mission type as the third argument
+            mstore(add(ptr, 0x44), 3)
+            // remaining args (ships, cargo, speed, randomnessRequestId), dropping the loot ratio tail
+            let restLen := sub(calldatasize(), 0xA4)
+            calldatacopy(add(ptr, 0x64), 0x44, restLen)
+            ok := delegatecall(gas(), address(), ptr, add(restLen, 0x64), ptr, 0x20)
+            missionId := mload(ptr)
+            if iszero(ok) {
+                returndatacopy(ptr, 0, returndatasize())
+                revert(ptr, returndatasize())
+            }
+        }
+        _fleetMissions[missionId].lootRatio = lootRatio;
+        emit FleetMissionLootRatio(
+            missionId, lootRatio.metalBps, lootRatio.crystalBps, lootRatio.deuteriumBps
         );
     }
 
@@ -226,7 +275,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             fuelCost: fuelCost,
             cargo: cargo,
             ships: ships,
-            randomnessRequestId: randomnessRequestId
+            randomnessRequestId: randomnessRequestId,
+            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
         });
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
         if (missionType == FleetMissionType.Attack) {
@@ -355,7 +405,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             fuelCost: fuelCost,
             cargo: cargo,
             ships: ships,
-            randomnessRequestId: attackMissionId
+            randomnessRequestId: attackMissionId,
+            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
         });
         _fleetCounterplayMissions[attackMissionId].push(missionId);
         _trackCounterplayMissionResolution(attackMissionId, _fleetMissions[missionId]);

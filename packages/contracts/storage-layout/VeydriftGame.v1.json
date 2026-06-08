@@ -504,6 +504,32 @@
         "offset": 0,
         "slot": "9",
         "type": "uint256"
+      },
+      {
+        "label": "lootRatio",
+        "offset": 0,
+        "slot": "10",
+        "type": "LootRatio"
+      }
+    ],
+    "LootRatio": [
+      {
+        "label": "metalBps",
+        "offset": 0,
+        "slot": "0",
+        "type": "uint16"
+      },
+      {
+        "label": "crystalBps",
+        "offset": 2,
+        "slot": "0",
+        "type": "uint16"
+      },
+      {
+        "label": "deuteriumBps",
+        "offset": 4,
+        "slot": "0",
+        "type": "uint16"
       }
     ],
     "MissionShips": [

@@ -273,6 +273,22 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlayModule();
     }
 
+    /// @notice Launch an Attack mission with a player-selected loot ratio.
+    /// @dev Implemented in the gameplay module, which has the EIP-170 headroom for the launch and
+    ///      loot-ratio bookkeeping; the facade only forwards the call via delegatecall.
+    function launchAttackMission(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        uint256,
+        LootRatio calldata
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToPlayModule();
+    }
+
     function joinAttackMission(uint256, uint256, uint256, MissionShips calldata, Resources calldata)
         external
         returns (uint256)
