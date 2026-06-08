@@ -2785,6 +2785,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testAttackLootRatioSplitsCapacityWhenCapsNonBinding() public {
+        _pinLootRatioFixtureEnv();
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
@@ -2809,6 +2810,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testAttackLootRatioRollsUnfillableShareIntoNextResource() public {
+        _pinLootRatioFixtureEnv();
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
@@ -2832,6 +2834,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testAttackLootRatioRolloverCascadesToDeuterium() public {
+        _pinLootRatioFixtureEnv();
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
@@ -4861,6 +4864,19 @@ contract VeydriftGameTest is Test {
         uint16 level = uint16(remaining > 50 ? 50 : remaining);
         _setBuildingLevel(planetId, building, level);
         return remaining - level;
+    }
+
+    /// @dev Pin the block environment for loot-ratio raid fixtures. The asserted loot amounts
+    ///      assume the honorable 75% plunder tier, which flows through the score/inactivity logic
+    ///      in `_attackProtectionStatus`. Left at the Foundry default, that tier depends on the
+    ///      build's default block values; an identical-source CI run was observed flipping the
+    ///      tier from 75% to 50% (looted crystal 2_250 -> 1_500). Pinning roll/warp/prevrandao
+    ///      makes the fixture deterministic. These raids fulfill battle randomness with an explicit
+    ///      word, so pinning prevrandao does not perturb the combat outcome.
+    function _pinLootRatioFixtureEnv() internal {
+        vm.roll(12_345);
+        vm.warp(1_800_000_000);
+        vm.prevrandao(keccak256("attack fixture entropy"));
     }
 
     function _seedAttackPlanets()
