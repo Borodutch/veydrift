@@ -51,7 +51,7 @@ describe("Overview fleets summary", () => {
       onOpenMissionControl: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("2 active");
+    expect(text).not.toContain("2 active");
     expect(text).toContain("Attack → 1517 [5:407:4] · arrives in 13m");
     expect(text).toContain("Open Mission Control");
     // No per-panel splitting labels on Overview anymore.
@@ -130,20 +130,19 @@ describe("Overview fleets summary", () => {
     expect(text).toContain("+2 more — open Mission Control");
   });
 
-  test("centers the Overview fleets label and active-count badge in matching header boxes", () => {
+  test("does not render the redundant active-count header pill", () => {
     const node = FleetsSummary({
       fleetVisibility: visibility({}),
       now: Date.parse("2026-06-07T22:00:00.000Z"),
       onOpenMissionControl: () => undefined,
     });
     const heading = collectElementsByType(node, "h2").find((element) => collectText(element).join(" ") === "Fleets");
-    const activeBadge = collectElementsByType(node, "span").find((element) => collectText(element).join(" ") === "0 active");
+    const activeBadge = collectElementsByType(node, "span").find((element) => /active$/.test(collectText(element).join(" ")));
 
-    expect(heading?.props?.className).toContain("inline-flex h-5 items-center");
+    expect(heading?.props?.className).toContain("inline-flex h-5");
+    expect(heading?.props?.className).toContain("items-center");
     expect(heading?.props?.className).toContain("leading-none");
-    expect(activeBadge?.props?.className).toContain("inline-flex h-5");
-    expect(activeBadge?.props?.className).toContain("items-center");
-    expect(activeBadge?.props?.className).toContain("leading-none");
+    expect(activeBadge).toBeUndefined();
   });
 
   test("falls back to a coordinate-free planet id when the planet reference is missing", () => {
