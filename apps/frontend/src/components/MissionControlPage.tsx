@@ -97,6 +97,9 @@ export function MissionControlPage({
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
   const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
+  // Rows collapsed by the dedupe (a mission + its battle report -> one row) so the section header
+  // count can match the actual rendered rows even with server-side pagination (VEY-399#1).
+  const pastCollapsedCount = rawPastMissionRows.length - pastMissionRows.length;
   // Past missions render from the paginated archive, which can contain missions absent from the live
   // fleet-visibility feed (older pages, returned missions no longer "active"). The backend already
   // resolves each row's origin/target planet, so seed the lookup from those references too — otherwise
@@ -160,6 +163,7 @@ export function MissionControlPage({
           />
 
           <PastMissionSection
+            collapsedCount={pastCollapsedCount}
             error={missionArchiveError}
             loading={missionArchiveLoading}
             now={now}
@@ -196,7 +200,7 @@ export function missionLifecycleActions({
     actions.push({
       enabled: canTransact && due,
       kind: "resolve",
-      label: "Resolve battle",
+      label: "Resolve",
       reason: due ? walletReason(canTransact) : "Mission has not arrived yet.",
     });
   }
@@ -384,9 +388,9 @@ function ActiveMissionTable({
         <table className="min-w-[52rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
           <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
             <tr>
-              <th className="w-[9rem] px-3 py-2">Mission</th>
-              <th className="w-[26rem] px-3 py-2">Origin {"->"} Target</th>
-              <th className="w-[10rem] px-3 py-2">Fleet</th>
+              <th className="w-[8rem] px-3 py-2">Mission</th>
+              <th className="px-3 py-2">Route</th>
+              <th className="w-[11rem] px-3 py-2">Fleet</th>
               <th className="w-[13rem] px-3 py-2">Orders</th>
             </tr>
           </thead>
@@ -451,42 +455,18 @@ function MissionRow({
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
-  // VEY-397#11: only show the Resolve battle button when it is actionable.
+  // VEY-399#6/VEY-397#11: only surface Resolve and Join when they are actionable.
   const actions = missionLifecycleActions({ canTransact, context, mission, now })
-    .filter((action) => action.kind !== "resolve" || action.enabled);
+    .filter((action) => !["joinAttack", "resolve"].includes(action.kind) || action.enabled);
   const missionDirection = resolveMissionDirection({ context, mission, wallet, walletPlanetIds });
   const origin = missionEndpoint(mission, "origin", planetLookup);
   const target = missionEndpoint(mission, "target", planetLookup);
   const noFleetReturned = isNoFleetReturned(mission);
+  const directionSubtext = direction && direction !== "Joinable attack" ? direction : undefined;
   return (
-    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
-      <td className="border-t border-white/10 px-3 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
-            {directionalMissionTypeLabel(mission.missionType, missionDirection)}
-          </span>
-          <span className="font-semibold text-white">#{mission.missionId}</span>
-        </div>
-        {direction && direction !== "Joinable attack" ? <p className="mt-2 text-slate-500">{direction}</p> : null}
-        {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,1fr)] items-start gap-2">
-          <MissionEndpointCell endpoint={origin} timingLabel="Return" timingValue={noFleetReturned ? "No fleet returned" : missionEndpointTime(mission.returnAt, now)} />
-          <div className="min-w-0 self-center">
-            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-cyan-300" style={{ width: `${missionProgressPercent(mission, now)}%` }} />
-            </div>
-            <p className="mt-1 text-center text-[10px] text-slate-500">-&gt;</p>
-          </div>
-          <MissionEndpointCell endpoint={target} timingLabel="Arrival" timingValue={missionEndpointTime(mission.arrivalAt, now)} />
-        </div>
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <FleetIcons ships={mission.ships} />
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <div className="flex flex-wrap gap-1.5">
+    <MissionTableRow
+      actions={
+        <>
           {actions.map((action) => action.kind === "counterplay" ? (
             <span className="contents" key={action.kind}>
               <ActionButton
@@ -499,13 +479,12 @@ function MissionRow({
               />
             </span>
           ) : action.kind === "joinAttack" ? (
-            // VEY-397#13/#14: "Join" shares the Open button style/size.
+            // VEY-397#13/#14: "Join" shares the Open button style/size (hidden when disabled, VEY-399#6).
             <button
               className={rowActionButtonClass}
-              disabled={!action.enabled}
               key={action.kind}
               onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId)}
-              title={action.enabled ? "Join this alliance attack" : action.reason}
+              title="Join this alliance attack"
               type="button"
             >
               Join
@@ -530,9 +509,20 @@ function MissionRow({
             <ExternalLink aria-hidden="true" size={13} />
             Open
           </button>
-        </div>
-      </td>
-    </tr>
+        </>
+      }
+      badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
+      badgeTone={missionTypeTone(mission.missionType)}
+      fleet={<FleetIcons ships={mission.ships} />}
+      groupId={mission.attackGroupId}
+      missionId={mission.missionId}
+      origin={origin}
+      originTiming={{ label: "Return", value: noFleetReturned ? "No fleet returned" : missionEndpointTiming(mission.returnAt, now) }}
+      progressPercent={missionProgressPercent(mission, now)}
+      subtext={directionSubtext}
+      target={target}
+      targetTiming={{ label: "Arrival", value: missionEndpointTiming(mission.arrivalAt, now) }}
+    />
   );
 }
 
@@ -591,36 +581,85 @@ function parseCoordinateString(value: string | null): { galaxy: number; position
   return { galaxy: parts[0]!, position: parts[2]!, system: parts[1]! };
 }
 
-function missionEndpointTime(value: string, now: number): string {
+// Compact absolute timestamp like "Jun 8, 9:55 AM" (VEY-399#4).
+function compactMissionTime(value: string, now: number): string {
   const timestamp = timestampToMs(value);
   if (timestamp === undefined) return "Unknown";
-  return formatDurationUntil(timestamp, now);
+  return formatUserTimestamp(timestamp, { day: "numeric", hour: "numeric", minute: "2-digit", month: "short" });
 }
 
-function MissionEndpointCell({
-  endpoint,
-  timingLabel,
-  timingValue,
+// Active-row endpoint timing: a live countdown while the event is still pending, switching to the
+// compact arrival/return time once it has passed (VEY-399#4 — no "Ready"/"ARRIVAL Ready" word).
+function missionEndpointTiming(value: string, now: number): string {
+  const timestamp = timestampToMs(value);
+  if (timestamp === undefined) return "Unknown";
+  const remaining = formatDurationUntil(timestamp, now);
+  return remaining === "Ready" ? compactMissionTime(value, now) : remaining;
+}
+
+type EndpointTiming = { label: string; value: string };
+
+// The single shared, alignment-clean route cell used by every mission table — active My missions /
+// Alliance and Past missions (VEY-399#5). Planet names share one vertically centered row with the
+// progress connector between them; commander + per-side timing fold underneath, and an optional
+// whole-route subtext (e.g. "Returned · <time>") sits below.
+function MissionRouteCell({
+  origin,
+  originTiming,
+  progressPercent,
+  subtext,
+  target,
+  targetTiming,
 }: {
-  endpoint: MissionEndpoint;
-  timingLabel: string;
-  timingValue: string;
+  origin: MissionEndpoint;
+  originTiming?: EndpointTiming | undefined;
+  progressPercent?: number | undefined;
+  subtext?: string | undefined;
+  target: MissionEndpoint;
+  targetTiming?: EndpointTiming | undefined;
 }) {
   return (
     <div className="min-w-0">
-      {endpoint.coords ? (
-        <a
-          className="rounded font-medium text-cyan-100 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50"
-          href={buildInspectHash({ coords: endpoint.coords, kind: "planet" })}
-          title={endpoint.coordinates ? `Open ${endpoint.coordinates} in Galaxy` : undefined}
-        >
-          {endpoint.name}
-        </a>
-      ) : (
-        <span className="font-medium text-slate-100" title={endpoint.coordinates ?? undefined}>{endpoint.name}</span>
-      )}
+      <div className="grid grid-cols-[minmax(0,1fr)_3rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+        <EndpointName endpoint={origin} />
+        <div className="h-1.5 self-center overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-cyan-300" style={{ width: `${Math.round(progressPercent ?? 100)}%` }} />
+        </div>
+        <EndpointName endpoint={target} />
+        <EndpointSub endpoint={origin} timing={originTiming} />
+        <span aria-hidden="true" />
+        <EndpointSub endpoint={target} timing={targetTiming} />
+      </div>
+      {subtext ? <p className="mt-1.5 text-[11px] text-slate-500">{subtext}</p> : null}
+    </div>
+  );
+}
+
+function EndpointName({ endpoint }: { endpoint: MissionEndpoint }) {
+  if (endpoint.coords) {
+    return (
+      <a
+        className="block min-w-0 truncate rounded font-medium text-cyan-100 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50"
+        href={buildInspectHash({ coords: endpoint.coords, kind: "planet" })}
+        title={endpoint.coordinates ? `Open ${endpoint.coordinates} in Galaxy` : undefined}
+      >
+        {endpoint.name}
+      </a>
+    );
+  }
+  return (
+    <span className="block min-w-0 truncate font-medium text-slate-100" title={endpoint.coordinates ?? undefined}>
+      {endpoint.name}
+    </span>
+  );
+}
+
+function EndpointSub({ endpoint, timing }: { endpoint: MissionEndpoint; timing?: EndpointTiming | undefined }) {
+  if (!endpoint.commanderName && !timing) return <span aria-hidden="true" />;
+  return (
+    <div className="min-w-0">
       {endpoint.commanderName ? (
-        <p className="mt-0.5 break-words text-slate-400">
+        <p className="break-words text-slate-400">
           {endpoint.commanderWallet ? (
             <a
               className="rounded text-slate-300 underline-offset-2 transition hover:text-cyan-100 hover:underline focus-visible:underline focus-visible:outline-none"
@@ -634,11 +673,93 @@ function MissionEndpointCell({
           )}
         </p>
       ) : null}
-      <p className="mt-0.5 text-[11px] text-slate-500">
-        <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{timingLabel}</span> {timingValue}
-      </p>
+      {timing ? (
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{timing.label}</span> {timing.value}
+        </p>
+      ) : null}
     </div>
   );
+}
+
+// The shared mission-row presentation used by every Mission Control table (VEY-399). Each table
+// supplies the badge/mission data, the route endpoints, the fleet cell, and the trailing actions;
+// the Mission, Route, and Fleet columns render identically so active and past tables stay in sync.
+function MissionTableRow({
+  actions,
+  badgeLabel,
+  badgeTone,
+  fleet,
+  groupId,
+  missionId,
+  origin,
+  originTiming,
+  progressPercent,
+  routeSubtext,
+  subtext,
+  target,
+  targetTiming,
+}: {
+  actions: preact.ComponentChildren;
+  badgeLabel: string;
+  badgeTone: string;
+  fleet: preact.ComponentChildren;
+  groupId?: string | null | undefined;
+  missionId?: string | undefined;
+  origin: MissionEndpoint;
+  originTiming?: EndpointTiming | undefined;
+  progressPercent?: number | undefined;
+  routeSubtext?: string | undefined;
+  subtext?: string | undefined;
+  target: MissionEndpoint;
+  targetTiming?: EndpointTiming | undefined;
+}) {
+  return (
+    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
+      <td className="border-t border-white/10 px-3 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
+          {missionId ? <span className="font-semibold text-white">#{missionId}</span> : null}
+        </div>
+        {subtext ? <p className="mt-2 text-slate-500">{subtext}</p> : null}
+        {groupId ? <p className="mt-1 text-cyan-100/70">Group {groupId}</p> : null}
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <MissionRouteCell
+          origin={origin}
+          originTiming={originTiming}
+          progressPercent={progressPercent}
+          subtext={routeSubtext}
+          target={target}
+          targetTiming={targetTiming}
+        />
+      </td>
+      <td className="border-t border-white/10 px-3 py-3">{fleet}</td>
+      <td className="border-t border-white/10 px-3 py-3">
+        <div className="flex flex-wrap gap-1.5">{actions}</div>
+      </td>
+    </tr>
+  );
+}
+
+// Builds a clickable route endpoint from a planet id alone (used by battle-report-only past rows,
+// which carry no full mission planet reference) — VEY-399 shared route reuse.
+function endpointFromPlanetId(planetId: string, lookup: ReadonlyMap<string, MissionPlanetIdentity>): MissionEndpoint {
+  const identity = lookup.get(planetId);
+  const colony = decodeColonizationTargetId(planetId);
+  const coordinates = identity?.coordinates ?? colony?.coordinates ?? null;
+  const coords = colony
+    ? { galaxy: colony.galaxy, position: colony.position, system: colony.system }
+    : parseCoordinateString(coordinates);
+  const commanderWallet = identity?.owner ?? null;
+  const commanderDisplay = identity?.ownerDisplayName?.trim() || null;
+  return {
+    commanderName: commanderDisplay || (commanderWallet ? shortAddress(commanderWallet) : null),
+    commanderWallet,
+    coordinates,
+    coords,
+    name: identityName(identity) || coordinates || `Planet #${planetId}`,
+  };
 }
 
 // Compact fleet column: small ship images with xN counts; hover shows the ship name + count.
@@ -781,6 +902,7 @@ function MissionReportDetail({
 }
 
 function PastMissionSection({
+  collapsedCount = 0,
   error,
   loading,
   now,
@@ -792,6 +914,7 @@ function PastMissionSection({
   wallet,
   walletPlanetIds,
 }: {
+  collapsedCount?: number | undefined;
   error?: string | undefined;
   loading: boolean;
   now: number;
@@ -808,18 +931,24 @@ function PastMissionSection({
   const currentPagination = pagination ?? paginationForRows(rows, pageSize);
   const hasPages = currentPagination.totalPages > 1;
   const visiblePages = pagination ? [rows] : pages;
+  // VEY-399#1: the header count must match the actual de-duplicated rows. The fallback pagination
+  // already counts deduped rows; a server archive count is corrected by the rows collapsed on the
+  // page (a mission and its battle report render as ONE row, not two).
+  const displayTotalEntries = pagination
+    ? Math.max(rows.length, currentPagination.totalEntries - collapsedCount)
+    : currentPagination.totalEntries;
 
   return (
     <section
       className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]"
       data-past-page-current={String(currentPagination.page - 1)}
       data-past-page-size={String(currentPagination.pageSize)}
-      data-past-page-total={String(currentPagination.totalEntries)}
+      data-past-page-total={String(displayTotalEntries)}
     >
       <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
         <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Past missions</h3>
-        {currentPagination.totalEntries > 0 ? (
-          <span className="text-[11px] tabular-nums text-slate-500">{currentPagination.totalEntries}</span>
+        {displayTotalEntries > 0 ? (
+          <span className="text-[11px] tabular-nums text-slate-500">{displayTotalEntries}</span>
         ) : null}
       </div>
       {error ? <div className="px-3 pt-3"><Notice tone="danger">{error}</Notice></div> : null}
@@ -828,13 +957,13 @@ function PastMissionSection({
       ) : (
         <>
           <div className="overflow-x-auto">
-            <table className="min-w-[44rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+            <table className="min-w-[52rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
               <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 <tr>
-                  <th className="w-[12rem] px-2.5 py-1.5">Mission</th>
-                  <th className="w-[18rem] px-2.5 py-1.5">Route</th>
-                  <th className="w-[13rem] px-2.5 py-1.5">Result</th>
-                  <th className="w-[9rem] px-2.5 py-1.5">Details</th>
+                  <th className="w-[8rem] px-3 py-2">Mission</th>
+                  <th className="px-3 py-2">Route</th>
+                  <th className="w-[11rem] px-3 py-2">Fleet</th>
+                  <th className="w-[13rem] px-3 py-2">Details</th>
                 </tr>
               </thead>
               {visiblePages.map((pageRows, pageIndex) => (
@@ -857,6 +986,7 @@ function PastMissionSection({
                     <PastBattleReportRow
                       key={`past-report:${row.report.missionId}`}
                       onOpenReport={onOpenReport}
+                      planetLookup={planetLookup}
                       report={row.report}
                     />
                   ))}
@@ -895,81 +1025,87 @@ function PastMissionSummaryRow({
   walletPlanetIds: ReadonlySet<string>;
 }) {
   const completedAt = missionCompletionTimestamp(mission);
-  const report = missionReport(mission, now, planetLookup);
   const missionDirection = resolveMissionDirection({ mission, wallet, walletPlanetIds });
+  const origin = missionEndpoint(mission, "origin", planetLookup);
+  const target = missionEndpoint(mission, "target", planetLookup);
+  // VEY-399#9: the completion stamp moves out of the Mission column to sit under the Route,
+  // matching how active rows show per-side timing.
+  const routeSubtext = completedAt === undefined
+    ? missionStatusLabel(mission.status)
+    : `${missionStatusLabel(mission.status)} · ${formatUserTimestamp(completedAt)}`;
   return (
-    <tr className="align-top text-xs text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
-      <td className="border-t border-white/10 px-2.5 py-2">
-        <span className={`inline-flex rounded border px-2 py-0.5 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
-          {directionalMissionTypeLabel(mission.missionType, missionDirection)}
-        </span>
-        <p className="mt-1 tabular-nums text-slate-400">
-          {missionStatusLabel(mission.status)}
-          {completedAt === undefined ? "" : ` · ${formatUserTimestamp(completedAt)}`}
-        </p>
-      </td>
-      <td className="border-t border-white/10 px-2.5 py-2 break-words">
-        <p className="font-medium text-slate-100">{report.routeSummary}</p>
-        {missionDirection === "outgoing" ? null : (
-          <p className="mt-1 break-all text-slate-500">Commander {report.attacker}</p>
-        )}
-      </td>
-      <td className="border-t border-white/10 px-2.5 py-2 break-words">
-        <p className="font-medium text-slate-100">{report.outcome}</p>
-        <p className="mt-1 text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
-        {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
-      </td>
-      <td className="border-t border-white/10 px-2.5 py-2">
+    <MissionTableRow
+      actions={
         <button
-          className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+          className={rowActionButtonClass}
           onClick={() => onOpenReport(mission.missionId)}
           title="Open the full mission detail screen"
           type="button"
         >
-          Open mission
+          <ExternalLink aria-hidden="true" size={13} />
+          Open
         </button>
-      </td>
-    </tr>
+      }
+      badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
+      badgeTone={missionTypeTone(mission.missionType)}
+      fleet={
+        <div className="space-y-1">
+          <FleetIcons ships={mission.ships} />
+          <p className="text-[11px] text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
+        </div>
+      }
+      groupId={mission.attackGroupId}
+      missionId={mission.missionId}
+      origin={origin}
+      routeSubtext={routeSubtext}
+      target={target}
+    />
   );
 }
 
 function PastBattleReportRow({
   onOpenReport,
+  planetLookup,
   report,
 }: {
   onOpenReport: (missionId: string) => void;
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   report: BattleReport;
 }) {
+  const target = endpointFromPlanetId(report.targetPlanetId, planetLookup);
+  const origin: MissionEndpoint = {
+    commanderName: shortHash(report.attacker),
+    commanderWallet: report.attacker,
+    coordinates: null,
+    coords: null,
+    name: "Attacker",
+  };
   return (
-    <tr className="align-top text-xs text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
-      <td className="border-t border-white/10 px-2.5 py-2">
-        <span className="inline-flex rounded border border-red-300/25 bg-red-400/10 px-2 py-0.5 text-[11px] font-semibold text-red-100">
-          Battle report
-        </span>
-        <p className="mt-1 tabular-nums text-slate-400">Block {report.blockNumber || "unknown"}</p>
-        <p className="mt-1 text-slate-500">{battleOutcomeLabel(report.outcome)}</p>
-      </td>
-      <td className="border-t border-white/10 px-2.5 py-2 break-words">
-        <p className="font-medium text-slate-100">
-          Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
-        </p>
-        <p className="mt-1 text-slate-500">Rounds {report.rounds}</p>
-      </td>
-      <td className="border-t border-white/10 px-2.5 py-2 break-words">
-        <p className="font-medium text-slate-100">Loot {formatCargo(report.loot)}</p>
-        <p className="mt-1 text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
-      </td>
-      <td className="border-t border-white/10 px-2.5 py-2">
+    <MissionTableRow
+      actions={
         <button
-          className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+          className={rowActionButtonClass}
           onClick={() => onOpenReport(report.missionId)}
           title="Open the full mission detail screen"
           type="button"
         >
-          Open mission
+          <ExternalLink aria-hidden="true" size={13} />
+          Open
         </button>
-      </td>
-    </tr>
+      }
+      badgeLabel="Battle report"
+      badgeTone="border-red-300/25 bg-red-400/10 text-red-100"
+      fleet={
+        <div className="space-y-1">
+          <p className="text-[11px] text-slate-500">Loot {formatCargo(report.loot)}</p>
+          <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+        </div>
+      }
+      missionId={report.missionId}
+      origin={origin}
+      routeSubtext={`${battleOutcomeLabel(report.outcome)} · Block ${report.blockNumber || "unknown"} · ${report.rounds} rounds`}
+      target={target}
+    />
   );
 }
 
