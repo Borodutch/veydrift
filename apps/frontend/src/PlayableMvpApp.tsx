@@ -2892,22 +2892,40 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   // element-wise minimum keeps the UI from ever exceeding the real balance, so
   // affordability gating cannot let through a tx that would revert with
   // InsufficientResources.
+  //
+  // The displayed balance is projected forward by a free-running `now` clock so
+  // production "ticks up" between backend reads. But when the backend resource
+  // read is stale/unavailable (settlement read errored, infrastructure errored,
+  // or backend sync is paused) the snapshots stop refreshing while `now` keeps
+  // advancing, which would run the balance up toward storage caps and
+  // over-report a spendable balance the player does not have (the QA repro:
+  // top bar climbed to the 10,000 cap during an infrastructure-API outage).
+  // While stale we therefore freeze the projection: feed the canonical helper
+  // the unprojected settlement snapshot and tell it not to accrue infrastructure
+  // forward, so both sources hold their last known value instead of drifting.
+  const backendResourceReadStale =
+    onChainStatus === "error"
+    || Boolean(infrastructureError)
+    || isInfrastructureBackendSyncPaused(infrastructureChainState);
   const canonicalOnChainResources = useMemo(() => {
     return canonicalSpendableResources({
-      settlementResources: liveOnChainResources,
+      settlementResources: backendResourceReadStale ? onChainResources : liveOnChainResources,
       infrastructureResources: resourcesFromChain(infrastructureChainState?.resources ?? null),
       infrastructureSettledAtMs:
         timestampToMs(infrastructureChainState?.planetLastSettledAt ?? null) ?? topBarResourceSnapshotReceivedAtMs,
       rates,
       caps,
       now,
+      freezeProjection: backendResourceReadStale,
     });
   }, [
+    backendResourceReadStale,
     caps,
     infrastructureChainState?.planetLastSettledAt,
     infrastructureChainState?.resources,
     liveOnChainResources,
     now,
+    onChainResources,
     rates,
     topBarResourceSnapshotReceivedAtMs,
   ]);
