@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Copy, ExternalLink, RefreshCw, Swords } from "lucide-preact";
+import { ArrowLeft, Check, Copy, RefreshCw, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -16,7 +16,7 @@ export type MissionDetailActionState =
 
 export type MissionShareCopyState = "copied" | "error" | "idle";
 
-// Each OGame recycler hauls 20,000 units of debris; used to estimate recyclers needed.
+// Each recycler hauls 20,000 units of debris; used to estimate recyclers needed.
 const RECYCLER_CARGO_CAPACITY = 20_000;
 
 interface MissionDetailPageProps {
@@ -33,7 +33,6 @@ interface MissionDetailPageProps {
   onCompleteReturn: (missionId: string) => void;
   onCopyShareUrl: () => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onOpenBattleReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
@@ -54,7 +53,6 @@ export function MissionDetailPage({
   onCompleteReturn,
   onCopyShareUrl,
   onCounterplay,
-  onOpenBattleReport,
   onRecall,
   onResolve,
   onRetry,
@@ -118,11 +116,7 @@ export function MissionDetailPage({
             </Notice>
           ) : null}
           <MissionFacts mission={mission} now={now} shareUrl={shareUrl} />
-          <MissionBattleReport
-            mission={mission}
-            onOpenBattleReport={onOpenBattleReport}
-            report={report}
-          />
+          <MissionBattleReport mission={mission} report={report} />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
@@ -232,23 +226,15 @@ function MissionFacts({ mission, now, shareUrl }: { mission: FleetMissionSummary
         <Datum label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
         <Datum label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
       </Panel>
-      <Panel title="Chain Proof">
-        <Datum label="Transaction" value={mission.transactionHash || "Pending chain proof"} />
-        <Datum label="Block" value={mission.blockNumber || "Pending chain proof"} />
-        <Datum label="Attack group" value={mission.attackGroupId ?? "None"} />
-        <Datum label="Joined missions" value={mission.joinedAttackMissionIds.length > 0 ? mission.joinedAttackMissionIds.join(", ") : "None"} />
-      </Panel>
     </section>
   );
 }
 
 function MissionBattleReport({
   mission,
-  onOpenBattleReport,
   report,
 }: {
   mission: FleetMissionSummary;
-  onOpenBattleReport: (missionId: string) => void;
   report?: BattleReport | undefined;
 }) {
   if (!isCombatMission(mission)) {
@@ -275,24 +261,14 @@ function MissionBattleReport({
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
-            <Swords aria-hidden="true" size={17} />
-          </span>
-          <div>
-            <h3 className="text-sm font-semibold text-white">OGame-Style Battle Report</h3>
-            <p className="text-xs text-slate-500">Reconstructed from the on-chain combat log for mission #{report.missionId}.</p>
-          </div>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
+          <Swords aria-hidden="true" size={17} />
+        </span>
+        <div>
+          <h3 className="text-sm font-semibold text-white">Battle Report</h3>
+          <p className="text-xs text-slate-500">Reconstructed from the on-chain combat log for mission #{report.missionId}.</p>
         </div>
-        <button
-          className="inline-flex h-8 items-center justify-center gap-2 rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
-          onClick={() => onOpenBattleReport(report.missionId)}
-          type="button"
-        >
-          <ExternalLink aria-hidden="true" size={13} />
-          Public report
-        </button>
       </div>
 
       <div className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 ${outcome.className}`}>
@@ -343,19 +319,6 @@ function MissionBattleReport({
           ))}
         </div>
       </div>
-
-      <div className="mt-4">
-        <Panel title="Combat Proof">
-          <Datum label="Combat seed" value={report.randomSeed || "Pending randomness"} />
-          <Datum label="Transaction" value={report.transactionHash || "Pending chain proof"} />
-          <Datum label="Block" value={report.blockNumber || "Pending chain proof"} />
-        </Panel>
-      </div>
-
-      <p className="mt-3 text-xs leading-5 text-slate-500">
-        Ship classes, weapon/shield/armour tech levels, per-defence counts, and honour points are not part of the on-chain
-        battle log, so they are omitted rather than shown as empty fields.
-      </p>
     </section>
   );
 }

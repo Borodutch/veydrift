@@ -2281,12 +2281,6 @@ export async function fetchMission(apiUrl: string, missionId: string): Promise<M
   return response.json() as Promise<MissionDetailResponse>;
 }
 
-export async function fetchBattleReport(apiUrl: string, missionId: string): Promise<BattleReport> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/battle-report/${encodeURIComponent(missionId)}`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Battle report"));
-  return response.json() as Promise<BattleReport>;
-}
-
 export async function fetchBattleReports(apiUrl: string): Promise<BattleReport[]> {
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/battle-reports`);
   if (!response.ok) throw new Error(await apiErrorMessage(response, "Battle reports"));

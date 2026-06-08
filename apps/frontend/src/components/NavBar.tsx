@@ -19,7 +19,6 @@ export type Page =
   | "galaxy"
   | "planet"
   | "battle-reports"
-  | "battle-report"
   | "player-inspect"
   | "alliance-inspect";
 
