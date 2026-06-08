@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage } from "./components/MissionControlPage";
+import { MissionControlPage, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionSummary } from "./walletFlow";
 
@@ -188,6 +188,73 @@ describe("Mission Control battle reports", () => {
     expect(countOccurrences(text.join(""), "Mission #61")).toBe(1);
   });
 
+  test("partitions active rows into My missions (own fleets) and Alliance (joinable attacks)", () => {
+    const rows: ActiveMissionRow[] = [
+      { context: "incoming", direction: "Hostile inbound", mission: mission("1") },
+      { context: "outgoing", direction: "Outbound", mission: mission("2") },
+      { context: "returning", direction: "Returning", mission: mission("3") },
+      { context: "joinable", direction: "Joinable attack", mission: mission("4") },
+      { context: "joinable", direction: "Joinable attack", mission: mission("5") },
+    ];
+
+    const { alliance, mine } = partitionActiveMissionRows(rows);
+
+    expect(mine.map((row) => row.mission.missionId)).toEqual(["1", "2", "3"]);
+    expect(mine.every((row) => row.context !== "joinable")).toBe(true);
+    expect(alliance.map((row) => row.mission.missionId)).toEqual(["4", "5"]);
+    expect(alliance.every((row) => row.context === "joinable")).toBe(true);
+  });
+
+  test("renders My missions / Alliance tabs with counts, join action, and per-tab empty state", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      incoming: [mission("31", "Attack", "Outbound", "0x2222222222222222222222222222222222222222", "8", "7", now + 60_000)],
+      outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
+      returning: [mission("33", "Deploy", "Returning", "0x1111111111111111111111111111111111111111", "9", "7", now - 60_000)],
+      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000)],
+    }))).join(" ");
+
+    expect(text).toContain("My missions (3)");
+    expect(text).toContain("Alliance (1)");
+    // Join actions stay available on the Alliance tab.
+    expect(text).toContain("Join attack");
+  });
+
+  test("shows the Alliance empty state when there are no joinable attacks", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
+      joinableAttacks: [],
+    }))).join(" ");
+
+    expect(text).toContain("My missions (1)");
+    expect(text).toContain("Alliance (0)");
+    expect(text).toContain("No joinable alliance attacks.");
+  });
+
+  test("paginates the My missions tab at 25 rows per page", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const outgoing = Array.from({ length: 26 }, (_unused, index) =>
+      mission(String(100 + index), "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + (index + 1) * 60_000));
+    const text = collectText(MissionControlPage(missionControlProps(now, { outgoing }))).join(" ");
+
+    expect(text).toContain("My missions (26)");
+    // Pagination range proves the 25-per-page split (26 rows -> first page shows 1-25).
+    expect(text).toContain("1-25 of 26");
+  });
+
+  test("paginates the Alliance tab at 25 rows per page", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const joinableAttacks = Array.from({ length: 26 }, (_unused, index) =>
+      mission(String(200 + index), "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + (index + 1) * 60_000));
+    const text = collectText(MissionControlPage(missionControlProps(now, { joinableAttacks }))).join(" ");
+
+    expect(text).toContain("Alliance (26)");
+    expect(text).toContain("No active missions.");
+    // Pagination range proves the 25-per-page split (26 rows -> first page shows 1-25).
+    expect(text).toContain("1-25 of 26");
+  });
+
   test("renders shareable mission detail stages, actions, and OGame-style report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
@@ -287,6 +354,42 @@ describe("Mission Control battle reports", () => {
 
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
+}
+
+function missionControlProps(
+  now: number,
+  visibility: Partial<{
+    incoming: FleetMissionSummary[];
+    outgoing: FleetMissionSummary[];
+    returning: FleetMissionSummary[];
+    joinableAttacks: FleetMissionSummary[];
+  }>,
+): Parameters<typeof MissionControlPage>[0] {
+  return {
+    actionState: { status: "idle" },
+    canTransact: true,
+    fleetVisibility: {
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      incoming: visibility.incoming ?? [],
+      outgoing: visibility.outgoing ?? [],
+      returning: visibility.returning ?? [],
+      joinableAttacks: visibility.joinableAttacks ?? [],
+      completedMissions: [],
+      battleReports: [],
+    },
+    loading: false,
+    now,
+    onCompleteReturn: () => undefined,
+    onCounterplay: () => undefined,
+    onJoinAttack: () => undefined,
+    onOpenBattleReport: () => undefined,
+    onOpenReport: () => undefined,
+    onOpenReportList: () => undefined,
+    onRecall: () => undefined,
+    onRefresh: () => undefined,
+    onResolve: () => undefined,
+  };
 }
 
 function collectText(node: unknown): string[] {
