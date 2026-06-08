@@ -141,7 +141,7 @@ export function DefensePage({
   );
 }
 
-function StatusPanel({
+export function StatusPanel({
   actionState,
   defenseState,
   error,

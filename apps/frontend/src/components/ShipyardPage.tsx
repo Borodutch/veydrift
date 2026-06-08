@@ -146,7 +146,7 @@ export function ShipyardPage({
   );
 }
 
-function StatusPanel({
+export function StatusPanel({
   actionState,
   error,
   loading,

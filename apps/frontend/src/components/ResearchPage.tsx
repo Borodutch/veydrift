@@ -306,7 +306,7 @@ export function researchRefreshErrorLabel({
   return `Refreshing research state: ${error}`;
 }
 
-function ResearchStatusPanel({
+export function ResearchStatusPanel({
   actionState,
   error,
   loading,
