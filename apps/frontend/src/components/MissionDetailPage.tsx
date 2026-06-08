@@ -93,7 +93,16 @@ export function MissionDetailPage({
           </>
         )}
         subtitle="Shareable mission state, current stage, available orders, and combat report when the indexed battle log exposes one."
-        title={missionId ? `Mission #${missionId}` : "Mission"}
+        title={(
+          <span className="inline-flex flex-wrap items-center gap-2">
+            {missionId ? `Mission #${missionId}` : "Mission"}
+            {mission ? (
+              <span className="rounded border border-white/10 bg-black/20 px-2.5 py-1 text-xs font-medium text-slate-200">
+                {missionTypeLabel(mission.missionType)}
+              </span>
+            ) : null}
+          </span>
+        )}
       />
 
       {loading ? (
@@ -133,15 +142,10 @@ function MissionStageSummary({ account, mission, now }: { account?: string | und
   const relationship = missionRelationship(mission, account);
   return (
     <section className={`rounded-lg border p-4 ${stage.tone === "danger" ? "border-red-300/25 bg-red-400/10" : stage.tone === "warning" ? "border-amber-300/25 bg-amber-300/10" : "border-cyan-300/20 bg-cyan-300/10"}`}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">{relationship}</p>
-          <h3 className="mt-1 text-xl font-semibold text-white">{stage.label}</h3>
-          <p className="mt-1 text-sm leading-6 text-slate-300">{stage.detail}</p>
-        </div>
-        <span className="rounded border border-white/10 bg-black/20 px-3 py-1.5 text-sm font-medium text-slate-200">
-          {missionTypeLabel(mission.missionType)}
-        </span>
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">{relationship}</p>
+        <h3 className="mt-1 text-xl font-semibold text-white">{stage.label}</h3>
+        <p className="mt-1 text-sm leading-6 text-slate-300">{stage.detail}</p>
       </div>
     </section>
   );
