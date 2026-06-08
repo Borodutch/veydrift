@@ -172,6 +172,9 @@ contract VeydriftGameTest is Test {
         uint128 deuterium,
         uint128 fuelCost
     );
+    event FleetMissionLootRatio(
+        uint256 indexed missionId, uint16 metalBps, uint16 crystalBps, uint16 deuteriumBps
+    );
     event AttackMissionJoined(
         uint256 indexed attackMissionId,
         uint256 indexed joinedMissionId,
@@ -2755,6 +2758,166 @@ contract VeydriftGameTest is Test {
         assertEq(cargo.crystal, 675);
         assertEq(cargo.deuterium, 675);
         assertEq(game.planet(targetPlanetId).resources.metal, 225);
+    }
+
+    function _launchAttackWithLootRatio(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        uint16 metalBps,
+        uint16 crystalBps,
+        uint16 deuteriumBps,
+        uint256 randomnessRequestId
+    ) internal returns (uint256 missionId) {
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        return game.launchAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            randomnessRequestId,
+            VeydriftGameStorage.LootRatio({
+                metalBps: metalBps, crystalBps: crystalBps, deuteriumBps: deuteriumBps
+            })
+        );
+    }
+
+    function testAttackLootRatioSplitsCapacityWhenCapsNonBinding() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        // Honorable plunder (7_500 bps) keeps every per-resource cap above the ratio shares,
+        // so the 5_000-capacity SmallCargo is split purely by the requested 50/30/20 ratio.
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        uint256 missionId =
+            _launchAttackWithLootRatio(originPlanetId, targetPlanetId, 5_000, 3_000, 2_000, 811);
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 811);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, 2_500);
+        assertEq(cargo.crystal, 1_500);
+        assertEq(cargo.deuterium, 1_000);
+        assertEq(game.planet(targetPlanetId).resources.metal, 7_500);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 8_500);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 9_000);
+    }
+
+    function testAttackLootRatioRollsUnfillableShareIntoNextResource() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        // No metal to loot: the 40% metal share cannot be filled and rolls over to crystal,
+        // while the deuterium share is still honored instead of being greedily skipped.
+        _setResources(targetPlanetId, 0, 10_000, 10_000);
+
+        uint256 missionId =
+            _launchAttackWithLootRatio(originPlanetId, targetPlanetId, 4_000, 4_000, 2_000, 812);
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 812);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, 0);
+        assertEq(cargo.crystal, 4_000);
+        assertEq(cargo.deuterium, 1_000);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 6_000);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 9_000);
+    }
+
+    function testAttackLootRatioRolloverCascadesToDeuterium() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        // Metal empty and crystal scarce (cap 2_250 at 7_500 bps): the rolled-over capacity
+        // saturates crystal then cascades into deuterium.
+        _setResources(targetPlanetId, 0, 3_000, 10_000);
+
+        uint256 missionId =
+            _launchAttackWithLootRatio(originPlanetId, targetPlanetId, 5_000, 2_500, 2_500, 813);
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 813);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, 0);
+        assertEq(cargo.crystal, 2_250);
+        assertEq(cargo.deuterium, 2_750);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 750);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 7_250);
+    }
+
+    function testAttackLootRatioEmitsLaunchEvent() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        uint256 expectedMissionId = game.nextFleetId();
+        vm.expectEmit(true, false, false, true, address(game));
+        emit FleetMissionLootRatio(expectedMissionId, 6_000, 2_500, 1_500);
+        vm.prank(player);
+        game.launchAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            815,
+            VeydriftGameStorage.LootRatio({metalBps: 6_000, crystalBps: 2_500, deuteriumBps: 1_500})
+        );
+    }
+
+    function testAttackLootRatioRejectsSharesThatDoNotSumToBps() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidLootRatio.selector);
+        game.launchAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            816,
+            VeydriftGameStorage.LootRatio({metalBps: 5_000, crystalBps: 3_000, deuteriumBps: 1_000})
+        );
+    }
+
+    function testAttackLootRatioRejectsZeroRatio() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        // The dedicated entrypoint requires a real ratio; plain greedy attacks use
+        // launchFleetMission instead.
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidLootRatio.selector);
+        game.launchAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            817,
+            VeydriftGameStorage.LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
+        );
     }
 
     function testAttackResolutionSettlesTargetResourcesAtImpactNotLateResolverTime() public {

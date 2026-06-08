@@ -172,6 +172,16 @@ abstract contract VeydriftGameStorage {
     uint8 internal constant ATTACK_BANDIT_FLAG = 8;
     uint8 internal constant ATTACK_INACTIVE_FLAG = 16;
 
+    /// @notice Player-selected split of cargo capacity across looted resources.
+    /// @dev Either all fields are zero (legacy greedy metal->crystal->deuterium order) or the three
+    ///      bps values sum to exactly `BPS`. Unfillable shares roll over to the remaining resources
+    ///      in metal->crystal->deuterium order.
+    struct LootRatio {
+        uint16 metalBps;
+        uint16 crystalBps;
+        uint16 deuteriumBps;
+    }
+
     struct MissionShips {
         uint32 smallCargo;
         uint32 lightFighter;
@@ -202,6 +212,7 @@ abstract contract VeydriftGameStorage {
         Resources cargo;
         MissionShips ships;
         uint256 randomnessRequestId;
+        LootRatio lootRatio;
     }
 
     struct AttackWindow {
@@ -336,6 +347,7 @@ abstract contract VeydriftGameStorage {
     error AttackJoinCutoffPassed(uint64 cutoffAt);
     error CannotJoinOwnAttackTarget();
     error RandomnessEngineUnset();
+    error InvalidLootRatio();
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -473,6 +485,9 @@ abstract contract VeydriftGameStorage {
         uint128 crystal,
         uint128 deuterium,
         uint128 fuelCost
+    );
+    event FleetMissionLootRatio(
+        uint256 indexed missionId, uint16 metalBps, uint16 crystalBps, uint16 deuteriumBps
     );
     event FleetMissionShips(
         uint256 indexed missionId,
