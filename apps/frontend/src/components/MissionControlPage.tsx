@@ -95,6 +95,8 @@ export function MissionControlPage({
   const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
   const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
+  const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
+  const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
   const activeCount = activeMissionRows.length;
   const initialLoading = loading && !fleetVisibility;
 
@@ -142,6 +144,8 @@ export function MissionControlPage({
             onRecall={onRecall}
             onResolve={onResolve}
             planetLookup={planetLookup}
+            wallet={walletAddress}
+            walletPlanetIds={walletPlanetIds}
           />
 
           <PastMissionSection
@@ -155,6 +159,8 @@ export function MissionControlPage({
             pagination={missionArchive?.pagination}
             planetLookup={planetLookup}
             rows={pastMissionRows}
+            wallet={walletAddress}
+            walletPlanetIds={walletPlanetIds}
           />
         </>
       )}
@@ -247,6 +253,8 @@ function ActiveMissionSection({
   onRecall,
   onResolve,
   planetLookup,
+  wallet,
+  walletPlanetIds,
 }: {
   canTransact: boolean;
   dueCount: number;
@@ -259,6 +267,8 @@ function ActiveMissionSection({
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+  wallet?: string | undefined;
+  walletPlanetIds: ReadonlySet<string>;
 }) {
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
@@ -300,6 +310,8 @@ function ActiveMissionSection({
                   onRecall={onRecall}
                   onResolve={onResolve}
                   planetLookup={planetLookup}
+                  wallet={wallet}
+                  walletPlanetIds={walletPlanetIds}
                 />
               ))}
             </tbody>
@@ -323,6 +335,8 @@ function MissionRow({
   onRecall,
   onResolve,
   planetLookup,
+  wallet,
+  walletPlanetIds,
 }: {
   canTransact: boolean;
   context: ActiveMissionContext;
@@ -336,10 +350,13 @@ function MissionRow({
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+  wallet?: string | undefined;
+  walletPlanetIds: ReadonlySet<string>;
 }) {
   const actions = missionLifecycleActions({ canTransact, context, mission, now });
   const report = missionReport(mission, now, planetLookup);
   const timing = missionTiming(mission, now);
+  const missionDirection = resolveMissionDirection({ context, mission, wallet, walletPlanetIds });
   return (
     <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
       <td className="border-t border-white/10 px-3 py-3">
@@ -348,7 +365,7 @@ function MissionRow({
       </td>
       <td className="border-t border-white/10 px-3 py-3">
         <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
-          {missionTypeLabel(mission.missionType)}
+          {directionalMissionTypeLabel(mission.missionType, missionDirection)}
         </span>
         <p className="mt-2 font-semibold text-white">#{mission.missionId}</p>
         <p className="mt-1 text-slate-500">{direction}</p>
@@ -365,7 +382,9 @@ function MissionRow({
           </div>
           <MissionCellLabel label={`Target Planet #${mission.targetPlanetId}`} value={report.target} />
         </div>
-        <p className="mt-2 text-slate-500">{`Commander ${commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId))}`}</p>
+        {missionDirection === "outgoing" ? null : (
+          <p className="mt-2 text-slate-500">{`Commander ${commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId))}`}</p>
+        )}
       </td>
       <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">{formatMissionTime(mission.returnAt, now)}</td>
       <td className="border-t border-white/10 px-3 py-3">
@@ -557,6 +576,8 @@ function PastMissionSection({
   pagination,
   planetLookup,
   rows,
+  wallet,
+  walletPlanetIds,
 }: {
   battleReportMissionIds: ReadonlySet<string>;
   error?: string | undefined;
@@ -568,6 +589,8 @@ function PastMissionSection({
   pagination?: FleetMissionArchiveResponse["pagination"] | undefined;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   rows: PastMissionRow[];
+  wallet?: string | undefined;
+  walletPlanetIds: ReadonlySet<string>;
 }) {
   const pageSize = 25;
   const pages = paginatedRows(rows, pageSize);
@@ -612,6 +635,8 @@ function PastMissionSection({
                   onOpenBattleReport={onOpenBattleReport}
                   onOpenReport={onOpenReport}
                   planetLookup={planetLookup}
+                  wallet={wallet}
+                  walletPlanetIds={walletPlanetIds}
                 />
               ) : (
                 <PastBattleReportRow
@@ -667,6 +692,8 @@ function PastMissionSummaryRow({
   onOpenBattleReport,
   onOpenReport,
   planetLookup,
+  wallet,
+  walletPlanetIds,
 }: {
   hasBattleReport: boolean;
   mission: FleetMissionSummary;
@@ -674,9 +701,12 @@ function PastMissionSummaryRow({
   onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+  wallet?: string | undefined;
+  walletPlanetIds: ReadonlySet<string>;
 }) {
   const completedAt = missionCompletionTimestamp(mission);
   const report = missionReport(mission, now, planetLookup);
+  const missionDirection = resolveMissionDirection({ mission, wallet, walletPlanetIds });
   return (
     <div className="grid min-w-0 gap-3 rounded border border-white/10 bg-black/10 p-3 text-xs text-slate-300 lg:grid-cols-[9rem_11rem_minmax(0,1.4fr)_minmax(0,1fr)_8rem] lg:items-start">
       <ArchiveField label="Completed" valueClassName="whitespace-pre-line tabular-nums">
@@ -684,14 +714,16 @@ function PastMissionSummaryRow({
       </ArchiveField>
       <ArchiveField label="Mission">
         <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
-          {missionTypeLabel(mission.missionType)}
+          {directionalMissionTypeLabel(mission.missionType, missionDirection)}
         </span>
         <p className="mt-2 font-semibold text-white">Mission #{mission.missionId}</p>
         <p className="mt-1 text-slate-500">{missionStatusLabel(mission.status)}</p>
       </ArchiveField>
       <ArchiveField label="Route / target" valueClassName="break-words">
         <p className="font-medium text-slate-100">{report.routeSummary}</p>
-        <p className="mt-1 break-all text-slate-500">Commander {report.attacker}</p>
+        {missionDirection === "outgoing" ? null : (
+          <p className="mt-1 break-all text-slate-500">Commander {report.attacker}</p>
+        )}
       </ArchiveField>
       <ArchiveField label="Result" valueClassName="break-words">
         <p className="font-medium text-slate-100">{report.outcome}</p>
@@ -1086,6 +1118,57 @@ function missionTypeLabel(missionType: string): string {
   if (missionType === "AcsAttack") return "Group attack";
   if (missionType === "AcsDefend") return "Group defense";
   return missionType.replace(/([A-Z])/g, " $1").trim();
+}
+
+type MissionDirection = "incoming" | "neutral" | "outgoing";
+
+// Hostile missions inbound to the player read "Incoming attack"; the player's own
+// launches and returning fleets keep the bare action label ("Attack", "Transport").
+function directionalMissionTypeLabel(missionType: string, direction: MissionDirection): string {
+  const base = missionTypeLabel(missionType);
+  if (direction === "incoming") return `Incoming ${base.toLowerCase()}`;
+  return base;
+}
+
+// Direction is "outgoing" when the player commands the fleet (always themselves) or
+// launches from a planet they own, and "incoming" when the player's planet is the
+// target. The active table already classifies hostile inbound and returning fleets,
+// so that context takes precedence when available; the past table relies on owner and
+// planet ownership alone.
+function resolveMissionDirection({
+  context,
+  mission,
+  wallet,
+  walletPlanetIds,
+}: {
+  context?: ActiveMissionContext | undefined;
+  mission: FleetMissionSummary;
+  wallet?: string | undefined;
+  walletPlanetIds: ReadonlySet<string>;
+}): MissionDirection {
+  if (context === "incoming") return "incoming";
+  if (context === "returning") return "outgoing";
+  if (addressesMatch(mission.owner, wallet)) return "outgoing";
+  if (context === "outgoing") return "outgoing";
+  if (walletPlanetIds.has(mission.originPlanetId)) return "outgoing";
+  if (walletPlanetIds.has(mission.targetPlanetId)) return "incoming";
+  return "neutral";
+}
+
+function walletPlanetIdSet(
+  walletPlanets: ManagedPlanetResponse[],
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>,
+  wallet: string | undefined
+): Set<string> {
+  const ids = new Set(walletPlanets.map((planet) => planet.planetId));
+  for (const [planetId, identity] of planetLookup) {
+    if (addressesMatch(identity.owner, wallet)) ids.add(planetId);
+  }
+  return ids;
+}
+
+function addressesMatch(left: string | undefined, right: string | undefined): boolean {
+  return left !== undefined && right !== undefined && left.toLowerCase() === right.toLowerCase();
 }
 
 function planetReference(planetId: string, lookup: ReadonlyMap<string, MissionPlanetIdentity>): string {

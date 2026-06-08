@@ -108,7 +108,9 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Fleet movement");
     expect(text).not.toContain("Past missions");
     expect(text).toContain("Countdown Mission Origin -> Target Return Fleet / cargo Orders");
-    expect(text).toContain("Attack # 8");
+    // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
+    expect(text).toContain("Incoming attack # 8");
+    expect(text).not.toContain("Attack # 8");
     expect(text).toContain("Hostile inbound");
     expect(text).toContain("Origin Planet #7");
     expect(text).toContain("Target Planet #9");
@@ -118,7 +120,10 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Copy report");
     expect(text).toContain("New Eos [2:44:9]");
     expect(text).toContain("External coordinates unavailable");
+    // Commander identity is kept for the foreign incoming attacker...
     expect(text).toContain("0x3333...3333");
+    // ...but dropped for the player's own outgoing/returning fleets (always themselves).
+    expect(text).not.toContain("Commander 0x1111...1111");
     expect(text).toContain("Report 0xabc...");
     expect(text).not.toContain("Fleets 3/?");
     expect(text).not.toContain("Reload");
@@ -406,6 +411,47 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Battle report");
     expect(text).toContain("Mission # 90");
     expect(text).toContain("Open report");
+  });
+
+  test("labels past missions by direction and drops the self-commander on outgoing", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [
+          mission({
+            missionId: "77",
+            missionType: "Transport",
+            owner: "0x1111111111111111111111111111111111111111",
+            originPlanetId: "7",
+            targetPlanetId: "9",
+            status: "Returned",
+          }),
+          mission({
+            missionId: "88",
+            missionType: "Attack",
+            owner: "0x3333333333333333333333333333333333333333",
+            originPlanetId: "5",
+            targetPlanetId: "7",
+            status: "Returned",
+          }),
+        ],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    // Outgoing past mission keeps the bare action and hides the always-me commander.
+    expect(text).toContain("Transport Mission # 77");
+    expect(text).not.toContain("Commander 0x1111...1111");
+    // Incoming past mission is prefixed and keeps the foreign commander identity.
+    expect(text).toContain("Incoming attack Mission # 88");
+    expect(text).toContain("Commander 0x3333...3333");
   });
 
   test("renders joinable attacks in the unified active mission list", () => {
