@@ -37,6 +37,7 @@ import {
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
   shipyardStateForMissionActions,
+  pendingSpendsFromQueues,
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
   topBarResourcesFor,
@@ -578,6 +579,49 @@ describe("Playable MVP app display helpers", () => {
       snapshotReceivedAtMs: afterSpendAt,
       snapshotResources: { metal: 40, crystal: 100, deuterium: 100 },
     })?.metal).toBe(45);
+  });
+
+  test("pendingSpendsFromQueues collects active queue spends with cost and start time", () => {
+    const buildingQueue: QueueStateResponse = {
+      active: true,
+      kind: "building",
+      itemId: 1,
+      targetLevel: 7,
+      readyAt: "1700003600",
+      startedAt: "1700000000",
+      cost: { metal: "683", crystal: "170", deuterium: "0" },
+    };
+    const shipQueue: QueueStateResponse = {
+      active: true,
+      kind: "ship",
+      itemId: 202,
+      quantity: 1,
+      readyAt: "1700001000",
+      startedAt: "1700000500",
+      cost: { metal: "2000", crystal: "0", deuterium: "0" },
+    };
+    const spends = pendingSpendsFromQueues([buildingQueue, shipQueue]);
+    expect(spends).toEqual([
+      { cost: { metal: 683, crystal: 170, deuterium: 0 }, startedAtMs: 1_700_000_000_000 },
+      { cost: { metal: 2_000, crystal: 0, deuterium: 0 }, startedAtMs: 1_700_000_500_000 },
+    ]);
+  });
+
+  test("pendingSpendsFromQueues ignores inactive, missing, and zero-cost queues", () => {
+    const inactive: QueueStateResponse = {
+      active: false,
+      kind: "building",
+      readyAt: null,
+      cost: { metal: "100", crystal: "0", deuterium: "0" },
+    };
+    const zeroCost: QueueStateResponse = {
+      active: true,
+      kind: "research",
+      readyAt: "1700000600",
+      startedAt: "1700000000",
+      cost: { metal: "0", crystal: "0", deuterium: "0" },
+    };
+    expect(pendingSpendsFromQueues([inactive, null, undefined, zeroCost])).toEqual([]);
   });
 
   test("blocks research completion transactions until the active queue is ready", () => {
