@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Copy, RefreshCw, Swords } from "lucide-preact";
+import { ArrowLeft, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -73,8 +73,9 @@ export function MissionDetailPage({
             </button>
             <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
             <button
+              aria-label={copyLabel}
               aria-live="polite"
-              className={`inline-flex h-9 items-center justify-center gap-2 rounded border px-3 text-sm font-medium transition ${
+              className={`inline-flex h-9 w-9 items-center justify-center rounded border text-sm font-medium transition ${
                 copyState === "copied"
                   ? "border-emerald-300/40 bg-emerald-300/15 text-emerald-100"
                   : copyState === "error"
@@ -82,10 +83,10 @@ export function MissionDetailPage({
                     : "border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
               }`}
               onClick={onCopyShareUrl}
+              title={copyLabel}
               type="button"
             >
-              {copyState === "copied" ? <Check aria-hidden="true" size={15} /> : <Copy aria-hidden="true" size={15} />}
-              {copyLabel}
+              {copyState === "copied" ? <Check aria-hidden="true" size={15} /> : <Share2 aria-hidden="true" size={15} />}
             </button>
           </>
         )}
@@ -167,12 +168,9 @@ function MissionActions({
   const actions = missionLifecycleActions({ canTransact, context, mission, now })
     .filter((action) => action.kind !== "recall" || Boolean(mission.recallCost));
 
+  // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
-    return (
-      <Notice>
-        No wallet action applies at this mission stage.
-      </Notice>
-    );
+    return null;
   }
 
   return (
