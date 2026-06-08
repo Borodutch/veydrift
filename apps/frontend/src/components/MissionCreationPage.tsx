@@ -22,13 +22,23 @@ export type MissionCargoDraft = {
   deuterium?: string | undefined;
 };
 
+export type MissionLootRatioDraft = {
+  metal: number;
+  crystal: number;
+  deuterium: number;
+};
+
 export type MissionLaunchDraft = {
   speedPercent: number;
   ships: MissionShips;
   cargo?: MissionCargoDraft | undefined;
+  lootRatio?: MissionLootRatioDraft | undefined;
   primaryTargetId?: number | undefined;
   quantity?: number | undefined;
 };
+
+export const LOOT_RATIO_TOTAL_PERCENT = 100;
+const DEFAULT_LOOT_RATIO: MissionLootRatioDraft = { metal: 34, crystal: 33, deuterium: 33 };
 
 type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
 
@@ -91,6 +101,8 @@ export function MissionCreationPage({
   const [speedPercent, setSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const [ships, setShips] = useState<MissionShips>(() => initialMissionShips(action));
   const [cargo, setCargo] = useState<MissionCargoDraft>({});
+  const [lootRatioEnabled, setLootRatioEnabled] = useState(false);
+  const [lootRatio, setLootRatio] = useState<MissionLootRatioDraft>(DEFAULT_LOOT_RATIO);
   const [primaryTargetId, setPrimaryTargetId] = useState(action.mode === "missile" ? action.primaryTargetId : 0);
   const [quantity, setQuantity] = useState(action.mode === "missile" ? action.quantity : 1);
 
@@ -103,6 +115,9 @@ export function MissionCreationPage({
   const availableShips = useMemo(() => missionShipOptionsForAction(action, shipyardState), [action, shipyardState]);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
+  const lootRatioSupported = action.mode === "mission" && action.kind === "attack";
+  const lootRatioActive = lootRatioSupported && lootRatioEnabled;
+  const lootRatioTotal = lootRatio.metal + lootRatio.crystal + lootRatio.deuterium;
   const timingSummary = missionTimingSummary(travelSeconds);
   const blockedReason = missionDraftBlocker({
     action,
@@ -110,6 +125,8 @@ export function MissionCreationPage({
     cargoSupported,
     cargoTotal,
     fuelCost,
+    lootRatioActive,
+    lootRatioTotal,
     originCoords,
     quantity,
     resources,
@@ -239,6 +256,56 @@ export function MissionCreationPage({
               ))}
             </div>
           </div>
+
+          {lootRatioSupported ? (
+            <div className="grid gap-2">
+              <label className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Loot ratio</span>
+                <span className="flex items-center gap-2 text-xs text-slate-400">
+                  Custom split
+                  <input
+                    checked={lootRatioEnabled}
+                    className="h-4 w-4 accent-signal [color-scheme:dark]"
+                    onChange={(event) => setLootRatioEnabled((event.currentTarget as HTMLInputElement).checked)}
+                    type="checkbox"
+                  />
+                </span>
+              </label>
+              {lootRatioEnabled ? (
+                <div className="grid gap-2">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <PercentField label="Metal %" onChange={(metal) => setLootRatio((current) => ({ ...current, metal }))} value={lootRatio.metal} />
+                    <PercentField label="Crystal %" onChange={(crystal) => setLootRatio((current) => ({ ...current, crystal }))} value={lootRatio.crystal} />
+                    <PercentField label="Deuterium %" onChange={(deuterium) => setLootRatio((current) => ({ ...current, deuterium }))} value={lootRatio.deuterium} />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className={lootRatioTotal === LOOT_RATIO_TOTAL_PERCENT ? "text-slate-500" : "text-amber-200"}>
+                      Total {lootRatioTotal}% (must equal {LOOT_RATIO_TOTAL_PERCENT}%)
+                    </span>
+                    <button
+                      className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white"
+                      onClick={() => setLootRatio(DEFAULT_LOOT_RATIO)}
+                      type="button"
+                    >
+                      Even split
+                    </button>
+                  </div>
+                  {lootRatioTotal === LOOT_RATIO_TOTAL_PERCENT && cargoCapacity > 0 ? (
+                    <p className="text-xs text-slate-500">
+                      Up to {Math.floor((cargoCapacity * lootRatio.metal) / 100).toLocaleString()} metal /{" "}
+                      {Math.floor((cargoCapacity * lootRatio.crystal) / 100).toLocaleString()} crystal /{" "}
+                      {Math.floor((cargoCapacity * lootRatio.deuterium) / 100).toLocaleString()} deuterium of cargo capacity.
+                      Unfilled shares roll over to the other resources.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500">Unfilled shares roll over to the other resources.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Loot fills greedily (metal, then crystal, then deuterium).</p>
+              )}
+            </div>
+          ) : null}
         </section>
 
         <aside className="grid content-start gap-3 rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -265,6 +332,7 @@ export function MissionCreationPage({
               speedPercent,
               ships,
               cargo: cargoSupported ? normalizeCargoDraft(cargo) : undefined,
+              lootRatio: lootRatioActive ? { ...lootRatio } : undefined,
               primaryTargetId,
               quantity,
             })}
@@ -284,6 +352,8 @@ export function missionDraftBlocker({
   cargoSupported,
   cargoTotal,
   fuelCost,
+  lootRatioActive = false,
+  lootRatioTotal = 0,
   originCoords,
   quantity,
   resources,
@@ -295,6 +365,8 @@ export function missionDraftBlocker({
   cargoSupported: boolean;
   cargoTotal: number;
   fuelCost: number;
+  lootRatioActive?: boolean | undefined;
+  lootRatioTotal?: number | undefined;
   originCoords: Coordinates | undefined;
   quantity: number;
   resources: MissionResourceSnapshot | undefined;
@@ -310,6 +382,9 @@ export function missionDraftBlocker({
   }
   if (cargoSupported && cargoTotal > cargoCapacity) return "Cargo exceeds available capacity.";
   if (cargoSupported && cargoTotal < 0) return "Cargo cannot be negative.";
+  if (lootRatioActive && lootRatioTotal !== LOOT_RATIO_TOTAL_PERCENT) {
+    return `Loot ratio must total ${LOOT_RATIO_TOTAL_PERCENT}%.`;
+  }
   return undefined;
 }
 
@@ -381,6 +456,31 @@ function ResourceField({
         min={0}
         onInput={(event) => onChange(String(clampInteger(Number((event.currentTarget as HTMLInputElement).value), 0, max)))}
         placeholder="0"
+        type="number"
+        value={value}
+      />
+    </label>
+  );
+}
+
+function PercentField({
+  label,
+  onChange,
+  value,
+}: {
+  label: string;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-xs text-slate-500">{label}</span>
+      <input
+        className="h-9 rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
+        inputMode="numeric"
+        max={LOOT_RATIO_TOTAL_PERCENT}
+        min={0}
+        onInput={(event) => onChange(clampInteger(Number((event.currentTarget as HTMLInputElement).value), 0, LOOT_RATIO_TOTAL_PERCENT))}
         type="number"
         value={value}
       />

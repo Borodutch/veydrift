@@ -122,6 +122,39 @@ describe("mission creation", () => {
     })).toBe("Cargo exceeds available capacity.");
   });
 
+  test("blocks attacks whose custom loot ratio does not total 100%", () => {
+    const base = {
+      action: attackAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 100 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 100,
+    };
+
+    expect(missionDraftBlocker({
+      ...base,
+      lootRatioActive: true,
+      lootRatioTotal: 90,
+    })).toBe("Loot ratio must total 100%.");
+
+    expect(missionDraftBlocker({
+      ...base,
+      lootRatioActive: true,
+      lootRatioTotal: 100,
+    })).toBeUndefined();
+
+    expect(missionDraftBlocker({
+      ...base,
+      lootRatioActive: false,
+      lootRatioTotal: 0,
+    })).toBeUndefined();
+  });
+
   test("summarizes mission timing with duration first and exact clocks preserved", () => {
     const summary = missionTimingSummary(3_900, Date.UTC(2026, 0, 1, 12, 0, 0));
 

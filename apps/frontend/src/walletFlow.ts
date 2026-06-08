@@ -668,6 +668,7 @@ const GAME_SELECTORS = {
   finishResourceWithdrawal: "0xde0f208c",
   joinAttackMission: "0x28260eb6",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
+  launchAttackMission: "0x19fec22b",
   launchFleetMission: "0x60eac16f",
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
@@ -682,6 +683,7 @@ const GAME_SELECTORS = {
 } as const;
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
 const COLONIZE_MISSION_TYPE = 2;
+const ATTACK_MISSION_TYPE = 3;
 const MOON_SELECTORS = {
   finishMoonBuildingUpgrade: "0x713b9e66",
   jumpGateJump: "0x36aaf8f8",
@@ -877,6 +879,7 @@ const contractRevertReasons: Record<string, string> = {
 const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.completeFleetMissionReturn,
   GAME_SELECTORS.joinAttackMission,
+  GAME_SELECTORS.launchAttackMission,
   GAME_SELECTORS.launchFleetMission,
   GAME_SELECTORS.recallFleetMission,
   GAME_SELECTORS.resolveFleetMission,
@@ -1249,6 +1252,66 @@ export function encodeLaunchFleetMissionCall({
     cargo?.deuterium ?? 0,
     speedPercent,
     randomnessRequestId,
+  ]);
+}
+
+export const LOOT_RATIO_BPS_TOTAL = 10_000;
+
+export type LootRatioBps = {
+  metalBps: number;
+  crystalBps: number;
+  deuteriumBps: number;
+};
+
+/// Encodes the `launchAttackMission` entrypoint, which carries a player-selected loot ratio.
+/// The three basis-point shares must sum to `LOOT_RATIO_BPS_TOTAL` (10000); the contract reverts
+/// otherwise. Attacks without an explicit ratio use `encodeLaunchFleetMissionCall` instead, which
+/// records a zero ratio and preserves the legacy greedy metal->crystal->deuterium fill.
+export function encodeLaunchAttackMissionCall({
+  originPlanetId,
+  targetPlanetId,
+  ships,
+  cargo,
+  speedPercent = 100,
+  randomnessRequestId = 0,
+  lootRatio,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  speedPercent?: number | undefined;
+  randomnessRequestId?: bigint | number | string | undefined;
+  lootRatio: LootRatioBps;
+}): string {
+  if (lootRatio.metalBps + lootRatio.crystalBps + lootRatio.deuteriumBps !== LOOT_RATIO_BPS_TOTAL) {
+    throw new Error("Loot ratio must total 100%.");
+  }
+  return encodeGameCall(GAME_SELECTORS.launchAttackMission, [
+    originPlanetId,
+    targetPlanetId,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
+    speedPercent,
+    randomnessRequestId,
+    lootRatio.metalBps,
+    lootRatio.crystalBps,
+    lootRatio.deuteriumBps,
   ]);
 }
 
@@ -1959,6 +2022,22 @@ export async function sendLaunchFleetMissionTransaction(
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
   await assertFleetMissionCallSucceeds(provider, account, contractAddress, data, params);
+
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data
+  });
+}
+
+export async function sendLaunchAttackMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchAttackMissionCall>[0]
+): Promise<string> {
+  const data = encodeLaunchAttackMissionCall(params);
+  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data, { missionType: ATTACK_MISSION_TYPE });
 
   return sendWalletTransaction(provider, account, {
     from: account,
