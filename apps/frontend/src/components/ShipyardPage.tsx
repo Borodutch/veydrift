@@ -146,7 +146,7 @@ export function ShipyardPage({
   );
 }
 
-function StatusPanel({
+export function StatusPanel({
   actionState,
   error,
   loading,
@@ -157,7 +157,10 @@ function StatusPanel({
   loading: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
 }) {
-  if (loading) {
+  // Only suppress notices during the initial load (no state yet). Keeping the
+  // last notice visible across refreshes avoids a blink/layout-jump when state
+  // is silently re-fetched.
+  if (loading && !shipyardState) {
     return null;
   }
 
@@ -186,9 +189,10 @@ function StatusPanel({
     );
   }
 
-  if (actionState.status !== "idle") {
-    const tone = actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "neutral";
-    return <Notice tone={tone}>{actionState.label}</Notice>;
+  // Only surface failures. Success/pending action banners are intentionally not
+  // rendered so the page does not flash transient status banners on every action.
+  if (actionState.status === "error") {
+    return <Notice tone="danger">{actionState.label}</Notice>;
   }
 
   return null;

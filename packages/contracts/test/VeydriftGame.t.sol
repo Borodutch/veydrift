@@ -1921,8 +1921,9 @@ contract VeydriftGameTest is Test {
         game.resolveFleetMission(attackMissionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(attackMissionId);
-        assertEq(attackCargo.metal, 4_500);
-        assertEq(game.planet(targetPlanetId).resources.metal, 1_500);
+        // Flat 50% classic plunder loots half of the 6,000 metal left after the save run.
+        assertEq(attackCargo.metal, 3_000);
+        assertEq(game.planet(targetPlanetId).resources.metal, 3_000);
 
         (, uint64 saveArrivalAt, uint64 saveReturnAt,) = _fleetMission(saveMissionId);
         uint64 currentTestTime = attackArrivalAt;
@@ -2044,7 +2045,8 @@ contract VeydriftGameTest is Test {
         _setHonorPoints(defender, -500);
         (reason, flags, plunderBps) = _attackProtectionStatus(player, targetPlanetId);
         assertEq(flags & ATTACK_BANDIT_FLAG, ATTACK_BANDIT_FLAG);
-        assertEq(plunderBps, 10_000);
+        // Classic raiding caps loot at 50% regardless of the bandit flag.
+        assertEq(plunderBps, 5_000);
 
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 1;
@@ -2782,10 +2784,11 @@ contract VeydriftGameTest is Test {
         game.resolveFleetMission(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
-        assertEq(cargo.metal, 675);
-        assertEq(cargo.crystal, 675);
-        assertEq(cargo.deuterium, 675);
-        assertEq(game.planet(targetPlanetId).resources.metal, 225);
+        // Flat 50% classic plunder: half of each small balance is looted.
+        assertEq(cargo.metal, 450);
+        assertEq(cargo.crystal, 450);
+        assertEq(cargo.deuterium, 450);
+        assertEq(game.planet(targetPlanetId).resources.metal, 450);
     }
 
     function _launchAttackWithLootRatio(
@@ -2859,36 +2862,34 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.deuterium, 9_000);
     }
 
-    // The cap-bound cascade (crystal share saturates its plunder cap and the remainder rolls into
-    // deuterium) is asserted directly against the deployed VeydriftRaidStorage library with an
-    // explicit plunder rate. The end-to-end attack path derives the plunder rate from
-    // `attackProtectionStatus`, which the combat module reaches through a self-`staticcall` that
-    // falls back to the base rate when it reverts; that fallback is environment-fragile under
-    // `forge test` (it flips between the honorable 7_500 and base 5_000 rate across otherwise
-    // identical CI runs), so pinning an exact looted amount through resolution is not deterministic.
-    // The two surrounding integration tests still cover launch -> resolve -> raid with a ratio at
-    // plunder rates where the per-resource cap is non-binding, so the wiring stays exercised.
+    // The cap-bound cascade (a resource share saturates its plunder cap and the remainder rolls into
+    // the next resource) is asserted directly against the deployed VeydriftRaidStorage library at the
+    // game's flat plunder rate (BASE_RAID_LOOT_BPS = 5_000). Exercising the library in isolation keeps
+    // the cascade arithmetic deterministic and independent of the resolution path, which reaches the
+    // plunder rate through the combat module's self-`staticcall` to `attackProtectionStatus`. The two
+    // surrounding integration tests still cover launch -> resolve -> raid with a ratio at caps that are
+    // non-binding, so the end-to-end wiring stays exercised.
     function testRaidCascadesCrystalCapIntoDeuterium() public {
         RaidStorageHarness harness = new RaidStorageHarness();
-        // Empty metal and only 3_000 crystal: at the 7_500 honorable plunder rate the crystal cap is
-        // 2_250, so the rolled-over metal capacity saturates crystal and cascades into deuterium.
+        // Empty metal and only 3_000 crystal: at the 5_000 bps plunder rate the crystal cap is 1_500,
+        // so the rolled-over metal capacity saturates crystal and cascades into deuterium.
         harness.setTarget(0, 3_000, 10_000);
 
         (uint128 metal, uint128 crystal, uint128 deuterium) = harness.raid({
             capacity: 5_000,
-            plunderRateBps: 7_500,
+            plunderRateBps: VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS,
             metalBps: 5_000,
             crystalBps: 2_500,
             deuteriumBps: 2_500
         });
 
         assertEq(metal, 0);
-        assertEq(crystal, 2_250);
-        assertEq(deuterium, 2_750);
+        assertEq(crystal, 1_500);
+        assertEq(deuterium, 3_500);
         VeydriftGameStorage.Resources memory remaining = harness.target();
         assertEq(remaining.metal, 0);
-        assertEq(remaining.crystal, 750);
-        assertEq(remaining.deuterium, 7_250);
+        assertEq(remaining.crystal, 1_500);
+        assertEq(remaining.deuterium, 6_500);
     }
 
     function testAttackLootRatioEmitsLaunchEvent() public {
@@ -3475,22 +3476,23 @@ contract VeydriftGameTest is Test {
         ) = _fleetMission(joinedMissionId);
         assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
         assertEq(uint8(joinedStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(attackCargo.metal, 3_750);
-        assertEq(attackCargo.crystal, 1_250);
-        assertEq(attackCargo.deuterium, 0);
-        assertEq(joinedCargo.metal, 3_750);
-        assertEq(joinedCargo.crystal, 1_250);
-        assertEq(joinedCargo.deuterium, 0);
+        // Flat 50% classic plunder of 10,000/4,000/3,000 fits both cargos and splits evenly.
+        assertEq(attackCargo.metal, 2_500);
+        assertEq(attackCargo.crystal, 1_000);
+        assertEq(attackCargo.deuterium, 750);
+        assertEq(joinedCargo.metal, 2_500);
+        assertEq(joinedCargo.crystal, 1_000);
+        assertEq(joinedCargo.deuterium, 750);
 
         vm.warp(joinedReturnAt);
         game.completeFleetMissionReturn(joinedMissionId);
         assertEq(game.shipCount(allyPlanetId, Ship.SmallCargo), 1);
-        assertEq(game.planet(allyPlanetId).resources.metal, 13_750);
+        assertEq(game.planet(allyPlanetId).resources.metal, 12_500);
 
         vm.warp(attackReturnAt);
         game.completeFleetMissionReturn(attackMissionId);
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
-        assertEq(game.planet(originPlanetId).resources.metal, 13_750);
+        assertEq(game.planet(originPlanetId).resources.metal, 12_500);
     }
 
     function testAcsAttackMultipleParticipantsSplitLootOnceInMissionOrder() public {

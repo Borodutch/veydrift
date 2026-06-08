@@ -34,8 +34,6 @@ abstract contract VeydriftGameStorage {
     uint8 public constant MAX_RESOURCE_ID = uint8(type(Resource).max);
     uint16 public constant MAX_LEVEL = 50;
     uint16 public constant BPS = 10_000;
-    uint16 public constant RAID_LOOT_CAP_BPS = 5_000;
-    uint16 public constant PROTECTED_STORAGE_BPS = 1_000;
     uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
     uint16 public constant FLEET_UNIVERSE_SPEED = 1;
     uint32 public constant MIN_QUEUE_SECONDS = 1;
@@ -726,7 +724,7 @@ abstract contract VeydriftGameStorage {
         );
         if (defenderBandit) flags |= ATTACK_BANDIT_FLAG;
         else if (honorable) flags |= ATTACK_HONORABLE_FLAG;
-        plunderBps = VeydriftAntiRaidPrimitives.plunderBps(honorable, defenderBandit);
+        plunderBps = VeydriftAntiRaidPrimitives.plunderBps();
         flags |= _attackRelationFlags(attackerScore, defenderScore);
 
         if (attacker == defender || _isAttackProtectionExempt(attacker, defender)) {

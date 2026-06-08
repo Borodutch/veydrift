@@ -375,18 +375,17 @@ function BuildingDetailPanel({
     onFinishBuilding,
     queue: activeBuildingQueue,
   });
-  const visibleActionNotice = deduplicatedInfrastructureActionNotice(actionNotice, [
+  const dedupedActionNotice = deduplicatedInfrastructureActionNotice(actionNotice, [
     status.reason,
     finishAction.reason,
   ]);
+  // Only surface failures. Success action banners are intentionally not rendered
+  // so the panel does not flash a transient status banner on every action.
+  const visibleActionNotice = dedupedActionNotice?.tone === "error" ? dedupedActionNotice : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
-  const noticeClass = visibleActionNotice?.tone === "error"
-    ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
-    : visibleActionNotice?.tone === "success"
-      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
-      : "border-signal/20 bg-signal/10 text-signal";
+  const noticeClass = "border-rose-300/20 bg-rose-300/10 text-rose-200";
 
   return (
     <InspectDetailShell>

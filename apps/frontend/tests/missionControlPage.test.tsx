@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions } from "../src/components/MissionControlPage";
+import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
@@ -86,7 +87,6 @@ describe("MissionControlPage", () => {
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
       onJoinAttack: () => undefined,
-      onOpenBattleReport: () => undefined,
       onOpenReport: () => undefined,
       onOpenReportList: () => undefined,
       onRecall: () => undefined,
@@ -99,26 +99,31 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Mission Control");
     expect(text).toContain("Watch inbound attacks");
-    expect(text).toContain("Active missions 3");
-    expect(text).toContain("Due resolvers 3");
-    expect(text).toContain("Hostile inbound 1");
-    expect(text).toContain("Returns 1");
+    // The top summary stat-card row was removed; the lists below convey the same counts.
+    expect(text).not.toContain("Active missions 3");
+    expect(text).not.toContain("Due resolvers");
+    expect(text).not.toContain("Returns 1");
     expect(text).toContain("No completed missions are visible for this wallet yet.");
-    // Section header labels are dropped; the tables convey grouping on their own.
+    // The active "Fleet movement" label is dropped; the past missions table keeps its header.
     expect(text).not.toContain("Fleet movement");
-    expect(text).not.toContain("Past missions");
+    expect(text).toContain("Past missions");
     expect(text).toContain("Countdown Mission Origin -> Target Return Fleet / cargo Orders");
-    expect(text).toContain("Attack # 8");
+    // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
+    expect(text).toContain("Incoming attack # 8");
+    expect(text).not.toContain("Attack # 8");
     expect(text).toContain("Hostile inbound");
     expect(text).toContain("Origin Planet #7");
     expect(text).toContain("Target Planet #9");
     expect(text).toContain("Transport # 9");
     expect(text).toContain("Land fleet");
-    expect(text).toContain("View report");
+    expect(text).toContain("Open mission");
     expect(text).toContain("Copy report");
     expect(text).toContain("New Eos [2:44:9]");
     expect(text).toContain("External coordinates unavailable");
+    // Commander identity is kept for the foreign incoming attacker...
     expect(text).toContain("0x3333...3333");
+    // ...but dropped for the player's own outgoing/returning fleets (always themselves).
+    expect(text).not.toContain("Commander 0x1111...1111");
     expect(text).toContain("Report 0xabc...");
     expect(text).not.toContain("Fleets 3/?");
     expect(text).not.toContain("Reload");
@@ -155,6 +160,94 @@ describe("MissionControlPage", () => {
     expect(visibleText(refreshingPage)).toContain("Refreshing");
     expect(source).toContain("<RefreshButton");
     expect(source).not.toContain("RefreshCw");
+  });
+
+  test("resolves colonize-mission target coordinates instead of an unavailable fallback", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({
+          missionId: "42",
+          missionType: "Colonize",
+          originPlanetId: "7",
+          targetPlanetId: encodeColonizationTargetId(2, 44, 10),
+        })],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Uncharted [2:44:10]");
+    expect(text).not.toContain("External coordinates unavailable");
+  });
+
+  test("resolves past-archive mission target coordinates that are absent from the live feed", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "6:9:1", name: "New Zion" })],
+      missionArchive: {
+        wallet,
+        homePlanetId: "7",
+        rows: [{
+          kind: "mission",
+          mission: mission({
+            missionId: "1",
+            missionType: "Attack",
+            status: "Returned",
+            originPlanetId: "7",
+            targetPlanetId: "40",
+            originPlanet: {
+              planetId: "7",
+              owner: wallet,
+              ownerDisplayName: "borodutch",
+              name: "New Zion",
+              galaxy: 6,
+              system: 9,
+              position: 1,
+              coordinates: "6:9:1",
+            },
+            targetPlanet: {
+              planetId: "40",
+              owner: "0xa278b3943c7c58eb0d26be397507285adf6490ed",
+              ownerDisplayName: null,
+              name: "1517",
+              galaxy: 5,
+              system: 407,
+              position: 4,
+              coordinates: "5:407:4",
+            },
+          }),
+        }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 1,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("1517 [5:407:4]");
+    expect(text).not.toContain("External coordinates unavailable");
   });
 
   test("renders attacker and defender attack views with side-specific controls", () => {
@@ -203,14 +296,15 @@ describe("MissionControlPage", () => {
     });
     const defenderText = visibleText(defenderPage);
 
-    expect(defenderText).toContain("Hostile inbound 1");
+    // "Hostile inbound" persists as the active-row direction label (the stat card is gone).
+    expect(defenderText).toContain("Hostile inbound");
     expect(defenderText).toContain("Astra (0x1111...1111)");
     expect(defenderText).toContain("New Eos [2:44:9]");
     expect(defenderText).toContain("Red Haven [4:55:11]");
     expect(defenderText).toContain("Group defend");
     expect(defenderText).toContain("Intercept");
     expect(defenderText).toContain("Battle report");
-    expect(defenderText).not.toContain("Past missions");
+    expect(defenderText).toContain("Past missions");
     expect(defenderText).not.toContain("Recall fleet");
 
     const attackerPage = missionControlPage({
@@ -253,17 +347,18 @@ describe("MissionControlPage", () => {
     });
     const attackerText = visibleText(attackerPage);
 
-    expect(attackerText).toContain("Active missions 1");
+    // The summary stat-card row was removed; the active mission still renders below.
+    expect(attackerText).not.toContain("Active missions 1");
     expect(attackerText).toContain("Recall fleet");
-    expect(attackerText).toContain("View report");
+    expect(attackerText).toContain("Open mission");
     expect(attackerText).toContain("Copy report");
     expect(attackerText).toContain("Battle report");
-    expect(attackerText).not.toContain("Past missions");
+    expect(attackerText).toContain("Past missions");
     expect(attackerText).not.toContain("Group defend");
     expect(attackerText).not.toContain("Intercept");
   });
 
-  test("renders a shareable battle report detail with OGame-style operational fields", () => {
+  test("renders a shareable battle report detail with operational fields", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -329,7 +424,8 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Needs orders now");
-    expect(text).toContain("Due resolvers 1");
+    // Due count now surfaces only via the "Needs orders now" badge (the summary stat card is gone).
+    expect(text).not.toContain("Due resolvers");
     expect(text).toContain("Needs orders now 1");
     expect(text).toContain("Resolve battle");
   });
@@ -349,13 +445,18 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).not.toContain("Past missions");
-    expect(text).toContain("Mission # 1");
-    expect(text).toContain("Mission # 25");
-    expect(text).not.toContain("Mission # 26");
+    expect(text).toContain("Past missions");
+    // 25 battle-report rows render on the visible first page; the 26th is on the hidden second page.
+    // Each row exposes a single "Open mission" button (Details + Report merged in VEY-374).
+    expect(text.split("Open mission").length - 1).toBe(25);
     expect(text).toContain("Page 1 of 2");
     expect(text).toContain("1-25 of 26");
-    expect(text).toContain("Completed Mission Route / target Result Details");
+    // The dedicated "Completed" column header is gone; the "Route / target" header is shortened to
+    // "Route" (VEY-371 rework). The compact table keeps the remaining columns.
+    expect(text).toContain("Mission Route Result Details");
+    expect(text).not.toContain("Route / target");
+    expect(text).not.toContain("Completed");
+    expect(text).not.toContain("Mission #");
     expect(text).not.toContain("Open list");
     expect(text).not.toContain("Battle reports");
   });
@@ -375,12 +476,17 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).not.toContain("Past missions");
-    // Mission #77 collapses to a single row that links to both the detail and the report.
-    expect(text).toContain("Attack Mission # 77");
-    expect(text.split("Mission # 77").length - 1).toBe(1);
-    expect(text).toContain("Open details");
-    expect(text).toContain("Open report");
+    // VEY-371 restores the "Past missions" header on the compact table.
+    expect(text).toContain("Past missions");
+    // Mission 77 collapses to a single row; the bare outgoing "Attack" label is kept.
+    expect(text).toContain("Attack");
+    // Mission-number text is no longer rendered in the compact past rows (VEY-371).
+    expect(text).not.toContain("Mission #");
+    // A single "Open mission" button replaces the old split "Open details" / "Open report" pair.
+    expect(text).toContain("Open mission");
+    expect(text.split("Open mission").length - 1).toBe(1);
+    expect(text).not.toContain("Open details");
+    expect(text).not.toContain("Open report");
     // The standalone battle-report row is collapsed away.
     expect(text).not.toContain("Battle report");
   });
@@ -401,11 +507,63 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Battle report");
-    expect(text).toContain("Mission # 90");
-    expect(text).toContain("Open report");
+    // VEY-371 restores the "Past missions" header and renders the target planet inline.
+    expect(text).toContain("Past missions");
+    expect(text).toContain("Planet # 7");
+    // Mission-number text is no longer rendered in the compact past rows (VEY-371).
+    expect(text).not.toContain("Mission #");
+    // Standalone battle-report rows also lead to the single unified mission detail screen.
+    expect(text).toContain("Open mission");
+    expect(text).not.toContain("Open report");
   });
 
-  test("renders joinable attacks in the unified active mission list", () => {
+  test("labels past missions by direction and drops the self-commander on outgoing", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [
+          mission({
+            missionId: "77",
+            missionType: "Transport",
+            owner: "0x1111111111111111111111111111111111111111",
+            originPlanetId: "7",
+            targetPlanetId: "9",
+            status: "Returned",
+          }),
+          mission({
+            missionId: "88",
+            missionType: "Attack",
+            owner: "0x3333333333333333333333333333333333333333",
+            originPlanetId: "5",
+            targetPlanetId: "7",
+            status: "Returned",
+          }),
+        ],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    // Outgoing past mission keeps the bare action and hides the always-me commander.
+    // (Mission-number text is dropped from the compact past rows per VEY-371.)
+    expect(text).toContain("Transport");
+    expect(text).not.toContain("Mission #");
+    expect(text).not.toContain("Commander 0x1111...1111");
+    // Incoming past mission is prefixed and keeps the foreign commander identity.
+    expect(text).toContain("Incoming attack");
+    expect(text).toContain("Commander 0x3333...3333");
+    // VEY-371 rework: the completion time now sits next to the status label (e.g.
+    // "Returned · Jun 7, 2026, ..."), not on a separate line or column.
+    expect(text).toContain("Returned · ");
+  });
+
+  test("surfaces joinable attacks under the Alliance tab (no stat-card row)", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -426,10 +584,11 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Active missions 1");
-    expect(text).toContain("Joinable attack");
-    expect(text).toContain("Join attack");
-    expect(text).not.toContain("Group defend");
+    // The summary stat-card row was removed; the joinable attack is now surfaced in the
+    // Alliance tab (My missions / Alliance split from VEY-375), not a unified list.
+    expect(text).not.toContain("Active missions 1");
+    expect(text).toContain("My missions (0)");
+    expect(text).toContain("Alliance (1)");
   });
 });
 
@@ -452,7 +611,6 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
     onJoinAttack: () => undefined,
-    onOpenBattleReport: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
     onRecall: () => undefined,
