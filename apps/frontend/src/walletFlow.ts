@@ -1269,6 +1269,36 @@ export function encodeColonizationTargetId(galaxy: number, system: number, posit
     | BigInt(position)).toString();
 }
 
+export type DecodedColonizationTarget = {
+  galaxy: number;
+  system: number;
+  position: number;
+  coordinates: string;
+};
+
+// Colonize-mission targets are empty, unsettled coordinates, so the indexer has no
+// planet to resolve them against. The target planet id is not a real planet id (those
+// are small sequential integers) but the destination coordinates packed behind the
+// colonization flag bit by `encodeColonizationTargetId`. Decoding it lets us show the
+// real coordinates instead of an opaque "unavailable" fallback. Returns null for any
+// id without the flag bit, which covers every real planet id.
+export function decodeColonizationTargetId(
+  planetId: string | bigint | number,
+): DecodedColonizationTarget | null {
+  let value: bigint;
+  try {
+    value = BigInt(planetId);
+  } catch {
+    return null;
+  }
+  if ((value & COLONIZATION_COORDINATE_FLAG) === 0n) return null;
+
+  const galaxy = Number((value >> 24n) & 0xffffn);
+  const system = Number((value >> 8n) & 0xffffn);
+  const position = Number(value & 0xffn);
+  return { galaxy, system, position, coordinates: `${galaxy}:${system}:${position}` };
+}
+
 export function encodeJoinAttackMissionCall({
   originPlanetId,
   attackMissionId,

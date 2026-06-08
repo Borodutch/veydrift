@@ -2,14 +2,15 @@ import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import type {
-  BattleReport,
-  FleetMissionArchiveEntry,
-  FleetMissionArchiveResponse,
-  FleetMissionPlanetReference,
-  FleetMissionSummary,
-  FleetMissionVisibilityResponse,
-  ManagedPlanetResponse,
+import {
+  type BattleReport,
+  type FleetMissionArchiveEntry,
+  type FleetMissionArchiveResponse,
+  type FleetMissionPlanetReference,
+  type FleetMissionSummary,
+  type FleetMissionVisibilityResponse,
+  type ManagedPlanetResponse,
+  decodeColonizationTargetId,
 } from "../walletFlow";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
@@ -93,8 +94,14 @@ export function MissionControlPage({
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
   const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
-  const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
-  const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
+  // Past missions render from the paginated archive, which can contain missions absent from the live
+  // fleet-visibility feed (older pages, returned missions no longer "active"). The backend already
+  // resolves each row's origin/target planet, so seed the lookup from those references too — otherwise
+  // their coordinates render as "External coordinates unavailable" even though the data is available.
+  const pastArchiveMissions = missionsFromArchiveRows(rawPastMissionRows);
+  const lookupMissions = uniqueMissions([...allMissions, ...pastArchiveMissions]);
+  const selectedReport = reportMissionId ? lookupMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
+  const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets);
   const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
   const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
   const activeCount = activeMissionRows.length;
@@ -1196,6 +1203,10 @@ function uniqueMissions(missions: FleetMissionSummary[]): FleetMissionSummary[] 
   });
 }
 
+function missionsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): FleetMissionSummary[] {
+  return rows.flatMap((row) => (row.kind === "mission" ? [row.mission] : []));
+}
+
 function planetLookupFromMissionData(
   missions: FleetMissionSummary[],
   walletPlanets: ManagedPlanetResponse[]
@@ -1289,6 +1300,8 @@ function addressesMatch(left: string | undefined, right: string | undefined): bo
 function planetReference(planetId: string, lookup: ReadonlyMap<string, MissionPlanetIdentity>): string {
   const planet = lookup.get(planetId);
   if (planet) return `${planet.displayName} [${planet.coordinates}]`;
+  const colonyTarget = decodeColonizationTargetId(planetId);
+  if (colonyTarget) return `Uncharted [${colonyTarget.coordinates}]`;
   return "External coordinates unavailable";
 }
 

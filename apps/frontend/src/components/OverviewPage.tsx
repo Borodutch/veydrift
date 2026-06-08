@@ -23,6 +23,7 @@ import { isImageReady } from "../imageLoadState";
 import { formatPlanetType } from "../data/mockUniverse";
 import type { Planet } from "../types";
 import {
+  decodeColonizationTargetId,
   playerDisplayLabel,
   validatePlayerDisplayName,
   type FleetMissionPlanetReference,
@@ -1136,6 +1137,8 @@ function missionEndpointLabel(
     const name = ref.name?.trim();
     return `${name && name.length > 0 ? name : "Planet"} [${ref.coordinates}]`;
   }
+  const colonyTarget = decodeColonizationTargetId(fallbackPlanetId);
+  if (colonyTarget) return `Uncharted [${colonyTarget.coordinates}]`;
   return `Planet #${fallbackPlanetId}`;
 }
 
