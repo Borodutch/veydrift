@@ -401,7 +401,7 @@ function RankingRow({
     : isAttackProtected
         ? "border-red-300/20 bg-red-300/[0.06] shadow-[inset_3px_0_0_rgba(248,113,113,0.5)]"
         : isSameAlliance
-          ? "border-sky-300/20 bg-sky-300/[0.06] shadow-[inset_3px_0_0_rgba(125,211,252,0.55)]"
+          ? "border-sky-400/30 bg-sky-300/[0.12] shadow-[inset_3px_0_0_rgba(56,189,248,0.85)]"
           : "border-white/5";
 
   const openAlliance = () => {
@@ -427,7 +427,7 @@ function RankingRow({
               <button
                 className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none transition disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 ${
                   isSameAlliance
-                    ? "border-sky-300/25 bg-sky-300/10 text-sky-100 hover:border-sky-200/50 hover:bg-sky-300/15"
+                    ? "border-sky-400/50 bg-sky-400/[0.22] text-sky-100 hover:border-sky-300/70 hover:bg-sky-400/30"
                     : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:border-cyan-200/50 hover:bg-cyan-300/15"
                 }`}
                 disabled={!onSelectAlliance}
@@ -460,6 +460,14 @@ function RankingRow({
                 title={entry.attackProtection?.blockedReasonLabel ?? "Attack blocked by protection rules"}
               >
                 Protected
+              </span>
+            ) : null}
+            {isSameAlliance && alliance ? (
+              <span
+                className="shrink-0 rounded border border-sky-300/40 bg-sky-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase leading-none tracking-normal text-sky-100"
+                title={entry.attackProtection?.blockedReasonLabel ?? `Same alliance — ${alliance.name}`}
+              >
+                {`Ally [${alliance.tag}]`}
               </span>
             ) : null}
           </span>
