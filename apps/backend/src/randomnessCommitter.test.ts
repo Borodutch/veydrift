@@ -25,6 +25,9 @@ const baseConfig: BackendConfig = {
 
 const zeroCommitment = "0x" + "0".repeat(64);
 
+// Silent logger so deliberate failure-path tests don't print to the CI output scanner.
+const silentLogger = { warn: () => {}, error: () => {} };
+
 /** In-memory engine simulating the commit-reveal lifecycle for service-level tests. */
 class FakeEngineChainClient implements RandomnessCommitmentChainClient {
   block = 100;
@@ -85,6 +88,7 @@ describe("RandomnessCommitterService", () => {
   test("commits a word when none is pending and surfaces the resulting status", async () => {
     const engine = new FakeEngineChainClient();
     const service = new RandomnessCommitterService(baseConfig, {
+      logger: silentLogger,
       chainClient: engine,
       store: new InMemoryRandomnessCommitmentStore(),
       fulfillerAddress: "0xc2142a4918754abe5975ecd486a66dfeba39a419"
@@ -143,6 +147,7 @@ describe("RandomnessCommitterService", () => {
       throw new Error("rpc down");
     };
     const service = new RandomnessCommitterService(baseConfig, {
+      logger: silentLogger,
       chainClient: engine,
       store: new InMemoryRandomnessCommitmentStore()
     });

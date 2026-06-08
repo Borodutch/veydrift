@@ -243,12 +243,23 @@ export type RandomnessCommitterSnapshot = {
   status: RandomnessCommitmentStatus | null;
 };
 
+export type RandomnessCommitterLogger = {
+  warn: (message: string) => void;
+  error: (message: string, error?: unknown) => void;
+};
+
 export type RandomnessCommitterOptions = {
   intervalMs?: number;
   chainClient?: RandomnessCommitmentChainClient;
   store?: RandomnessCommitmentStore;
   now?: () => Date;
   fulfillerAddress?: string;
+  logger?: RandomnessCommitterLogger;
+};
+
+const consoleLogger: RandomnessCommitterLogger = {
+  warn: (message) => console.warn(message),
+  error: (message, error) => console.error(message, error)
 };
 
 const defaultCommitIntervalMs = 15_000;
@@ -263,6 +274,7 @@ export class RandomnessCommitterService {
   private readonly worker: RandomnessCommitmentWorker | undefined;
   private readonly intervalMs: number;
   private readonly fulfillerAddress: string | null;
+  private readonly logger: RandomnessCommitterLogger;
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = false;
   private lastRunAt: string | null = null;
@@ -274,6 +286,7 @@ export class RandomnessCommitterService {
     options: RandomnessCommitterOptions = {}
   ) {
     this.intervalMs = options.intervalMs ?? defaultCommitIntervalMs;
+    this.logger = options.logger ?? consoleLogger;
 
     let chainClient = options.chainClient;
     let fulfillerAddress = options.fulfillerAddress ?? null;
@@ -341,12 +354,12 @@ export class RandomnessCommitterService {
       const status = await this.worker.tick();
       this.lastStatus = status;
       for (const alert of status.alerts) {
-        console.warn(`[randomness-committer] ${alert}`);
+        this.logger.warn(`[randomness-committer] ${alert}`);
       }
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
-      console.error("[randomness-committer] tick failed", error);
+      this.logger.error("[randomness-committer] tick failed", error);
     } finally {
       this.inFlight = false;
     }
