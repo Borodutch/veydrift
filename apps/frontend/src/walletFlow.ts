@@ -257,6 +257,24 @@ export type FleetMissionVisibilityResponse = {
   battleReports: BattleReport[];
 };
 
+export type FleetMissionArchiveEntry =
+  | { kind: "mission"; mission: FleetMissionSummary }
+  | { kind: "battleReport"; report: BattleReport };
+
+export type FleetMissionArchiveResponse = {
+  wallet: string;
+  homePlanetId: string | null;
+  rows: FleetMissionArchiveEntry[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalEntries: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+};
+
 export type MissionDetailResponse = {
   mission: FleetMissionSummary;
   battleReport: BattleReport | null;
@@ -2226,12 +2244,35 @@ type WalletReadOptions = {
   source?: "indexed";
 };
 
+type FleetMissionVisibilityOptions = WalletReadOptions & {
+  includeArchive?: boolean;
+};
+
 export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
   return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withWalletReadOptions("queues", planetId, options), "Queues");
 }
 
-export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<FleetMissionVisibilityResponse> {
-  return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, withWalletReadOptions("fleet-visibility", undefined, options), "Fleet visibility");
+export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
+  const params = new URLSearchParams();
+  if (options.includeArchive === false) params.set("archive", "none");
+  return fetchWalletJson<FleetMissionVisibilityResponse>(
+    apiUrl,
+    wallet,
+    withWalletReadOptions("fleet-visibility", undefined, options, params),
+    "Fleet visibility"
+  );
+}
+
+export async function fetchFleetMissionArchive(
+  apiUrl: string,
+  wallet: string,
+  options: { page?: number; pageSize?: number } = {}
+): Promise<FleetMissionArchiveResponse> {
+  const params = new URLSearchParams();
+  params.set("status", "completed");
+  params.set("page", String(options.page ?? 1));
+  params.set("pageSize", String(options.pageSize ?? 25));
+  return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive");
 }
 
 export async function fetchMission(apiUrl: string, missionId: string): Promise<MissionDetailResponse> {
@@ -2487,8 +2528,7 @@ function withPlanetId(path: string, planetId: string | undefined): string {
   return planetId && isContractPlanetId(planetId) ? `${path}?planetId=${encodeURIComponent(planetId)}` : path;
 }
 
-function withWalletReadOptions(path: string, planetId: string | undefined, options: WalletReadOptions): string {
-  const params = new URLSearchParams();
+function withWalletReadOptions(path: string, planetId: string | undefined, options: WalletReadOptions, params = new URLSearchParams()): string {
   if (planetId && isContractPlanetId(planetId)) {
     params.set("planetId", planetId);
   }

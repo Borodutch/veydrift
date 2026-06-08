@@ -2,7 +2,15 @@ import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import type { BattleReport, FleetMissionPlanetReference, FleetMissionSummary, FleetMissionVisibilityResponse, ManagedPlanetResponse } from "../walletFlow";
+import type {
+  BattleReport,
+  FleetMissionArchiveEntry,
+  FleetMissionArchiveResponse,
+  FleetMissionPlanetReference,
+  FleetMissionSummary,
+  FleetMissionVisibilityResponse,
+  ManagedPlanetResponse,
+} from "../walletFlow";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
 
@@ -30,6 +38,9 @@ interface MissionControlPageProps {
   canTransact: boolean;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   loading: boolean;
+  missionArchive?: FleetMissionArchiveResponse | undefined;
+  missionArchiveError?: string | undefined;
+  missionArchiveLoading?: boolean | undefined;
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
@@ -37,12 +48,12 @@ interface MissionControlPageProps {
   onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
+  onMissionArchivePageChange?: ((page: number) => void) | undefined;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
   onResolve: (missionId: string) => void;
   reportMissionId?: string | undefined;
   reportUrlForMission?: ((missionId: string) => string) | undefined;
-  fleetSlots?: { active: number; limit: number } | undefined;
   walletPlanets?: ManagedPlanetResponse[] | undefined;
 }
 
@@ -51,6 +62,9 @@ export function MissionControlPage({
   canTransact,
   fleetVisibility,
   loading,
+  missionArchive,
+  missionArchiveError,
+  missionArchiveLoading = false,
   now,
   onCompleteReturn,
   onCounterplay,
@@ -58,12 +72,12 @@ export function MissionControlPage({
   onOpenBattleReport,
   onOpenReport,
   onOpenReportList,
+  onMissionArchivePageChange,
   onRecall,
   onRefresh,
   onResolve,
   reportMissionId,
   reportUrlForMission,
-  fleetSlots,
   walletPlanets = [],
 }: MissionControlPageProps) {
   const incoming = fleetVisibility?.incoming ?? [];
@@ -75,7 +89,8 @@ export function MissionControlPage({
   const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, outgoing, returning });
   const due = activeMissionRows.filter(({ mission }) => isMissionDue(mission, now) || isMissionReturned(mission, now));
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
-  const pastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
+  const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
+  const pastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
   const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
   const activeCount = activeMissionRows.length;
@@ -125,7 +140,6 @@ export function MissionControlPage({
           <ActiveMissionSection
             canTransact={canTransact}
             dueCount={due.length}
-            fleetSlots={fleetSlots}
             missions={activeMissionRows}
             now={now}
             onCompleteReturn={onCompleteReturn}
@@ -133,15 +147,18 @@ export function MissionControlPage({
             onJoinAttack={onJoinAttack}
             onOpenReport={onOpenReport}
             onRecall={onRecall}
-            onRefresh={onRefresh}
             onResolve={onResolve}
             planetLookup={planetLookup}
           />
 
           <PastMissionSection
+            error={missionArchiveError}
+            loading={missionArchiveLoading}
             now={now}
             onOpenBattleReport={onOpenBattleReport}
             onOpenReport={onOpenReport}
+            onPageChange={onMissionArchivePageChange}
+            pagination={missionArchive?.pagination}
             planetLookup={planetLookup}
             rows={pastMissionRows}
           />
@@ -222,14 +239,11 @@ type ActiveMissionRow = {
   mission: FleetMissionSummary;
 };
 
-type PastMissionRow =
-  | { kind: "mission"; mission: FleetMissionSummary }
-  | { kind: "battleReport"; report: BattleReport };
+type PastMissionRow = FleetMissionArchiveEntry;
 
 function ActiveMissionSection({
   canTransact,
   dueCount,
-  fleetSlots,
   missions,
   now,
   onCompleteReturn,
@@ -237,13 +251,11 @@ function ActiveMissionSection({
   onJoinAttack,
   onOpenReport,
   onRecall,
-  onRefresh,
   onResolve,
   planetLookup,
 }: {
   canTransact: boolean;
   dueCount: number;
-  fleetSlots?: { active: number; limit: number } | undefined;
   missions: ActiveMissionRow[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
@@ -251,11 +263,9 @@ function ActiveMissionSection({
   onJoinAttack: (missionId: string, targetPlanetId: string) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
-  onRefresh: () => void;
   onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
 }) {
-  const slotLabel = fleetSlots ? `Fleets ${fleetSlots.active}/${fleetSlots.limit}` : `Fleets ${missions.length}/?`;
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
       <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-black/20 px-3 py-2">
@@ -269,16 +279,6 @@ function ActiveMissionSection({
               Needs orders now {dueCount}
             </span>
           ) : null}
-          <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-xs tabular-nums text-slate-300">
-            {slotLabel}
-          </span>
-          <button
-            className="h-8 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
-            onClick={onRefresh}
-            type="button"
-          >
-            Reload
-          </button>
         </div>
       </div>
       {missions.length === 0 ? (
@@ -559,106 +559,113 @@ function MissionReportDetail({
 }
 
 function PastMissionSection({
+  error,
+  loading,
   now,
   onOpenBattleReport,
   onOpenReport,
+  onPageChange,
+  pagination,
   planetLookup,
   rows,
 }: {
+  error?: string | undefined;
+  loading: boolean;
   now: number;
   onOpenBattleReport: (missionId: string) => void;
   onOpenReport: (missionId: string) => void;
+  onPageChange?: ((page: number) => void) | undefined;
+  pagination?: FleetMissionArchiveResponse["pagination"] | undefined;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   rows: PastMissionRow[];
 }) {
-  const pageSize = 6;
+  const pageSize = 25;
   const pages = paginatedRows(rows, pageSize);
-  const hasPages = pages.length > 1;
+  const currentPagination = pagination ?? paginationForRows(rows, pageSize);
+  const hasPages = currentPagination.totalPages > 1;
+  const visiblePages = pagination ? [rows] : pages;
+  const firstEntry = currentPagination.totalEntries === 0 ? 0 : (currentPagination.page - 1) * currentPagination.pageSize + 1;
+  const lastEntry = Math.min(currentPagination.page * currentPagination.pageSize, currentPagination.totalEntries);
 
   return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-3" data-past-page-current="0">
+    <section
+      className="min-w-0 rounded-lg border border-white/10 bg-[#101624] p-3"
+      data-past-page-current={String(currentPagination.page - 1)}
+      data-past-page-size={String(currentPagination.pageSize)}
+      data-past-page-total={String(currentPagination.totalEntries)}
+    >
       <div className="mb-3 flex items-center justify-between gap-2">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Archive</p>
           <h3 className="mt-0.5 text-sm font-semibold text-white">Past missions</h3>
         </div>
-        <span className="text-xs tabular-nums text-slate-400">{rows.length}</span>
+        <span className="text-xs tabular-nums text-slate-400">{currentPagination.totalEntries}</span>
       </div>
+      {loading ? <InlineSyncIndicator label="Refreshing archive" /> : null}
+      {error ? <Notice tone="danger">{error}</Notice> : null}
       {rows.length === 0 ? (
         <p className="text-xs text-slate-500">No completed missions are visible for this wallet yet.</p>
       ) : (
         <>
-          {pages.map((pageRows, pageIndex) => (
+          {visiblePages.map((pageRows, pageIndex) => (
             <div
-              className="overflow-x-auto"
+              className="grid gap-2"
               data-past-page={pageIndex}
-              hidden={pageIndex !== 0}
+              hidden={!pagination && pageIndex !== 0}
               key={`past-mission-page:${pageIndex}`}
             >
-              <table className="min-w-[56rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
-                <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  <tr>
-                    <th className="w-[10rem] px-3 py-2">Completed</th>
-                    <th className="w-[12rem] px-3 py-2">Mission</th>
-                    <th className="w-[19rem] px-3 py-2">Route / target</th>
-                    <th className="w-[13rem] px-3 py-2">Result</th>
-                    <th className="w-[10rem] px-3 py-2">Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((row) => row.kind === "mission" ? (
-                    <PastMissionSummaryRow
-                      key={`past-mission:${row.mission.missionId}`}
-                      mission={row.mission}
-                      now={now}
-                      onOpenReport={onOpenReport}
-                      planetLookup={planetLookup}
-                    />
-                  ) : (
-                    <PastBattleReportRow
-                      key={`past-report:${row.report.missionId}`}
-                      onOpenBattleReport={onOpenBattleReport}
-                      report={row.report}
-                    />
-                  ))}
-                </tbody>
-              </table>
+              <div className="hidden rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 lg:grid lg:grid-cols-[9rem_11rem_minmax(0,1.4fr)_minmax(0,1fr)_8rem] lg:gap-3">
+                <span>Completed</span>
+                <span>Mission</span>
+                <span>Route / target</span>
+                <span>Result</span>
+                <span>Details</span>
+              </div>
+              {pageRows.map((row) => row.kind === "mission" ? (
+                <PastMissionSummaryRow
+                  key={`past-mission:${row.mission.missionId}`}
+                  mission={row.mission}
+                  now={now}
+                  onOpenReport={onOpenReport}
+                  planetLookup={planetLookup}
+                />
+              ) : (
+                <PastBattleReportRow
+                  key={`past-report:${row.report.missionId}`}
+                  onOpenBattleReport={onOpenBattleReport}
+                  report={row.report}
+                />
+              ))}
             </div>
           ))}
           {hasPages ? (
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
-              <span className="text-xs tabular-nums text-slate-400" data-past-page-label>Page 1 of {pages.length}</span>
-              <div className="flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-col gap-2 border-t border-white/10 pt-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                <span data-past-page-label>Page {currentPagination.page} of {currentPagination.totalPages}</span>
+                <span className="ml-2 text-slate-600" data-past-page-range>{`${firstEntry}-${lastEntry} of ${currentPagination.totalEntries}`}</span>
+              </span>
+              <div className="flex items-center gap-2">
                 <button
-                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 disabled:hover:bg-white/5"
+                  aria-label="Previous mission archive page"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                   data-past-page-prev
-                  disabled
-                  onClick={(event) => showPastMissionPage(event, "previous")}
+                  disabled={loading || !currentPagination.hasPreviousPage}
+                  onClick={(event) => onPageChange ? onPageChange(currentPagination.page - 1) : showPastMissionPage(event, "previous")}
+                  title="Previous page"
                   type="button"
                 >
-                  <ChevronLeft aria-hidden="true" size={13} />
-                  Previous
+                  <ChevronLeft aria-hidden="true" size={14} />
                 </button>
-                {pages.map((_, pageIndex) => (
-                  <button
-                    aria-current={pageIndex === 0 ? "page" : undefined}
-                    className="h-8 min-w-8 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 aria-[current=page]:border-cyan-300/35 aria-[current=page]:bg-cyan-300/10 aria-[current=page]:text-cyan-100"
-                    data-past-page-button={pageIndex}
-                    key={`past-mission-page-button:${pageIndex}`}
-                    onClick={(event) => showPastMissionPage(event, pageIndex)}
-                    type="button"
-                  >
-                    {pageIndex + 1}
-                  </button>
-                ))}
                 <button
-                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 disabled:hover:bg-white/5"
+                  aria-label="Next mission archive page"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                   data-past-page-next
-                  onClick={(event) => showPastMissionPage(event, "next")}
+                  disabled={loading || !currentPagination.hasNextPage}
+                  onClick={(event) => onPageChange ? onPageChange(currentPagination.page + 1) : showPastMissionPage(event, "next")}
+                  title="Next page"
                   type="button"
                 >
-                  Next
-                  <ChevronRight aria-hidden="true" size={13} />
+                  <ChevronRight aria-hidden="true" size={14} />
                 </button>
               </div>
             </div>
@@ -683,36 +690,36 @@ function PastMissionSummaryRow({
   const completedAt = missionCompletionTimestamp(mission);
   const report = missionReport(mission, now, planetLookup);
   return (
-    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
-      <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">
+    <div className="grid min-w-0 gap-3 rounded border border-white/10 bg-black/10 p-3 text-xs text-slate-300 lg:grid-cols-[9rem_11rem_minmax(0,1.4fr)_minmax(0,1fr)_8rem] lg:items-start">
+      <ArchiveField label="Completed" valueClassName="whitespace-pre-line tabular-nums">
         {completedAt === undefined ? "Unknown" : formatMissionTime(String(Math.floor(completedAt / 1_000)), now)}
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
+      </ArchiveField>
+      <ArchiveField label="Mission">
         <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
           {missionTypeLabel(mission.missionType)}
         </span>
         <p className="mt-2 font-semibold text-white">Mission #{mission.missionId}</p>
         <p className="mt-1 text-slate-500">{missionStatusLabel(mission.status)}</p>
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
+      </ArchiveField>
+      <ArchiveField label="Route / target" valueClassName="break-words">
         <p className="font-medium text-slate-100">{report.routeSummary}</p>
-        <p className="mt-1 text-slate-500">Commander {report.attacker}</p>
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
+        <p className="mt-1 break-all text-slate-500">Commander {report.attacker}</p>
+      </ArchiveField>
+      <ArchiveField label="Result" valueClassName="break-words">
         <p className="font-medium text-slate-100">{report.outcome}</p>
         <p className="mt-1 text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
         {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
+      </ArchiveField>
+      <ArchiveField label="Details">
         <button
-          className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+          className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
           onClick={() => onOpenReport(mission.missionId)}
           type="button"
         >
           Open details
         </button>
-      </td>
-    </tr>
+      </ArchiveField>
+    </div>
   );
 }
 
@@ -724,36 +731,66 @@ function PastBattleReportRow({
   report: BattleReport;
 }) {
   return (
-    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
-      <td className="border-t border-white/10 px-3 py-3 tabular-nums">Block {report.blockNumber || "unknown"}</td>
-      <td className="border-t border-white/10 px-3 py-3">
+    <div className="grid min-w-0 gap-3 rounded border border-white/10 bg-black/10 p-3 text-xs text-slate-300 lg:grid-cols-[9rem_11rem_minmax(0,1.4fr)_minmax(0,1fr)_8rem] lg:items-start">
+      <ArchiveField label="Completed" valueClassName="tabular-nums">Block {report.blockNumber || "unknown"}</ArchiveField>
+      <ArchiveField label="Mission">
         <span className="inline-flex rounded border border-red-300/25 bg-red-400/10 px-2 py-1 text-[11px] font-semibold text-red-100">
           Battle report
         </span>
         <p className="mt-2 font-semibold text-white">Mission #{report.missionId}</p>
         <p className="mt-1 text-slate-500">{battleOutcomeLabel(report.outcome)}</p>
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
+      </ArchiveField>
+      <ArchiveField label="Route / target" valueClassName="break-words">
         <p className="font-medium text-slate-100">
           Attacker {shortHash(report.attacker)} {"->"} Planet #{report.targetPlanetId}
         </p>
         <p className="mt-1 text-slate-500">Rounds {report.rounds}</p>
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
+      </ArchiveField>
+      <ArchiveField label="Result" valueClassName="break-words">
         <p className="font-medium text-slate-100">Loot {formatCargo(report.loot)}</p>
         <p className="mt-1 text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
+      </ArchiveField>
+      <ArchiveField label="Details">
         <button
-          className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+          className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
           onClick={() => onOpenBattleReport(report.missionId)}
           type="button"
         >
           Open report
         </button>
-      </td>
-    </tr>
+      </ArchiveField>
+    </div>
   );
+}
+
+function ArchiveField({
+  children,
+  label,
+  valueClassName = "",
+}: {
+  children: preact.ComponentChildren;
+  label: string;
+  valueClassName?: string | undefined;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 lg:hidden">{label}</p>
+      <div className={`min-w-0 ${valueClassName}`}>{children}</div>
+    </div>
+  );
+}
+
+function paginationForRows(rows: PastMissionRow[], pageSize: number): FleetMissionArchiveResponse["pagination"] {
+  const totalEntries = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+  return {
+    page: 1,
+    pageSize,
+    totalEntries,
+    totalPages,
+    hasPreviousPage: false,
+    hasNextPage: totalPages > 1,
+  };
 }
 
 function paginatedRows<T>(rows: T[], pageSize: number): T[][] {
@@ -790,20 +827,19 @@ function showPastMissionPage(event: Event, target: number | "next" | "previous")
   const label = section.querySelector<HTMLElement>("[data-past-page-label]");
   if (label) label.textContent = `Page ${clamped + 1} of ${pages.length}`;
 
+  const pageSize = Number(section.dataset.pastPageSize ?? "25");
+  const totalEntries = Number(section.dataset.pastPageTotal ?? "0");
+  const firstEntry = totalEntries === 0 ? 0 : clamped * pageSize + 1;
+  const lastEntry = Math.min((clamped + 1) * pageSize, totalEntries);
+  const range = section.querySelector<HTMLElement>("[data-past-page-range]");
+  if (range) range.textContent = `${firstEntry}-${lastEntry} of ${totalEntries}`;
+
   const previous = section.querySelector<HTMLButtonElement>("[data-past-page-prev]");
   if (previous) previous.disabled = clamped === 0;
 
   const next = section.querySelector<HTMLButtonElement>("[data-past-page-next]");
   if (next) next.disabled = clamped === pages.length - 1;
 
-  section.querySelectorAll<HTMLButtonElement>("[data-past-page-button]").forEach((pageButton) => {
-    const pageIndex = Number(pageButton.dataset.pastPageButton ?? "0");
-    if (pageIndex === clamped) {
-      pageButton.setAttribute("aria-current", "page");
-    } else {
-      pageButton.removeAttribute("aria-current");
-    }
-  });
 }
 
 function ReportPanel({ children, title }: { children: preact.ComponentChildren; title: string }) {
@@ -882,12 +918,9 @@ function chronologicalActiveMissionRows({
 }
 
 function chronologicalPastMissionRows(completedMissions: FleetMissionSummary[], battleReports: BattleReport[]): PastMissionRow[] {
-  const completedMissionIds = new Set(completedMissions.map((mission) => mission.missionId));
   return [
     ...completedMissions.map((mission): PastMissionRow => ({ kind: "mission", mission })),
-    ...battleReports
-      .filter((report) => !completedMissionIds.has(report.missionId))
-      .map((report): PastMissionRow => ({ kind: "battleReport", report })),
+    ...battleReports.map((report): PastMissionRow => ({ kind: "battleReport", report })),
   ].sort((left, right) => pastRowTimestamp(right) - pastRowTimestamp(left));
 }
 

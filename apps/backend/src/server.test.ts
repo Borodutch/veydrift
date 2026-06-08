@@ -25,7 +25,7 @@ import type {
 } from "./evm";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
-import { SettlementIndexer } from "./indexer";
+import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { createRequestHandler } from "./server";
 
 const configuredTestConfig: BackendConfig = {
@@ -57,6 +57,10 @@ const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
+const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
+const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
@@ -1020,6 +1024,51 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
     await expect(response.json()).resolves.toEqual([]);
+  });
+
+  test("serves paginated completed mission archive from the indexed read model", async () => {
+    const chainReader = new class extends MockChainReader {
+      override async getFleetMissionVisibility(): Promise<never> {
+        throw new Error("mission archive must not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+    for (let missionId = 1n; missionId <= 26n; missionId += 1n) {
+      for (const log of completedFleetMissionLogs({ missionId, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+        indexer.applyLog(log);
+      }
+    }
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/missions?status=completed&page=2&pageSize=25`));
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.pagination).toEqual({
+      page: 2,
+      pageSize: 25,
+      totalEntries: 26,
+      totalPages: 2,
+      hasPreviousPage: true,
+      hasNextPage: false
+    });
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({
+      kind: "mission",
+      mission: {
+        missionId: "1",
+        status: "Returned"
+      }
+    });
   });
 
   test("keeps galaxy planet rows indexed-only instead of resolving owner alliance through chain reader calls", async () => {
@@ -4382,4 +4431,61 @@ function topic(value: bigint): string {
 
 function addressTopic(address: Address): string {
   return `0x${address.slice(2).padStart(64, "0")}`;
+}
+
+function completedFleetMissionLogs({
+  missionId,
+  owner,
+  originPlanetId,
+  targetPlanetId,
+}: {
+  missionId: bigint;
+  owner: Address;
+  originPlanetId: bigint;
+  targetPlanetId: bigint;
+}): IndexedRpcLog[] {
+  const arrivalAt = 1_800_000_000n + missionId;
+  const returnAt = arrivalAt + 300n;
+  return [
+    fleetMissionLog({
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(0n)],
+      data: abiWords(originPlanetId, targetPlanetId, arrivalAt, returnAt),
+      logIndex: Number(missionId * 10n),
+    }),
+    fleetMissionLog({
+      topics: [fleetMissionCargoTopic, topic(missionId)],
+      data: abiWords(0n, 0n, 0n, 1n),
+      logIndex: Number(missionId * 10n + 1n),
+    }),
+    fleetMissionLog({
+      topics: [fleetMissionShipsTopic, topic(missionId)],
+      data: abiWords(...Array.from({ length: 14 }, (_, index) => index === 0 ? 1n : 0n)),
+      logIndex: Number(missionId * 10n + 2n),
+    }),
+    fleetMissionLog({
+      topics: [fleetMissionReturnedTopic, topic(missionId), addressTopic(owner), topic(originPlanetId)],
+      data: "0x",
+      logIndex: Number(missionId * 10n + 3n),
+    }),
+  ];
+}
+
+function fleetMissionLog({
+  data,
+  logIndex,
+  topics,
+}: {
+  data: string;
+  logIndex: number;
+  topics: string[];
+}): IndexedRpcLog {
+  const log: IndexedRpcLog = {
+    blockNumber: "0x64",
+    data,
+    logIndex: `0x${logIndex.toString(16)}`,
+    removed: false,
+    topics,
+    transactionHash: `0x${logIndex.toString(16).padStart(64, "0")}`,
+  };
+  return log;
 }
