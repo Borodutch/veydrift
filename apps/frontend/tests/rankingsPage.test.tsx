@@ -117,6 +117,11 @@ describe("RankingsPage", () => {
     expect(visibleText(rowWithWallet(table, ally.wallet))).not.toContain("Protected");
     expect(rowWithWallet(table, other.wallet)?.props?.className).toContain("border-white/5");
     expect(visibleText(rowWithWallet(table, other.wallet))).toContain("[OTHR]");
+    const allyTag = buttonWithTitle(rowWithWallet(table, ally.wallet), "Open alliance VDFT");
+    const otherTag = buttonWithTitle(rowWithWallet(table, other.wallet), "Open alliance OTHR");
+    expect(allyTag?.props?.className).toContain("bg-sky-400");
+    expect(otherTag?.props?.className).toContain("bg-cyan-300");
+    expect(allyTag?.props?.className).not.toBe(otherTag?.props?.className);
     buttonWithTitle(rowWithWallet(table, ally.wallet), "Open alliance VDFT")?.props?.onClick?.();
     buttonWithTitle(rowWithWallet(table, other.wallet), "Open alliance OTHR")?.props?.onClick?.();
     expect(selectedAlliances).toEqual(["3", "4"]);
@@ -292,6 +297,7 @@ describe("RankingsPage", () => {
     expect(row?.props?.className).not.toContain("bg-red-300");
     expect(visibleText(row)).toContain("[VDFT]");
     expect(visibleText(row)).not.toContain("Protected");
+    expect(visibleText(row)).toContain("Ally [VDFT]");
   });
 
   test("tints score-protected ranking rows red", () => {
