@@ -779,6 +779,95 @@ describe("fleet mission visibility", () => {
   });
 });
 
+describe("fleet mission resolution scheduling", () => {
+  const owner = "0x0000000000000000000000000000000000000abc" as Address;
+  const pastSeconds = 1_700_000_000n;
+  const futureSeconds = 1_900_000_000n;
+
+  function outboundMissionLogs({
+    missionId,
+    missionType,
+    arrivalAt
+  }: {
+    missionId: bigint;
+    missionType: bigint;
+    arrivalAt: bigint;
+  }): RpcLog[] {
+    return [
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(missionType)],
+        data: dataWords([word(99n), word(1n), word(arrivalAt), word(arrivalAt + 300n)])
+      }),
+      makeLog({
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: dataWords([word(0n), word(0n), word(0n), word(1n)])
+      }),
+      makeLog({
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: dataWords(Array.from({ length: 14 }, (_, index) => word(index === 0 ? 1n : 0n)))
+      })
+    ];
+  }
+
+  function returningMissionLog({
+    missionId,
+    missionType,
+    returnAt
+  }: {
+    missionId: bigint;
+    missionType: bigint;
+    returnAt: bigint;
+  }): RpcLog {
+    return makeLog({
+      topics: [fleetMissionReturnExposedTopic, topic(missionId), addressTopic(owner), topic(2n)],
+      data: dataWords([word(99n), word(1n), word(returnAt), word(100n), word(25n), word(0n)])
+    });
+  }
+
+  function readerFor(logs: RpcLog[]): VeydriftGameReader {
+    return new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string): Promise<T> {
+        expect(method).toBe("eth_getLogs");
+        return logs as T;
+      }
+    });
+  }
+
+  test("includes transport and deploy arrivals while excluding unsupported and not-yet-due missions", async () => {
+    const reader = readerFor([
+      ...outboundMissionLogs({ missionId: 1n, missionType: 0n, arrivalAt: pastSeconds }), // Transport
+      ...outboundMissionLogs({ missionId: 2n, missionType: 1n, arrivalAt: pastSeconds }), // Deploy
+      ...outboundMissionLogs({ missionId: 3n, missionType: 3n, arrivalAt: pastSeconds }), // Attack
+      ...outboundMissionLogs({ missionId: 4n, missionType: 6n, arrivalAt: pastSeconds }), // Intercept (unsupported)
+      ...outboundMissionLogs({ missionId: 5n, missionType: 0n, arrivalAt: futureSeconds }) // Transport, not yet arrived
+    ]);
+
+    const resolvable = await reader.listResolvableFleetMissions();
+
+    expect(resolvable.map((mission) => mission.missionId)).toEqual(["1", "2", "3"]);
+    expect(resolvable.map((mission) => mission.missionType)).toEqual(["Transport", "Deploy", "Attack"]);
+  });
+
+  test("surfaces returning missions whose return leg is due across all mission types", async () => {
+    const reader = readerFor([
+      ...outboundMissionLogs({ missionId: 10n, missionType: 3n, arrivalAt: pastSeconds }),
+      returningMissionLog({ missionId: 10n, missionType: 3n, returnAt: pastSeconds }),
+      ...outboundMissionLogs({ missionId: 11n, missionType: 0n, arrivalAt: pastSeconds }),
+      returningMissionLog({ missionId: 11n, missionType: 0n, returnAt: pastSeconds }),
+      // Returning but not yet due — must not be surfaced.
+      ...outboundMissionLogs({ missionId: 12n, missionType: 3n, arrivalAt: pastSeconds }),
+      returningMissionLog({ missionId: 12n, missionType: 3n, returnAt: futureSeconds })
+    ]);
+
+    const returnable = await reader.listReturnableFleetMissions();
+
+    expect(returnable.map((mission) => mission.missionId)).toEqual(["10", "11"]);
+    expect(returnable.every((mission) => Number(mission.returnAt) <= Math.floor(Date.now() / 1_000))).toBe(true);
+    // Resolved/Returning missions are not arrival-resolvable any more.
+    expect(await reader.listResolvableFleetMissions()).toEqual([]);
+  });
+});
+
 describe("battle reports", () => {
   test("decodes shareable combat report logs", () => {
     const attacker = "0x0000000000000000000000000000000000000abc" as Address;

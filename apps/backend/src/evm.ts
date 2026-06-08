@@ -339,6 +339,11 @@ export type ResolvableFleetMission = Pick<
   "arrivalAt" | "missionId" | "missionType" | "originPlanetId" | "targetPlanetId"
 >;
 
+export type ReturnableFleetMission = Pick<
+  FleetMissionSummary,
+  "missionId" | "missionType" | "originPlanetId" | "returnAt" | "targetPlanetId"
+>;
+
 export type BattleOutcomeName = "Draw" | "AttackerWin" | "DefenderWin";
 
 export type CombatRoundReport = {
@@ -700,6 +705,7 @@ export interface ChainReader {
   listAllianceDirectoryState?(): Promise<AllianceState["directory"]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
   listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
+  listReturnableFleetMissions?(): Promise<ReturnableFleetMission[]>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
@@ -1278,6 +1284,8 @@ export class VeydriftGameReader implements ChainReader {
             mission.missionType === "Attack"
               || mission.missionType === "Harvest"
               || mission.missionType === "Colonize"
+              || mission.missionType === "Transport"
+              || mission.missionType === "Deploy"
           )
       )
       .map(({ arrivalAt, missionId, missionType, originPlanetId, targetPlanetId }) => ({
@@ -1285,6 +1293,24 @@ export class VeydriftGameReader implements ChainReader {
         missionId,
         missionType,
         originPlanetId,
+        targetPlanetId
+      }));
+  }
+
+  async listReturnableFleetMissions(): Promise<ReturnableFleetMission[]> {
+    const summaries = await this.readFleetMissionSummaries();
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    return summaries
+      .filter((mission) =>
+        mission.status === "Returning"
+          && Number(mission.returnAt) > 0
+          && Number(mission.returnAt) <= nowSeconds
+      )
+      .map(({ missionId, missionType, originPlanetId, returnAt, targetPlanetId }) => ({
+        missionId,
+        missionType,
+        originPlanetId,
+        returnAt,
         targetPlanetId
       }));
   }
