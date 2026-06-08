@@ -133,6 +133,7 @@ import {
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
+  sendLaunchAttackMissionTransaction,
   sendLaunchFleetMissionTransaction,
   sendJoinAttackMissionTransaction,
   sendFinishMoonBuildingUpgradeTransaction,
@@ -4445,6 +4446,26 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     setPendingGalaxyMission(null);
+    if (action.kind === "attack" && draft.lootRatio) {
+      const { metal, crystal, deuterium } = draft.lootRatio;
+      void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
+        provider,
+        account,
+        gameContract,
+        {
+          originPlanetId,
+          targetPlanetId,
+          ships: draft.ships,
+          speedPercent: draft.speedPercent,
+          lootRatio: {
+            metalBps: metal * 100,
+            crystalBps: crystal * 100,
+            deuteriumBps: deuterium * 100,
+          },
+        },
+      ));
+      return;
+    }
     void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchFleetMissionTransaction(
       provider,
       account,
