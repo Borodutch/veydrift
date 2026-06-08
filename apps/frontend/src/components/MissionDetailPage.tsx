@@ -129,6 +129,7 @@ export function MissionDetailPage({
             </Notice>
           ) : null}
           <MissionFacts
+            hideFleetAndCargo={Boolean(report)}
             mission={mission}
             now={now}
             onSelectCoordinates={onSelectCoordinates}
@@ -197,11 +198,13 @@ function MissionActions({
 }
 
 function MissionFacts({
+  hideFleetAndCargo,
   mission,
   now,
   onSelectCoordinates,
   onSelectPlayer,
 }: {
+  hideFleetAndCargo: boolean;
   mission: FleetMissionSummary;
   now: number;
   onSelectCoordinates: (coords: Coordinates) => void;
@@ -215,12 +218,17 @@ function MissionFacts({
         onSelectCoordinates={onSelectCoordinates}
         onSelectPlayer={onSelectPlayer}
       />
-      <Panel title="Fleet And Cargo">
-        <Row label="Ships" value={formatShips(mission.ships)} />
-        <Row label="Cargo" value={formatResources(mission.cargo)} />
-        <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
-        <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
-      </Panel>
+      {/* When a battle report renders, the fleet and cargo are folded into the attacker side of the
+          report, so the standalone panel is suppressed to avoid duplicating it. Non-combat / unresolved
+          missions keep it as the only place this fleet/cargo detail is shown. */}
+      {hideFleetAndCargo ? null : (
+        <Panel title="Fleet And Cargo">
+          <Row label="Ships" value={formatShips(mission.ships)} />
+          <Row label="Cargo" value={formatResources(mission.cargo)} />
+          <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
+          <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+        </Panel>
+      )}
     </div>
   );
 }
@@ -275,10 +283,6 @@ function MissionRoute({
           timing={{ label: "Arrival", value: formatMissionTime(mission.arrivalAt, now) }}
         />
       </div>
-      <p className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-3 text-xs text-slate-400">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Needs resolution</span>
-        <span className="text-slate-300">{mission.needsResolution ? "Yes" : "No"}</span>
-      </p>
     </section>
   );
 }
@@ -389,6 +393,7 @@ function MissionBattleReport({
   // The defender is the owner of the attacked planet; the indexed mission carries that planet
   // reference (and display name) when the target is charted.
   const defenderWallet = mission.targetPlanet?.owner ?? null;
+  const recyclersNeeded = recyclersForDebris(report.debris);
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -396,10 +401,7 @@ function MissionBattleReport({
         <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
           <Swords aria-hidden="true" size={17} />
         </span>
-        <div>
-          <h3 className="text-sm font-semibold text-white">Battle Report</h3>
-          <p className="text-xs text-slate-500">Reconstructed from the on-chain combat log for mission #{report.missionId}.</p>
-        </div>
+        <h3 className="text-sm font-semibold text-white">Battle Report</h3>
       </div>
 
       <div className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 ${outcome.className}`}>
@@ -407,18 +409,20 @@ function MissionBattleReport({
         <p className="text-xs font-medium uppercase tracking-[0.14em] opacity-80">{report.rounds} {report.rounds === 1 ? "round" : "rounds"} fought</p>
       </div>
 
-      {/* Two-sided report: the attacker column carries the offensive fleet, its losses, and the loot
-          it grabbed; the defender column carries the target commander, defenses, losses, and the loot
-          it kept. Debris is shown on its own below. */}
+      {/* Two-sided report modelled on the classic combat report: the attacker column folds in the
+          offensive fleet and cargo it carried, its losses, and the loot it grabbed; the defender
+          column carries the target commander and its losses. Fields the on-chain log does not expose
+          (defender composition, loot retained) are flagged compactly rather than fabricated. Debris
+          is shown on its own below. */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel title="Attacker">
           <Row
             label="Commander"
-            value={<Commander displayName={mission.originPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} wallet={report.attacker} />}
+            value={<Commander displayName={mission.originPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} planet={mission.originPlanet} wallet={report.attacker} />}
           />
           <Row label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
           <Row label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
-          <Row label="Full fleet" value={formatShips(mission.ships)} />
+          <Row label="Cargo carried" value={formatResources(mission.cargo)} />
           <Row label="Fleet losses" value={formatResources(report.attackerLosses)} />
           <Row label="Loot grabbed" value={formatResources(report.loot)} />
         </Panel>
@@ -426,19 +430,20 @@ function MissionBattleReport({
           <Row
             label="Commander"
             value={defenderWallet
-              ? <Commander displayName={mission.targetPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} wallet={defenderWallet} />
+              ? <Commander displayName={mission.targetPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} planet={mission.targetPlanet} wallet={defenderWallet} />
               : `Planet #${report.targetPlanetId} (external commander unavailable)`}
           />
-          {/* The indexed combat log does not expose the defender's ship/defense composition. */}
-          <Row label="Fleet / defenses" value="Not exposed by the indexed report" />
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
-          <Row label="Loot left" value="Not exposed by the indexed report" />
+          {/* The on-chain combat log records the defender's losses but not its surviving fleet/defense
+              composition or the loot it kept, so those are flagged on one line instead of fabricated. */}
+          <Row label="Fleet / defenses" value="Surviving composition and loot retained aren't published in the on-chain combat log." />
         </Panel>
       </div>
 
       <div className="mt-3">
         <Panel title="Debris Field">
           <Row label="Debris created" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
+          <Row label="Recyclers needed" value={recyclersNeeded > 0 ? `~${formatResource(String(recyclersNeeded))} (20,000 cargo each)` : "None"} />
         </Panel>
       </div>
 
@@ -505,11 +510,12 @@ function Row({ label, value }: { label: string; value: preact.ComponentChildren 
 }
 
 // Commander identity that links to the player's public profile when a navigation handler is wired;
-// falls back to plain text for the shareable/standalone render.
-function Commander({ displayName, onOpenPlayer, wallet }: { displayName?: string | null | undefined; onOpenPlayer?: ((wallet: string) => void) | undefined; wallet: string }) {
+// falls back to plain text for the shareable/standalone render. The home planet/coordinates are shown
+// alongside as muted text (e.g. "from Moon [4:194:8]") to match the classic combat report header.
+function Commander({ displayName, onOpenPlayer, planet, wallet }: { displayName?: string | null | undefined; onOpenPlayer?: ((wallet: string) => void) | undefined; planet?: FleetMissionPlanetReference | null | undefined; wallet: string }) {
   const label = displayName ? `${displayName} (${shortHash(wallet)})` : shortHash(wallet);
-  if (!onOpenPlayer) return <>{label}</>;
-  return (
+  const location = planet ? ` from ${planet.name?.trim() ? `${planet.name.trim()} ` : ""}[${planet.coordinates}]` : "";
+  const identity = onOpenPlayer ? (
     <button
       className="text-left font-medium text-cyan-200 underline-offset-2 transition hover:text-cyan-100 hover:underline"
       onClick={() => onOpenPlayer(wallet)}
@@ -518,6 +524,14 @@ function Commander({ displayName, onOpenPlayer, wallet }: { displayName?: string
     >
       {label}
     </button>
+  ) : (
+    <>{label}</>
+  );
+  return (
+    <span className="break-words">
+      {identity}
+      {location ? <span className="text-slate-500">{location}</span> : null}
+    </span>
   );
 }
 
@@ -613,6 +627,17 @@ function formatResources(resources: { metal: string; crystal: string; deuterium?
 
 function formatResource(value: string): string {
   return Number(value).toLocaleString();
+}
+
+// A recycler carries 20,000 units of cargo, so the fleet needed to sweep a debris field is the
+// combined metal + crystal divided by that capacity, rounded up. Shown compactly next to the debris
+// total rather than as a separate verbose "recyclers to clean debris" section.
+const RECYCLER_CARGO_CAPACITY = 20_000;
+
+function recyclersForDebris(debris: { crystal: string; metal: string }): number {
+  const total = Number(debris.metal) + Number(debris.crystal);
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  return Math.ceil(total / RECYCLER_CARGO_CAPACITY);
 }
 
 const shipLabels: Record<string, string> = {

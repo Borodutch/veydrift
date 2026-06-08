@@ -397,28 +397,42 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("Mission #42");
     expect(text).not.toContain("Mission Detail");
-    expect(text).toContain("Needs resolution");
     // VEY-399#7: the resolve action label is "Resolve" (shared across the control + detail screens).
     expect(text).toContain("Resolve");
     expect(text).not.toContain("Resolve battle");
     expect(text).toContain("Copy link");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");
+    // VEY-KANEO-396 rework (#9636): the "Reconstructed from the on-chain combat log" subtext and the
+    // internal "Needs resolution" jargon were removed from the page.
+    expect(text).not.toContain("Reconstructed");
+    expect(text).not.toContain("Needs resolution");
     // VEY-KANEO-396: two-sided report split into attacker | defender columns plus a debris panel.
     expect(text).toContain("Attacker");
     expect(text).toContain("Defender");
     expect(text).toContain("Debris Field");
     expect(text).toContain("Debris created");
-    // VEY-KANEO-396: loot is split per side - attacker grabbed, defender kept.
+    // VEY-KANEO-396 rework (#9636): recyclers needed is shown compactly inside the debris panel,
+    // not as a separate verbose section.
+    expect(text).toContain("Recyclers needed");
+    // VEY-KANEO-396 rework (#9636): the attacker's fleet + cargo are folded into the report, so the
+    // standalone "Fleet And Cargo" facts panel is suppressed when a battle report renders.
+    expect(text).not.toContain("Fleet And Cargo");
+    expect(text).toContain("Cargo carried");
+    // VEY-KANEO-396: loot is the attacker's "Loot grabbed"; the on-chain log does not expose loot
+    // retained by the defender, so there is no fabricated "Loot left" row.
     expect(text).toContain("Loot grabbed");
-    expect(text).toContain("Loot left");
+    expect(text).not.toContain("Loot left");
     expect(text).toContain("Fleet / defenses");
-    // VEY-KANEO-396: commander names are present for both sides and link to their profiles.
+    // VEY-KANEO-396: commander names are present for both sides, link to their profiles, and carry
+    // their home planet/coordinates (classic combat report header).
     expect(text).toContain("Aggressor");
     expect(text).toContain("Bastion");
     expect(text).toContain("Open Aggressor (0x22222222...222222) profile");
     expect(text).toContain("Open Bastion (0x33333333...333333) profile");
-    // VEY-KANEO-396: the recyclers-to-clear-debris section was removed entirely.
+    expect(text).toContain("from Aggressor [1:2:3]");
+    expect(text).toContain("from Bastion [4:5:6]");
+    // VEY-KANEO-396: the verbose recyclers-to-clear-debris section stays removed.
     expect(text).not.toContain("Recyclers to clear debris");
     expect(text).not.toContain("Loot plundered");
     // The legacy single-list panels were replaced by the two-sided layout.
@@ -588,11 +602,11 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("4:5:6");
     expect(text).toContain("Aria");
     expect(text).toContain("Zane");
-    // Timing folds beside each endpoint (return near origin, arrival near target) and the
-    // resolution flag is still exposed.
+    // Timing folds beside each endpoint (return near origin, arrival near target).
     expect(text).toContain("Arrival");
     expect(text).toContain("Return");
-    expect(text).toContain("Needs resolution");
+    // VEY-KANEO-396 rework (#9636): the internal "Needs resolution" jargon line was removed.
+    expect(text).not.toContain("Needs resolution");
     // The Mission ID field is dropped from the route (requirement 1); it lives in the header.
     expect(text).not.toContain("Mission id");
 
