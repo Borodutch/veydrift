@@ -282,7 +282,6 @@ describe("Mission Control battle reports", () => {
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
-      shareUrl: "https://test.veydrift.com/#/mission/42",
     })).join(" ");
 
     expect(text).toContain("Mission #42");
@@ -309,6 +308,8 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Public report");
     // VEY-388: descriptive ship-class subtext was removed.
     expect(text).not.toContain("Ship classes");
+    // VEY-380: the page URL is the shareable public URL, so the redundant "Share URL" field is gone.
+    expect(text).not.toContain("Share URL");
   });
 
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
@@ -333,7 +334,6 @@ describe("Mission Control battle reports", () => {
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
-      shareUrl: "https://test.veydrift.com/#/mission/42",
     } as const;
 
     const copied = collectText(MissionDetailPage({
@@ -406,13 +406,17 @@ function collectText(node: unknown): string[] {
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return [String(node)];
   if (typeof node !== "object") return [];
 
-  const vnode = node as { type?: unknown; props?: { children?: unknown } };
+  const vnode = node as { type?: unknown; props?: { children?: unknown; ["aria-label"]?: unknown } };
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: { children?: unknown }) => unknown;
     if (render.name === "Icon") return [];
     return collectText(render({ ...(vnode.props ?? {}) }));
   }
-  return collectText(vnode.props?.children);
+  // Icon-only controls expose their label through aria-label rather than children;
+  // collect the accessible name so assertions can see it (e.g. the share/copy button).
+  const ariaLabel = vnode.props?.["aria-label"];
+  const labelText = typeof ariaLabel === "string" ? [ariaLabel] : [];
+  return [...labelText, ...collectText(vnode.props?.children)];
 }
 
 function mission(
