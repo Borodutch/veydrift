@@ -197,9 +197,74 @@ describe("Mission Control battle reports", () => {
       onResolve: () => undefined,
     }));
 
-    // Mission numbers are no longer rendered in past rows; a single deduped battle-report
-    // row exposes exactly one "Open mission" action (Details + Report merged in VEY-374).
-    expect(countOccurrences(text.join(""), "Open mission")).toBe(1);
+    // A single deduped battle-report row exposes exactly one row "Open" action (Details + Report
+    // merged in VEY-374; label shortened to "Open" in the shared row, VEY-399#8).
+    expect(countOccurrences(text.join(""), "Open the full mission detail screen")).toBe(1);
+    expect(text.join("")).not.toContain("Open mission");
+    // VEY-399#1: the header count reflects the de-duplicated rows (two raw rows collapse to one).
+    expect(text.join(" ")).toContain("Past missions 1");
+    expect(text.join(" ")).not.toContain("Past missions 2");
+  });
+
+  test("past missions reuse the shared row: clickable origin+target, returned subtext, Open label, deduped count (VEY-399#1/#2/#8/#9)", () => {
+    const now = Date.parse("2026-06-08T23:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const completed: FleetMissionSummary = {
+      ...mission("70", "Attack", "Returned", owner, "7", "9", now - 7_200_000),
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1"),
+      targetPlanet: planetReference("9", defender, "Borealis", "5:407:4"),
+    };
+    const tree = MissionControlPage({
+      ...missionControlProps(now, {}),
+      missionArchive: {
+        wallet: owner,
+        homePlanetId: "7",
+        // The archive returns the mission AND its battle report; the shared row collapses them to one.
+        rows: [{ kind: "mission", mission: completed }, { kind: "battleReport", report: battleReport("70") }],
+        pagination: { page: 1, pageSize: 25, totalEntries: 2, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+    });
+    const text = collectText(tree).join(" ");
+
+    // VEY-399#1: the count matches the single de-duplicated row, not the two raw archive rows.
+    expect(text).toContain("Past missions 1");
+    expect(text).not.toContain("Past missions 2");
+    // VEY-399#8: the row action reads "Open", never "Open mission".
+    expect(text).not.toContain("Open mission");
+    expect(text).toContain("Open");
+    // VEY-399#9: the completion stamp renders as route subtext ("Returned · <time>").
+    expect(text).toContain("Returned");
+    // VEY-399#2: both origin AND target route endpoints are clickable Galaxy links.
+    const links = findElements(tree, "a");
+    expect(links.some((link) => String(link.props?.title ?? "").includes("6:9:1"))).toBe(true);
+    expect(links.some((link) => String(link.props?.title ?? "").includes("5:407:4"))).toBe(true);
+    expect(text).toContain("New Zion");
+    expect(text).toContain("Borealis");
+  });
+
+  test("active table renames the route header and removes the Origin -> Target header (VEY-399#3)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
+    }))).join(" ");
+
+    expect(text).toContain("Route");
+    expect(text).not.toContain("Origin -> Target");
+  });
+
+  test("hides Join when disabled and labels the resolve action 'Resolve' (VEY-399#6/#7)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // Own outbound mission already arrived -> Resolve is enabled and labeled "Resolve".
+    // A joinable alliance attack that already arrived -> Join is disabled, so it is hidden.
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000)],
+      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 60_000)],
+    }))).join(" ");
+
+    expect(text).toContain("Resolve");
+    expect(text).not.toContain("Resolve battle");
+    expect(text).not.toContain("Join");
   });
 
   test("partitions active rows into My missions (own fleets) and Alliance (joinable attacks)", () => {
@@ -333,7 +398,9 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Mission #42");
     expect(text).not.toContain("Mission Detail");
     expect(text).toContain("Needs resolution");
-    expect(text).toContain("Resolve battle");
+    // VEY-399#7: the resolve action label is "Resolve" (shared across the control + detail screens).
+    expect(text).toContain("Resolve");
+    expect(text).not.toContain("Resolve battle");
     expect(text).toContain("Copy link");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");

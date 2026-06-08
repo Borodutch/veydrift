@@ -246,7 +246,9 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("1517 [5:407:4]");
+    // VEY-399#2: the shared row renders the resolved planet name as a clickable Galaxy link
+    // (coords live in the link title), rather than the old "name [coords]" text.
+    expect(text).toContain("1517");
     expect(text).not.toContain("External coordinates unavailable");
   });
 
@@ -427,7 +429,9 @@ describe("MissionControlPage", () => {
     // Due count now surfaces only via the "Needs orders now" badge (the summary stat card is gone).
     expect(text).not.toContain("Due resolvers");
     expect(text).toContain("Needs orders now 1");
-    expect(text).toContain("Resolve battle");
+    // VEY-399#7: the resolve action label is "Resolve".
+    expect(text).toContain("Resolve");
+    expect(text).not.toContain("Resolve battle");
   });
 
   test("paginates past missions inline without a separate list action", () => {
@@ -447,14 +451,16 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Past missions");
     // 25 battle-report rows render on the visible first page; the 26th is on the hidden second page.
-    // Each row exposes a single "Open mission" button (Details + Report merged in VEY-374).
-    expect(text.split("Open mission").length - 1).toBe(25);
+    // Each row exposes a single "Open" button (Details + Report merged in VEY-374; label shortened
+    // to "Open" in the shared row, VEY-399#8).
+    expect(text.split("Open").length - 1).toBe(25);
+    expect(text).not.toContain("Open mission");
     expect(text).toContain("Page 1 of 2");
     expect(text).toContain("1-25 of 26");
-    // The dedicated "Completed" column header is gone; the "Route / target" header is shortened to
-    // "Route" (VEY-371 rework). The compact table keeps the remaining columns.
-    expect(text).toContain("Mission Route Result Details");
+    // VEY-399: the past table now shares the active row columns — Mission / Route / Fleet / Details.
+    expect(text).toContain("Mission Route Fleet Details");
     expect(text).not.toContain("Route / target");
+    expect(text).not.toContain("Mission Route Result Details");
     expect(text).not.toContain("Completed");
     expect(text).not.toContain("Mission #");
     expect(text).not.toContain("Open list");
@@ -482,9 +488,10 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Attack");
     // Mission-number text is no longer rendered in the compact past rows (VEY-371).
     expect(text).not.toContain("Mission #");
-    // A single "Open mission" button replaces the old split "Open details" / "Open report" pair.
-    expect(text).toContain("Open mission");
-    expect(text.split("Open mission").length - 1).toBe(1);
+    // A single "Open" button replaces the old split "Open details" / "Open report" pair (VEY-399#8).
+    expect(text).toContain("Open");
+    expect(text).not.toContain("Open mission");
+    expect(text.split("Open").length - 1).toBe(1);
     expect(text).not.toContain("Open details");
     expect(text).not.toContain("Open report");
     // The standalone battle-report row is collapsed away.
@@ -509,11 +516,11 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Battle report");
     // VEY-371 restores the "Past missions" header and renders the target planet inline.
     expect(text).toContain("Past missions");
-    expect(text).toContain("Planet # 7");
-    // Mission-number text is no longer rendered in the compact past rows (VEY-371).
-    expect(text).not.toContain("Mission #");
-    // Standalone battle-report rows also lead to the single unified mission detail screen.
-    expect(text).toContain("Open mission");
+    expect(text).toContain("Planet #7");
+    // Standalone battle-report rows also lead to the single unified mission detail screen,
+    // via the shared "Open" action (VEY-399#8).
+    expect(text).toContain("Open");
+    expect(text).not.toContain("Open mission");
     expect(text).not.toContain("Open report");
   });
 
@@ -550,16 +557,16 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    // Outgoing past mission keeps the bare action and hides the always-me commander.
-    // (Mission-number text is dropped from the compact past rows per VEY-371.)
+    // Outgoing past mission keeps the bare action label. The shared row no longer prefixes the
+    // commander with the word "Commander" — it renders the address as a clickable subtext (VEY-399).
     expect(text).toContain("Transport");
-    expect(text).not.toContain("Mission #");
     expect(text).not.toContain("Commander 0x1111...1111");
-    // Incoming past mission is prefixed and keeps the foreign commander identity.
+    // Incoming past mission is prefixed and keeps the foreign commander identity on the route.
     expect(text).toContain("Incoming attack");
-    expect(text).toContain("Commander 0x3333...3333");
-    // VEY-371 rework: the completion time now sits next to the status label (e.g.
-    // "Returned · Jun 7, 2026, ..."), not on a separate line or column.
+    expect(text).toContain("0x3333...3333");
+    expect(text).not.toContain("Commander 0x3333...3333");
+    // VEY-399#9: the completion stamp now sits under the Route as subtext (e.g.
+    // "Returned · Jun 7, 2026, ..."), not in the Mission column.
     expect(text).toContain("Returned · ");
   });
 
