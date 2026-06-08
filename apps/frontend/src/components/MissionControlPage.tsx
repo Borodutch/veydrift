@@ -92,8 +92,14 @@ export function MissionControlPage({
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
   const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
-  const selectedReport = reportMissionId ? allMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
-  const planetLookup = planetLookupFromMissionData(allMissions, walletPlanets);
+  // Past missions render from the paginated archive, which can contain missions absent from the live
+  // fleet-visibility feed (older pages, returned missions no longer "active"). The backend already
+  // resolves each row's origin/target planet, so seed the lookup from those references too — otherwise
+  // their coordinates render as "External coordinates unavailable" even though the data is available.
+  const pastArchiveMissions = missionsFromArchiveRows(rawPastMissionRows);
+  const lookupMissions = uniqueMissions([...allMissions, ...pastArchiveMissions]);
+  const selectedReport = reportMissionId ? lookupMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
+  const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets);
   const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
   const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
   const activeCount = activeMissionRows.length;
@@ -1193,6 +1199,10 @@ function uniqueMissions(missions: FleetMissionSummary[]): FleetMissionSummary[] 
     seen.add(mission.missionId);
     return true;
   });
+}
+
+function missionsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): FleetMissionSummary[] {
+  return rows.flatMap((row) => (row.kind === "mission" ? [row.mission] : []));
 }
 
 function planetLookupFromMissionData(

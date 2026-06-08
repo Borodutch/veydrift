@@ -187,6 +187,69 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("External coordinates unavailable");
   });
 
+  test("resolves past-archive mission target coordinates that are absent from the live feed", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "6:9:1", name: "New Zion" })],
+      missionArchive: {
+        wallet,
+        homePlanetId: "7",
+        rows: [{
+          kind: "mission",
+          mission: mission({
+            missionId: "1",
+            missionType: "Attack",
+            status: "Returned",
+            originPlanetId: "7",
+            targetPlanetId: "40",
+            originPlanet: {
+              planetId: "7",
+              owner: wallet,
+              ownerDisplayName: "borodutch",
+              name: "New Zion",
+              galaxy: 6,
+              system: 9,
+              position: 1,
+              coordinates: "6:9:1",
+            },
+            targetPlanet: {
+              planetId: "40",
+              owner: "0xa278b3943c7c58eb0d26be397507285adf6490ed",
+              ownerDisplayName: null,
+              name: "1517",
+              galaxy: 5,
+              system: 407,
+              position: 4,
+              coordinates: "5:407:4",
+            },
+          }),
+        }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 1,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("1517 [5:407:4]");
+    expect(text).not.toContain("External coordinates unavailable");
+  });
+
   test("renders attacker and defender attack views with side-specific controls", () => {
     const defenderPage = missionControlPage({
       fleetVisibility: {
