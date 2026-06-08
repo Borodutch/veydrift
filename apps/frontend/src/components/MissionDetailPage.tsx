@@ -109,7 +109,6 @@ export function MissionDetailPage({
         <Notice tone="danger">{error}</Notice>
       ) : mission ? (
         <>
-          <MissionStageSummary account={account} mission={mission} now={now} />
           <MissionActions
             account={account}
             canTransact={canTransact}
@@ -131,20 +130,6 @@ export function MissionDetailPage({
       ) : (
         <Notice>No mission selected.</Notice>
       )}
-    </section>
-  );
-}
-
-function MissionStageSummary({ account, mission, now }: { account?: string | undefined; mission: FleetMissionSummary; now: number }) {
-  const stage = missionStage(mission, now);
-  const relationship = missionRelationship(mission, account);
-  return (
-    <section className={`rounded-lg border p-4 ${stage.tone === "danger" ? "border-red-300/25 bg-red-400/10" : stage.tone === "warning" ? "border-amber-300/25 bg-amber-300/10" : "border-cyan-300/20 bg-cyan-300/10"}`}>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">{relationship}</p>
-        <h3 className="mt-1 text-xl font-semibold text-white">{stage.label}</h3>
-        <p className="mt-1 text-sm leading-6 text-slate-300">{stage.detail}</p>
-      </div>
     </section>
   );
 }
@@ -384,31 +369,6 @@ function Notice({ children, tone = "neutral" }: { children: preact.ComponentChil
           ? "border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
           : "border-white/10 bg-[#101624] text-slate-400";
   return <div className={`rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
-}
-
-function missionStage(mission: FleetMissionSummary, now: number): { detail: string; label: string; tone: "danger" | "neutral" | "warning" } {
-  if (isNoFleetReturned(mission)) {
-    return { detail: "The battle is complete and no returning fleet leg exists.", label: "Completed, no fleet returned", tone: "neutral" };
-  }
-  if (mission.status === "Outbound" && isMissionDue(mission, now)) {
-    return {
-      detail: mission.needsResolution ? "The mission has reached the target and needs resolution." : "The mission has reached its target; the backend may still be indexing final state.",
-      label: mission.needsResolution ? "Needs resolution" : "Arrived",
-      tone: "danger",
-    };
-  }
-  if (mission.status === "Outbound") {
-    return { detail: `Arrives ${formatMissionTime(mission.arrivalAt, now)}.`, label: "Outbound", tone: "neutral" };
-  }
-  if (mission.status === "Returning" || mission.status === "Recalled") {
-    return { detail: `Return leg lands ${formatMissionTime(mission.returnAt, now)}.`, label: mission.status, tone: "warning" };
-  }
-  return { detail: "The mission has no active outbound or return leg.", label: mission.status || "Completed", tone: "neutral" };
-}
-
-function missionRelationship(mission: FleetMissionSummary, account?: string | undefined): string {
-  if (!account) return "Public mission";
-  return mission.owner.toLowerCase() === account.toLowerCase() ? "Your mission" : "Visible mission";
 }
 
 function missionActionContext(mission: FleetMissionSummary, now: number, account?: string | undefined): MissionActionContext {
