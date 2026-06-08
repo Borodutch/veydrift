@@ -115,13 +115,6 @@ export function MissionControlPage({
         <VeydriftLoader label="Mapping missions" />
       ) : (
         <>
-          <div className="grid gap-3 md:grid-cols-4">
-            <Metric label="Active missions" value={activeCount.toString()} />
-            <Metric label="Due resolvers" value={due.length.toString()} />
-            <Metric label="Hostile inbound" value={incoming.length.toString()} />
-            <Metric label="Returns" value={returning.length.toString()} />
-          </div>
-
           {reportMissionId ? (
             <MissionReportDetail
               mission={selectedReport}
@@ -862,15 +855,6 @@ function ReportLine({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/50">{label}</dt>
       <dd className="mt-0.5 whitespace-pre-line break-words text-cyan-50/90">{value}</dd>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-[#101624] p-3">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</dt>
-      <dd className="mt-1 text-lg font-semibold text-white">{value}</dd>
     </div>
   );
 }

@@ -128,8 +128,10 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("Mission Control");
     expect(text).toContain("Watch inbound attacks");
+    // "Hostile inbound" persists as the active-row direction label, not as a summary stat card.
     expect(text).toContain("Hostile inbound");
-    expect(text).toContain("Returns");
+    // The top summary stat-card row (Active missions / Due resolvers / Hostile inbound / Returns) is removed.
+    expect(text).not.toContain("Due resolvers");
     // Section header labels are dropped; grouping is conveyed by the tables themselves.
     expect(text).not.toContain("Fleet movement");
     expect(text).not.toContain("Past missions");
