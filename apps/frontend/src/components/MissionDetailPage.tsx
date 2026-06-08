@@ -262,25 +262,26 @@ function MissionBattleReport({
         <p className="text-xs font-medium uppercase tracking-[0.14em] opacity-80">{report.rounds} {report.rounds === 1 ? "round" : "rounds"} fought</p>
       </div>
 
+      {/* Two-sided report: the attacker column carries the offensive fleet, its losses, and what it
+          plundered; the defender column carries the target planet and its losses. */}
       <div className="grid gap-3 lg:grid-cols-2">
-        <Panel title="Combatants">
-          <Row label="Attacker" value={shortHash(report.attacker)} />
-          <Row label="Defender" value={`Planet #${report.targetPlanetId}`} />
-          <Row label="Outcome" value={outcome.label} />
-          <Row label="Rounds fought" value={report.rounds.toString()} />
-        </Panel>
-        <Panel title="Attacker Fleet">
+        <Panel title="Attacker">
+          <Row label="Commander" value={shortHash(report.attacker)} />
           <Row label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
           <Row label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
           <Row label="Full fleet" value={formatShips(mission.ships)} />
-        </Panel>
-        <Panel title="Fleet Losses">
-          <Row label="Attacker losses" value={formatResources(report.attackerLosses)} />
-          <Row label="Defender losses" value={formatResources(report.defenderLosses)} />
-        </Panel>
-        <Panel title="Plunder And Debris">
+          <Row label="Fleet losses" value={formatResources(report.attackerLosses)} />
           <Row label="Loot plundered" value={formatResources(report.loot)} />
-          <Row label="Debris field" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
+        </Panel>
+        <Panel title="Defender">
+          <Row label="Planet" value={`Planet #${report.targetPlanetId}`} />
+          <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
+        </Panel>
+      </div>
+
+      <div className="mt-3">
+        <Panel title="Debris Field">
+          <Row label="Debris" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
           <Row
             label="Recyclers to clear debris"
             value={recyclersNeeded > 0 ? `${formatResource(recyclersNeeded.toString())} (${formatResource(debrisTotal.toString())} debris)` : "No debris field"}
@@ -288,23 +289,24 @@ function MissionBattleReport({
         </Panel>
       </div>
 
-      <div className="mt-4">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round-by-round combat</p>
-        <div className="grid gap-2">
-          {report.roundReports.length === 0 ? (
-            <Notice>No round-by-round snapshots were indexed for this battle.</Notice>
-          ) : report.roundReports.map((round) => (
-            <article className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
-                <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
-              </div>
-              <Datum label="Attacker firepower / losses" value={`${formatResource(round.attackerUnits)} units fired; ${formatResources(round.attackerLosses)} lost`} />
-              <Datum label="Defender firepower / losses" value={`${formatResource(round.defenderUnits)} units fired; ${formatResources(round.defenderLosses)} lost`} />
-            </article>
-          ))}
+      {/* Only render the round-by-round block when the indexed log actually exposes snapshots. */}
+      {report.roundReports.length > 0 ? (
+        <div className="mt-4">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round-by-round combat</p>
+          <div className="grid gap-2">
+            {report.roundReports.map((round) => (
+              <article className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
+                  <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
+                </div>
+                <Datum label="Attacker firepower / losses" value={`${formatResource(round.attackerUnits)} units fired; ${formatResources(round.attackerLosses)} lost`} />
+                <Datum label="Defender firepower / losses" value={`${formatResource(round.defenderUnits)} units fired; ${formatResources(round.defenderLosses)} lost`} />
+              </article>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
     </section>
   );
 }

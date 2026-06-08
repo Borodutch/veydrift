@@ -319,12 +319,19 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Copy link");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");
-    expect(text).toContain("Combatants");
-    expect(text).toContain("Attacker Fleet");
-    expect(text).toContain("Fleet Losses");
-    expect(text).toContain("Plunder And Debris");
+    // VEY-KANEO-396: two-sided report split into attacker | defender columns plus a debris panel.
+    expect(text).toContain("Attacker");
+    expect(text).toContain("Defender");
+    expect(text).toContain("Debris Field");
+    expect(text).toContain("Loot plundered");
     expect(text).toContain("Recyclers to clear debris");
-    expect(text).toContain("Round-by-round combat");
+    // The legacy single-list panels were replaced by the two-sided layout.
+    expect(text).not.toContain("Combatants");
+    expect(text).not.toContain("Attacker Fleet");
+    expect(text).not.toContain("Plunder And Debris");
+    // VEY-KANEO-396: with no indexed round snapshots, the round-by-round block is hidden entirely.
+    expect(text).not.toContain("Round-by-round combat");
+    expect(text).not.toContain("No round-by-round snapshots were indexed");
     // The on-chain log does not expose these fields, so they must not be rendered as empty cells.
     expect(text).not.toContain("Not indexed yet");
     // VEY-389: no "OGame" anywhere in rendered copy.
@@ -338,6 +345,49 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Ship classes");
     // VEY-380: the page URL is the shareable public URL, so the redundant "Share URL" field is dropped.
     expect(text).not.toContain("Share URL");
+  });
+
+  test("renders the round-by-round block only when indexed round snapshots exist", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          needsResolution: true,
+        },
+        battleReport: {
+          ...battleReport("42"),
+          roundReports: [
+            {
+              round: 1,
+              attackerUnits: "1000",
+              defenderUnits: "800",
+              attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
+              defenderLosses: { metal: "400", crystal: "200", deuterium: "0" },
+            },
+          ],
+        },
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+    })).join(" ");
+
+    expect(text).toContain("Round-by-round combat");
+    expect(text).toContain("Attacker firepower / losses");
+    expect(text).toContain("Defender firepower / losses");
+    expect(text).not.toContain("No round-by-round snapshots were indexed");
   });
 
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
@@ -434,13 +484,18 @@ function collectText(node: unknown): string[] {
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return [String(node)];
   if (typeof node !== "object") return [];
 
-  const vnode = node as { type?: unknown; props?: { children?: unknown } };
+  const vnode = node as { type?: unknown; props?: { children?: unknown; "aria-label"?: unknown; title?: unknown } };
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: { children?: unknown }) => unknown;
     if (render.name === "Icon") return [];
     return collectText(render({ ...(vnode.props ?? {}) }));
   }
-  return collectText(vnode.props?.children);
+  // For intrinsic DOM nodes (string types), include the accessible label so icon-only controls
+  // that expose their state via aria-label/title (e.g. the share button) are visible to assertions.
+  const labels = typeof vnode.type === "string"
+    ? [vnode.props?.["aria-label"], vnode.props?.title].filter((value): value is string => typeof value === "string")
+    : [];
+  return [...labels, ...collectText(vnode.props?.children)];
 }
 
 function mission(
