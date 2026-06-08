@@ -74,6 +74,16 @@ export function minResources(
  * to `now` — keeps the UI from ever exceeding the accurate balance while still
  * ticking up with production between settlements. When one source is missing
  * (e.g. infrastructure resources are still warming), the other is used as-is.
+ *
+ * `freezeProjection` stops the forward production accrual. The displayed balance
+ * is projected forward by a free-running `now` clock so it ticks up between
+ * backend reads; but when the backend resource read is stale or unavailable
+ * (API/RPC outage, backend sync paused) the underlying snapshots stop
+ * refreshing while `now` keeps advancing, which would run the balance up toward
+ * the storage caps and over-report a spendable balance the player does not have.
+ * In that case the caller passes `freezeProjection: true` (and the unprojected
+ * settlement snapshot as `settlementResources`) so neither source accrues past
+ * its last known value. Production only ticks up while reads are fresh.
  */
 export function canonicalSpendableResources({
   settlementResources,
@@ -82,6 +92,7 @@ export function canonicalSpendableResources({
   rates,
   caps,
   now,
+  freezeProjection = false,
 }: {
   settlementResources: Resources | undefined;
   infrastructureResources: Resources | undefined;
@@ -89,13 +100,16 @@ export function canonicalSpendableResources({
   rates: Resources;
   caps: Resources;
   now: number;
+  freezeProjection?: boolean;
 }): Resources | undefined {
   const projectedInfrastructure = projectResources({
     resources: infrastructureResources,
     rates,
     caps,
     settledAtMs: infrastructureSettledAtMs,
-    now,
+    // Freeze => project to the snapshot's own settle time (elapsed 0) so the
+    // accurate read is used as-is instead of drifting toward storage caps.
+    now: freezeProjection ? infrastructureSettledAtMs : now,
   });
   return minResources(settlementResources, projectedInfrastructure);
 }
