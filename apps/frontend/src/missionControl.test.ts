@@ -136,13 +136,23 @@ describe("Mission Control battle reports", () => {
     // Section header labels are dropped; grouping is conveyed by the tables themselves.
     expect(text).not.toContain("Fleet movement");
     expect(text).toContain("Past missions");
-    expect(text).toContain("Commander 0x2222...2222");
-    expect(text).toContain("Origin Planet #8");
-    expect(text).toContain("Target Planet #7");
-    expect(text).toContain("Ships Small Cargo x3");
+    // VEY-397#7: commander shown as clickable subtext under each endpoint (wallet fallback).
+    expect(text).toContain("0x2222...2222");
+    // VEY-397#5/#6: endpoints show planet names (coords fallback), no "Origin/Target planet #" prefix.
+    expect(text).toContain("Planet #8");
+    expect(text).toContain("Planet #7");
+    expect(text).not.toContain("Origin Planet #8");
+    expect(text).not.toContain("Target Planet #7");
+    // VEY-397#9: fleet column shows ship icons with xN counts (ship name is in the hover title).
+    expect(text).toContain("x3");
     expect(text).toContain("Group defend");
     expect(text).toContain("Intercept");
-    expect(text).toContain("Open mission");
+    // VEY-397#12: the active-row action is "Open" (the past-report row keeps "Open mission").
+    expect(text).toContain("Open");
+    // VEY-397#1/#8: the Countdown and Return columns were removed.
+    expect(text).not.toContain("Countdown");
+    // VEY-397#10: the per-row "Copy report" control was removed.
+    expect(text).not.toContain("Copy report");
     expect(text).not.toContain("Open report");
     expect(text).not.toContain("Open details");
     expect(text).not.toContain("Open list");
@@ -220,8 +230,9 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("My missions (3)");
     expect(text).toContain("Alliance (1)");
-    // Join actions stay available on the Alliance tab.
-    expect(text).toContain("Join attack");
+    // VEY-397#13: join actions stay available on the Alliance tab, now labelled "Join".
+    expect(text).toContain("Join");
+    expect(text).not.toContain("Join attack");
   });
 
   test("shows the Alliance empty state when there are no joinable attacks", () => {
