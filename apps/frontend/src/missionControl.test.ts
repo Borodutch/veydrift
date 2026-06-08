@@ -4,7 +4,7 @@ import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
-import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionSummary } from "./walletFlow";
+import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
@@ -300,6 +300,84 @@ describe("Mission Control battle reports", () => {
 
   test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const openedPlayers: string[] = [];
+    const text = collectText(MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          needsResolution: true,
+          originPlanet: planetReference("7", "0x1111111111111111111111111111111111111111", "Aggressor", "1:2:3"),
+          targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
+        },
+        battleReport: battleReport("42"),
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onOpenPlayer: (wallet) => openedPlayers.push(wallet),
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    })).join(" ");
+
+    expect(text).toContain("Mission #42");
+    expect(text).not.toContain("Mission Detail");
+    expect(text).toContain("Needs resolution");
+    expect(text).toContain("Resolve battle");
+    expect(text).toContain("Copy link");
+    expect(text).toContain("Battle Report");
+    expect(text).toContain("Attacker victory");
+    // VEY-KANEO-396: two-sided report split into attacker | defender columns plus a debris panel.
+    expect(text).toContain("Attacker");
+    expect(text).toContain("Defender");
+    expect(text).toContain("Debris Field");
+    expect(text).toContain("Debris created");
+    // VEY-KANEO-396: loot is split per side - attacker grabbed, defender kept.
+    expect(text).toContain("Loot grabbed");
+    expect(text).toContain("Loot left");
+    expect(text).toContain("Fleet / defenses");
+    // VEY-KANEO-396: commander names are present for both sides and link to their profiles.
+    expect(text).toContain("Aggressor");
+    expect(text).toContain("Bastion");
+    expect(text).toContain("Open Aggressor (0x22222222...222222) profile");
+    expect(text).toContain("Open Bastion (0x33333333...333333) profile");
+    // VEY-KANEO-396: the recyclers-to-clear-debris section was removed entirely.
+    expect(text).not.toContain("Recyclers to clear debris");
+    expect(text).not.toContain("Loot plundered");
+    // The legacy single-list panels were replaced by the two-sided layout.
+    expect(text).not.toContain("Combatants");
+    expect(text).not.toContain("Attacker Fleet");
+    expect(text).not.toContain("Plunder And Debris");
+    // VEY-KANEO-396: with no indexed round snapshots, the round-by-round block is hidden entirely.
+    expect(text).not.toContain("Round-by-round combat");
+    expect(text).not.toContain("No round-by-round snapshots were indexed");
+    // The on-chain log does not expose these fields, so they must not be rendered as empty cells.
+    expect(text).not.toContain("Not indexed yet");
+    // VEY-389: no "OGame" anywhere in rendered copy.
+    expect(text).not.toContain("OGame");
+    // VEY-387/386: combat-proof and chain-proof blocks were removed from the page.
+    expect(text).not.toContain("Combat Proof");
+    expect(text).not.toContain("Chain Proof");
+    // VEY-390: the mission detail page is itself the public report, no separate button.
+    expect(text).not.toContain("Public report");
+    // VEY-388: descriptive ship-class subtext was removed.
+    expect(text).not.toContain("Ship classes");
+    // VEY-380: the page URL is the shareable public URL, so the redundant "Share URL" field is dropped.
+    expect(text).not.toContain("Share URL");
+  });
+
+  test("renders the round-by-round block only when indexed round snapshots exist", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
       account: "0x1111111111111111111111111111111111111111",
       actionState: { status: "idle" },
@@ -310,7 +388,18 @@ describe("Mission Control battle reports", () => {
           ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
           needsResolution: true,
         },
-        battleReport: battleReport("42"),
+        battleReport: {
+          ...battleReport("42"),
+          roundReports: [
+            {
+              round: 1,
+              attackerUnits: "1000",
+              defenderUnits: "800",
+              attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
+              defenderLosses: { metal: "400", crystal: "200", deuterium: "0" },
+            },
+          ],
+        },
       },
       loading: false,
       missionId: "42",
@@ -326,32 +415,10 @@ describe("Mission Control battle reports", () => {
       onSelectPlayer: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("Mission #42");
-    expect(text).not.toContain("Mission Detail");
-    expect(text).toContain("Needs resolution");
-    expect(text).toContain("Resolve battle");
-    expect(text).toContain("Copy link");
-    expect(text).toContain("Battle Report");
-    expect(text).toContain("Attacker victory");
-    expect(text).toContain("Combatants");
-    expect(text).toContain("Attacker Fleet");
-    expect(text).toContain("Fleet Losses");
-    expect(text).toContain("Plunder And Debris");
-    expect(text).toContain("Recyclers to clear debris");
     expect(text).toContain("Round-by-round combat");
-    // The on-chain log does not expose these fields, so they must not be rendered as empty cells.
-    expect(text).not.toContain("Not indexed yet");
-    // VEY-389: no "OGame" anywhere in rendered copy.
-    expect(text).not.toContain("OGame");
-    // VEY-387/386: combat-proof and chain-proof blocks were removed from the page.
-    expect(text).not.toContain("Combat Proof");
-    expect(text).not.toContain("Chain Proof");
-    // VEY-390: the mission detail page is itself the public report, no separate button.
-    expect(text).not.toContain("Public report");
-    // VEY-388: descriptive ship-class subtext was removed.
-    expect(text).not.toContain("Ship classes");
-    // VEY-380: the page URL is the shareable public URL, so the redundant "Share URL" field is dropped.
-    expect(text).not.toContain("Share URL");
+    expect(text).toContain("Attacker firepower / losses");
+    expect(text).toContain("Defender firepower / losses");
+    expect(text).not.toContain("No round-by-round snapshots were indexed");
   });
 
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
@@ -539,13 +606,23 @@ function collectText(node: unknown): string[] {
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return [String(node)];
   if (typeof node !== "object") return [];
 
-  const vnode = node as { type?: unknown; props?: { children?: unknown } };
+  const vnode = node as { type?: unknown; props?: { children?: unknown; "aria-label"?: unknown; title?: unknown } };
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: { children?: unknown }) => unknown;
     if (render.name === "Icon") return [];
     return collectText(render({ ...(vnode.props ?? {}) }));
   }
-  return collectText(vnode.props?.children);
+  // For intrinsic DOM nodes (string types), include the accessible label so icon-only controls
+  // that expose their state via aria-label/title (e.g. the share button) are visible to assertions.
+  const labels = typeof vnode.type === "string"
+    ? [vnode.props?.["aria-label"], vnode.props?.title].filter((value): value is string => typeof value === "string")
+    : [];
+  return [...labels, ...collectText(vnode.props?.children)];
+}
+
+function planetReference(planetId: string, owner: string, ownerDisplayName: string, coordinates: string): FleetMissionPlanetReference {
+  const [galaxy, system, position] = coordinates.split(":").map((part) => Number(part));
+  return { planetId, owner, ownerDisplayName, name: ownerDisplayName, galaxy: galaxy ?? 0, system: system ?? 0, position: position ?? 0, coordinates };
 }
 
 function mission(
