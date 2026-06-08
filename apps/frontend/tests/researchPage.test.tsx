@@ -9,6 +9,7 @@ import {
   ResearchLevelInfoButton,
   ResearchLevelInfoModal,
   ResearchLoadErrorPanel,
+  ResearchStatusPanel,
   researchLevelInfoRows,
   researchRefreshErrorLabel,
   researchActionStatus,
@@ -19,6 +20,57 @@ import {
 import { RequirementFlairs } from "../src/components/RequirementFlairs";
 import { createInitialPlayableState, researchEffectRows, researchUnlockRows } from "../src/playableMvp";
 import type { ChainResearchState } from "../src/walletFlow";
+
+describe("Research status panel surfaces only failures", () => {
+  test("does not render success or pending action banners", () => {
+    for (const status of ["success", "pending"] as const) {
+      const panel = ResearchStatusPanel({
+        actionState: { status, label: `Research ${status} banner` },
+        error: undefined,
+        loading: false,
+        researchState: researchState(),
+      });
+      expect(visibleText(panel)).toBe("");
+    }
+  });
+
+  test("does not render the queued/ready queue-status banner", () => {
+    const panel = ResearchStatusPanel({
+      actionState: { status: "idle" },
+      error: undefined,
+      loading: false,
+      researchState: researchState({
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "10000",
+          cost: { metal: "0", crystal: "0", deuterium: "0" },
+        },
+      }),
+    });
+    expect(visibleText(panel)).toBe("");
+  });
+
+  test("still renders error action banners, including during a refresh", () => {
+    const loaded = ResearchStatusPanel({
+      actionState: { status: "error", label: "Research failed" },
+      error: undefined,
+      loading: false,
+      researchState: researchState(),
+    });
+    expect(visibleText(loaded)).toContain("Research failed");
+
+    const refreshing = ResearchStatusPanel({
+      actionState: { status: "error", label: "Research failed" },
+      error: undefined,
+      loading: true,
+      researchState: researchState(),
+    });
+    expect(visibleText(refreshing)).toContain("Research failed");
+  });
+});
 
 describe("Research page load-error display", () => {
   test("formats cumulative costs and requirements with commas", () => {

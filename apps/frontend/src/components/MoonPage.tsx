@@ -221,8 +221,10 @@ function MoonSystemsPanel({
           </div>
         ) : null}
 
-        {action && action.status !== "idle" && action.label ? (
-          <p className={"mt-3 text-xs " + (action.status === "error" ? "text-rose-200" : "text-cyan-100")}>
+        {/* Only surface failures. Success/pending action status text is intentionally
+            not rendered so the panel does not flash transient status banners. */}
+        {action?.status === "error" && action.label ? (
+          <p className="mt-3 text-xs text-rose-200">
             {action.label}
           </p>
         ) : null}
