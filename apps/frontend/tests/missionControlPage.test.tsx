@@ -99,10 +99,10 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Mission Control");
     expect(text).toContain("Watch inbound attacks");
-    expect(text).toContain("Active missions 3");
-    expect(text).toContain("Due resolvers 3");
-    expect(text).toContain("Hostile inbound 1");
-    expect(text).toContain("Returns 1");
+    // The top summary stat-card row was removed; the lists below convey the same counts.
+    expect(text).not.toContain("Active missions 3");
+    expect(text).not.toContain("Due resolvers");
+    expect(text).not.toContain("Returns 1");
     expect(text).toContain("No completed missions are visible for this wallet yet.");
     // Section header labels are dropped; the tables convey grouping on their own.
     expect(text).not.toContain("Fleet movement");
@@ -203,7 +203,8 @@ describe("MissionControlPage", () => {
     });
     const defenderText = visibleText(defenderPage);
 
-    expect(defenderText).toContain("Hostile inbound 1");
+    // "Hostile inbound" persists as the active-row direction label (the stat card is gone).
+    expect(defenderText).toContain("Hostile inbound");
     expect(defenderText).toContain("Astra (0x1111...1111)");
     expect(defenderText).toContain("New Eos [2:44:9]");
     expect(defenderText).toContain("Red Haven [4:55:11]");
@@ -253,7 +254,8 @@ describe("MissionControlPage", () => {
     });
     const attackerText = visibleText(attackerPage);
 
-    expect(attackerText).toContain("Active missions 1");
+    // The summary stat-card row was removed; the active mission still renders below.
+    expect(attackerText).not.toContain("Active missions 1");
     expect(attackerText).toContain("Recall fleet");
     expect(attackerText).toContain("View report");
     expect(attackerText).toContain("Copy report");
@@ -329,7 +331,8 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Needs orders now");
-    expect(text).toContain("Due resolvers 1");
+    // Due count now surfaces only via the "Needs orders now" badge (the summary stat card is gone).
+    expect(text).not.toContain("Due resolvers");
     expect(text).toContain("Needs orders now 1");
     expect(text).toContain("Resolve battle");
   });
@@ -426,7 +429,8 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Active missions 1");
+    // The summary stat-card row was removed; the joinable attack still appears in the active list.
+    expect(text).not.toContain("Active missions 1");
     expect(text).toContain("Joinable attack");
     expect(text).toContain("Join attack");
     expect(text).not.toContain("Group defend");
