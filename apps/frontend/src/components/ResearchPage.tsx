@@ -153,8 +153,6 @@ export function ResearchPage({
         actionState={actionState}
         error={error}
         loading={loading}
-        now={now}
-        queue={queue}
         researchState={researchState}
       />
 
@@ -312,18 +310,17 @@ function ResearchStatusPanel({
   actionState,
   error,
   loading,
-  now,
-  queue,
   researchState,
 }: {
   actionState: ResearchActionState;
   error: string | undefined;
   loading: boolean;
-  now: number;
-  queue: ReturnType<typeof researchQueueForDisplay>;
   researchState: ChainResearchState | null;
 }) {
-  if (loading) {
+  // Only suppress notices during the initial load (no state yet). Keeping the
+  // last notice visible across refreshes avoids a blink/layout-jump when state
+  // is silently re-fetched.
+  if (loading && !researchState) {
     return null;
   }
 
@@ -356,17 +353,12 @@ function ResearchStatusPanel({
     );
   }
 
-  if (actionState.status !== "idle") {
-    const tone = actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "neutral";
-    return <Notice tone={tone}>{actionState.label}</Notice>;
-  }
-
-  if (queue) {
-    return (
-      <Notice tone={queue.readyAt <= now ? "success" : "neutral"}>
-        {queue.label} to Level {queue.targetLevel} is queued, ready {formatReady(queue.readyAt, now)}.
-      </Notice>
-    );
+  // Only surface failures. Success/pending action banners and the queue-status
+  // banner are intentionally not rendered so the page does not flash transient
+  // status banners on every action; queue progress remains in the header
+  // completion control and the selected technology's queue detail.
+  if (actionState.status === "error") {
+    return <Notice tone="danger">{actionState.label}</Notice>;
   }
 
   return null;
