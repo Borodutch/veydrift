@@ -36,7 +36,6 @@ interface MissionDetailPageProps {
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
-  shareUrl: string;
 }
 
 export function MissionDetailPage({
@@ -56,7 +55,6 @@ export function MissionDetailPage({
   onRecall,
   onResolve,
   onRetry,
-  shareUrl,
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
   const report = detail?.battleReport ?? undefined;
@@ -93,7 +91,16 @@ export function MissionDetailPage({
           </>
         )}
         subtitle="Shareable mission state, current stage, available orders, and combat report when the indexed battle log exposes one."
-        title={missionId ? `Mission #${missionId}` : "Mission"}
+        title={(
+          <span className="inline-flex flex-wrap items-center gap-2">
+            {missionId ? `Mission #${missionId}` : "Mission"}
+            {mission ? (
+              <span className="rounded border border-white/10 bg-black/20 px-2.5 py-1 text-xs font-medium text-slate-200">
+                {missionTypeLabel(mission.missionType)}
+              </span>
+            ) : null}
+          </span>
+        )}
       />
 
       {loading ? (
@@ -117,7 +124,7 @@ export function MissionDetailPage({
               {actionState.label}
             </Notice>
           ) : null}
-          <MissionFacts mission={mission} now={now} shareUrl={shareUrl} />
+          <MissionFacts mission={mission} now={now} />
           <MissionBattleReport mission={mission} report={report} />
         </>
       ) : (
@@ -180,7 +187,7 @@ function MissionActions({
   );
 }
 
-function MissionFacts({ mission, now, shareUrl }: { mission: FleetMissionSummary; now: number; shareUrl: string }) {
+function MissionFacts({ mission, now }: { mission: FleetMissionSummary; now: number }) {
   const noFleetReturned = isNoFleetReturned(mission);
   return (
     <section className="grid gap-3 lg:grid-cols-2">
@@ -198,7 +205,6 @@ function MissionFacts({ mission, now, shareUrl }: { mission: FleetMissionSummary
           <Row label="Return" value={formatMissionTime(mission.returnAt, now)} />
         )}
         <Row label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
-        <Row label="Share URL" value={shareUrl || "Available after navigation"} />
       </Panel>
       <Panel title="Fleet And Cargo">
         <Row label="Ships" value={formatShips(mission.ships)} />
