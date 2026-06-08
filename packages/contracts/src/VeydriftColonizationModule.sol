@@ -358,7 +358,8 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             fuelCost: fuelCost,
             cargo: cargo,
             ships: ships,
-            randomnessRequestId: 0
+            randomnessRequestId: 0,
+            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
         });
         emit FleetMissionLaunched(
             missionId,
