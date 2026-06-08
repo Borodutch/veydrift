@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ComponentChildren, VNode } from "preact";
 import { formatProductionPrice, productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
 import {
   getBlockedReason,
@@ -7,9 +8,67 @@ import {
   shipyardRefreshButtonState,
   shipyardRefreshErrorLabel,
   shouldShowShipyardInitialLoader,
+  StatusPanel,
 } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
 import { shipCatalog } from "../src/playableMvp";
+
+describe("Shipyard status panel surfaces only failures", () => {
+  test("does not render success or pending action banners", () => {
+    for (const status of ["success", "pending"] as const) {
+      const panel = StatusPanel({
+        actionState: { status, label: `Ship ${status} banner` },
+        error: undefined,
+        loading: false,
+        shipyardState: shipyardState(),
+      });
+      expect(visibleText(panel)).toBe("");
+    }
+  });
+
+  test("still renders error action banners", () => {
+    const panel = StatusPanel({
+      actionState: { status: "error", label: "Ship build failed" },
+      error: undefined,
+      loading: false,
+      shipyardState: shipyardState(),
+    });
+    expect(visibleText(panel)).toContain("Ship build failed");
+  });
+
+  test("keeps the last notice visible during a refresh instead of blinking to null", () => {
+    const panel = StatusPanel({
+      actionState: { status: "error", label: "Ship build failed" },
+      error: undefined,
+      loading: true,
+      shipyardState: shipyardState(),
+    });
+    expect(visibleText(panel)).toContain("Ship build failed");
+  });
+});
+
+function visibleText(node: ComponentChildren): string {
+  const parts: string[] = [];
+  const walk = (current: ComponentChildren): void => {
+    if (current === null || current === undefined || typeof current === "boolean") return;
+    if (typeof current === "string" || typeof current === "number") {
+      parts.push(String(current));
+      return;
+    }
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+    const vnode = current as VNode;
+    if (typeof vnode.type === "function") {
+      walk(vnode.type(vnode.props));
+      return;
+    }
+    walk(vnode.props?.children as ComponentChildren);
+  };
+  walk(node);
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
 
 describe("Shipyard page display helpers", () => {
   test("formats shipyard prices like building cost rows", () => {
