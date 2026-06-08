@@ -1205,13 +1205,18 @@ function missionArchivePagination(url: URL): { page: number; pageSize: number } 
   };
 }
 
-function chronologicalMissionArchiveRows(
+export function chronologicalMissionArchiveRows(
   completedMissions: FleetMissionSummary[],
   battleReports: FleetMissionVisibility["battleReports"]
 ): FleetMissionArchiveEntry[] {
+  // A resolved attack surfaces both a completed-mission summary and a battle report for the
+  // same missionId. They are one archived event, so collapse the report into its mission row
+  // before counting/paginating — otherwise totalEntries double-counts the pair (VEY-399#1).
+  const completedMissionIds = new Set(completedMissions.map((mission) => mission.missionId));
+  const standaloneReports = battleReports.filter((report) => !completedMissionIds.has(report.missionId));
   return [
     ...completedMissions.map((mission): FleetMissionArchiveEntry => ({ kind: "mission", mission })),
-    ...battleReports.map((report): FleetMissionArchiveEntry => ({ kind: "battleReport", report })),
+    ...standaloneReports.map((report): FleetMissionArchiveEntry => ({ kind: "battleReport", report })),
   ].sort((left, right) => missionArchiveTimestamp(right) - missionArchiveTimestamp(left));
 }
 

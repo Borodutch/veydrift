@@ -147,8 +147,9 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("x3");
     expect(text).toContain("Group defend");
     expect(text).toContain("Intercept");
-    // VEY-397#12: the active-row action is "Open" (the past-report row keeps "Open mission").
+    // VEY-399#8: every row (active and past) uses one shared "Open" action label.
     expect(text).toContain("Open");
+    expect(text).not.toContain("Open mission");
     // VEY-397#1/#8: the Countdown and Return columns were removed.
     expect(text).not.toContain("Countdown");
     // VEY-397#10: the per-row "Copy report" control was removed.
@@ -198,8 +199,9 @@ describe("Mission Control battle reports", () => {
     }));
 
     // Mission numbers are no longer rendered in past rows; a single deduped battle-report
-    // row exposes exactly one "Open mission" action (Details + Report merged in VEY-374).
-    expect(countOccurrences(text.join(""), "Open mission")).toBe(1);
+    // row exposes exactly one "Open" action (Details + Report merged in VEY-374; label per VEY-399#8).
+    expect(countOccurrences(text.join(""), "Open mission")).toBe(0);
+    expect(countOccurrences(text.join(""), "Open the full mission detail screen")).toBe(1);
   });
 
   test("partitions active rows into My missions (own fleets) and Alliance (joinable attacks)", () => {
@@ -333,7 +335,9 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Mission #42");
     expect(text).not.toContain("Mission Detail");
     expect(text).toContain("Needs resolution");
-    expect(text).toContain("Resolve battle");
+    // VEY-399#7: the resolve action label is "Resolve" everywhere it is reused.
+    expect(text).toContain("Resolve");
+    expect(text).not.toContain("Resolve battle");
     expect(text).toContain("Copy link");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");

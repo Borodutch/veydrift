@@ -10,6 +10,7 @@ import type {
   ChainReader,
   DebrisFieldEvent,
   DefenseState,
+  FleetMissionSummary,
   InfrastructureState,
   ManagedPlanet,
   MoonState,
@@ -26,7 +27,7 @@ import type {
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
-import { createRequestHandler } from "./server";
+import { chronologicalMissionArchiveRows, createRequestHandler } from "./server";
 
 const configuredTestConfig: BackendConfig = {
   chainId: 84532,
@@ -1072,6 +1073,54 @@ describe("Veydrift backend", () => {
         status: "Returned"
       }
     });
+  });
+
+  test("collapses a completed mission and its matching battle report into one archive row", () => {
+    const owner = player;
+    const resolvedMission: FleetMissionSummary = {
+      missionId: "1",
+      status: "Returned",
+      missionType: "Attack",
+      owner,
+      originPlanetId: "7",
+      targetPlanetId: "8",
+      arrivalAt: "1800000000",
+      returnAt: "1800000300",
+      fuelCost: "0",
+      recallCost: null,
+      attackGroupId: null,
+      joinedAttackMissionIds: [],
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      ships: { lightFighter: "1" },
+      transactionHash: "0xabc",
+      blockNumber: "100",
+      needsResolution: false,
+    };
+    const matchingReport: BattleReport = {
+      missionId: "1",
+      attacker: owner,
+      targetPlanetId: "8",
+      outcome: "AttackerWin",
+      rounds: 2,
+      randomSeed: "9",
+      loot: { metal: "0", crystal: "0", deuterium: "0" },
+      attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
+      defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+      debris: { metal: "0", crystal: "0" },
+      roundReports: [],
+      transactionHash: "0xabc",
+      blockNumber: "101",
+    };
+    const standaloneReport: BattleReport = { ...matchingReport, missionId: "2", blockNumber: "200" };
+
+    // The resolved attack + its report are one event: only the mission row survives, plus the
+    // unmatched standalone report. Without dedup totalEntries would be 3 instead of 2 (VEY-399#1).
+    const rows = chronologicalMissionArchiveRows([resolvedMission], [matchingReport, standaloneReport]);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => row.kind === "mission")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "battleReport")).toHaveLength(1);
+    expect(rows.some((row) => row.kind === "battleReport" && row.report.missionId === "1")).toBe(false);
+    expect(rows.some((row) => row.kind === "battleReport" && row.report.missionId === "2")).toBe(true);
   });
 
   test("keeps galaxy planet rows indexed-only instead of resolving owner alliance through chain reader calls", async () => {
