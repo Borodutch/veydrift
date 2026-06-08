@@ -13,7 +13,7 @@ import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
-import { MissionDetailPage } from "./components/MissionDetailPage";
+import { MissionDetailPage, type MissionShareCopyState } from "./components/MissionDetailPage";
 import { MissionControlPage } from "./components/MissionControlPage";
 import { MissionCreationPage, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { BattleReportPage } from "./components/BattleReportPage";
@@ -1710,6 +1710,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [planetRenameAction, setPlanetRenameAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [playerProfileAction, setPlayerProfileAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
+  const [missionShareCopyState, setMissionShareCopyState] = useState<MissionShareCopyState>("idle");
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const onChainRefreshGate = useRef(0);
@@ -2050,6 +2051,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       cancelled = true;
     };
   }, [apiBaseUrl, missionDetailId]);
+
+  useEffect(() => {
+    setMissionShareCopyState("idle");
+  }, [missionDetailId]);
+
+  useEffect(() => {
+    if (missionShareCopyState === "idle") return;
+    const timer = setTimeout(() => setMissionShareCopyState("idle"), 2_000);
+    return () => clearTimeout(timer);
+  }, [missionShareCopyState]);
 
   const refreshPlayerProfile = useCallback(async () => {
     if (!apiBaseUrl || !account) {
@@ -4394,6 +4405,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     );
   }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState]);
 
+  const handleCopyMissionShareUrl = useCallback((url: string) => {
+    if (!url || typeof navigator === "undefined" || !navigator.clipboard) {
+      setMissionShareCopyState("error");
+      return;
+    }
+    navigator.clipboard.writeText(url)
+      .then(() => setMissionShareCopyState("copied"))
+      .catch(() => setMissionShareCopyState("error"));
+  }, []);
+
   const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string) => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
@@ -4601,7 +4622,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return (
         <MissionDetailPage
           account={account}
+          actionState={missionAction}
           canTransact={Boolean(provider && account && gameContract)}
+          copyState={missionShareCopyState}
           detail={missionDetail}
           error={missionDetailError}
           loading={missionDetailLoading}
@@ -4609,6 +4632,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onBack={() => handleNavigate("mission-control")}
           onCompleteReturn={handleCompleteMissionReturn}
+          onCopyShareUrl={() => handleCopyMissionShareUrl(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
           onOpenBattleReport={handleOpenBattleReport}
           onRecall={handleRecallMission}

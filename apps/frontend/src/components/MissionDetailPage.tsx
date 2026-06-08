@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy, ExternalLink, RefreshCw, Swords } from "lucide-preact";
+import { ArrowLeft, Check, Copy, ExternalLink, RefreshCw, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -8,9 +8,22 @@ import { PageHeader, RefreshButton } from "./PageHeader";
 
 type MissionActionContext = "due" | "incoming" | "outgoing" | "returning";
 
+export type MissionDetailActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
+
+export type MissionShareCopyState = "copied" | "error" | "idle";
+
+// Each OGame recycler hauls 20,000 units of debris; used to estimate recyclers needed.
+const RECYCLER_CARGO_CAPACITY = 20_000;
+
 interface MissionDetailPageProps {
   account?: string | undefined;
+  actionState: MissionDetailActionState;
   canTransact: boolean;
+  copyState: MissionShareCopyState;
   detail?: MissionDetailResponse | undefined;
   error?: string | undefined;
   loading: boolean;
@@ -18,6 +31,7 @@ interface MissionDetailPageProps {
   now: number;
   onBack: () => void;
   onCompleteReturn: (missionId: string) => void;
+  onCopyShareUrl: () => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
   onOpenBattleReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -28,7 +42,9 @@ interface MissionDetailPageProps {
 
 export function MissionDetailPage({
   account,
+  actionState,
   canTransact,
+  copyState,
   detail,
   error,
   loading,
@@ -36,6 +52,7 @@ export function MissionDetailPage({
   now,
   onBack,
   onCompleteReturn,
+  onCopyShareUrl,
   onCounterplay,
   onOpenBattleReport,
   onRecall,
@@ -45,10 +62,7 @@ export function MissionDetailPage({
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
   const report = detail?.battleReport ?? undefined;
-  const copyShareUrl = () => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
-    void navigator.clipboard.writeText(shareUrl);
-  };
+  const copyLabel = copyState === "copied" ? "Copied!" : copyState === "error" ? "Copy failed" : "Copy link";
 
   return (
     <section className="grid gap-4">
@@ -60,9 +74,20 @@ export function MissionDetailPage({
               Mission Control
             </button>
             <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
-            <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20" onClick={copyShareUrl} type="button">
-              <Copy aria-hidden="true" size={15} />
-              Copy link
+            <button
+              aria-live="polite"
+              className={`inline-flex h-9 items-center justify-center gap-2 rounded border px-3 text-sm font-medium transition ${
+                copyState === "copied"
+                  ? "border-emerald-300/40 bg-emerald-300/15 text-emerald-100"
+                  : copyState === "error"
+                    ? "border-red-300/40 bg-red-400/15 text-red-100"
+                    : "border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+              }`}
+              onClick={onCopyShareUrl}
+              type="button"
+            >
+              {copyState === "copied" ? <Check aria-hidden="true" size={15} /> : <Copy aria-hidden="true" size={15} />}
+              {copyLabel}
             </button>
           </>
         )}
@@ -87,6 +112,11 @@ export function MissionDetailPage({
             onRecall={onRecall}
             onResolve={onResolve}
           />
+          {actionState.status !== "idle" ? (
+            <Notice tone={actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "info"}>
+              {actionState.label}
+            </Notice>
+          ) : null}
           <MissionFacts mission={mission} now={now} shareUrl={shareUrl} />
           <MissionBattleReport
             mission={mission}
@@ -239,6 +269,10 @@ function MissionBattleReport({
     );
   }
 
+  const outcome = battleOutcomeSummary(report.outcome);
+  const debrisTotal = Number(report.debris.metal) + Number(report.debris.crystal);
+  const recyclersNeeded = debrisTotal > 0 ? Math.ceil(debrisTotal / RECYCLER_CARGO_CAPACITY) : 0;
+
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -248,7 +282,7 @@ function MissionBattleReport({
           </span>
           <div>
             <h3 className="text-sm font-semibold text-white">OGame-Style Battle Report</h3>
-            <p className="text-xs text-slate-500">Layout mirrors the report structure; unavailable indexed fields are shown explicitly.</p>
+            <p className="text-xs text-slate-500">Reconstructed from the on-chain combat log for mission #{report.missionId}.</p>
           </div>
         </div>
         <button
@@ -261,47 +295,67 @@ function MissionBattleReport({
         </button>
       </div>
 
+      <div className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 ${outcome.className}`}>
+        <p className="text-base font-semibold">{outcome.label}</p>
+        <p className="text-xs font-medium uppercase tracking-[0.14em] opacity-80">{report.rounds} {report.rounds === 1 ? "round" : "rounds"} fought</p>
+      </div>
+
       <div className="grid gap-3 lg:grid-cols-2">
-        <Panel title="Attacker vs Defender">
+        <Panel title="Combatants">
           <Datum label="Attacker" value={shortHash(report.attacker)} />
           <Datum label="Defender" value={`Planet #${report.targetPlanetId}`} />
-          <Datum label="Outcome" value={battleOutcomeLabel(report.outcome)} />
-          <Datum label="Rounds" value={report.rounds.toString()} />
+          <Datum label="Outcome" value={outcome.label} />
+          <Datum label="Rounds fought" value={report.rounds.toString()} />
         </Panel>
-        <Panel title="Combat Classes">
-          <Datum label="Attacker class" value="Not indexed yet" />
-          <Datum label="Defender class" value="Not indexed yet" />
-          <Datum label="Weapons / shields / armour" value="Not indexed yet" />
-          <Datum label="Honour points" value="Not indexed yet" />
-        </Panel>
-        <Panel title="Ships And Defences">
-          <Datum label="Attacker fleet" value={formatShips(mission.ships)} />
-          <Datum label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
+        <Panel title="Attacker Fleet">
           <Datum label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
-          <Datum label="Defences" value="Not indexed yet" />
+          <Datum label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
+          <Datum label="Full fleet" value={formatShips(mission.ships)} />
         </Panel>
-        <Panel title="Loot And Debris">
-          <Datum label="Loot" value={formatResources(report.loot)} />
+        <Panel title="Fleet Losses">
           <Datum label="Attacker losses" value={formatResources(report.attackerLosses)} />
           <Datum label="Defender losses" value={formatResources(report.defenderLosses)} />
-          <Datum label="Debris to recyclers" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
+        </Panel>
+        <Panel title="Plunder And Debris">
+          <Datum label="Loot plundered" value={formatResources(report.loot)} />
+          <Datum label="Debris field" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
+          <Datum
+            label="Recyclers to clear debris"
+            value={recyclersNeeded > 0 ? `${formatResource(recyclersNeeded.toString())} (${formatResource(debrisTotal.toString())} debris)` : "No debris field"}
+          />
         </Panel>
       </div>
 
-      <div className="mt-4 grid gap-2">
-        {report.roundReports.length === 0 ? (
-          <Notice>No round-by-round snapshots were indexed for this battle.</Notice>
-        ) : report.roundReports.map((round) => (
-          <article className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
-              <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
-            </div>
-            <Datum label="Attacker shots / shields" value={`${formatResource(round.attackerUnits)} units fired; ${formatResources(round.attackerLosses)} lost`} />
-            <Datum label="Defender shots / shields" value={`${formatResource(round.defenderUnits)} units fired; ${formatResources(round.defenderLosses)} lost`} />
-          </article>
-        ))}
+      <div className="mt-4">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round-by-round combat</p>
+        <div className="grid gap-2">
+          {report.roundReports.length === 0 ? (
+            <Notice>No round-by-round snapshots were indexed for this battle.</Notice>
+          ) : report.roundReports.map((round) => (
+            <article className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
+                <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
+              </div>
+              <Datum label="Attacker firepower / losses" value={`${formatResource(round.attackerUnits)} units fired; ${formatResources(round.attackerLosses)} lost`} />
+              <Datum label="Defender firepower / losses" value={`${formatResource(round.defenderUnits)} units fired; ${formatResources(round.defenderLosses)} lost`} />
+            </article>
+          ))}
+        </div>
       </div>
+
+      <div className="mt-4">
+        <Panel title="Combat Proof">
+          <Datum label="Combat seed" value={report.randomSeed || "Pending randomness"} />
+          <Datum label="Transaction" value={report.transactionHash || "Pending chain proof"} />
+          <Datum label="Block" value={report.blockNumber || "Pending chain proof"} />
+        </Panel>
+      </div>
+
+      <p className="mt-3 text-xs leading-5 text-slate-500">
+        Ship classes, weapon/shield/armour tech levels, per-defence counts, and honour points are not part of the on-chain
+        battle log, so they are omitted rather than shown as empty fields.
+      </p>
     </section>
   );
 }
@@ -343,12 +397,16 @@ function Datum({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Notice({ children, tone = "neutral" }: { children: preact.ComponentChildren; tone?: "danger" | "neutral" | "warning" }) {
+function Notice({ children, tone = "neutral" }: { children: preact.ComponentChildren; tone?: "danger" | "info" | "neutral" | "success" | "warning" }) {
   const className = tone === "danger"
     ? "border-red-300/25 bg-red-400/10 text-red-100"
     : tone === "warning"
       ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
-      : "border-white/10 bg-[#101624] text-slate-400";
+      : tone === "success"
+        ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-100"
+        : tone === "info"
+          ? "border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
+          : "border-white/10 bg-[#101624] text-slate-400";
   return <div className={`rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
 }
 
@@ -415,10 +473,14 @@ function missionTypeLabel(value: string): string {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
-function battleOutcomeLabel(outcome: BattleReport["outcome"]): string {
-  if (outcome === "AttackerWin") return "Attacker victory";
-  if (outcome === "DefenderWin") return "Defender victory";
-  return "Draw";
+function battleOutcomeSummary(outcome: BattleReport["outcome"]): { className: string; label: string } {
+  if (outcome === "AttackerWin") {
+    return { className: "border-emerald-300/30 bg-emerald-300/10 text-emerald-100", label: "Attacker victory" };
+  }
+  if (outcome === "DefenderWin") {
+    return { className: "border-red-300/30 bg-red-400/10 text-red-100", label: "Defender victory" };
+  }
+  return { className: "border-amber-300/30 bg-amber-300/10 text-amber-100", label: "Draw" };
 }
 
 function formatResources(resources: { metal: string; crystal: string; deuterium?: string }): string {
