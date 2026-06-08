@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
+import type { Coordinates } from "./types";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
 
 describe("Mission Control battle reports", () => {
@@ -314,6 +315,8 @@ describe("Mission Control battle reports", () => {
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
     })).join(" ");
 
     expect(text).toContain("Mission #42");
@@ -427,6 +430,8 @@ describe("Mission Control battle reports", () => {
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
     } as const;
 
     const copied = collectText(MissionDetailPage({
@@ -451,6 +456,76 @@ describe("Mission Control battle reports", () => {
     })).join(" ");
     expect(failed).toContain("transaction failed");
     expect(failed).toContain("Copy failed");
+  });
+
+  test("renders the route as origin -> target with clickable coordinates and commanders", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const selectedCoords: Coordinates[] = [];
+    const selectedPlayers: string[] = [];
+    const detailMission: FleetMissionSummary = {
+      ...mission("42", "Attack", "Outbound", owner, "7", "9", now - 60_000),
+      originPlanet: {
+        planetId: "7", owner, ownerDisplayName: "Aria", name: "Helios",
+        galaxy: 1, system: 2, position: 3, coordinates: "1:2:3",
+      },
+      targetPlanet: {
+        planetId: "9", owner: defender, ownerDisplayName: "Zane", name: "Borealis",
+        galaxy: 4, system: 5, position: 6, coordinates: "4:5:6",
+      },
+    };
+    const props = {
+      account: owner,
+      actionState: { status: "idle" } as const,
+      canTransact: true,
+      copyState: "idle" as const,
+      detail: { mission: detailMission, battleReport: null },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: (coords: Coordinates) => { selectedCoords.push(coords); },
+      onSelectPlayer: (wallet: string) => { selectedPlayers.push(wallet); },
+    };
+
+    const tree = MissionDetailPage(props);
+    const text = collectText(tree).join(" ");
+    expect(text).toContain("Route");
+    expect(text).toContain("Origin");
+    expect(text).toContain("Target");
+    expect(text).toContain("Commander");
+    // Planet names, coordinates, and resolved commander names all surface on the route.
+    expect(text).toContain("Helios");
+    expect(text).toContain("Borealis");
+    expect(text).toContain("1:2:3");
+    expect(text).toContain("4:5:6");
+    expect(text).toContain("Aria");
+    expect(text).toContain("Zane");
+    // Timing folds beside each endpoint (return near origin, arrival near target) and the
+    // resolution flag is still exposed.
+    expect(text).toContain("Arrival");
+    expect(text).toContain("Return");
+    expect(text).toContain("Needs resolution");
+    // The Mission ID field is dropped from the route (requirement 1); it lives in the header.
+    expect(text).not.toContain("Mission id");
+
+    const buttons = findElements(tree, "button");
+    const originCoordButton = buttons.find((node) => collectText(node).join("").includes("1:2:3"));
+    expect(originCoordButton).toBeDefined();
+    (originCoordButton?.props?.onClick as () => void)();
+    expect(selectedCoords).toEqual([{ galaxy: 1, system: 2, position: 3 }]);
+
+    const targetCommanderButton = buttons.find((node) => collectText(node).join("").includes("Zane"));
+    expect(targetCommanderButton).toBeDefined();
+    (targetCommanderButton?.props?.onClick as () => void)();
+    expect(selectedPlayers).toEqual([defender]);
   });
 });
 
@@ -491,6 +566,25 @@ function missionControlProps(
     onRefresh: () => undefined,
     onResolve: () => undefined,
   };
+}
+
+type FoundElement = { props?: Record<string, unknown> & { children?: unknown }; type?: unknown };
+
+// Walks the rendered tree (expanding function components) and returns every host element
+// matching `tag`, so a test can read its text or invoke its onClick handler.
+function findElements(node: unknown, tag: string): FoundElement[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) return node.flatMap((child) => findElements(child, tag));
+  if (typeof node !== "object") return [];
+
+  const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
+  if (typeof vnode.type === "function") {
+    const render = vnode.type as (props: Record<string, unknown>) => unknown;
+    if (render.name === "Icon") return [];
+    return findElements(render({ ...(vnode.props ?? {}) }), tag);
+  }
+  const self = vnode.type === tag ? [vnode] : [];
+  return self.concat(findElements(vnode.props?.children, tag));
 }
 
 function collectText(node: unknown): string[] {

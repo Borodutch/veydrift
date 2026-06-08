@@ -1,8 +1,9 @@
-import { ArrowLeft, Check, RefreshCw, Share2, Swords } from "lucide-preact";
+import { ArrowLeft, ArrowRight, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import { type BattleReport, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
+import type { Coordinates } from "../types";
+import { type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
 import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
@@ -34,6 +35,8 @@ interface MissionDetailPageProps {
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
+  onSelectCoordinates: (coords: Coordinates) => void;
+  onSelectPlayer: (wallet: string) => void;
 }
 
 export function MissionDetailPage({
@@ -54,6 +57,8 @@ export function MissionDetailPage({
   onRecall,
   onResolve,
   onRetry,
+  onSelectCoordinates,
+  onSelectPlayer,
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
   const report = detail?.battleReport ?? undefined;
@@ -123,7 +128,12 @@ export function MissionDetailPage({
               {actionState.label}
             </Notice>
           ) : null}
-          <MissionFacts mission={mission} now={now} />
+          <MissionFacts
+            mission={mission}
+            now={now}
+            onSelectCoordinates={onSelectCoordinates}
+            onSelectPlayer={onSelectPlayer}
+          />
           <MissionBattleReport mission={mission} onOpenPlayer={onOpenPlayer} report={report} />
         </>
       ) : (
@@ -186,32 +196,165 @@ function MissionActions({
   );
 }
 
-function MissionFacts({ mission, now }: { mission: FleetMissionSummary; now: number }) {
-  const noFleetReturned = isNoFleetReturned(mission);
+function MissionFacts({
+  mission,
+  now,
+  onSelectCoordinates,
+  onSelectPlayer,
+}: {
+  mission: FleetMissionSummary;
+  now: number;
+  onSelectCoordinates: (coords: Coordinates) => void;
+  onSelectPlayer: (wallet: string) => void;
+}) {
   return (
-    <section className="grid gap-3 lg:grid-cols-2">
-      <Panel title="Route">
-        <Row label="Origin" value={planetLabel(mission.originPlanet, mission.originPlanetId)} />
-        <Row label="Target" value={planetLabel(mission.targetPlanet, mission.targetPlanetId)} />
-        <Row label="Commander" value={shortHash(mission.owner)} />
-        <Row label="Mission id" value={mission.missionId} />
-      </Panel>
-      <Panel title="Timing">
-        <Row label="Arrival" value={formatMissionTime(mission.arrivalAt, now)} />
-        {noFleetReturned ? (
-          <Row label="Return" value="Completed, no fleet returned" />
-        ) : (
-          <Row label="Return" value={formatMissionTime(mission.returnAt, now)} />
-        )}
-        <Row label="Needs resolution" value={mission.needsResolution ? "Yes" : "No"} />
-      </Panel>
+    <div className="grid gap-3">
+      <MissionRoute
+        mission={mission}
+        now={now}
+        onSelectCoordinates={onSelectCoordinates}
+        onSelectPlayer={onSelectPlayer}
+      />
       <Panel title="Fleet And Cargo">
         <Row label="Ships" value={formatShips(mission.ships)} />
         <Row label="Cargo" value={formatResources(mission.cargo)} />
         <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
         <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
       </Panel>
+    </div>
+  );
+}
+
+// Full-width "origin -> target" route hero. Replaces the old side-by-side Route and
+// Timing panels: each endpoint shows its planet name, clickable coordinates (opens the
+// galaxy/planet view), a clickable commander (opens the player profile), and the timing
+// that belongs to it — return beside the origin, arrival beside the target. The Mission
+// ID field is intentionally dropped (it already shows in the page header).
+function MissionRoute({
+  mission,
+  now,
+  onSelectCoordinates,
+  onSelectPlayer,
+}: {
+  mission: FleetMissionSummary;
+  now: number;
+  onSelectCoordinates: (coords: Coordinates) => void;
+  onSelectPlayer: (wallet: string) => void;
+}) {
+  const origin = routeEndpoint(mission.originPlanet, mission.originPlanetId);
+  const target = routeEndpoint(mission.targetPlanet, mission.targetPlanetId);
+  // Origin commander is always the fleet owner; the target commander is the defender,
+  // known only when the indexer resolved the target planet.
+  const originCommander = { displayName: mission.originPlanet?.ownerDisplayName ?? null, owner: mission.owner };
+  const targetCommander = mission.targetPlanet
+    ? { displayName: mission.targetPlanet.ownerDisplayName ?? null, owner: mission.targetPlanet.owner }
+    : null;
+  const noFleetReturned = isNoFleetReturned(mission);
+
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+      <h3 className="mb-3 text-sm font-semibold text-white">Route</h3>
+      <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <RouteEndpoint
+          commander={originCommander}
+          endpoint={origin}
+          kind="Origin"
+          onSelectCoordinates={onSelectCoordinates}
+          onSelectPlayer={onSelectPlayer}
+          timing={{ label: "Return", value: noFleetReturned ? "Completed, no fleet returned" : formatMissionTime(mission.returnAt, now) }}
+        />
+        <div aria-hidden="true" className="flex items-center justify-center text-slate-500">
+          <ArrowRight className="rotate-90 md:rotate-0" size={20} />
+        </div>
+        <RouteEndpoint
+          commander={targetCommander}
+          endpoint={target}
+          kind="Target"
+          onSelectCoordinates={onSelectCoordinates}
+          onSelectPlayer={onSelectPlayer}
+          timing={{ label: "Arrival", value: formatMissionTime(mission.arrivalAt, now) }}
+        />
+      </div>
+      <p className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-3 text-xs text-slate-400">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Needs resolution</span>
+        <span className="text-slate-300">{mission.needsResolution ? "Yes" : "No"}</span>
+      </p>
     </section>
+  );
+}
+
+type RouteEndpointData = {
+  coordinates: Coordinates | null;
+  coordinatesLabel: string | null;
+  displayName: string;
+};
+
+function RouteEndpoint({
+  commander,
+  endpoint,
+  kind,
+  onSelectCoordinates,
+  onSelectPlayer,
+  timing,
+}: {
+  commander: { displayName: string | null; owner: string } | null;
+  endpoint: RouteEndpointData;
+  kind: string;
+  onSelectCoordinates: (coords: Coordinates) => void;
+  onSelectPlayer: (wallet: string) => void;
+  timing: { label: string; value: string };
+}) {
+  const coords = endpoint.coordinates;
+  return (
+    <div className="grid content-start gap-1.5 rounded-md border border-white/10 bg-black/20 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{kind}</p>
+      <p className="break-words text-sm font-semibold text-white">{endpoint.displayName}</p>
+      {coords && endpoint.coordinatesLabel ? (
+        <button
+          className="w-fit rounded font-mono text-xs text-cyan-200 underline decoration-cyan-300/40 underline-offset-2 transition hover:text-cyan-100 hover:decoration-cyan-200"
+          onClick={() => onSelectCoordinates(coords)}
+          title={`Open [${endpoint.coordinatesLabel}]`}
+          type="button"
+        >
+          [{endpoint.coordinatesLabel}]
+        </button>
+      ) : endpoint.coordinatesLabel ? (
+        <span className="font-mono text-xs text-slate-400">[{endpoint.coordinatesLabel}]</span>
+      ) : (
+        <span className="font-mono text-xs text-slate-600">Coordinates unavailable</span>
+      )}
+      <CommanderLink commander={commander} onSelectPlayer={onSelectPlayer} />
+      <p className="mt-1 border-t border-white/5 pt-2 text-xs text-slate-400">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label}</span>{" "}
+        <span className="break-words text-slate-300">{timing.value}</span>
+      </p>
+    </div>
+  );
+}
+
+function CommanderLink({
+  commander,
+  onSelectPlayer,
+}: {
+  commander: { displayName: string | null; owner: string } | null;
+  onSelectPlayer: (wallet: string) => void;
+}) {
+  return (
+    <p className="mt-0.5 text-xs text-slate-400">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Commander</span>{" "}
+      {commander ? (
+        <button
+          className="rounded text-left text-slate-200 underline decoration-white/20 underline-offset-2 transition hover:text-white hover:decoration-white/40"
+          onClick={() => onSelectPlayer(commander.owner)}
+          title={`Inspect ${commander.displayName ?? shortHash(commander.owner)}`}
+          type="button"
+        >
+          {commander.displayName ? `${commander.displayName} (${shortHash(commander.owner)})` : shortHash(commander.owner)}
+        </button>
+      ) : (
+        <span className="text-slate-500">Unsettled</span>
+      )}
+    </p>
   );
 }
 
@@ -354,9 +497,9 @@ function Panel({ children, title }: { children: preact.ComponentChildren; title:
 // Compact two-column table row for a Panel: muted label on the left, value on the right.
 function Row({ label, value }: { label: string; value: preact.ComponentChildren }) {
   return (
-    <tr className="border-t border-white/5 align-top first:border-t-0">
-      <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-top text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</th>
-      <td className="py-1.5 text-left align-top break-words text-sm text-slate-300">{value}</td>
+    <tr className="border-t border-white/5 align-middle first:border-t-0">
+      <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-middle text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</th>
+      <td className="py-1.5 text-left align-middle break-words text-sm text-slate-300">{value}</td>
     </tr>
   );
 }
@@ -428,14 +571,25 @@ function formatMissionTime(value: string, now: number): string {
   return `${absolute} (${relative})`;
 }
 
-function planetLabel(planet: FleetMissionSummary["originPlanet"], fallbackId: string): string {
-  if (!planet) {
-    const colonyTarget = decodeColonizationTargetId(fallbackId);
-    if (colonyTarget) return `Uncharted [${colonyTarget.coordinates}]`;
-    return `Planet #${fallbackId}`;
+function routeEndpoint(planet: FleetMissionPlanetReference | null | undefined, fallbackId: string): RouteEndpointData {
+  if (planet) {
+    return {
+      coordinates: { galaxy: planet.galaxy, system: planet.system, position: planet.position },
+      coordinatesLabel: planet.coordinates,
+      displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
+    };
   }
-  const name = planet.name ? `${planet.name} ` : "";
-  return `${name}[${planet.coordinates}]`;
+  // Colonize targets are unsettled coordinates packed behind a flag bit, so there is no
+  // indexed planet but the destination coordinates are still recoverable and clickable.
+  const colonyTarget = decodeColonizationTargetId(fallbackId);
+  if (colonyTarget) {
+    return {
+      coordinates: { galaxy: colonyTarget.galaxy, system: colonyTarget.system, position: colonyTarget.position },
+      coordinatesLabel: colonyTarget.coordinates,
+      displayName: "Uncharted",
+    };
+  }
+  return { coordinates: null, coordinatesLabel: null, displayName: `Planet #${fallbackId}` };
 }
 
 function missionTypeLabel(value: string): string {

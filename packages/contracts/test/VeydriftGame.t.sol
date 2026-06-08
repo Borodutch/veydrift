@@ -15,6 +15,7 @@ import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftSpaceDockSystem} from "../src/VeydriftSpaceDockSystem.sol";
 import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
+import {VeydriftRaidStorage} from "../src/libraries/VeydriftRaidStorage.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
@@ -54,6 +55,33 @@ contract MockResourceToken {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
+    }
+}
+
+/// @dev Thin wrapper that owns a storage `Resources` slot so the storage-reference
+///      `VeydriftRaidStorage.raid` helper can be exercised deterministically in isolation.
+contract RaidStorageHarness {
+    VeydriftGameStorage.Resources internal _target;
+
+    function setTarget(uint128 metal, uint128 crystal, uint128 deuterium) external {
+        _target =
+            VeydriftGameStorage.Resources({metal: metal, crystal: crystal, deuterium: deuterium});
+    }
+
+    function target() external view returns (VeydriftGameStorage.Resources memory) {
+        return _target;
+    }
+
+    function raid(
+        uint256 capacity,
+        uint16 plunderRateBps,
+        uint16 metalBps,
+        uint16 crystalBps,
+        uint16 deuteriumBps
+    ) external returns (uint128 metal, uint128 crystal, uint128 deuterium) {
+        return VeydriftRaidStorage.raid(
+                _target, capacity, plunderRateBps, metalBps, crystalBps, deuteriumBps
+            );
     }
 }
 
@@ -171,6 +199,9 @@ contract VeydriftGameTest is Test {
         uint128 crystal,
         uint128 deuterium,
         uint128 fuelCost
+    );
+    event FleetMissionLootRatio(
+        uint256 indexed missionId, uint16 metalBps, uint16 crystalBps, uint16 deuteriumBps
     );
     event AttackMissionJoined(
         uint256 indexed attackMissionId,
@@ -2758,6 +2789,173 @@ contract VeydriftGameTest is Test {
         assertEq(cargo.crystal, 450);
         assertEq(cargo.deuterium, 450);
         assertEq(game.planet(targetPlanetId).resources.metal, 450);
+    }
+
+    function _launchAttackWithLootRatio(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        uint16 metalBps,
+        uint16 crystalBps,
+        uint16 deuteriumBps,
+        uint256 randomnessRequestId
+    ) internal returns (uint256 missionId) {
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        return game.launchAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            randomnessRequestId,
+            VeydriftGameStorage.LootRatio({
+                metalBps: metalBps, crystalBps: crystalBps, deuteriumBps: deuteriumBps
+            })
+        );
+    }
+
+    function testAttackLootRatioSplitsCapacityWhenCapsNonBinding() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        // Honorable plunder (7_500 bps) keeps every per-resource cap above the ratio shares,
+        // so the 5_000-capacity SmallCargo is split purely by the requested 50/30/20 ratio.
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        uint256 missionId =
+            _launchAttackWithLootRatio(originPlanetId, targetPlanetId, 5_000, 3_000, 2_000, 811);
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 811);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, 2_500);
+        assertEq(cargo.crystal, 1_500);
+        assertEq(cargo.deuterium, 1_000);
+        assertEq(game.planet(targetPlanetId).resources.metal, 7_500);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 8_500);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 9_000);
+    }
+
+    function testAttackLootRatioRollsUnfillableShareIntoNextResource() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        // No metal to loot: the 40% metal share cannot be filled and rolls over to crystal,
+        // while the deuterium share is still honored instead of being greedily skipped.
+        _setResources(targetPlanetId, 0, 10_000, 10_000);
+
+        uint256 missionId =
+            _launchAttackWithLootRatio(originPlanetId, targetPlanetId, 4_000, 4_000, 2_000, 812);
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 812);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, 0);
+        assertEq(cargo.crystal, 4_000);
+        assertEq(cargo.deuterium, 1_000);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 6_000);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 9_000);
+    }
+
+    // The cap-bound cascade (a resource share saturates its plunder cap and the remainder rolls into
+    // the next resource) is asserted directly against the deployed VeydriftRaidStorage library at the
+    // game's flat plunder rate (BASE_RAID_LOOT_BPS = 5_000). Exercising the library in isolation keeps
+    // the cascade arithmetic deterministic and independent of the resolution path, which reaches the
+    // plunder rate through the combat module's self-`staticcall` to `attackProtectionStatus`. The two
+    // surrounding integration tests still cover launch -> resolve -> raid with a ratio at caps that are
+    // non-binding, so the end-to-end wiring stays exercised.
+    function testRaidCascadesCrystalCapIntoDeuterium() public {
+        RaidStorageHarness harness = new RaidStorageHarness();
+        // Empty metal and only 3_000 crystal: at the 5_000 bps plunder rate the crystal cap is 1_500,
+        // so the rolled-over metal capacity saturates crystal and cascades into deuterium.
+        harness.setTarget(0, 3_000, 10_000);
+
+        (uint128 metal, uint128 crystal, uint128 deuterium) = harness.raid({
+            capacity: 5_000,
+            plunderRateBps: VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS,
+            metalBps: 5_000,
+            crystalBps: 2_500,
+            deuteriumBps: 2_500
+        });
+
+        assertEq(metal, 0);
+        assertEq(crystal, 1_500);
+        assertEq(deuterium, 3_500);
+        VeydriftGameStorage.Resources memory remaining = harness.target();
+        assertEq(remaining.metal, 0);
+        assertEq(remaining.crystal, 1_500);
+        assertEq(remaining.deuterium, 6_500);
+    }
+
+    function testAttackLootRatioEmitsLaunchEvent() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        uint256 expectedMissionId = game.nextFleetId();
+        vm.expectEmit(true, false, false, true, address(game));
+        emit FleetMissionLootRatio(expectedMissionId, 6_000, 2_500, 1_500);
+        vm.prank(player);
+        game.launchAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            815,
+            VeydriftGameStorage.LootRatio({metalBps: 6_000, crystalBps: 2_500, deuteriumBps: 1_500})
+        );
+    }
+
+    function testAttackLootRatioRejectsSharesThatDoNotSumToBps() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidLootRatio.selector);
+        game.launchAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            816,
+            VeydriftGameStorage.LootRatio({metalBps: 5_000, crystalBps: 3_000, deuteriumBps: 1_000})
+        );
+    }
+
+    function testAttackLootRatioRejectsZeroRatio() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        // The dedicated entrypoint requires a real ratio; plain greedy attacks use
+        // launchFleetMission instead.
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidLootRatio.selector);
+        game.launchAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+            817,
+            VeydriftGameStorage.LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
+        );
     }
 
     function testAttackResolutionSettlesTargetResourcesAtImpactNotLateResolverTime() public {

@@ -5,6 +5,7 @@ import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
+import {VeydriftRaidStorage} from "./libraries/VeydriftRaidStorage.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 struct FleetBattleGroup {
@@ -1548,7 +1549,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (totalCapacity == 0) return;
 
         (, uint16 plunderBps) = _attackProtectionPreview(mission.owner, mission.targetPlanetId);
-        Resources memory loot = _raidResources(mission.targetPlanetId, totalCapacity, plunderBps);
+        Resources memory loot =
+            _raidResources(mission.targetPlanetId, totalCapacity, plunderBps, mission.lootRatio);
         _distributeAttackGroupLoot(attackMissionId, mission, loot, totalCapacity);
     }
 
@@ -1613,20 +1615,22 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         return capacity > used ? capacity - used : 0;
     }
 
-    function _raidResources(uint256 targetPlanetId, uint256 capacity, uint16 plunderBps)
-        private
-        returns (Resources memory raided)
-    {
-        Resources storage target = _planets[targetPlanetId].resources;
-        uint128 metal = _lootable(target.metal, capacity, plunderBps);
-        capacity -= metal;
-        uint128 crystal = _lootable(target.crystal, capacity, plunderBps);
-        capacity -= crystal;
-        uint128 deuterium = _lootable(target.deuterium, capacity, plunderBps);
-        target.metal -= metal;
-        target.crystal -= crystal;
-        target.deuterium -= deuterium;
-        return Resources({metal: metal, crystal: crystal, deuterium: deuterium});
+    function _raidResources(
+        uint256 targetPlanetId,
+        uint256 capacity,
+        uint16 plunderBps,
+        LootRatio memory lootRatio
+    ) private returns (Resources memory raided) {
+        // The capacity split + rollover arithmetic and the storage decrement live in the deployed
+        // VeydriftRaidStorage library to keep this size-constrained module within EIP-170.
+        (raided.metal, raided.crystal, raided.deuterium) = VeydriftRaidStorage.raid(
+            _planets[targetPlanetId].resources,
+            capacity,
+            plunderBps,
+            lootRatio.metalBps,
+            lootRatio.crystalBps,
+            lootRatio.deuteriumBps
+        );
     }
 
     function _battleSeed(uint256 missionId, FleetMission storage mission)
@@ -1682,15 +1686,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         debris.crystal = _toUint128(
             ((uint256(attackerLosses.crystal) + defenderLosses.crystal) * COMBAT_DEBRIS_BPS) / BPS
         );
-    }
-
-    function _lootable(uint128 available, uint256 capacity, uint16 plunderBps)
-        private
-        pure
-        returns (uint128)
-    {
-        uint256 loot = (uint256(available) * plunderBps) / BPS;
-        return _toUint128(_min(loot, capacity));
     }
 
     function _attackProtectionPreview(address attacker, uint256 targetPlanetId)

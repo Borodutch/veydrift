@@ -11,6 +11,7 @@ import {
   encodeColonizationTargetId,
   encodeGameCall,
   encodeJoinAttackMissionCall,
+  encodeLaunchAttackMissionCall,
   encodeLaunchInterplanetaryMissileAttackCall,
   encodeLaunchFleetMissionCall,
   encodeUintCall,
@@ -1153,6 +1154,68 @@ describe("walletFlow", () => {
           101, 202, 303, 50, 404,
         ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
     );
+  });
+
+  test("encodes a loot-ratio attack mission in contract ABI order", () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 2,
+      recycler: 3,
+      colonyShip: 4,
+      largeCargo: 5,
+      heavyFighter: 6,
+      cruiser: 7,
+      battleship: 8,
+      bomber: 9,
+      destroyer: 10,
+      deathstar: 11,
+      battlecruiser: 12,
+      reaper: 13,
+      pathfinder: 14,
+    };
+
+    expect(encodeLaunchAttackMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      ships,
+      speedPercent: 50,
+      randomnessRequestId: 404,
+      lootRatio: { metalBps: 2000, crystalBps: 4000, deuteriumBps: 4000 },
+    })).toBe(
+      "0x19fec22b"
+        + [
+          7, 9,
+          1, 2, 3, 4, 5, 6, 7,
+          8, 9, 10, 11, 12, 13, 14,
+          0, 0, 0, 50, 404,
+          2000, 4000, 4000,
+        ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
+    );
+  });
+
+  test("rejects an attack loot ratio that does not total 100%", () => {
+    const ships = {
+      smallCargo: 0,
+      lightFighter: 1,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    expect(() => encodeLaunchAttackMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      ships,
+      lootRatio: { metalBps: 2000, crystalBps: 4000, deuteriumBps: 3000 },
+    })).toThrow("Loot ratio must total 100%.");
   });
 
   test("encodes fleet lifecycle resolver transactions", async () => {

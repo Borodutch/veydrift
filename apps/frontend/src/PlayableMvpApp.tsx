@@ -42,6 +42,7 @@ import {
   productionPerHour,
   progress,
   researchCatalog,
+  researchCost,
   storageCaps,
   type BuildingKey,
   type DefenseKey,
@@ -49,6 +50,7 @@ import {
   type PlanetProductionProfile,
   type PlayableState,
   type ResearchKey,
+  type Resources,
   type ShipKey,
 } from "./playableMvp";
 import { activeProductionQueue } from "./productionQueueFallback";
@@ -131,6 +133,7 @@ import {
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
+  sendLaunchAttackMissionTransaction,
   sendLaunchFleetMissionTransaction,
   sendJoinAttackMissionTransaction,
   sendFinishMoonBuildingUpgradeTransaction,
@@ -189,6 +192,12 @@ import {
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
 import { canonicalSpendableResources } from "./canonicalResources";
+import {
+  applyPendingSpends,
+  createPendingSpend,
+  reconcilePendingSpends,
+  type PendingSpend,
+} from "./pendingSpends";
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -212,6 +221,24 @@ export function walletSpendableResourcesFor({
   onChainResources: PlayableState["resources"] | undefined;
 }): PlayableState["resources"] | undefined {
   return isWalletConnected ? onChainResources : undefined;
+}
+
+/**
+ * Scale a per-unit resource cost by a production quantity. Returns undefined
+ * when the per-unit cost is unavailable so callers can skip optimistic
+ * subtraction rather than subtract a wrong (zero) amount.
+ */
+export function scaleResourcesBy(
+  cost: Resources | undefined,
+  quantity: number,
+): Resources | undefined {
+  if (!cost) return undefined;
+  const factor = Math.max(0, quantity);
+  return {
+    metal: cost.metal * factor,
+    crystal: cost.crystal * factor,
+    deuterium: cost.deuterium * factor,
+  };
 }
 
 const buildingFinishStateReadFailureLabel =
@@ -1696,6 +1723,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
   const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
+  // Client-side ledger of submitted-but-not-yet-settled resource spends. Keeps
+  // the displayed/gated balance from over-reporting during the window between a
+  // spend mining and the backend infrastructure read reflecting it (VEY-392).
+  const [pendingSpends, setPendingSpends] = useState<PendingSpend[]>([]);
+  const pendingSpendIdRef = useRef(0);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
   const [infrastructureError, setInfrastructureError] = useState<string | undefined>();
   const [moonState, setMoonState] = useState<ChainMoonState | null>(null);
@@ -2929,9 +2961,56 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     rates,
     topBarResourceSnapshotReceivedAtMs,
   ]);
+  // Raw, backend-known infrastructure balance used to detect when a pending
+  // spend has settled (the read has dropped to reflect the cost).
+  const infrastructureSpendableResources = useMemo(
+    () => resourcesFromChain(infrastructureChainState?.resources ?? null),
+    [infrastructureChainState?.resources],
+  );
+  // Drop pending spends the backend has caught up on (or that hit the TTL
+  // backstop) so they are no longer double-subtracted from the live balance.
+  const activePendingSpends = useMemo(
+    () => reconcilePendingSpends({ entries: pendingSpends, infrastructure: infrastructureSpendableResources, now }),
+    [pendingSpends, infrastructureSpendableResources, now],
+  );
+  useEffect(() => {
+    // Prune settled/expired entries out of state once they fall away so the
+    // ledger does not grow unbounded; the memo above keeps the displayed value
+    // correct in the meantime.
+    if (activePendingSpends.length !== pendingSpends.length) {
+      setPendingSpends(activePendingSpends);
+    }
+  }, [activePendingSpends, pendingSpends.length]);
   const spendableResources = useMemo(() => {
-    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
-  }, [isWalletConnected, canonicalOnChainResources]);
+    const canonical = walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
+    // Subtract submitted-but-unsettled spends so the displayed balance and every
+    // affordability gate that reads it cannot over-report (VEY-392).
+    return applyPendingSpends(canonical, activePendingSpends);
+  }, [isWalletConnected, canonicalOnChainResources, activePendingSpends]);
+  // Latest values snapshotted into refs so spend handlers can record an accurate
+  // pre-spend baseline without re-subscribing to every render.
+  const pendingSpendBaselineRef = useRef<{ baseline: Resources | undefined; rates: Resources }>({
+    baseline: undefined,
+    rates,
+  });
+  pendingSpendBaselineRef.current = {
+    baseline: infrastructureSpendableResources ?? canonicalOnChainResources,
+    rates,
+  };
+  const registerPendingSpend = useCallback((cost: Resources | undefined): string | undefined => {
+    if (!cost) return undefined;
+    if (cost.metal <= 0 && cost.crystal <= 0 && cost.deuterium <= 0) return undefined;
+    const { baseline, rates: ratePerHour } = pendingSpendBaselineRef.current;
+    if (!baseline) return undefined;
+    const id = `pending-spend-${(pendingSpendIdRef.current += 1)}`;
+    const entry = createPendingSpend({ id, cost, baseline, ratePerHour, now: Date.now() });
+    setPendingSpends((prev) => [...prev, entry]);
+    return id;
+  }, []);
+  const releasePendingSpend = useCallback((id: string | undefined) => {
+    if (!id) return;
+    setPendingSpends((prev) => prev.filter((entry) => entry.id !== id));
+  }, []);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
@@ -3159,6 +3238,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       const building = buildingContractIds[key];
       const label = "Building upgrade";
       let backendStateReady = false;
+      let pendingSpendId: string | undefined;
+      let txMined = false;
       setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
 
       try {
@@ -3179,6 +3260,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
         backendStateReady = true;
         setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
+        // Optimistically subtract the upgrade cost so the top bar and every
+        // action gate reflect the spend the instant it is submitted (VEY-392).
+        pendingSpendId = registerPendingSpend(buildingCosts(liveInfrastructure)[key]);
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
           account,
@@ -3192,6 +3276,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           label: transactionConfirmingLabel(label, txHash),
         });
         await confirmSubmittedTransaction(txHash);
+        txMined = true;
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
         const currentLevel = liveInfrastructure?.buildings.find((row) => row.id === building)?.level ?? 0;
         await refreshStartedBuildingState({
@@ -3202,6 +3287,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
       } catch (error) {
         console.error(error);
+        // The tx never durably spent (wallet reject / pre-mine revert): refund
+        // the optimistic subtraction. If it mined, keep it until the backend
+        // settlement reflects the spend.
+        if (!txMined) releasePendingSpend(pendingSpendId);
         setBuildingAction({
           status: "error",
           buildingKey: key,
@@ -3222,6 +3311,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     provider,
     refreshLiveInfrastructureState,
     refreshStartedBuildingState,
+    registerPendingSpend,
+    releasePendingSpend,
     runtimeConfig.status,
     transactionActionGate,
   ]);
@@ -3357,14 +3448,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     actionKey: string,
     send: () => Promise<string>,
     afterReceipt?: (() => Promise<boolean | void>) | undefined,
+    cost?: Resources | undefined,
   ) => {
     await transactionActionGate.run(actionKey, async () => {
       setShipyardAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
+      // Optimistically subtract the production cost so the displayed/gated
+      // balance reflects the spend immediately (VEY-392).
+      const pendingSpendId = registerPendingSpend(cost);
+      let txMined = false;
 
       try {
         const txHash = await send();
         setShipyardAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
         await confirmSubmittedTransaction(txHash);
+        txMined = true;
         setShipyardAction({ status: "pending", label: transactionSyncingLabel(label) });
         let synced = true;
         if (afterReceipt) {
@@ -3380,6 +3477,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           : { status: "pending", label: `${label} confirmed. Rechecking game state after a temporary API/RPC outage.` });
       } catch (error) {
         console.error(error);
+        if (!txMined) releasePendingSpend(pendingSpendId);
         const message = spendTransactionErrorMessage(error);
         setShipyardAction({
           status: "error",
@@ -3387,21 +3485,27 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
       }
     });
-  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, registerPendingSpend, releasePendingSpend, transactionActionGate]);
 
   const runDefenseTransaction = useCallback(async (
     label: string,
     actionKey: string,
     send: () => Promise<string>,
     afterReceipt?: (() => Promise<void>) | undefined,
+    cost?: Resources | undefined,
   ) => {
     await transactionActionGate.run(actionKey, async () => {
       setDefenseAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
+      // Optimistically subtract the production cost so the displayed/gated
+      // balance reflects the spend immediately (VEY-392).
+      const pendingSpendId = registerPendingSpend(cost);
+      let txMined = false;
 
       try {
         const txHash = await send();
         setDefenseAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
         await confirmSubmittedTransaction(txHash);
+        txMined = true;
         setDefenseAction({ status: "pending", label: transactionSyncingLabel(label) });
         if (afterReceipt) {
           await afterReceipt();
@@ -3413,13 +3517,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setDefenseAction({ status: "success", label: `${label} confirmed.` });
       } catch (error) {
         console.error(error);
+        if (!txMined) releasePendingSpend(pendingSpendId);
         setDefenseAction({
           status: "error",
           label: spendTransactionErrorMessage(error),
         });
       }
     });
-  }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, registerPendingSpend, releasePendingSpend, transactionActionGate]);
 
   const waitForAllianceApplicationState = useCallback((
     expectation: AllianceApplicationExpectation,
@@ -3467,14 +3572,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     label: string,
     send: () => Promise<string>,
     afterReceipt?: (() => Promise<void>) | undefined,
+    cost?: Resources | undefined,
   ) => {
     await transactionActionGate.run(`research:${label}`, async () => {
       setResearchAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
+      // Optimistically subtract the research cost so the displayed/gated balance
+      // reflects the spend immediately (VEY-392).
+      const pendingSpendId = registerPendingSpend(cost);
+      let txMined = false;
 
       try {
         const txHash = await send();
         setResearchAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
         await confirmSubmittedTransaction(txHash);
+        txMined = true;
         setResearchAction({ status: "pending", label: transactionSyncingLabel(label) });
         if (afterReceipt) {
           await afterReceipt();
@@ -3486,13 +3597,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setResearchAction({ status: "success", label: `${label} confirmed.` });
       } catch (error) {
         console.error(error);
+        if (!txMined) releasePendingSpend(pendingSpendId);
         setResearchAction({
           status: "error",
           label: spendTransactionErrorMessage(error),
         });
       }
     });
-  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshResearchState, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshResearchState, registerPendingSpend, releasePendingSpend, transactionActionGate]);
 
   const runRiftTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setRiftAction({ status: "pending", label });
@@ -3569,6 +3681,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         ? activeShipyardProductionQueue.quantity ?? 0
         : 0;
     const expectedQuantity = currentQueuedQuantity + quantity;
+    const shipSpendCost = scaleResourcesBy(
+      resourcesFromChain(shipyardState?.ships.find((ship) => ship.id === shipId)?.cost ?? null),
+      quantity,
+    );
 
     void runShipyardTransaction("Ship production", `shipyard:start:${shipId}`, () => sendStartShipProductionTransaction(
       provider,
@@ -3581,7 +3697,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       itemId: shipId,
       planetId,
       quantity: expectedQuantity,
-    }));
+    }), shipSpendCost);
   }, [
     account,
     activeShipyardProductionQueue,
@@ -3591,6 +3707,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     runShipyardTransaction,
     shipyardState?.homePlanetId,
     shipyardState?.planetId,
+    shipyardState?.ships,
   ]);
 
   const handleFinishShipProduction = useCallback(() => {
@@ -3624,6 +3741,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         ? activeDefenseProductionQueue.quantity ?? 0
         : 0;
     const expectedQuantity = currentQueuedQuantity + quantity;
+    const defenseSpendCost = scaleResourcesBy(
+      resourcesFromChain(defenseState.defenses.find((defense) => defense.id === defenseId)?.cost ?? null),
+      quantity,
+    );
 
     void runDefenseTransaction("Defense production", `defense:start:${defenseId}`, () => sendStartDefenseProductionTransaction(
       provider,
@@ -3636,10 +3757,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       itemId: defenseId,
       planetId,
       quantity: expectedQuantity,
-    }));
+    }), defenseSpendCost);
   }, [
     account,
     activeDefenseProductionQueue,
+    defenseState?.defenses,
     defenseState?.homePlanetId,
     gameContract,
     provider,
@@ -3982,6 +4104,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           ?? stateForTransaction.technologyLevels[technologyId.toString()]
           ?? 0;
 
+        // Cost of upgrading from the current level, scaled the same way the
+        // research affordability gate computes it, so the optimistic
+        // subtraction matches what the player is charged on-chain (VEY-392).
+        const researchSpendCost = researchCost({ [key]: currentLevel } as Record<ResearchKey, number>, key);
         void runResearchTransaction(researchStartTransactionLabel(technologyId, key, stateForTransaction), () => sendStartResearchTransaction(
           provider,
           account,
@@ -3991,7 +4117,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         ), () => refreshStartedResearchState({
           itemId: technologyId,
           targetLevel: currentLevel + 1,
-        }));
+        }), researchSpendCost);
       })
       .catch((error) => {
         console.error(error);
@@ -4320,6 +4446,26 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     setPendingGalaxyMission(null);
+    if (action.kind === "attack" && draft.lootRatio) {
+      const { metal, crystal, deuterium } = draft.lootRatio;
+      void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
+        provider,
+        account,
+        gameContract,
+        {
+          originPlanetId,
+          targetPlanetId,
+          ships: draft.ships,
+          speedPercent: draft.speedPercent,
+          lootRatio: {
+            metalBps: metal * 100,
+            crystalBps: crystal * 100,
+            deuteriumBps: deuterium * 100,
+          },
+        },
+      ));
+      return;
+    }
     void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchFleetMissionTransaction(
       provider,
       account,
@@ -4678,6 +4824,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onRecall={handleRecallMission}
           onResolve={handleResolveMission}
           onRetry={loadMissionDetail}
+          onSelectCoordinates={handleSelectPlanet}
+          onSelectPlayer={handleSelectPlayer}
         />
       );
     }
