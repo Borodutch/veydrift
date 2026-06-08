@@ -1,6 +1,9 @@
 import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
+import { shipAssetByKey } from "../gameAssets";
+import { buildInspectHash } from "../inspectRoutes";
+import type { ShipKey } from "../playableMvp";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   type BattleReport,
@@ -378,15 +381,13 @@ function ActiveMissionTable({
       data-past-page-total={String(pagination.totalEntries)}
     >
       <div className="overflow-x-auto">
-        <table className="min-w-[58rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+        <table className="min-w-[52rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
           <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
             <tr>
-              <th className="w-[9rem] px-3 py-2">Countdown</th>
-              <th className="w-[10rem] px-3 py-2">Mission</th>
-              <th className="w-[23rem] px-3 py-2">Origin {"->"} Target</th>
-              <th className="w-[9rem] px-3 py-2">Return</th>
-              <th className="w-[13rem] px-3 py-2">Fleet / cargo</th>
-              <th className="w-[15rem] px-3 py-2">Orders</th>
+              <th className="w-[9rem] px-3 py-2">Mission</th>
+              <th className="w-[26rem] px-3 py-2">Origin {"->"} Target</th>
+              <th className="w-[10rem] px-3 py-2">Fleet</th>
+              <th className="w-[13rem] px-3 py-2">Orders</th>
             </tr>
           </thead>
           {pages.map((pageRows, pageIndex) => (
@@ -450,45 +451,39 @@ function MissionRow({
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
-  const actions = missionLifecycleActions({ canTransact, context, mission, now });
-  const report = missionReport(mission, now, planetLookup);
-  const timing = missionTiming(mission, now);
+  // VEY-397#11: only show the Resolve battle button when it is actionable.
+  const actions = missionLifecycleActions({ canTransact, context, mission, now })
+    .filter((action) => action.kind !== "resolve" || action.enabled);
   const missionDirection = resolveMissionDirection({ context, mission, wallet, walletPlanetIds });
+  const origin = missionEndpoint(mission, "origin", planetLookup);
+  const target = missionEndpoint(mission, "target", planetLookup);
+  const noFleetReturned = isNoFleetReturned(mission);
   return (
     <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
       <td className="border-t border-white/10 px-3 py-3">
-        <p className={`font-semibold tabular-nums ${timing.due ? "text-red-100" : "text-white"}`}>{timing.countdown}</p>
-        <p className="mt-1 whitespace-pre-line text-slate-500">{timing.clock}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
+            {directionalMissionTypeLabel(mission.missionType, missionDirection)}
+          </span>
+          <span className="font-semibold text-white">#{mission.missionId}</span>
+        </div>
+        {direction && direction !== "Joinable attack" ? <p className="mt-2 text-slate-500">{direction}</p> : null}
+        {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
       </td>
       <td className="border-t border-white/10 px-3 py-3">
-        <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${missionTypeTone(mission.missionType)}`}>
-          {directionalMissionTypeLabel(mission.missionType, missionDirection)}
-        </span>
-        <p className="mt-2 font-semibold text-white">#{mission.missionId}</p>
-        <p className="mt-1 text-slate-500">{direction}</p>
-        <p className="mt-1 text-slate-500">Report {missionReportLabel(mission)}</p>
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)] items-center gap-2">
-          <MissionCellLabel label={`Origin Planet #${mission.originPlanetId}`} value={report.origin} />
-          <div className="min-w-0">
+        <div className="grid grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,1fr)] items-start gap-2">
+          <MissionEndpointCell endpoint={origin} timingLabel="Return" timingValue={noFleetReturned ? "No fleet returned" : missionEndpointTime(mission.returnAt, now)} />
+          <div className="min-w-0 self-center">
             <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
               <div className="h-full rounded-full bg-cyan-300" style={{ width: `${missionProgressPercent(mission, now)}%` }} />
             </div>
             <p className="mt-1 text-center text-[10px] text-slate-500">-&gt;</p>
           </div>
-          <MissionCellLabel label={`Target Planet #${mission.targetPlanetId}`} value={report.target} />
+          <MissionEndpointCell endpoint={target} timingLabel="Arrival" timingValue={missionEndpointTime(mission.arrivalAt, now)} />
         </div>
-        {missionDirection === "outgoing" ? null : (
-          <p className="mt-2 text-slate-500">{`Commander ${commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId))}`}</p>
-        )}
       </td>
-      <td className="border-t border-white/10 px-3 py-3 whitespace-pre-line tabular-nums">{formatMissionTime(mission.returnAt, now)}</td>
       <td className="border-t border-white/10 px-3 py-3">
-        <MissionCellLabel label="Ships" value={formatShips(mission.ships)} />
-        <p className="mt-2 text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
-        <p className="mt-1 text-slate-500">Fuel {formatResource(mission.fuelCost)} D</p>
-        {mission.attackGroupId ? <p className="mt-1 text-cyan-100/70">Group {mission.attackGroupId}</p> : null}
+        <FleetIcons ships={mission.ships} />
       </td>
       <td className="border-t border-white/10 px-3 py-3">
         <div className="flex flex-wrap gap-1.5">
@@ -503,6 +498,18 @@ function MissionRow({
                 onClick={() => onCounterplay(mission.missionId, "intercept")}
               />
             </span>
+          ) : action.kind === "joinAttack" ? (
+            // VEY-397#13/#14: "Join" shares the Open button style/size.
+            <button
+              className={rowActionButtonClass}
+              disabled={!action.enabled}
+              key={action.kind}
+              onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId)}
+              title={action.enabled ? "Join this alliance attack" : action.reason}
+              type="button"
+            >
+              Join
+            </button>
           ) : (
             <ActionButton
               action={action}
@@ -511,27 +518,17 @@ function MissionRow({
                 if (action.kind === "resolve") onResolve(mission.missionId);
                 if (action.kind === "recall") onRecall(mission.missionId);
                 if (action.kind === "completeReturn") onCompleteReturn(mission.missionId);
-                if (action.kind === "joinAttack") onJoinAttack(mission.missionId, mission.targetPlanetId);
               }}
             />
           ))}
           <button
-            className="inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+            className={rowActionButtonClass}
             onClick={() => onOpenReport(mission.missionId)}
             title="Open the full mission detail screen"
             type="button"
           >
             <ExternalLink aria-hidden="true" size={13} />
-            Open mission
-          </button>
-          <button
-            className="inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
-            onClick={() => copyMissionReport(mission, now, planetLookup)}
-            title="Copy this battle report for chat"
-            type="button"
-          >
-            <Clipboard aria-hidden="true" size={13} />
-            Copy report
+            Open
           </button>
         </div>
       </td>
@@ -539,11 +536,132 @@ function MissionRow({
   );
 }
 
-function MissionCellLabel({ label, value }: { label: string; value: string }) {
+// Shared style for the "Open" and "Join" row actions (VEY-397#14).
+const rowActionButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500";
+
+type MissionEndpoint = {
+  commanderName: string | null;
+  commanderWallet: string | null;
+  coordinates: string | null;
+  coords: { galaxy: number; position: number; system: number } | null;
+  name: string;
+};
+
+// Resolves a mission endpoint to a clickable planet (name with coords fallback, coords on
+// hover) and its commander, preferring the mission's own planet reference and falling back
+// to the shared planet lookup or a colonization-target decode.
+function missionEndpoint(
+  mission: FleetMissionSummary,
+  side: "origin" | "target",
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>,
+): MissionEndpoint {
+  const ref = side === "origin" ? mission.originPlanet : mission.targetPlanet;
+  const planetId = side === "origin" ? mission.originPlanetId : mission.targetPlanetId;
+  const identity = planetLookup.get(planetId);
+  const colony = ref ? null : decodeColonizationTargetId(planetId);
+  const coordinates = ref?.coordinates ?? identity?.coordinates ?? colony?.coordinates ?? null;
+  const coords = ref
+    ? { galaxy: ref.galaxy, position: ref.position, system: ref.system }
+    : colony
+      ? { galaxy: colony.galaxy, position: colony.position, system: colony.system }
+      : parseCoordinateString(coordinates);
+  const rawName = ref?.name?.trim() || identityName(identity);
+  const commanderWallet = ref?.owner ?? identity?.owner ?? (side === "origin" ? mission.owner : null);
+  const commanderDisplay = ref?.ownerDisplayName?.trim() || identity?.ownerDisplayName?.trim() || null;
+  return {
+    commanderName: commanderDisplay || (commanderWallet ? shortAddress(commanderWallet) : null),
+    commanderWallet,
+    coordinates,
+    coords,
+    name: rawName || (coordinates ? coordinates : colony ? "Uncharted" : `Planet #${planetId}`),
+  };
+}
+
+// The shared planet identity stores "Planet [coords]" as its display fallback; strip that so
+// the endpoint can show the coordinates themselves when there is no real planet name.
+function identityName(identity: MissionPlanetIdentity | undefined): string | null {
+  if (!identity) return null;
+  return /^Planet \[/.test(identity.displayName) ? null : identity.displayName;
+}
+
+function parseCoordinateString(value: string | null): { galaxy: number; position: number; system: number } | null {
+  if (!value) return null;
+  const parts = value.split(":").map((part) => Number(part));
+  if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part) || part <= 0)) return null;
+  return { galaxy: parts[0]!, position: parts[2]!, system: parts[1]! };
+}
+
+function missionEndpointTime(value: string, now: number): string {
+  const timestamp = timestampToMs(value);
+  if (timestamp === undefined) return "Unknown";
+  return formatDurationUntil(timestamp, now);
+}
+
+function MissionEndpointCell({
+  endpoint,
+  timingLabel,
+  timingValue,
+}: {
+  endpoint: MissionEndpoint;
+  timingLabel: string;
+  timingValue: string;
+}) {
   return (
-    <div>
-      <p className="font-medium text-slate-100">{label}</p>
-      <p className="mt-1 break-words text-slate-400">{value}</p>
+    <div className="min-w-0">
+      {endpoint.coords ? (
+        <a
+          className="rounded font-medium text-cyan-100 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50"
+          href={buildInspectHash({ coords: endpoint.coords, kind: "planet" })}
+          title={endpoint.coordinates ? `Open ${endpoint.coordinates} in Galaxy` : undefined}
+        >
+          {endpoint.name}
+        </a>
+      ) : (
+        <span className="font-medium text-slate-100" title={endpoint.coordinates ?? undefined}>{endpoint.name}</span>
+      )}
+      {endpoint.commanderName ? (
+        <p className="mt-0.5 break-words text-slate-400">
+          {endpoint.commanderWallet ? (
+            <a
+              className="rounded text-slate-300 underline-offset-2 transition hover:text-cyan-100 hover:underline focus-visible:underline focus-visible:outline-none"
+              href={buildInspectHash({ kind: "player", wallet: endpoint.commanderWallet })}
+              title={`Open ${endpoint.commanderName}'s profile`}
+            >
+              {endpoint.commanderName}
+            </a>
+          ) : (
+            endpoint.commanderName
+          )}
+        </p>
+      ) : null}
+      <p className="mt-0.5 text-[11px] text-slate-500">
+        <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{timingLabel}</span> {timingValue}
+      </p>
+    </div>
+  );
+}
+
+// Compact fleet column: small ship images with xN counts; hover shows the ship name + count.
+function FleetIcons({ ships }: { ships: Record<string, string> }) {
+  const entries = Object.entries(ships).filter(([, count]) => Number(count) > 0);
+  if (entries.length === 0) return <span className="text-slate-500">None</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {entries.map(([key, count]) => {
+        const asset = shipAssetByKey[key as ShipKey];
+        const name = shipLabel(key);
+        const label = `${name} x${formatResource(count)}`;
+        return (
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1 py-0.5" key={key} title={label}>
+            {asset ? (
+              <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={asset} />
+            ) : (
+              <span className="text-[10px] text-slate-300">{name}</span>
+            )}
+            <span className="text-[11px] font-medium tabular-nums text-slate-200">{`x${formatResource(count)}`}</span>
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -1040,6 +1158,11 @@ function isMissionReturned(mission: FleetMissionSummary, now: number): boolean {
   return Number(mission.returnAt) * 1_000 <= now;
 }
 
+function isNoFleetReturned(mission: FleetMissionSummary): boolean {
+  return !["Outbound", "Returning", "Recalled"].includes(mission.status)
+    && Object.values(mission.ships).every((value) => Number(value) <= 0);
+}
+
 function chronologicalActiveMissionRows({
   incoming,
   joinableAttacks,
@@ -1101,16 +1224,6 @@ function uniqueMissionRows(rows: ActiveMissionRow[]): ActiveMissionRow[] {
     seen.add(row.mission.missionId);
     return true;
   });
-}
-
-function missionTiming(mission: FleetMissionSummary, now: number): { clock: string; countdown: string; due: boolean } {
-  const timestamp = nextMissionEventTimestamp(mission);
-  if (timestamp === undefined) return { clock: "Unknown", countdown: "Unknown", due: false };
-  return {
-    clock: formatUserTimestamp(timestamp),
-    countdown: formatDurationUntil(timestamp, now),
-    due: timestamp <= now,
-  };
 }
 
 function nextMissionEventTimestamp(mission: FleetMissionSummary): number | undefined {
@@ -1310,15 +1423,6 @@ function commanderLabel(address: string, planet: MissionPlanetIdentity | undefin
   return name ? `${name} (${shortAddress(address)})` : shortAddress(address);
 }
 
-function missionReportLabel(mission: FleetMissionSummary): string {
-  const joinedAttackMissionIds = mission.joinedAttackMissionIds ?? [];
-  if (mission.attackGroupId) return `Group ${mission.attackGroupId}`;
-  if (joinedAttackMissionIds.length > 0) {
-    return `Joined ${joinedAttackMissionIds.join(", ")}`;
-  }
-  return mission.transactionHash ? `${mission.transactionHash.slice(0, 10)}...` : "Ready to share";
-}
-
 function missionReport(
   mission: FleetMissionSummary,
   now: number,
@@ -1384,14 +1488,6 @@ function missionReportText(
     joinedAttackMissionIds.length > 0 ? `Joined attacks: ${joinedAttackMissionIds.join(", ")}` : null,
     mission.transactionHash ? `Tx: ${mission.transactionHash}` : null,
   ].filter(Boolean).join("\n");
-}
-
-function copyMissionReport(
-  mission: FleetMissionSummary,
-  now: number,
-  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>
-): void {
-  copyText(missionReportText(mission, now, planetLookup));
 }
 
 function copyText(text: string): void {
