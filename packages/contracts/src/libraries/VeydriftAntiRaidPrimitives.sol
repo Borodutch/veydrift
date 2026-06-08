@@ -15,8 +15,6 @@ library VeydriftAntiRaidPrimitives {
     uint16 public constant RECALL_FUEL_REFUND_BPS = 0;
 
     uint16 public constant BASE_RAID_LOOT_BPS = 5_000;
-    uint16 public constant HONORABLE_RAID_LOOT_BPS = 7_500;
-    uint16 public constant BANDIT_RAID_LOOT_BPS = 10_000;
     uint16 public constant PROTECTED_STORAGE_BPS = 0;
     uint16 public constant WRECK_FIELD_RECOVERY_BPS = 3_000;
     uint16 public constant DEFENSE_REPAIR_BPS = 7_000;
@@ -177,9 +175,9 @@ library VeydriftAntiRaidPrimitives {
         return false;
     }
 
-    function plunderBps(bool honorable, bool defenderBandit) internal pure returns (uint16) {
-        if (defenderBandit) return BANDIT_RAID_LOOT_BPS;
-        if (honorable) return HONORABLE_RAID_LOOT_BPS;
+    /// @notice Classic raiding plunders a flat share of the target's resources.
+    /// @dev Honour/bandit loot tiers are intentionally gone; every raid loots at most 50%.
+    function plunderBps() internal pure returns (uint16) {
         return BASE_RAID_LOOT_BPS;
     }
 
