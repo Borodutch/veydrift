@@ -168,12 +168,9 @@ function MissionActions({
   const actions = missionLifecycleActions({ canTransact, context, mission, now })
     .filter((action) => action.kind !== "recall" || Boolean(mission.recallCost));
 
+  // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
-    return (
-      <Notice>
-        No wallet action applies at this mission stage.
-      </Notice>
-    );
+    return null;
   }
 
   return (
