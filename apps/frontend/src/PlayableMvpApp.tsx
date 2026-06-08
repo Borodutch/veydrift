@@ -193,10 +193,14 @@ import {
 import { timestampToMs } from "./timestampFormat";
 import { canonicalSpendableResources } from "./canonicalResources";
 import {
-  applyPendingSpends,
   createPendingSpend,
+  maxResourceCost,
   reconcilePendingSpends,
+  subtractResourceCost,
+  sumPendingSpendCosts,
+  unsettledQueueSpendCosts,
   type PendingSpend,
+  type QueueSpend,
 } from "./pendingSpends";
 
 export function researchStartTransactionLabel(
@@ -1042,6 +1046,29 @@ function liveResourceAmount(
     ? Math.min(cap, snapshotValue + produced)
     : snapshotValue + produced;
   return Math.max(0, Math.floor(cappedValue));
+}
+
+/**
+ * Derive the in-flight spends from the active backend queues. Each active queue
+ * item (build / research / ship / defense) had its resource cost debited
+ * on-chain when it started, so we subtract any not-yet-settled cost from the
+ * displayed/spendable balance. Unlike the in-session pending-spend ledger these
+ * are re-read from the backend on every load, so they survive a page reload —
+ * the live QA repro where an in-progress upgrade's cost was not reflected in the
+ * top bar. (VEY-KANEO-392)
+ */
+export function pendingSpendsFromQueues(
+  queues: ReadonlyArray<QueueStateResponse | null | undefined>,
+): QueueSpend[] {
+  const spends: QueueSpend[] = [];
+  for (const queue of queues) {
+    if (!queue || queue.active === false) continue;
+    const cost = resourcesFromChain(queue.cost);
+    if (!cost) continue;
+    if (cost.metal <= 0 && cost.crystal <= 0 && cost.deuterium <= 0) continue;
+    spends.push({ cost, startedAtMs: timestampToMs(queue.startedAt ?? null) });
+  }
+  return spends;
 }
 
 export function infrastructureUnavailableReasonFor({
@@ -2981,12 +3008,36 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setPendingSpends(activePendingSpends);
     }
   }, [activePendingSpends, pendingSpends.length]);
+  // Spends the backend already shows as active queue items (build / research /
+  // ship / defense). These are re-read from the backend on every load, so unlike
+  // the in-session `activePendingSpends` ledger they survive a page reload and
+  // never expire — they cover the QA repro where an in-progress upgrade started
+  // in a prior session was not reflected in the displayed balance.
+  const unsettledQueueSpend = useMemo(() => {
+    const queueSpends: QueueSpend[] = pendingSpendsFromQueues([
+      activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
+      onChainQueues?.ship,
+      onChainQueues?.research,
+      onChainQueues?.defense,
+    ]);
+    // Skip spends the accurate infrastructure snapshot already reflects (settled
+    // at/after the spend) so they are not subtracted twice.
+    return unsettledQueueSpendCosts(
+      queueSpends,
+      timestampToMs(infrastructureChainState?.planetLastSettledAt ?? null),
+    );
+  }, [onChainQueues, infrastructureChainState]);
   const spendableResources = useMemo(() => {
     const canonical = walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
     // Subtract submitted-but-unsettled spends so the displayed balance and every
-    // affordability gate that reads it cannot over-report (VEY-392).
-    return applyPendingSpends(canonical, activePendingSpends);
-  }, [isWalletConnected, canonicalOnChainResources, activePendingSpends]);
+    // affordability gate that reads it cannot over-report (VEY-392). The
+    // in-session ledger and the backend active-queue spends estimate the SAME
+    // underlying spends, so combine them with an element-wise max (never a sum)
+    // to avoid double-subtracting while still deducting persistent queue spends
+    // the session ledger misses after a reload / TTL expiry.
+    const deduction = maxResourceCost(sumPendingSpendCosts(activePendingSpends), unsettledQueueSpend);
+    return subtractResourceCost(canonical, deduction);
+  }, [isWalletConnected, canonicalOnChainResources, activePendingSpends, unsettledQueueSpend]);
   // Latest values snapshotted into refs so spend handlers can record an accurate
   // pre-spend baseline without re-subscribing to every render.
   const pendingSpendBaselineRef = useRef<{ baseline: Resources | undefined; rates: Resources }>({
