@@ -2572,6 +2572,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setOnChainQueues(snapshot.queues);
       setOnChainError(undefined);
       setOnChainStatus("ready");
+      // Reconcile the settlement snapshot so the top-bar resources reflect the
+      // amount just spent on the upgrade. Safe to fire here: the indexer is
+      // already confirmed caught up (the queue poll succeeded), and the queue
+      // display prefers infrastructureChainState.queue, so this cannot regress
+      // the freshly-applied build queue.
+      void refreshOnChainState();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load started building state.";
       setOnChainError(message);
