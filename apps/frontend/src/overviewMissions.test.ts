@@ -51,7 +51,7 @@ describe("Overview fleets summary", () => {
       onOpenMissionControl: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("2 active");
+    expect(text).not.toContain("2 active");
     expect(text).toContain("Attack → 1517 [5:407:4] · arrives in 13m");
     expect(text).toContain("Open Mission Control");
     // No per-panel splitting labels on Overview anymore.
@@ -130,6 +130,21 @@ describe("Overview fleets summary", () => {
     expect(text).toContain("+2 more — open Mission Control");
   });
 
+  test("does not render the redundant active-count header pill", () => {
+    const node = FleetsSummary({
+      fleetVisibility: visibility({}),
+      now: Date.parse("2026-06-07T22:00:00.000Z"),
+      onOpenMissionControl: () => undefined,
+    });
+    const heading = collectElementsByType(node, "h2").find((element) => collectText(element).join(" ") === "Fleets");
+    const activeBadge = collectElementsByType(node, "span").find((element) => /active$/.test(collectText(element).join(" ")));
+
+    expect(heading?.props?.className).toContain("inline-flex h-5");
+    expect(heading?.props?.className).toContain("items-center");
+    expect(heading?.props?.className).toContain("leading-none");
+    expect(activeBadge).toBeUndefined();
+  });
+
   test("falls back to a coordinate-free planet id when the planet reference is missing", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const summary = summarizeFleets(visibility({
@@ -163,6 +178,15 @@ function collectText(node: unknown): string[] {
     return collectText(render({ ...(vnode.props ?? {}) }));
   }
   return collectText(vnode.props?.children);
+}
+
+function collectElementsByType(node: unknown, type: string): Array<{ props?: { children?: unknown; className?: string }; type?: unknown }> {
+  if (node === null || node === undefined || typeof node !== "object") return [];
+  if (Array.isArray(node)) return node.flatMap((child) => collectElementsByType(child, type));
+
+  const vnode = node as { type?: unknown; props?: { children?: unknown; className?: string } };
+  const current = vnode.type === type ? [vnode] : [];
+  return [...current, ...collectElementsByType(vnode.props?.children, type)];
 }
 
 function visibility(overrides: Partial<FleetMissionVisibilityResponse>): FleetMissionVisibilityResponse {
