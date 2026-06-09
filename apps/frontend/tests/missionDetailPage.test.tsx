@@ -116,6 +116,38 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
   });
 });
 
+// VEY-KANEO-409: the "Recall cost" row in the Fleet And Cargo panel is only meaningful while a fleet
+// is still in flight. For a finished (non-recalled) mission it would only read "Not recallable", so
+// the row is hidden. (These cases render the standalone facts panel by omitting the battle report.)
+describe("MissionDetailPage recall cost row", () => {
+  function transportMission(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
+    return combatMission({ missionType: "Transport", ships: { smallCargo: "3" }, ...overrides });
+  }
+
+  test("hides the recall cost row for a finished (non-recalled) mission", () => {
+    const text = renderDetailText({ mission: transportMission({ status: "Returned" }) });
+
+    expect(text).toContain("Fleet And Cargo");
+    expect(text).toContain("Fuel cost");
+    expect(text).not.toContain("Recall cost");
+    expect(text).not.toContain("Not recallable");
+  });
+
+  test("keeps the recall cost row for an in-flight outbound mission", () => {
+    const text = renderDetailText({ mission: transportMission({ status: "Outbound", recallCost: "50" }) });
+
+    expect(text).toContain("Recall cost");
+    expect(text).toContain("50 deuterium");
+  });
+
+  test("keeps the recall cost row for a recalled fleet still heading home", () => {
+    const text = renderDetailText({ mission: transportMission({ status: "Recalled", recallCost: null }) });
+
+    expect(text).toContain("Recall cost");
+    expect(text).toContain("Not recallable");
+  });
+});
+
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();
 }
