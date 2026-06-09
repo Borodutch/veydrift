@@ -244,14 +244,18 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Borealis");
   });
 
-  test("active table renames the route header and removes the Origin -> Target header (VEY-399#3)", () => {
+  test("active mission cards drop the column-header row entirely (VEY-KANEO-400)", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionControlPage(missionControlProps(now, {
       outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
     }))).join(" ");
 
-    expect(text).toContain("Route");
+    // Cards are self-describing, so neither the old "Route"/"Origin -> Target" column header nor the
+    // full table header row is rendered; the per-card timing labels carry the meaning instead.
     expect(text).not.toContain("Origin -> Target");
+    expect(text).not.toContain("Mission Route Fleet Orders");
+    expect(text).toContain("Transport # 32");
+    expect(text).toContain("Arrival");
   });
 
   test("hides Join when disabled and labels the resolve action 'Resolve' (VEY-399#6/#7)", () => {

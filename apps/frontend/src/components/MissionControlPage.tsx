@@ -117,7 +117,7 @@ export function MissionControlPage({
     <section className="grid gap-4">
       <PageHeader
         actions={<RefreshButton loading={loading || missionArchiveLoading} onRefresh={onRefresh} title="Refresh missions" />}
-        subtitle="Watch inbound attacks, active launches, returning fleets, and time-critical battle actions from one command table."
+        subtitle="Watch inbound attacks, active launches, returning fleets, and time-critical battle actions from one command center."
         title="Mission Control"
       />
 
@@ -384,41 +384,34 @@ function ActiveMissionTable({
       data-past-page-size={String(pageSize)}
       data-past-page-total={String(pagination.totalEntries)}
     >
-      <div className="overflow-x-auto">
-        <table className="min-w-[52rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
-          <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-            <tr>
-              <th className="w-[8rem] px-3 py-2">Mission</th>
-              <th className="px-3 py-2">Route</th>
-              <th className="w-[11rem] px-3 py-2">Fleet</th>
-              <th className="w-[13rem] px-3 py-2">Orders</th>
-            </tr>
-          </thead>
-          {pages.map((pageRows, pageIndex) => (
-            <tbody data-past-page={pageIndex} hidden={pageIndex !== 0} key={`active-mission-page:${pageIndex}`}>
-              {pageRows.map(({ context, direction, mission }) => (
-                <MissionRow
-                  canTransact={canTransact}
-                  context={context}
-                  direction={direction}
-                  key={`${context}:${mission.missionId}`}
-                  mission={mission}
-                  now={now}
-                  onCompleteReturn={onCompleteReturn}
-                  onCounterplay={onCounterplay}
-                  onJoinAttack={onJoinAttack}
-                  onOpenReport={onOpenReport}
-                  onRecall={onRecall}
-                  onResolve={onResolve}
-                  planetLookup={planetLookup}
-                  wallet={wallet}
-                  walletPlanetIds={walletPlanetIds}
-                />
-              ))}
-            </tbody>
+      {pages.map((pageRows, pageIndex) => (
+        <div
+          className="grid gap-3 p-3 sm:grid-cols-2"
+          data-past-page={pageIndex}
+          hidden={pageIndex !== 0}
+          key={`active-mission-page:${pageIndex}`}
+        >
+          {pageRows.map(({ context, direction, mission }) => (
+            <MissionRow
+              canTransact={canTransact}
+              context={context}
+              direction={direction}
+              key={`${context}:${mission.missionId}`}
+              mission={mission}
+              now={now}
+              onCompleteReturn={onCompleteReturn}
+              onCounterplay={onCounterplay}
+              onJoinAttack={onJoinAttack}
+              onOpenReport={onOpenReport}
+              onRecall={onRecall}
+              onResolve={onResolve}
+              planetLookup={planetLookup}
+              wallet={wallet}
+              walletPlanetIds={walletPlanetIds}
+            />
           ))}
-        </table>
-      </div>
+        </div>
+      ))}
       {pagination.totalPages > 1 ? <ClientPaginationControl className="px-3 pb-3" pagination={pagination} /> : null}
     </div>
   );
@@ -464,7 +457,7 @@ function MissionRow({
   const noFleetReturned = isNoFleetReturned(mission);
   const directionSubtext = direction && direction !== "Joinable attack" ? direction : undefined;
   return (
-    <MissionTableRow
+    <MissionCard
       actions={
         <>
           {actions.map((action) => action.kind === "counterplay" ? (
@@ -599,7 +592,7 @@ function missionEndpointTiming(value: string, now: number): string {
 
 type EndpointTiming = { label: string; value: string };
 
-// The single shared, alignment-clean route cell used by every mission table — active My missions /
+// The single shared, alignment-clean route block used by every mission card — active My missions /
 // Alliance and Past missions (VEY-399#5). Planet names share one vertically centered row with the
 // progress connector between them; commander + per-side timing fold underneath, and an optional
 // whole-route subtext (e.g. "Returned · <time>") sits below.
@@ -682,10 +675,12 @@ function EndpointSub({ endpoint, timing }: { endpoint: MissionEndpoint; timing?:
   );
 }
 
-// The shared mission-row presentation used by every Mission Control table (VEY-399). Each table
-// supplies the badge/mission data, the route endpoints, the fleet cell, and the trailing actions;
-// the Mission, Route, and Fleet columns render identically so active and past tables stay in sync.
-function MissionTableRow({
+// The shared mission-card presentation used by every Mission Control list. VEY-KANEO-400 replaced
+// the old table rows with self-describing cards: each list still supplies the badge/mission data,
+// the route endpoints, the fleet block, and the trailing actions, and active and past cards render
+// identically so the two lists stay visually in sync — no column header is needed because every
+// field is labelled inline.
+function MissionCard({
   actions,
   badgeLabel,
   badgeTone,
@@ -715,30 +710,26 @@ function MissionTableRow({
   targetTiming?: EndpointTiming | undefined;
 }) {
   return (
-    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
-      <td className="border-t border-white/10 px-3 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
-          {missionId ? <span className="font-semibold text-white">#{missionId}</span> : null}
-        </div>
-        {subtext ? <p className="mt-2 text-slate-500">{subtext}</p> : null}
-        {groupId ? <p className="mt-1 text-cyan-100/70">Group {groupId}</p> : null}
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <MissionRouteCell
-          origin={origin}
-          originTiming={originTiming}
-          progressPercent={progressPercent}
-          subtext={routeSubtext}
-          target={target}
-          targetTiming={targetTiming}
-        />
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">{fleet}</td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <div className="flex flex-wrap gap-1.5">{actions}</div>
-      </td>
-    </tr>
+    <article className="flex min-w-0 flex-col gap-3 rounded-lg border border-white/10 bg-[#0d1320] p-3 text-xs text-slate-300">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
+        {missionId ? <span className="font-semibold text-white">#{missionId}</span> : null}
+        {groupId ? <span className="text-cyan-100/70">Group {groupId}</span> : null}
+      </div>
+      {subtext ? <p className="text-slate-500">{subtext}</p> : null}
+      <MissionRouteCell
+        origin={origin}
+        originTiming={originTiming}
+        progressPercent={progressPercent}
+        subtext={routeSubtext}
+        target={target}
+        targetTiming={targetTiming}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-white/5 pt-3">
+        <div className="min-w-0">{fleet}</div>
+        <div className="flex flex-wrap justify-end gap-1.5">{actions}</div>
+      </div>
+    </article>
   );
 }
 
@@ -956,46 +947,36 @@ function PastMissionSection({
         <p className="px-3 py-4 text-xs text-slate-500">No completed missions are visible for this wallet yet.</p>
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table className="min-w-[52rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
-              <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                <tr>
-                  <th className="w-[8rem] px-3 py-2">Mission</th>
-                  <th className="px-3 py-2">Route</th>
-                  <th className="w-[11rem] px-3 py-2">Fleet</th>
-                  <th className="w-[13rem] px-3 py-2">Details</th>
-                </tr>
-              </thead>
-              {visiblePages.map((pageRows, pageIndex) => (
-                <tbody
-                  data-past-page={pageIndex}
-                  hidden={!pagination && pageIndex !== 0}
-                  key={`past-mission-page:${pageIndex}`}
-                >
-                  {pageRows.map((row) => row.kind === "mission" ? (
-                    <PastMissionSummaryRow
-                      key={`past-mission:${row.mission.missionId}`}
-                      mission={row.mission}
-                      now={now}
-                      onOpenReport={onOpenReport}
-                      planetLookup={planetLookup}
-                      wallet={wallet}
-                      walletPlanetIds={walletPlanetIds}
-                    />
-                  ) : (
-                    <PastBattleReportRow
-                      key={`past-report:${row.report.missionId}`}
-                      onOpenReport={onOpenReport}
-                      planetLookup={planetLookup}
-                      report={row.report}
-                    />
-                  ))}
-                </tbody>
+          {visiblePages.map((pageRows, pageIndex) => (
+            <div
+              className="grid gap-3 p-3 sm:grid-cols-2"
+              data-past-page={pageIndex}
+              hidden={!pagination && pageIndex !== 0}
+              key={`past-mission-page:${pageIndex}`}
+            >
+              {pageRows.map((row) => row.kind === "mission" ? (
+                <PastMissionSummaryRow
+                  key={`past-mission:${row.mission.missionId}`}
+                  mission={row.mission}
+                  now={now}
+                  onOpenReport={onOpenReport}
+                  planetLookup={planetLookup}
+                  wallet={wallet}
+                  walletPlanetIds={walletPlanetIds}
+                />
+              ) : (
+                <PastBattleReportRow
+                  key={`past-report:${row.report.missionId}`}
+                  onOpenReport={onOpenReport}
+                  planetLookup={planetLookup}
+                  report={row.report}
+                />
               ))}
-            </table>
-          </div>
+            </div>
+          ))}
           {hasPages ? (
             <ClientPaginationControl
+              className="px-3 pb-3"
               loading={loading}
               nextLabel="Next mission archive page"
               onPageChange={onPageChange}
@@ -1027,11 +1008,11 @@ function PastMissionSummaryRow({
   const missionDirection = resolveMissionDirection({ mission, wallet, walletPlanetIds });
   const origin = missionEndpoint(mission, "origin", planetLookup);
   const target = missionEndpoint(mission, "target", planetLookup);
-  // VEY-399 rework (#9634 -> #9636): the mission status word (e.g. "Returned") sits as subtext
-  // under the MISSION column, beneath the badge/number. No date/time is shown for past rows.
+  // The mission status word (e.g. "Returned") sits as the card subtext, beneath the badge/number.
+  // No date/time is shown for past mission cards.
   const missionSubtext = missionStatusLabel(mission.status);
   return (
-    <MissionTableRow
+    <MissionCard
       actions={
         <button
           className={rowActionButtonClass}
@@ -1078,7 +1059,7 @@ function PastBattleReportRow({
     name: "Attacker",
   };
   return (
-    <MissionTableRow
+    <MissionCard
       actions={
         <button
           className={rowActionButtonClass}
