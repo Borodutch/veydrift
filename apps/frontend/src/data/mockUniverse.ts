@@ -127,6 +127,18 @@ export function planetImageForType(type: PlanetType): string {
   return PLANET_IMAGES[type];
 }
 
+// Shared planet-art-type resolution for the mission route visuals (VEY-403): prefer the indexed
+// archetype (derived from temperature) and otherwise fall back to a deterministic coordinate-derived
+// type so uncharted colonization targets still render real planet art rather than a generic icon.
+// Used by both the Mission Control cards and the Mission detail Route so the two stay in lockstep.
+// Returns null only when no planet can be resolved at all (e.g. an attacker with no coordinates).
+export function planetArtTypeFromArchetypeOrCoords(
+  archetype: PlanetType | null | undefined,
+  coords: { galaxy: number; position: number; system: number } | null,
+): PlanetType | null {
+  return archetype ?? (coords ? planetTypeFromCoordinates(coords.galaxy, coords.system, coords.position) : null);
+}
+
 export function formatPlanetType(type: PlanetType): string {
   return type.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
