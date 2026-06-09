@@ -1152,16 +1152,17 @@ function PastMissionTable({
                 ))}
               </div>
             ))}
+            {hasPages ? (
+              <ClientPaginationControl
+                className="pt-3"
+                loading={loading}
+                nextLabel="Next mission archive page"
+                onPageChange={onPageChange}
+                pagination={currentPagination}
+                prevLabel="Previous mission archive page"
+              />
+            ) : null}
           </div>
-          {hasPages ? (
-            <ClientPaginationControl
-              loading={loading}
-              nextLabel="Next mission archive page"
-              onPageChange={onPageChange}
-              pagination={currentPagination}
-              prevLabel="Previous mission archive page"
-            />
-          ) : null}
         </>
       )}
     </div>
