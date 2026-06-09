@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions } from "../src/components/MissionControlPage";
+import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions, returnPhaseLoot } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -578,6 +578,51 @@ describe("MissionControlPage", () => {
     // folding in the VEY-399 rework intent now that cards have no MISSION column.
     expect(text).toContain("Returned");
     expect(text).not.toContain("Returned · ");
+  });
+
+  test("shows outbound cargo and return-leg loot as separate lines on the mission card", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        // A returning attack carries home both its outbound cargo and the loot it grabbed; its
+        // battle report supplies the loot (VEY-404).
+        outgoing: [],
+        returning: [mission({
+          missionId: "55",
+          missionType: "Attack",
+          status: "Returning",
+          cargo: { metal: "10", crystal: "0", deuterium: "0" },
+        })],
+        joinableAttacks: [],
+        // An en-route outbound attack must stay cargo-only even when a report id collides — the
+        // haul is not carried until the fleet turns back.
+        completedMissions: [],
+        battleReports: [battleReport("55")],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    // Both the outbound cargo and the looted haul render, on their own labeled lines.
+    expect(text).toContain("Cargo 10 M / 0 C / 0 D");
+    expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
+  });
+
+  test("withholds loot from a mission card until the fleet leaves its outbound leg", () => {
+    const loot = { metal: "1200", crystal: "300", deuterium: "0" };
+    const lootByMissionId = new Map([["55", loot]]);
+
+    // En-route outbound/incoming cards stay cargo-only even when a matching report id exists: the
+    // haul is not carried (or not the player's) until the fleet turns back.
+    expect(returnPhaseLoot(mission({ missionId: "55", status: "Outbound" }), lootByMissionId)).toBeUndefined();
+    // Once a fleet is returning/returned, its matching loot is surfaced for the card's Loot line.
+    expect(returnPhaseLoot(mission({ missionId: "55", status: "Returning" }), lootByMissionId)).toBe(loot);
+    expect(returnPhaseLoot(mission({ missionId: "55", status: "Returned" }), lootByMissionId)).toBe(loot);
+    // No matching report -> no loot line at all (e.g. a returning transport).
+    expect(returnPhaseLoot(mission({ missionId: "999", status: "Returned" }), lootByMissionId)).toBeUndefined();
   });
 
   test("surfaces joinable attacks under the Alliance tab (no stat-card row)", () => {
