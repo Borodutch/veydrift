@@ -373,11 +373,7 @@ function MissionBattleReport({
   report?: BattleReport | undefined;
 }) {
   if (!isCombatMission(mission)) {
-    return (
-      <Notice>
-        This is a {missionTypeLabel(mission.missionType).toLowerCase()} mission, so there is no combat battle report section.
-      </Notice>
-    );
+    return null;
   }
 
   if (!report) {
