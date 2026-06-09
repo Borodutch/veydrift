@@ -392,6 +392,7 @@ function MissionBattleReport({
   // reference (and display name) when the target is charted.
   const defenderWallet = mission.targetPlanet?.owner ?? null;
   const recyclersNeeded = recyclersForDebris(report.debris);
+  const defenderSurvivors = defenderSurvivingUnits(report);
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -432,9 +433,12 @@ function MissionBattleReport({
               : `Planet #${report.targetPlanetId} (external commander unavailable)`}
           />
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
-          {/* The on-chain combat log records the defender's losses but not its surviving fleet/defense
-              composition or the loot it kept, so those are flagged on one line instead of fabricated. */}
-          <Row label="Fleet / defenses" value="Surviving composition and loot retained aren't published in the on-chain combat log." />
+          {/* The on-chain combat log emits the defender's aggregate unit count remaining after each
+              round (ships + ground defenses + any counterplay reinforcements), so we surface the
+              surviving force total from the final round as real data instead of a flat "not
+              published" line. The per-type composition and the loot the defender kept genuinely are
+              not in the log, so that caveat stays compact rather than being fabricated. */}
+          <Row label="Surviving forces" value={defenderSurvivorsLabel(defenderSurvivors)} />
         </Panel>
       </div>
 
@@ -636,6 +640,30 @@ function recyclersForDebris(debris: { crystal: string; metal: string }): number 
   const total = Number(debris.metal) + Number(debris.crystal);
   if (!Number.isFinite(total) || total <= 0) return 0;
   return Math.ceil(total / RECYCLER_CARGO_CAPACITY);
+}
+
+// The contract emits the defender's *remaining* aggregate unit count after each combat round
+// (CombatRoundResolved.defenderUnits = ships + ground defenses + qualified counterplay reinforcements),
+// so the last indexed round carries the surviving force total. An AttackerWin is only settled when the
+// defender is wiped, so survivors are 0 even if round snapshots were not indexed. Returns null only when
+// the count is genuinely unknown (no rounds indexed and the attacker did not clear the planet).
+export function defenderSurvivingUnits(report: BattleReport): number | null {
+  if (report.outcome === "AttackerWin") return 0;
+  const lastRound = report.roundReports.at(-1);
+  if (!lastRound || lastRound.defenderUnits.trim() === "") return null;
+  const survivors = Number(lastRound.defenderUnits);
+  return Number.isFinite(survivors) ? survivors : null;
+}
+
+export function defenderSurvivorsLabel(survivors: number | null): string {
+  if (survivors == null) {
+    return "Not recorded in the on-chain combat log; loot retained isn't published either.";
+  }
+  if (survivors <= 0) {
+    return "All forces destroyed. Loot retained isn't published on-chain.";
+  }
+  const units = `${formatResource(String(survivors))} ${survivors === 1 ? "unit" : "units"}`;
+  return `${units} remaining (ships + defenses combined; per-type composition and loot retained aren't published on-chain).`;
 }
 
 const shipLabels: Record<string, string> = {

@@ -426,7 +426,15 @@ describe("Mission Control battle reports", () => {
     // retained by the defender, so there is no fabricated "Loot left" row.
     expect(text).toContain("Loot grabbed");
     expect(text).not.toContain("Loot left");
-    expect(text).toContain("Fleet / defenses");
+    // VEY-KANEO-401: the defender's surviving force total is real on-chain data (the final round's
+    // aggregate unit count), so the old "Fleet / defenses" not-published placeholder is replaced by a
+    // "Surviving forces" row. This report is an AttackerWin, which is only settled when the defender is
+    // wiped, so it must read as a total loss while still flagging that per-type composition / retained
+    // loot are not published.
+    expect(text).not.toContain("Fleet / defenses");
+    expect(text).not.toContain("Surviving composition and loot retained aren't published");
+    expect(text).toContain("Surviving forces");
+    expect(text).toContain("All forces destroyed");
     // VEY-KANEO-396: commander names are present for both sides, link to their profiles, and carry
     // their home planet/coordinates (classic combat report header).
     expect(text).toContain("Aggressor");
