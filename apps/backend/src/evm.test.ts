@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { BackendConfig } from "./config";
 import {
   decodeBattleReportLogs,
+  decodeFleetMissionLogs,
   decodePlanetRenamedLog,
   decodeMoonChanceReportLog,
   HttpJsonRpcTransport,
@@ -933,6 +934,52 @@ describe("fleet mission resolution scheduling", () => {
     expect(returnable.every((mission) => Number(mission.returnAt) <= Math.floor(Date.now() / 1_000))).toBe(true);
     // Resolved/Returning missions are not arrival-resolvable any more.
     expect(await reader.listResolvableFleetMissions()).toEqual([]);
+  });
+});
+
+describe("fleet mission cargo vs loot", () => {
+  // VEY-404: a pure attack that loaded no outbound cargo but looted 50 metal must report Cargo 0
+  // (outbound launch cargo) and Loot 50 (battle report) — not 50/50. On-chain the contract folds
+  // loot into mission.cargo before emitting FleetMissionReturnExposed, so the indexer must keep the
+  // authoritative outbound value from FleetMissionCargo and never overwrite it from the return leg.
+  test("keeps outbound launch cargo and does not absorb loot from the return-exposed event", () => {
+    const owner = "0x0000000000000000000000000000000000000abc" as Address;
+    const missionId = 1n;
+    const logs: RpcLog[] = [
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(3n)],
+        data: dataWords([word(99n), word(1n), word(1_700_000_000n), word(1_700_000_600n)])
+      }),
+      // Outbound launch cargo: nothing loaded.
+      makeLog({
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: dataWords([word(0n), word(0n), word(0n), word(1n)])
+      }),
+      makeLog({
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: dataWords(Array.from({ length: 14 }, (_, index) => word(index === 1 ? 1n : 0n)))
+      }),
+      // Return leg: the contract has already credited the 50 metal loot into cargo, so the event
+      // carries 50 metal. The indexer must ignore this for `cargo`.
+      makeLog({
+        topics: [fleetMissionReturnExposedTopic, topic(missionId), addressTopic(owner), topic(2n)],
+        data: dataWords([word(99n), word(1n), word(1_700_000_600n), word(50n), word(0n), word(0n)])
+      })
+    ];
+
+    const mission = decodeFleetMissionLogs(logs).get("1");
+    expect(mission?.status).toBe("Returning");
+    // Cargo stays at the outbound launch value (0), not the 50 metal return-leg/loot amount.
+    expect(mission?.cargo).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
+
+    // Loot is sourced independently from the battle report.
+    const report = decodeBattleReportLogs([
+      makeLog({
+        topics: [attackBattleResolvedTopic, topic(missionId), addressTopic(owner), topic(1n)],
+        data: dataWords([word(1n), word(1n), word(12345n), word(50n), word(0n), word(0n)])
+      })
+    ]);
+    expect(report?.loot).toEqual({ metal: "50", crystal: "0", deuterium: "0" });
   });
 });
 
