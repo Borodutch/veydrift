@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
+import { MissionControlPage, allActiveMissionRows, missionControlViewState, partitionActiveMissionRows, resetMissionControlViewState, type ActiveMissionRow } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -394,6 +394,65 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("No active missions.");
     // Pagination range proves the 25-per-page split (26 rows -> first page shows 1-25).
     expect(text).toContain("1-25 of 26");
+  });
+
+  // VEY-KANEO-412: opening a mission detail unmounts and remounts Mission Control, so the
+  // tab + page selection — held in the DOM, not component state — must be restored from the
+  // module-level store rather than snapping back to the default tab/first page.
+  test("restores the remembered active + past mission tabs on remount (VEY-KANEO-412)", () => {
+    resetMissionControlViewState();
+    try {
+      const now = Date.parse("2026-06-05T12:00:00.000Z");
+      const props = {
+        ...missionControlProps(now, {
+          outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
+          joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000)],
+        }),
+        globalMissionArchive: {
+          rows: [{ kind: "battleReport" as const, report: battleReport("500") }],
+          pagination: { page: 1, pageSize: 25, totalEntries: 1, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+        },
+      };
+
+      // Default render selects the "mine" tab in both the active and past panels.
+      expect(panelVisibility(MissionControlPage(props), "active-tab-panel")).toEqual({ mine: true, alliance: false, all: false });
+      expect(panelVisibility(MissionControlPage(props), "past-tab-panel")).toEqual({ mine: true, all: false });
+
+      // Selecting the Alliance / All tabs (recorded by the show* handlers) survives the remount.
+      missionControlViewState.activeTab = "alliance";
+      missionControlViewState.pastTab = "all";
+      expect(panelVisibility(MissionControlPage(props), "active-tab-panel")).toEqual({ mine: false, alliance: true, all: false });
+      expect(panelVisibility(MissionControlPage(props), "past-tab-panel")).toEqual({ mine: false, all: true });
+    } finally {
+      resetMissionControlViewState();
+    }
+  });
+
+  test("restores the remembered active-mission client page on remount (VEY-KANEO-412)", () => {
+    resetMissionControlViewState();
+    try {
+      const now = Date.parse("2026-06-05T12:00:00.000Z");
+      const outgoing = Array.from({ length: 26 }, (_unused, index) =>
+        mission(String(100 + index), "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + (index + 1) * 60_000));
+      const props = missionControlProps(now, { outgoing });
+
+      // The user paged to the second page of the My missions tab before opening a detail.
+      missionControlViewState.pageByScope["active:mine"] = 1;
+      const tree = MissionControlPage(props);
+      const text = collectText(tree).join(" ");
+
+      // Page 2 of 2 is restored: the range reads the 26th row alone, and the active-list container
+      // marks page index 1 as current (26 rows, 25 per page -> the 26th row alone on page 2).
+      expect(text).toContain("26-26 of 26");
+      expect(text).not.toContain("1-25 of 26");
+      expect(activeListCurrentPage(tree)).toBe("1");
+
+      // A remembered page beyond the available rows clamps to the last real page instead of an empty view.
+      missionControlViewState.pageByScope["active:mine"] = 9;
+      expect(activeListCurrentPage(MissionControlPage(props))).toBe("1");
+    } finally {
+      resetMissionControlViewState();
+    }
   });
 
   test("excludes Alliance joinable attacks from the \"Needs orders now\" count", () => {
@@ -1020,6 +1079,26 @@ function findElements(node: unknown, tag: string): FoundElement[] {
   }
   const self = vnode.type === tag ? [vnode] : [];
   return self.concat(findElements(vnode.props?.children, tag));
+}
+
+// Maps each tab panel (identified by its `data-<attr>` key) to whether it is currently visible
+// (not hidden), so a test can assert which tab the page restored on render.
+function panelVisibility(node: unknown, attr: "active-tab-panel" | "past-tab-panel"): Record<string, boolean> {
+  const key = `data-${attr}`;
+  const visibility: Record<string, boolean> = {};
+  for (const element of findElements(node, "div")) {
+    const panelKey = element.props?.[key];
+    if (typeof panelKey === "string") visibility[panelKey] = element.props?.hidden !== true;
+  }
+  return visibility;
+}
+
+// Reads the active-mission list's restored page index from its container's data attribute (the
+// scope marks it apart from the past-mission table, which carries the same pagination attributes).
+function activeListCurrentPage(node: unknown): string | undefined {
+  const container = findElements(node, "div").find((element) => element.props?.["data-page-scope"] === "active:mine");
+  const current = container?.props?.["data-past-page-current"];
+  return typeof current === "string" ? current : undefined;
 }
 
 function collectText(node: unknown): string[] {

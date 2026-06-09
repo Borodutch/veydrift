@@ -353,13 +353,14 @@ function ActiveMissionSection({
     wallet,
     walletPlanetIds,
   };
+  const selectedTab = missionControlViewState.activeTab;
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={ACTIVE_MISSION_DEFAULT_TAB}>
+    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={selectedTab}>
       <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <div aria-label="Active missions" className="flex flex-wrap gap-1.5" role="tablist">
           {ACTIVE_MISSION_TABS.map((tab) => (
             <button
-              aria-selected={tab.key === ACTIVE_MISSION_DEFAULT_TAB}
+              aria-selected={tab.key === selectedTab}
               className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100"
               data-active-tab-button={tab.key}
               key={tab.key}
@@ -378,8 +379,8 @@ function ActiveMissionSection({
         ) : null}
       </div>
       {ACTIVE_MISSION_TABS.map((tab) => (
-        <div data-active-tab-panel={tab.key} hidden={tab.key !== ACTIVE_MISSION_DEFAULT_TAB} key={tab.key} role="tabpanel">
-          <ActiveMissionList emptyLabel={tab.emptyLabel} rows={rowsByTab[tab.key]} {...sharedRowProps} />
+        <div data-active-tab-panel={tab.key} hidden={tab.key !== selectedTab} key={tab.key} role="tabpanel">
+          <ActiveMissionList emptyLabel={tab.emptyLabel} pageScope={`active:${tab.key}`} rows={rowsByTab[tab.key]} {...sharedRowProps} />
         </div>
       ))}
     </section>
@@ -397,6 +398,7 @@ function ActiveMissionList({
   onOpenReport,
   onRecall,
   onResolve,
+  pageScope,
   planetLookup,
   rows,
   wallet,
@@ -412,6 +414,7 @@ function ActiveMissionList({
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
+  pageScope: string;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   rows: ActiveMissionRow[];
   wallet?: string | undefined;
@@ -423,12 +426,14 @@ function ActiveMissionList({
 
   const pageSize = 25;
   const pages = paginatedRows(rows, pageSize);
-  const pagination = paginationForRows(rows, pageSize);
+  const initialPage = rememberedPageIndex(pageScope, pages.length);
+  const pagination = paginationForRows(rows, pageSize, initialPage);
 
   return (
     <div
       className="p-3"
-      data-past-page-current="0"
+      data-page-scope={pageScope}
+      data-past-page-current={String(initialPage)}
       data-past-page-size={String(pageSize)}
       data-past-page-total={String(pagination.totalEntries)}
     >
@@ -436,7 +441,7 @@ function ActiveMissionList({
         <div
           className="grid gap-3"
           data-past-page={pageIndex}
-          hidden={pageIndex !== 0}
+          hidden={pageIndex !== initialPage}
           key={`active-mission-page:${pageIndex}`}
         >
           {pageRows.map(({ context, direction, mission }) => (
@@ -1119,6 +1124,40 @@ type PastMissionTabKey = (typeof PAST_MISSION_TABS)[number]["key"];
 
 const PAST_MISSION_DEFAULT_TAB: PastMissionTabKey = "mine";
 
+// Mission Control's tab + page selection lives in the DOM (the imperative show* handlers below
+// toggle data-attributes/hidden) rather than in component state, so opening a mission detail and
+// navigating back — which unmounts and remounts this page — would otherwise reset the player to the
+// default tab and first page. This module-level store survives that remount so they return to the
+// exact tab and page they left (VEY-KANEO-412). Server-paginated past archives already persist via
+// the parent's fetched-page state; this covers the client-side tab selection and the client-paginated
+// active/past pages. Render reads it for initial state; the show* handlers write to it on interaction.
+type MissionControlViewState = {
+  activeTab: ActiveMissionTabKey;
+  pastTab: PastMissionTabKey;
+  pageByScope: Record<string, number>;
+};
+
+export const missionControlViewState: MissionControlViewState = {
+  activeTab: ACTIVE_MISSION_DEFAULT_TAB,
+  pastTab: PAST_MISSION_DEFAULT_TAB,
+  pageByScope: {},
+};
+
+// Resets the remembered tab/page selection back to defaults. Used by tests to isolate the
+// restore-on-render behavior; production code never needs to forget the selection.
+export function resetMissionControlViewState(): void {
+  missionControlViewState.activeTab = ACTIVE_MISSION_DEFAULT_TAB;
+  missionControlViewState.pastTab = PAST_MISSION_DEFAULT_TAB;
+  missionControlViewState.pageByScope = {};
+}
+
+// Remembered page index for a paginated section, clamped to the rows currently available so a stale
+// page (rows shrank while away) falls back to the last real page instead of an empty view.
+function rememberedPageIndex(scope: string, pageCount: number): number {
+  const remembered = missionControlViewState.pageByScope[scope] ?? 0;
+  return Math.min(Math.max(0, remembered), Math.max(0, pageCount - 1));
+}
+
 // VEY-399#1: the displayed total must match the actual de-duplicated rows. The fallback pagination
 // already counts deduped rows; a server archive count is corrected by the rows collapsed on the
 // page (a mission and its battle report render as ONE row, not two).
@@ -1203,9 +1242,10 @@ function PastMissionSection({
     },
   };
   const sharedRowProps = { lootByMissionId, now, onOpenReport, planetLookup, wallet, walletPlanetIds };
+  const selectedTab = missionControlViewState.pastTab;
 
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-past-tab={PAST_MISSION_DEFAULT_TAB}>
+    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-past-tab={selectedTab}>
       <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Past missions</h3>
         <div aria-label="Past missions scope" className="flex flex-wrap gap-1.5" role="tablist">
@@ -1214,7 +1254,7 @@ function PastMissionSection({
             const count = pastDisplayTotalEntries(data.rows, data.pagination, data.collapsedCount);
             return (
               <button
-                aria-selected={tab.key === PAST_MISSION_DEFAULT_TAB}
+                aria-selected={tab.key === selectedTab}
                 className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100"
                 data-past-tab-button={tab.key}
                 key={tab.key}
@@ -1229,8 +1269,8 @@ function PastMissionSection({
         </div>
       </div>
       {PAST_MISSION_TABS.map((tab) => (
-        <div data-past-tab-panel={tab.key} hidden={tab.key !== PAST_MISSION_DEFAULT_TAB} key={tab.key} role="tabpanel">
-          <PastMissionTable {...dataByTab[tab.key]} {...sharedRowProps} />
+        <div data-past-tab-panel={tab.key} hidden={tab.key !== selectedTab} key={tab.key} role="tabpanel">
+          <PastMissionTable {...dataByTab[tab.key]} {...sharedRowProps} pageScope={`past:${tab.key}`} />
         </div>
       ))}
     </section>
@@ -1246,6 +1286,7 @@ function PastMissionTable({
   now,
   onOpenReport,
   onPageChange,
+  pageScope,
   pagination,
   planetLookup,
   rows,
@@ -1255,19 +1296,24 @@ function PastMissionTable({
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onOpenReport: (missionId: string) => void;
+  pageScope: string;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
   const pageSize = 25;
   const pages = paginatedRows(rows, pageSize);
-  const currentPagination = pagination ?? paginationForRows(rows, pageSize);
+  // Server-paginated archives carry their page in the parent's fetched state (which persists across
+  // mission-detail navigation already); client-paginated tables restore their page from the store.
+  const initialPage = pagination ? 0 : rememberedPageIndex(pageScope, pages.length);
+  const currentPagination = pagination ?? paginationForRows(rows, pageSize, initialPage);
   const hasPages = currentPagination.totalPages > 1;
   const visiblePages = pagination ? [rows] : pages;
   const displayTotalEntries = pastDisplayTotalEntries(rows, pagination, collapsedCount);
 
   return (
     <div
+      data-page-scope={pageScope}
       data-past-page-current={String(currentPagination.page - 1)}
       data-past-page-size={String(currentPagination.pageSize)}
       data-past-page-total={String(displayTotalEntries)}
@@ -1282,7 +1328,7 @@ function PastMissionTable({
               <div
                 className="grid gap-3"
                 data-past-page={pageIndex}
-                hidden={!pagination && pageIndex !== 0}
+                hidden={!pagination && pageIndex !== initialPage}
                 key={`past-mission-page:${pageIndex}`}
               >
                 {pageRows.map((row) => row.kind === "mission" ? (
@@ -1419,16 +1465,18 @@ function PastBattleReportRow({
   );
 }
 
-function paginationForRows<T>(rows: T[], pageSize: number): FleetMissionArchiveResponse["pagination"] {
+function paginationForRows<T>(rows: T[], pageSize: number, currentPageIndex = 0): FleetMissionArchiveResponse["pagination"] {
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+  const pageIndex = Math.min(Math.max(0, currentPageIndex), totalPages - 1);
+  const page = pageIndex + 1;
   return {
-    page: 1,
+    page,
     pageSize,
     totalEntries,
     totalPages,
-    hasPreviousPage: false,
-    hasNextPage: totalPages > 1,
+    hasPreviousPage: page > 1,
+    hasNextPage: page < totalPages,
   };
 }
 
@@ -1458,6 +1506,10 @@ function showPastMissionPage(event: Event, target: number | "next" | "previous")
       : target;
   const clamped = Math.max(0, Math.min(pages.length - 1, nextPage));
   section.dataset.pastPageCurrent = clamped.toString();
+
+  // Remember this client page so returning from a mission detail restores it (VEY-KANEO-412).
+  const scope = section.dataset.pageScope;
+  if (scope) missionControlViewState.pageByScope[scope] = clamped;
 
   pages.forEach((page, pageIndex) => {
     page.hidden = pageIndex !== clamped;
@@ -1500,6 +1552,8 @@ function showActiveMissionTab(event: Event, key: string) {
   const section = button.closest<HTMLElement>("[data-active-tab]");
   if (!section) return;
   section.dataset.activeTab = key;
+  // Remember the selected tab so returning from a mission detail restores it (VEY-KANEO-412).
+  missionControlViewState.activeTab = key as ActiveMissionTabKey;
 
   section.querySelectorAll<HTMLElement>("[data-active-tab-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.activeTabPanel !== key;
@@ -1516,6 +1570,8 @@ function showPastMissionTab(event: Event, key: string) {
   const section = button.closest<HTMLElement>("[data-past-tab]");
   if (!section) return;
   section.dataset.pastTab = key;
+  // Remember the selected tab so returning from a mission detail restores it (VEY-KANEO-412).
+  missionControlViewState.pastTab = key as PastMissionTabKey;
 
   section.querySelectorAll<HTMLElement>("[data-past-tab-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.pastTabPanel !== key;
