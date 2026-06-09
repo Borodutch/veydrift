@@ -114,11 +114,24 @@ export type QueueSpend = {
  * Total cost of active-queue spends that are NOT yet reflected in the accurate
  * backend resource snapshot.
  *
- * A spend with `startedAtMs <= snapshotSettledAtMs` is already baked into the
- * snapshot, so it is skipped to avoid double-subtracting. When the snapshot
- * settle time is unknown — the accurate infrastructure read is unavailable or
- * still warming — the snapshot cannot be trusted to reflect the spend, so it is
- * subtracted (the conservative, never-over-report direction).
+ * The on-chain contract deducts a queue's cost at the moment it is started, in
+ * the same settlement that advances the planet's `lastSettledAt` (see
+ * `startBuildingUpgrade` / `startResearch` / `startShipProduction` /
+ * `startDefenseProduction`: each calls `_settleResources` then `_spend`). So any
+ * snapshot the backend serves with a known settle time was read from indexed
+ * state that already includes the BuildingStarted/ResearchQueued/... event and
+ * therefore already reflects the spend. When the snapshot settle time is known
+ * we treat the spend as reflected — even when the spend's own start time is
+ * unknown (the indexer frequently cannot backfill `startedAt`). Subtracting it
+ * again would double-count and pin Metal/Crystal at 0 for the whole build
+ * (VEY-318: top bar stuck at 0 with positive production until the queue clears).
+ *
+ * A spend is only subtracted when the snapshot settle time is unknown — the
+ * accurate infrastructure read is unavailable, stale, or still warming — so the
+ * snapshot cannot be trusted to reflect it (the conservative, never-over-report
+ * direction; covered by the in-session pending-spend ledger for fresh spends),
+ * or when the snapshot is known to predate the spend (`startedAtMs >
+ * snapshotSettledAtMs`).
  */
 export function unsettledQueueSpendCosts(
   spends: readonly QueueSpend[],
@@ -127,8 +140,7 @@ export function unsettledQueueSpendCosts(
   return spends.reduce<Resources>((acc, spend) => {
     const reflectedInSnapshot =
       snapshotSettledAtMs !== undefined
-      && spend.startedAtMs !== undefined
-      && spend.startedAtMs <= snapshotSettledAtMs;
+      && (spend.startedAtMs === undefined || spend.startedAtMs <= snapshotSettledAtMs);
     if (reflectedInSnapshot) return acc;
     return {
       metal: acc.metal + Math.max(0, spend.cost.metal),

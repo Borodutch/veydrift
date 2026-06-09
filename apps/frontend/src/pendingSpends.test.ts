@@ -217,9 +217,16 @@ describe("unsettledQueueSpendCosts", () => {
     expect(unsettledQueueSpendCosts([upgrade], undefined)).toEqual({ metal: 683, crystal: 170, deuterium: 0 });
   });
 
-  test("subtracts a queue spend with an unknown start time", () => {
+  test("skips a queue spend with an unknown start time when the snapshot settle time is known", () => {
+    // The contract deducts a queue's cost in the same settlement that advances
+    // `lastSettledAt`, so a snapshot with a known settle time already reflects
+    // any active queue cost — even when the indexer could not backfill the
+    // spend's own `startedAt`. Subtracting it again is the VEY-318 double-count
+    // that pinned Metal/Crystal at 0 for the whole build.
     const noStart: QueueSpend = { cost: { metal: 100, crystal: 0, deuterium: 0 }, startedAtMs: undefined };
-    expect(unsettledQueueSpendCosts([noStart], 10 * HOUR_MS)).toEqual({ metal: 100, crystal: 0, deuterium: 0 });
+    expect(unsettledQueueSpendCosts([noStart], 10 * HOUR_MS)).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
+    // ...but with no trustworthy snapshot settle time it is still subtracted.
+    expect(unsettledQueueSpendCosts([noStart], undefined)).toEqual({ metal: 100, crystal: 0, deuterium: 0 });
   });
 
   test("sums multiple unsettled queue spends", () => {
@@ -274,6 +281,38 @@ describe("reload over-report repro (VEY-KANEO-392 rework)", () => {
     const deduction = maxResourceCost(sumPendingSpendCosts([]), queueDeduction);
     const displayed = subtractResourceCost(canonical, deduction)!;
     expect(displayed).toEqual({ metal: 9_317, crystal: 9_830, deuterium: 1_643 });
+  });
+});
+
+describe("active-build double-subtraction repro (VEY-318 rework)", () => {
+  const RATES = { metal: 0, crystal: 0, deuterium: 0 };
+  const CAPS = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
+
+  test("a fresh infra snapshot that already reflects an active build is not double-subtracted", () => {
+    // Live QA repro (2026-06-09 05:28): the contract already deducted the build
+    // cost on-chain, so the canonical infrastructure snapshot reads the
+    // post-spend balance (Metal 1,823 / Crystal 6,712 / Deuterium 325). The
+    // backend reports the build as active but the indexer did not backfill its
+    // `startedAt`. The displayed top bar must equal the canonical snapshot, not
+    // canonical minus the build cost again (which pinned Metal at 0).
+    const SETTLED_AT_MS = 10 * 3_600_000;
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 1_823, crystal: 6_712, deuterium: 325 },
+      settlementSettledAtMs: SETTLED_AT_MS,
+      infrastructureResources: { metal: 1_823, crystal: 6_712, deuterium: 325 },
+      infrastructureSettledAtMs: SETTLED_AT_MS,
+      rates: RATES,
+      caps: CAPS,
+      now: SETTLED_AT_MS,
+    })!;
+    const queueDeduction = unsettledQueueSpendCosts(
+      // A building costing more Metal than the post-spend balance, no startedAt.
+      [{ cost: { metal: 2_100, crystal: 850, deuterium: 0 }, startedAtMs: undefined }],
+      SETTLED_AT_MS,
+    );
+    const deduction = maxResourceCost(sumPendingSpendCosts([]), queueDeduction);
+    const displayed = subtractResourceCost(canonical, deduction)!;
+    expect(displayed).toEqual({ metal: 1_823, crystal: 6_712, deuterium: 325 });
   });
 });
 
