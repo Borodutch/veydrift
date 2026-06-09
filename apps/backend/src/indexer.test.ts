@@ -1883,6 +1883,15 @@ describe("SettlementIndexer", () => {
       }
     });
 
+    // VEY-403: mission planet references carry the real planet archetype (derived from the indexed
+    // temperature) so Mission Control can render the same planet art the Galaxy view uses.
+    const knownArchetypes = [
+      "frozen-ice", "cold-tundra", "temperate-ocean", "lush-temperate", "warm-terracotta", "hot-desert", "scorching-molten",
+    ];
+    const incomingMission = defenderVisibility.incoming[0]!;
+    expect(knownArchetypes).toContain(incomingMission.originPlanet!.archetype);
+    expect(knownArchetypes).toContain(incomingMission.targetPlanet!.archetype);
+
     const attackerVisibility = indexer.fleetMissionVisibility(attacker);
     expect(attackerVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["44"]);
     expect(attackerVisibility.incoming).toEqual([]);

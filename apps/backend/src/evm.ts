@@ -1,7 +1,7 @@
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { usedFieldsFromBuildingRows } from "./readModels";
-import type { Coordinates } from "./universe";
+import type { Coordinates, PlanetArchetype } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
 export type Address = `0x${string}`;
@@ -344,6 +344,9 @@ export type FleetMissionPlanetReference = {
   system: number;
   position: number;
   coordinates: string;
+  // Real planet archetype (derived from the indexed temperature) so Mission Control can render the
+  // same planet art the Galaxy view uses for thumbnails (VEY-403 / VEY-67), not a generic icon.
+  archetype: PlanetArchetype;
 };
 
 export type ResolvableFleetMission = Pick<

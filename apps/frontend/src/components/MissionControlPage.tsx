@@ -1,9 +1,11 @@
 import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
+import { planetImageForType, planetTypeFromCoordinates, planetTypeFromTemperature } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { shipAssetByKey } from "../gameAssets";
 import { buildInspectHash } from "../inspectRoutes";
 import type { ShipKey } from "../playableMvp";
+import type { PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   type BattleReport,
@@ -555,6 +557,7 @@ function MissionRow({
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
+      direction={missionRouteLeg(mission.status)}
       fleet={<MissionFleet cargo={mission.cargo} loot={loot} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
@@ -628,12 +631,26 @@ function missionStatusPill(status: string): MissionStatusPill {
 const rowActionButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500";
 
 type MissionEndpoint = {
+  // Real planet archetype used to pick the planet art asset (VEY-403 / VEY-67); null only when the
+  // endpoint has no resolvable planet (e.g. a battle-report attacker with no coordinates).
+  archetype: PlanetType | null;
   commanderName: string | null;
   commanderWallet: string | null;
   coordinates: string | null;
   coords: { galaxy: number; position: number; system: number } | null;
   name: string;
 };
+
+// Resolves the planet archetype (art type) for an endpoint, preferring the mission feed's real
+// archetype, then a shared-lookup archetype, then a deterministic coordinate-derived fallback so
+// uncharted colonization targets still render planet art rather than a generic icon.
+function endpointArchetype(
+  refArchetype: PlanetType | null | undefined,
+  identityArchetype: PlanetType | null | undefined,
+  coords: { galaxy: number; position: number; system: number } | null,
+): PlanetType | null {
+  return refArchetype ?? identityArchetype ?? (coords ? planetTypeFromCoordinates(coords.galaxy, coords.system, coords.position) : null);
+}
 
 // Resolves a mission endpoint to a clickable planet (name with coords fallback, coords on
 // hover) and its commander, preferring the mission's own planet reference and falling back
@@ -657,6 +674,7 @@ function missionEndpoint(
   const commanderWallet = ref?.owner ?? identity?.owner ?? (side === "origin" ? mission.owner : null);
   const commanderDisplay = ref?.ownerDisplayName?.trim() || identity?.ownerDisplayName?.trim() || null;
   return {
+    archetype: endpointArchetype(ref?.archetype, identity?.archetype, coords),
     commanderName: commanderDisplay || (commanderWallet ? shortAddress(commanderWallet) : null),
     commanderWallet,
     coordinates,
@@ -697,39 +715,78 @@ function missionEndpointTiming(value: string, now: number): string {
 
 type EndpointTiming = { label: string; value: string };
 
+// The leg of the journey a card's route arrow represents: an outbound fleet flies origin -> target,
+// a returning/recalled/returned fleet flies back target -> origin (home). The arrow points along
+// this leg and fills with mission progress (VEY-403).
+type RouteLeg = "outbound" | "returning";
+
+function missionRouteLeg(status: string): RouteLeg {
+  return status === "Returning" || status === "Recalled" || status === "Returned" ? "returning" : "outbound";
+}
+
 // The single shared, alignment-clean route cell used by every mission table — active My missions /
-// Alliance and Past missions (VEY-399#5). Planet names share one vertically centered row with the
-// progress connector between them; commander + per-side timing fold underneath, and an optional
-// whole-route subtext (e.g. "Returned · <time>") sits below.
+// Alliance and Past missions (VEY-399#5, VEY-403). Each endpoint renders its real planet art plus a
+// clickable name + commander; between them a directional arrow points along the active leg
+// (outbound -> target, returning -> home) and fills with mission progress. An optional whole-route
+// subtext (e.g. "Returned · <time>") sits below.
 function MissionRouteCell({
+  direction,
   origin,
-  originTiming,
   progressPercent,
   subtext,
   target,
-  targetTiming,
 }: {
+  direction: RouteLeg;
   origin: MissionEndpoint;
-  originTiming?: EndpointTiming | undefined;
   progressPercent?: number | undefined;
   subtext?: string | undefined;
   target: MissionEndpoint;
-  targetTiming?: EndpointTiming | undefined;
 }) {
   return (
     <div className="min-w-0">
-      <div className="grid grid-cols-[minmax(0,1fr)_3rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
-        <EndpointName endpoint={origin} />
-        <div className="h-1.5 self-center overflow-hidden rounded-full bg-white/10">
-          <div className="h-full rounded-full bg-cyan-300" style={{ width: `${Math.round(progressPercent ?? 100)}%` }} />
-        </div>
-        <EndpointName endpoint={target} />
-        <EndpointSub endpoint={origin} timing={originTiming} />
-        <span aria-hidden="true" />
-        <EndpointSub endpoint={target} timing={targetTiming} />
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(2.75rem,4.5rem)_minmax(0,1fr)] items-center gap-x-2 sm:gap-x-3">
+        <RouteEndpoint align="left" endpoint={origin} />
+        <RouteArrow direction={direction} progressPercent={progressPercent ?? 100} />
+        <RouteEndpoint align="right" endpoint={target} />
       </div>
       {subtext ? <p className="mt-1.5 text-[11px] text-slate-500">{subtext}</p> : null}
     </div>
+  );
+}
+
+// One side of the route: the planet art asset flanking the route (origin on the outer-left, target
+// on the outer-right via the mirrored layout) with the clickable planet name + commander stacked
+// alongside it.
+function RouteEndpoint({ align, endpoint }: { align: "left" | "right"; endpoint: MissionEndpoint }) {
+  return (
+    <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
+      <EndpointPlanetImage endpoint={endpoint} />
+      <div className="min-w-0">
+        <EndpointName endpoint={endpoint} />
+        <EndpointCommander endpoint={endpoint} />
+      </div>
+    </div>
+  );
+}
+
+// Real planet art for an endpoint (the same asset set the Galaxy view uses for thumbnails — VEY-67).
+// Falls back to a subtle ringed placeholder only when no planet can be resolved (e.g. a
+// battle-report attacker without coordinates).
+function EndpointPlanetImage({ endpoint }: { endpoint: MissionEndpoint }) {
+  const frameClass = "relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30 sm:h-9 sm:w-9";
+  if (!endpoint.archetype) {
+    return <span aria-hidden="true" className={`${frameClass} flex items-center justify-center`}><span className="h-3 w-3 rounded-full border border-white/25" /></span>;
+  }
+  return (
+    <span className={frameClass}>
+      <img
+        alt={`${endpoint.name} planet`}
+        className="h-full w-full object-cover"
+        data-planet-art={endpoint.archetype}
+        loading="lazy"
+        src={planetImageForType(endpoint.archetype)}
+      />
+    </span>
   );
 }
 
@@ -752,30 +809,76 @@ function EndpointName({ endpoint }: { endpoint: MissionEndpoint }) {
   );
 }
 
-function EndpointSub({ endpoint, timing }: { endpoint: MissionEndpoint; timing?: EndpointTiming | undefined }) {
-  if (!endpoint.commanderName && !timing) return <span aria-hidden="true" />;
+function EndpointCommander({ endpoint }: { endpoint: MissionEndpoint }) {
+  if (!endpoint.commanderName) return null;
   return (
-    <div className="min-w-0">
-      {endpoint.commanderName ? (
-        <p className="break-words text-slate-400">
-          {endpoint.commanderWallet ? (
-            <a
-              className="rounded text-slate-300 underline-offset-2 transition hover:text-cyan-100 hover:underline focus-visible:underline focus-visible:outline-none"
-              href={buildInspectHash({ kind: "player", wallet: endpoint.commanderWallet })}
-              title={`Open ${endpoint.commanderName}'s profile`}
-            >
-              {endpoint.commanderName}
-            </a>
-          ) : (
-            endpoint.commanderName
-          )}
-        </p>
-      ) : null}
-      {timing ? (
-        <p className="mt-0.5 text-[11px] text-slate-500">
-          <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{timing.label}</span> {timing.value}
-        </p>
-      ) : null}
+    <p className="truncate text-slate-400">
+      {endpoint.commanderWallet ? (
+        <a
+          className="rounded text-slate-300 underline-offset-2 transition hover:text-cyan-100 hover:underline focus-visible:underline focus-visible:outline-none"
+          href={buildInspectHash({ kind: "player", wallet: endpoint.commanderWallet })}
+          title={`Open ${endpoint.commanderName}'s profile`}
+        >
+          {endpoint.commanderName}
+        </a>
+      ) : (
+        endpoint.commanderName
+      )}
+    </p>
+  );
+}
+
+// Directional, progress-filled route arrow (VEY-403). The arrowhead always points along the active
+// leg — right toward the target for outbound fleets, left toward home for returning fleets — and a
+// cyan fill grows from the trailing end to the current position, ending in a matching arrowhead, so
+// the head sits at 100% on arrival/return. A muted destination chevron marks the leading end even at
+// 0% progress.
+function RouteArrow({ direction, progressPercent }: { direction: RouteLeg; progressPercent: number }) {
+  const progress = clamp(progressPercent, 0, 100);
+  const returning = direction === "returning";
+  const rounded = Math.round(progress);
+  const label = returning
+    ? `Returning home, ${rounded}% of the way back`
+    : `Outbound to target, ${rounded}% of the way there`;
+  const Chevron = returning ? ChevronLeft : ChevronRight;
+  // The track is inset by 0.5rem on each side to leave room for the destination chevron; the fill
+  // and its leading chevron are positioned within that same inset span so the head reaches the tip
+  // exactly at 100%. All transforms are inline to avoid clashing with Tailwind transform utilities.
+  const fillStyle: Record<string, string> = returning
+    ? { right: "0.5rem", width: `calc((100% - 1rem) * ${progress / 100})` }
+    : { left: "0.5rem", width: `calc((100% - 1rem) * ${progress / 100})` };
+  const headStyle: Record<string, string> = returning
+    ? { right: `calc(0.5rem + (100% - 1rem) * ${progress / 100})`, transform: "translate(50%, -50%)" }
+    : { left: `calc(0.5rem + (100% - 1rem) * ${progress / 100})`, transform: "translate(-50%, -50%)" };
+  return (
+    <div
+      aria-label={label}
+      className="relative h-5 w-full"
+      data-route-arrow
+      data-route-direction={direction}
+      data-route-progress={String(rounded)}
+      role="img"
+    >
+      {/* Muted full-length track. */}
+      <span className="absolute inset-x-2 top-1/2 h-[3px] rounded-full bg-white/12" style={{ transform: "translateY(-50%)" }} />
+      {/* Muted destination chevron pinned at the leading end (visible even at 0% progress). */}
+      <span
+        className={`absolute top-1/2 text-white/25 ${returning ? "left-0" : "right-0"}`}
+        style={{ transform: "translateY(-50%)" }}
+      >
+        <Chevron aria-hidden="true" size={13} />
+      </span>
+      {/* Cyan progress fill growing from the trailing end toward the destination tip. */}
+      <span
+        className="absolute top-1/2 h-[3px] rounded-full bg-cyan-300"
+        data-route-fill
+        data-route-progress={String(rounded)}
+        style={{ ...fillStyle, transform: "translateY(-50%)" }}
+      />
+      {/* Cyan arrowhead riding the leading edge of the fill, marking the current position. */}
+      <span className="absolute top-1/2 text-cyan-200" data-route-head style={headStyle}>
+        <Chevron aria-hidden="true" size={13} />
+      </span>
     </div>
   );
 }
@@ -791,6 +894,7 @@ function MissionCard({
   actions,
   badgeLabel,
   badgeTone,
+  direction,
   fleet,
   groupId,
   headerTiming,
@@ -804,6 +908,7 @@ function MissionCard({
   actions: preact.ComponentChildren;
   badgeLabel: string;
   badgeTone: string;
+  direction: RouteLeg;
   fleet: preact.ComponentChildren;
   groupId?: string | null | undefined;
   headerTiming?: EndpointTiming | undefined;
@@ -832,7 +937,7 @@ function MissionCard({
         {groupId ? <span className="text-[11px] text-cyan-100/70">Group {groupId}</span> : null}
       </div>
       <div className="mt-3">
-        <MissionRouteCell origin={origin} progressPercent={progressPercent} subtext={routeSubtext} target={target} />
+        <MissionRouteCell direction={direction} origin={origin} progressPercent={progressPercent} subtext={routeSubtext} target={target} />
       </div>
       <div className="mt-3 flex flex-col gap-2 border-t border-white/5 pt-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">{fleet}</div>
@@ -854,6 +959,7 @@ function endpointFromPlanetId(planetId: string, lookup: ReadonlyMap<string, Miss
   const commanderWallet = identity?.owner ?? null;
   const commanderDisplay = identity?.ownerDisplayName?.trim() || null;
   return {
+    archetype: endpointArchetype(undefined, identity?.archetype, coords),
     commanderName: commanderDisplay || (commanderWallet ? shortAddress(commanderWallet) : null),
     commanderWallet,
     coordinates,
@@ -1249,6 +1355,7 @@ function PastMissionSummaryRow({
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
+      direction={missionRouteLeg(mission.status)}
       fleet={<MissionFleet cargo={mission.cargo} loot={loot} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
@@ -1272,6 +1379,7 @@ function PastBattleReportRow({
 }) {
   const target = endpointFromPlanetId(report.targetPlanetId, planetLookup);
   const origin: MissionEndpoint = {
+    archetype: null,
     commanderName: shortHash(report.attacker),
     commanderWallet: report.attacker,
     coordinates: null,
@@ -1293,6 +1401,7 @@ function PastBattleReportRow({
       }
       badgeLabel="Battle report"
       badgeTone="border-red-300/25 bg-red-400/10 text-red-100"
+      direction="outbound"
       fleet={
         <div className="space-y-1">
           <p className="text-[11px] text-slate-500">Loot {formatCargo(report.loot)}</p>
@@ -1670,6 +1779,7 @@ function missionStatusLabel(status: string): string {
 }
 
 type MissionPlanetIdentity = {
+  archetype: PlanetType | null;
   coordinates: string;
   displayName: string;
   owner: string;
@@ -1722,6 +1832,7 @@ function planetLookupFromMissionData(
 
 function identityFromManagedPlanet(planet: ManagedPlanetResponse): MissionPlanetIdentity {
   return {
+    archetype: planetTypeFromTemperature(planet.temperature),
     coordinates: planet.coordinates,
     displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
     owner: planet.owner,
@@ -1731,6 +1842,7 @@ function identityFromManagedPlanet(planet: ManagedPlanetResponse): MissionPlanet
 
 function identityFromMissionPlanet(planet: FleetMissionPlanetReference): MissionPlanetIdentity {
   return {
+    archetype: planet.archetype ?? planetTypeFromCoordinates(planet.galaxy, planet.system, planet.position),
     coordinates: planet.coordinates,
     displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
     owner: planet.owner,

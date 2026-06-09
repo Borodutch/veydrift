@@ -244,6 +244,10 @@ export type FleetMissionPlanetReference = {
   system: number;
   position: number;
   coordinates: string;
+  // Real planet archetype (derived from the indexed temperature) so Mission Control can render the
+  // same planet art the Galaxy view uses (VEY-403 / VEY-67). Optional for back-compat with feeds or
+  // fixtures that predate the field; the card falls back to a coordinate-derived type when absent.
+  archetype?: PlanetType | null;
 };
 
 export type FleetMissionVisibilityResponse = {
