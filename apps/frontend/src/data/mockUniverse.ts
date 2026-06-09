@@ -131,6 +131,14 @@ export function formatPlanetType(type: PlanetType): string {
   return type.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
+// Deterministic planet type from coordinates alone, matching the frontend fallback universe
+// generator (`planetFromCoordinates`). Used when a real archetype/temperature is unavailable —
+// e.g. uncharted colonization targets — so a card can still show planet art by type (VEY-403).
+export function planetTypeFromCoordinates(galaxy: number, system: number, position: number): PlanetType {
+  const seed = galaxy * 10000 + system * 100 + position;
+  return pickPlanetType(position, seed + 1);
+}
+
 export function planetTypeFromTemperature(temperature: number): PlanetType {
   if (temperature <= -35) return "frozen-ice";
   if (temperature <= -10) return "cold-tundra";

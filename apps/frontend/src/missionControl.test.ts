@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
+import { planetImageForType } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
@@ -684,6 +685,86 @@ describe("Mission Control battle reports", () => {
     (targetCommanderButton?.props?.onClick as () => void)();
     expect(selectedPlayers).toEqual([defender]);
   });
+
+  // VEY-403: the mission card route is a directional, progress-filled arrow plus real planet art for
+  // both endpoints. These cover the three behaviours the ticket calls out: direction, fill, assets.
+  function routeArrows(tree: unknown): FoundElement[] {
+    return findElements(tree, "div").filter((node) => node.props?.["data-route-direction"] !== undefined);
+  }
+
+  test("outbound mission renders a right-pointing route arrow filled to progress, with real planet art for both endpoints (VEY-403)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    // arrival 30s out; the mission fixture's return is 60s after arrival, so the outbound leg is
+    // exactly half elapsed -> 50% progress along origin -> target.
+    const outbound: FleetMissionSummary = {
+      ...mission("80", "Attack", "Outbound", owner, "7", "9", now + 30_000),
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", defender, "Borealis", "5:407:4", "frozen-ice"),
+    };
+    const tree = MissionControlPage(missionControlProps(now, { outgoing: [outbound] }));
+
+    const arrows = routeArrows(tree);
+    expect(arrows.length).toBe(1);
+    const arrow = arrows[0]!;
+    // Direction follows the active leg: outbound points toward the target.
+    expect(arrow.props?.["data-route-direction"]).toBe("outbound");
+    expect(arrow.props?.["data-route-progress"]).toBe("50");
+
+    // The cyan fill is proportional to progress (half of the available track).
+    const fill = findElements(tree, "span").find((node) => node.props?.["data-route-fill"] !== undefined);
+    expect(fill).toBeDefined();
+    expect(fill?.props?.["data-route-progress"]).toBe("50");
+    expect(String((fill?.props?.style as { width?: string } | undefined)?.width ?? "")).toContain("* 0.5");
+
+    // Both endpoints render their real planet art (Galaxy thumbnail assets), keyed by archetype.
+    const planetImages = findElements(tree, "img").filter((node) => node.props?.["data-planet-art"] !== undefined);
+    const arts = planetImages.map((node) => node.props?.["data-planet-art"]);
+    expect(arts).toContain("temperate-ocean");
+    expect(arts).toContain("frozen-ice");
+    const sources = planetImages.map((node) => node.props?.src);
+    expect(sources).toContain(planetImageForType("temperate-ocean"));
+    expect(sources).toContain(planetImageForType("frozen-ice"));
+  });
+
+  test("returning mission points the route arrow back toward home and fills on the return leg (VEY-403)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    // arrival 30s ago; return 60s after arrival -> return leg is half elapsed -> 50% of the way home.
+    const returning: FleetMissionSummary = {
+      ...mission("81", "Transport", "Returning", owner, "7", "9", now - 30_000),
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "lush-temperate"),
+      targetPlanet: planetReference("9", defender, "Borealis", "5:407:4", "hot-desert"),
+    };
+    const tree = MissionControlPage(missionControlProps(now, { returning: [returning] }));
+
+    const arrows = routeArrows(tree);
+    expect(arrows.length).toBe(1);
+    const arrow = arrows[0]!;
+    // Returning fleets fly target -> origin, so the arrow points back toward home (origin).
+    expect(arrow.props?.["data-route-direction"]).toBe("returning");
+    expect(arrow.props?.["data-route-progress"]).toBe("50");
+    // The accessible label describes the homeward direction.
+    expect(String(arrow.props?.["aria-label"] ?? "")).toContain("Returning home");
+  });
+
+  test("route arrow fill reaches 100% at arrival (VEY-403)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    // arrival already passed: the outbound leg is fully elapsed -> fill at 100%.
+    const arrived: FleetMissionSummary = {
+      ...mission("82", "Deploy", "Outbound", owner, "7", "9", now - 5_000),
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "warm-terracotta"),
+      targetPlanet: planetReference("9", owner, "Outpost", "5:407:4", "cold-tundra"),
+    };
+    const tree = MissionControlPage(missionControlProps(now, { outgoing: [arrived] }));
+
+    const arrow = routeArrows(tree)[0]!;
+    expect(arrow.props?.["data-route-direction"]).toBe("outbound");
+    expect(arrow.props?.["data-route-progress"]).toBe("100");
+  });
 });
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -764,9 +845,25 @@ function collectText(node: unknown): string[] {
   return [...labels, ...collectText(vnode.props?.children)];
 }
 
-function planetReference(planetId: string, owner: string, ownerDisplayName: string, coordinates: string): FleetMissionPlanetReference {
+function planetReference(
+  planetId: string,
+  owner: string,
+  ownerDisplayName: string,
+  coordinates: string,
+  archetype?: FleetMissionPlanetReference["archetype"],
+): FleetMissionPlanetReference {
   const [galaxy, system, position] = coordinates.split(":").map((part) => Number(part));
-  return { planetId, owner, ownerDisplayName, name: ownerDisplayName, galaxy: galaxy ?? 0, system: system ?? 0, position: position ?? 0, coordinates };
+  return {
+    planetId,
+    owner,
+    ownerDisplayName,
+    name: ownerDisplayName,
+    galaxy: galaxy ?? 0,
+    system: system ?? 0,
+    position: position ?? 0,
+    coordinates,
+    ...(archetype ? { archetype } : {}),
+  };
 }
 
 function mission(

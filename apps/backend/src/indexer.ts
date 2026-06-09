@@ -80,6 +80,7 @@ import {
 } from "./readModels";
 import type { HighscoreEntry } from "./highscores";
 import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
+import { planetArchetypeForTemperature } from "./universe";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -2902,7 +2903,8 @@ export class SettlementIndexer {
       galaxy: planet.galaxy,
       system: planet.system,
       position: planet.position,
-      coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`
+      coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+      archetype: planetArchetypeForTemperature(planet.temperature)
     };
   }
 
