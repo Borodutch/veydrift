@@ -564,6 +564,61 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("No round-by-round snapshots were indexed");
   });
 
+  test("VEY-KANEO-407: renders unit art for attacker combat/civil ships and the defender's surviving fleet/defenses", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const tree = MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          // A mixed offensive fleet: combat (light fighter) + civil (small cargo).
+          ships: { lightFighter: "12", smallCargo: "3" },
+          originPlanet: planetReference("7", "0x1111111111111111111111111111111111111111", "Aggressor", "1:2:3"),
+          targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
+        },
+        battleReport: battleReport("42"),
+        // Indexed surviving composition for the defender planet (catalog-id keyed): cruiser (id 6) and
+        // a rocket launcher (id 0).
+        defenderPlanetState: {
+          fleet: [{ id: 6, count: 2 }],
+          defenses: [{ id: 0, count: 5 }],
+        },
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    });
+
+    const text = collectText(tree).join(" ");
+    // Each unit chip exposes its name + count via title, alongside the generated art.
+    expect(text).toContain("Light Fighter ×12");
+    expect(text).toContain("Small Cargo ×3");
+    expect(text).toContain("Cruiser ×2");
+    expect(text).toContain("Rocket Launcher ×5");
+    // With the defender planet charted, the combined "Fleet / defenses" caveat is replaced by the
+    // per-row icon lists.
+    expect(text).not.toContain("Fleet / defenses");
+
+    // The chips render the mapped game art for ships (combat + civil) and defenses, not just text.
+    const imageSrcs = findElements(tree, "img").map((node) => String(node.props?.src ?? ""));
+    expect(imageSrcs.some((src) => src.includes("/ships/light-fighter"))).toBe(true);
+    expect(imageSrcs.some((src) => src.includes("/ships/small-cargo"))).toBe(true);
+    expect(imageSrcs.some((src) => src.includes("/ships/cruiser"))).toBe(true);
+    expect(imageSrcs.some((src) => src.includes("/defenses/rocket-launcher"))).toBe(true);
+  });
+
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const baseProps = {
