@@ -2,8 +2,9 @@ import { ArrowLeft, ArrowRight, Check, RefreshCw, Share2, Swords } from "lucide-
 
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { defenseCatalog, shipCatalog } from "../playableMvp";
 import type { Coordinates } from "../types";
-import { type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
+import { type BattleReport, type DefenderPlanetState, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
 import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
@@ -134,7 +135,7 @@ export function MissionDetailPage({
             onSelectCoordinates={onSelectCoordinates}
             onSelectPlayer={onSelectPlayer}
           />
-          <MissionBattleReport mission={mission} onOpenPlayer={onOpenPlayer} report={report} />
+          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} onOpenPlayer={onOpenPlayer} report={report} />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
@@ -361,10 +362,12 @@ function CommanderLink({
 }
 
 function MissionBattleReport({
+  defenderState,
   mission,
   onOpenPlayer,
   report,
 }: {
+  defenderState?: DefenderPlanetState | undefined;
   mission: FleetMissionSummary;
   onOpenPlayer?: ((wallet: string) => void) | undefined;
   report?: BattleReport | undefined;
@@ -392,6 +395,12 @@ function MissionBattleReport({
   // reference (and display name) when the target is charted.
   const defenderWallet = mission.targetPlanet?.owner ?? null;
   const recyclersNeeded = recyclersForDebris(report.debris);
+  // Defender fleet/defenses come from the indexed target-planet composition (ShipCountChanged +
+  // defense events) rather than the single AttackBattleResolved event. For a freshly-resolved
+  // battle this is the surviving force; we show "None" when the planet had no fleet/defenses, and
+  // fall back to a precise caveat only when the target planet is not charted in the indexed state.
+  const defenderFleetSummary = compositionSummary(defenderState?.fleet, shipCatalog);
+  const defenderDefenseSummary = compositionSummary(defenderState?.defenses, defenseCatalog);
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -432,9 +441,20 @@ function MissionBattleReport({
               : `Planet #${report.targetPlanetId} (external commander unavailable)`}
           />
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
-          {/* The on-chain combat log records the defender's losses but not its surviving fleet/defense
-              composition or the loot it kept, so those are flagged on one line instead of fabricated. */}
-          <Row label="Fleet / defenses" value="Surviving composition and loot retained aren't published in the on-chain combat log." />
+          {/* Fleet/defenses are the defender planet's indexed composition (surviving force). "None"
+              when the planet had no fleet/defenses; a precise caveat only when it isn't charted. */}
+          {defenderState ? (
+            defenderFleetSummary || defenderDefenseSummary ? (
+              <>
+                <Row label="Fleet" value={defenderFleetSummary || "None"} />
+                <Row label="Defenses" value={defenderDefenseSummary || "None"} />
+              </>
+            ) : (
+              <Row label="Fleet / defenses" value="None" />
+            )
+          ) : (
+            <Row label="Fleet / defenses" value="The defender planet isn't charted in the indexed state, so its surviving composition can't be derived." />
+          )}
         </Panel>
       </div>
 
@@ -636,6 +656,23 @@ function recyclersForDebris(debris: { crystal: string; metal: string }): number 
   const total = Number(debris.metal) + Number(debris.crystal);
   if (!Number.isFinite(total) || total <= 0) return 0;
   return Math.ceil(total / RECYCLER_CARGO_CAPACITY);
+}
+
+// Renders an indexed `{ id, count }` composition (ships or defenses) into a compact, human label
+// list like "Light Fighter ×12, Cruiser ×3" using the playable catalog. Mirrors how PlanetDetail's
+// publicStateRows resolves catalog entries (id, falling back to catalog index). Zero counts are
+// dropped; an empty composition returns "" so callers can decide between "None" and a caveat.
+function compositionSummary(
+  rows: Array<{ id: number; count: number }> | undefined,
+  catalog: readonly { id?: number; label: string }[]
+): string {
+  return (rows ?? [])
+    .filter((row) => row.count > 0)
+    .map((row) => {
+      const item = catalog.find((entry, index) => (entry.id ?? index) === row.id);
+      return `${item?.label ?? `ID ${row.id}`} ×${row.count.toLocaleString()}`;
+    })
+    .join(", ");
 }
 
 const shipLabels: Record<string, string> = {
