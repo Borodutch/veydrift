@@ -233,8 +233,9 @@ describe("Mission Control battle reports", () => {
     // VEY-399#8: the row action reads "Open", never "Open mission".
     expect(text).not.toContain("Open mission");
     expect(text).toContain("Open");
-    // VEY-399#9: the completion stamp renders as route subtext ("Returned · <time>").
+    // VEY-399 rework (#9636): the status word renders as MISSION-column subtext, with no date/time.
     expect(text).toContain("Returned");
+    expect(text).not.toContain(", 2026");
     // VEY-399#2: both origin AND target route endpoints are clickable Galaxy links.
     const links = findElements(tree, "a");
     expect(links.some((link) => String(link.props?.title ?? "").includes("6:9:1"))).toBe(true);
