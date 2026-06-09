@@ -299,60 +299,130 @@ describe("canonicalSpendableResources (live tick from the snapshot read time)", 
   });
 });
 
-describe("VEY-318 double-count regression (anchor to read time, not lastSettledAt)", () => {
-  // Live evidence (2026-06-09, planet 1, wallet 0xbf74…08ee, contract 0xf12f):
-  // the backend `/settlement` + `/infrastructure` resources are live
-  // `previewResources` reads (already accrued + capped), e.g. crystal 10_033,
-  // while the planet's on-chain `lastSettledAt` was ~3.7h stale. PR #692 anchored
-  // the projection to `lastSettledAt`, so the top bar re-added 3.7h × rate of
-  // production a second time and read crystal ~12_819 vs on-chain
-  // previewResources ~10_483. Anchoring to the snapshot *read time* removes the
-  // double-count: at rest the canonical value equals the previewResources read.
-  const PREVIEW_READ = { metal: 11_359, crystal: 10_033, deuterium: 4_008 };
-  const RATES_LIVE = { metal: 1_594, crystal: 753, deuterium: 96 };
-  const CAPS_LIVE = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
-  const READ_AT_MS = 1_781_028_699_000; // when the snapshot was received
+describe("canonicalSpendableResources (on-chain previewResources is authoritative)", () => {
+  // The direct on-chain `previewResources(planetId)` read is the contract's real
+  // current spendable balance, so when a fresh read is available it is used
+  // OUTRIGHT — never folded into a min with the backend snapshots, which are
+  // unreliable in BOTH directions. A min would clamp to whichever backend source
+  // is wrong: too-high (double-counted projection -> over-report) OR too-low (a
+  // snapshot lagging the chain -> under-report, the current VEY-318 failure).
+  const HOUR_MS = 3_600_000;
+  const TOPBAR_CAPS = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
 
-  test("at the read time the canonical value equals the previewResources snapshot (no accrual added)", () => {
+  test("uses the on-chain preview when a LAGGING backend snapshot would under-report (live planet-83 repro)", () => {
+    // Live evidence (2026-06-09, planet 83, wallet 0x3727…8a69, contract 0xf12f):
+    // the backend infrastructure read lagged the chain — metal 20 / crystal 5_484
+    // vs on-chain previewResources metal 211 / crystal 5_538. A min(settlement,
+    // infrastructure) clamped the top bar to the stored ~20 metal and the
+    // uncollected production never appeared. The chain read is authoritative.
+    const laggingBackend = { metal: 20, crystal: 5_484, deuterium: 51 };
+    const onChainPreview = { metal: 211, crystal: 5_538, deuterium: 76 };
     const canonical = canonicalSpendableResources({
-      settlementResources: PREVIEW_READ,
-      settlementSettledAtMs: READ_AT_MS,
-      infrastructureResources: PREVIEW_READ,
-      infrastructureSettledAtMs: READ_AT_MS,
-      rates: RATES_LIVE,
-      caps: CAPS_LIVE,
-      now: READ_AT_MS,
+      settlementResources: laggingBackend,
+      settlementSettledAtMs: HOUR_MS,
+      infrastructureResources: laggingBackend,
+      infrastructureSettledAtMs: HOUR_MS,
+      previewResources: onChainPreview,
+      previewSettledAtMs: HOUR_MS,
+      rates: { metal: 419, crystal: 121, deuterium: 52 },
+      caps: TOPBAR_CAPS,
+      now: HOUR_MS,
     });
-    expect(canonical).toEqual(PREVIEW_READ);
+    expect(canonical).toEqual(onChainPreview);
   });
 
-  test("anchoring to a 3.7h-stale lastSettledAt would double-count (the bug we are guarding against)", () => {
-    const STALE_SETTLED_AT_MS = READ_AT_MS - 13_314_000; // ~3.7h before the read
-    const doubleCounted = canonicalSpendableResources({
-      settlementResources: PREVIEW_READ,
-      settlementSettledAtMs: STALE_SETTLED_AT_MS,
-      infrastructureResources: PREVIEW_READ,
-      infrastructureSettledAtMs: STALE_SETTLED_AT_MS,
-      rates: RATES_LIVE,
-      caps: CAPS_LIVE,
-      now: READ_AT_MS,
+  test("uses the on-chain preview when an OVER-projected backend snapshot would over-report", () => {
+    // Both backend sources were already accrued to `now` (crystal 10,155) but
+    // carry an hour-old settle time, so projecting them forward adds ~753 crystal
+    // a second time -> 10,908. The preview read (10,155) is used instead.
+    const overReported = { metal: 6_000, crystal: 10_908, deuterium: 4_000 };
+    const canonical = canonicalSpendableResources({
+      settlementResources: overReported,
+      settlementSettledAtMs: 0,
+      infrastructureResources: overReported,
+      infrastructureSettledAtMs: 0,
+      previewResources: { metal: 6_000, crystal: 10_155, deuterium: 4_000 },
+      previewSettledAtMs: HOUR_MS,
+      rates: { metal: 0, crystal: 753, deuterium: 0 },
+      caps: TOPBAR_CAPS,
+      now: HOUR_MS,
     });
-    // Re-adds ~3.7h of crystal production on top of the already-accrued read.
-    expect(doubleCounted!.crystal).toBeGreaterThan(PREVIEW_READ.crystal + 2_000);
+    expect(canonical).toEqual({ metal: 6_000, crystal: 10_155, deuterium: 4_000 });
   });
 
-  test("between polls it ticks up only by the seconds since the read, staying near previewResources", () => {
+  test("ticks the preview forward from its own read time between reads", () => {
     const canonical = canonicalSpendableResources({
-      settlementResources: PREVIEW_READ,
-      settlementSettledAtMs: READ_AT_MS,
-      infrastructureResources: PREVIEW_READ,
-      infrastructureSettledAtMs: READ_AT_MS,
-      rates: RATES_LIVE,
-      caps: CAPS_LIVE,
-      now: READ_AT_MS + 30_000, // 30s later
+      settlementResources: { metal: 100_000, crystal: 100_000, deuterium: 100_000 },
+      infrastructureResources: { metal: 100_000, crystal: 100_000, deuterium: 100_000 },
+      infrastructureSettledAtMs: 0,
+      previewResources: { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
+      // Preview read 10s ago; 3600/h == 1/s so it should accrue ~10 by now.
+      previewSettledAtMs: 0,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      caps: CAPS,
+      now: 10_000,
     });
-    // 30s × 753/h ≈ 6 crystal — a gentle live tick, not hours of double-count.
-    expect(canonical!.crystal).toBe(PREVIEW_READ.crystal + 6);
+    expect(canonical).toEqual({ metal: 1_010, crystal: 1_000, deuterium: 1_000 });
+  });
+
+  test("caps the projected preview at storage", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: undefined,
+      infrastructureResources: undefined,
+      infrastructureSettledAtMs: 0,
+      previewResources: { metal: 9_990, crystal: 0, deuterium: 0 },
+      previewSettledAtMs: 0,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      caps: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      now: HOUR_MS, // would accrue 3,600 metal but the 10,000 cap clamps it
+    });
+    expect(canonical!.metal).toBe(10_000);
+  });
+
+  test("a fresh preview keeps ticking even when the backend read is stale (freeze applies only to the fallback)", () => {
+    // backendResourceReadStale signals a BACKEND outage; it must not freeze a
+    // working on-chain read. The caller's staleness gate drops the preview once
+    // the chain read itself goes stale, bounding any forward drift.
+    const canonical = canonicalSpendableResources({
+      settlementResources: undefined,
+      infrastructureResources: undefined,
+      infrastructureSettledAtMs: 0,
+      previewResources: { metal: 1_000, crystal: 0, deuterium: 0 },
+      previewSettledAtMs: 0,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      caps: CAPS,
+      now: 10_000, // 10s -> +10 metal
+      freezeProjection: true,
+    });
+    expect(canonical!.metal).toBe(1_010);
+  });
+
+  test("falls back to the settlement/infrastructure minimum when no preview read is available", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 5_000, crystal: 5_000, deuterium: 5_000 },
+      infrastructureResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      infrastructureSettledAtMs: 0,
+      previewResources: undefined,
+      rates: { metal: 0, crystal: 0, deuterium: 0 },
+      caps: CAPS,
+      now: 0,
+    });
+    expect(canonical).toEqual({ metal: 2_117, crystal: 2_091, deuterium: 2_100 });
+  });
+
+  test("fallback freezes the backend snapshot during an outage (no drift toward the cap)", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      settlementSettledAtMs: 0,
+      infrastructureResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      infrastructureSettledAtMs: 0,
+      previewResources: undefined,
+      rates: RATES,
+      caps: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      now: 100 * HOUR_MS,
+      freezeProjection: true,
+    });
+    expect(canonical).toEqual({ metal: 2_117, crystal: 2_091, deuterium: 2_100 });
   });
 });
 
