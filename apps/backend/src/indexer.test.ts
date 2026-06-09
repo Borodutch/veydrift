@@ -1889,8 +1889,8 @@ describe("SettlementIndexer", () => {
       "frozen-ice", "cold-tundra", "temperate-ocean", "lush-temperate", "warm-terracotta", "hot-desert", "scorching-molten",
     ];
     const incomingMission = defenderVisibility.incoming[0]!;
-    expect(knownArchetypes).toContain(incomingMission.originPlanet?.archetype);
-    expect(knownArchetypes).toContain(incomingMission.targetPlanet?.archetype);
+    expect(knownArchetypes).toContain(incomingMission.originPlanet!.archetype);
+    expect(knownArchetypes).toContain(incomingMission.targetPlanet!.archetype);
 
     const attackerVisibility = indexer.fleetMissionVisibility(attacker);
     expect(attackerVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["44"]);
