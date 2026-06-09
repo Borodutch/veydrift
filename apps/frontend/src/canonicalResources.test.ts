@@ -5,6 +5,7 @@ import {
   projectResourceAmount,
   projectResources,
 } from "./canonicalResources";
+import { subtractResourceCost } from "./pendingSpends";
 
 const RATES = { metal: 3_600, crystal: 1_800, deuterium: 0 };
 const CAPS = { metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000 };
@@ -210,5 +211,134 @@ describe("canonicalSpendableResources (stale backend read / freeze projection)",
     });
     // 10s of accrual on the infrastructure base (preserves the merged UX).
     expect(fresh).toEqual({ metal: 2_127, crystal: 2_096, deuterium: 2_100 });
+  });
+});
+
+describe("canonicalSpendableResources (settlement accrual from the on-chain settle time)", () => {
+  // Reproduces the VEY-318 regression: the backend returns resources stored at
+  // the planet's on-chain `lastSettledAt` (it does not pre-accrue uncollected
+  // production), so the top bar must project the settlement snapshot forward from
+  // that settle time. Projecting from the page-load time instead dropped the
+  // pre-load accrual and pinned Metal/Crystal at the raw last-settled value
+  // (stuck at 0 when the planet was last settled near 0).
+  const HOUR_MS = 3_600_000;
+  const TOPBAR_CAPS = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
+
+  test("accrues uncollected production from a past settle time (Metal/Crystal off 0)", () => {
+    // Planet last settled 1h ago with Metal/Crystal drained to 0 by a spend.
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 0, crystal: 0, deuterium: 2_531 },
+      settlementSettledAtMs: 0,
+      infrastructureResources: { metal: 0, crystal: 0, deuterium: 2_531 },
+      infrastructureSettledAtMs: 0,
+      rates: { metal: 1_346, crystal: 627, deuterium: 110 },
+      caps: TOPBAR_CAPS,
+      now: HOUR_MS,
+    });
+    // 1h of accrual at the shown rates, counted exactly once: both sources share
+    // the same settle time and values, so the element-wise minimum is the single
+    // projection — no double counting.
+    expect(canonical).toEqual({ metal: 1_346, crystal: 627, deuterium: 2_641 });
+  });
+
+  test("ticks up as `now` advances from a past settle time", () => {
+    const base = {
+      settlementResources: { metal: 100, crystal: 100, deuterium: 100 },
+      settlementSettledAtMs: 0,
+      infrastructureResources: { metal: 100, crystal: 100, deuterium: 100 },
+      infrastructureSettledAtMs: 0,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      caps: CAPS,
+    };
+    const at10s = canonicalSpendableResources({ ...base, now: 10_000 });
+    const at40s = canonicalSpendableResources({ ...base, now: 40_000 });
+    expect(at10s?.metal).toBe(110);
+    expect(at40s?.metal).toBe(140);
+    expect(at40s!.metal).toBeGreaterThan(at10s!.metal);
+  });
+
+  test("caps accrued settlement production at storage", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 9_990, crystal: 0, deuterium: 0 },
+      settlementSettledAtMs: 0,
+      infrastructureResources: { metal: 9_990, crystal: 0, deuterium: 0 },
+      infrastructureSettledAtMs: 0,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      caps: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      now: HOUR_MS, // +3_600 would exceed the cap
+    });
+    expect(canonical?.metal).toBe(10_000);
+  });
+
+  test("freeze holds the settlement snapshot at its settle time even with settlementSettledAtMs supplied", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 2_200, crystal: 2_150, deuterium: 2_100 },
+      settlementSettledAtMs: 0,
+      infrastructureResources: undefined,
+      infrastructureSettledAtMs: 0,
+      rates: RATES,
+      caps: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      now: 100 * HOUR_MS,
+      freezeProjection: true,
+    });
+    // No drift toward the cap despite 100h of `now` advancing while frozen.
+    expect(canonical).toEqual({ metal: 2_200, crystal: 2_150, deuterium: 2_100 });
+  });
+
+  test("defaults settlementSettledAtMs to now (no accrual) for back-compat", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 5_000, crystal: 5_000, deuterium: 5_000 },
+      infrastructureResources: undefined,
+      infrastructureSettledAtMs: 0,
+      rates: RATES,
+      caps: CAPS,
+      now: 10_000,
+    });
+    // Without a settle time the settlement snapshot is used as-is.
+    expect(canonical).toEqual({ metal: 5_000, crystal: 5_000, deuterium: 5_000 });
+  });
+});
+
+describe("VEY-318 displayed resources while a build is queued", () => {
+  // Nikita's repro (2026-06-08): top-bar Metal/Crystal dropped to 0 and stopped
+  // accruing while a crystal-mine build was queued, "coming back to normal" only
+  // when the build completed. Starting a build re-settles the planet with
+  // Metal/Crystal drained near 0 and leaves an active queue item whose cost is
+  // subtracted from the spendable balance (clamped at zero). Before the fix the
+  // canonical value was pinned at the raw last-settled (~0) amount, so
+  // `balance − queueCost` clamped to 0 and stayed frozen until the build's
+  // completion settlement arrived. Accruing from the on-chain settle time lets
+  // the displayed balance climb back off 0 *during* the active queue.
+  const HOUR_MS = 3_600_000;
+  const rates = { metal: 1_346, crystal: 627, deuterium: 110 };
+  const caps = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
+  const queueCost = { metal: 60, crystal: 48, deuterium: 0 };
+
+  function displayedWhileQueued(elapsedMs: number) {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 10, crystal: 5, deuterium: 2_531 },
+      settlementSettledAtMs: 0,
+      infrastructureResources: { metal: 10, crystal: 5, deuterium: 2_531 },
+      infrastructureSettledAtMs: 0,
+      rates,
+      caps,
+      now: elapsedMs,
+    });
+    return subtractResourceCost(canonical, queueCost);
+  }
+
+  test("displayed balance recovers and grows during an active queue instead of freezing at 0", () => {
+    // Right at settle the post-cost balance clamps to 0 (the build spent almost
+    // everything) — the failing state the user saw.
+    expect(displayedWhileQueued(0)).toEqual({ metal: 0, crystal: 0, deuterium: 2_531 });
+
+    const after1h = displayedWhileQueued(HOUR_MS)!;
+    const after2h = displayedWhileQueued(2 * HOUR_MS)!;
+    // It does NOT stay frozen: production accrues from the on-chain settle time.
+    expect(after1h.metal).toBeGreaterThan(0);
+    expect(after1h.crystal).toBeGreaterThan(0);
+    // ...and keeps climbing as time passes while the build is still queued.
+    expect(after2h.metal).toBeGreaterThan(after1h.metal);
+    expect(after2h.crystal).toBeGreaterThan(after1h.crystal);
   });
 });
