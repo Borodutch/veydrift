@@ -116,6 +116,32 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
   });
 });
 
+describe("MissionDetailPage Route timing copy", () => {
+  // VEY-405: a leg that has already happened should read "Arrived"/"Returned", not the
+  // generic building-queue word "(Ready)".
+  test("says Arrived/Returned (not Ready) once the leg is in the past", () => {
+    // combatMission's arrivalAt/returnAt are both before the fixed `now` in renderDetailText.
+    const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null });
+
+    expect(text).toContain("Arrival Arrived");
+    expect(text).toContain("Return Returned");
+    expect(text).not.toContain("(Ready)");
+  });
+
+  test("keeps the absolute time and countdown for a future leg", () => {
+    const text = renderDetailText({
+      mission: combatMission({ status: "Outbound", arrivalAt: "1770002000", returnAt: "1770003000" }),
+      battleReport: battleReport(),
+      defenderPlanetState: null,
+    });
+
+    expect(text).not.toContain("Arrived");
+    expect(text).not.toContain("Returned");
+    // Future legs still render the relative countdown in parentheses.
+    expect(text).toMatch(/Arrival .+\(/);
+  });
+});
+
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();
 }

@@ -269,7 +269,7 @@ function MissionRoute({
           kind="Origin"
           onSelectCoordinates={onSelectCoordinates}
           onSelectPlayer={onSelectPlayer}
-          timing={{ label: "Return", value: noFleetReturned ? "Completed, no fleet returned" : formatMissionTime(mission.returnAt, now) }}
+          timing={{ label: "Return", value: noFleetReturned ? "Completed, no fleet returned" : formatMissionTime(mission.returnAt, now, "Returned") }}
         />
         <div aria-hidden="true" className="flex items-center justify-center text-slate-500">
           <ArrowRight className="rotate-90 md:rotate-0" size={20} />
@@ -280,7 +280,7 @@ function MissionRoute({
           kind="Target"
           onSelectCoordinates={onSelectCoordinates}
           onSelectPlayer={onSelectPlayer}
-          timing={{ label: "Arrival", value: formatMissionTime(mission.arrivalAt, now) }}
+          timing={{ label: "Arrival", value: formatMissionTime(mission.arrivalAt, now, "Arrived") }}
         />
       </div>
     </section>
@@ -595,9 +595,13 @@ function isCombatMission(mission: FleetMissionSummary): boolean {
   return ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType);
 }
 
-function formatMissionTime(value: string, now: number): string {
+function formatMissionTime(value: string, now: number, pastLabel: string): string {
   const ms = timestampToMs(value);
   if (ms == null || ms <= 0) return "Not scheduled";
+  // Once the moment has passed the parenthetical countdown collapses to a generic
+  // "Ready" (a building-queue word). For a fleet leg, say what actually happened:
+  // the target has "Arrived" and the origin has "Returned".
+  if (ms <= now) return pastLabel;
   const absolute = formatUserTimestamp(value);
   const relative = formatDurationUntil(ms, now);
   return `${absolute} (${relative})`;
