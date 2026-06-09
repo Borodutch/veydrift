@@ -1,10 +1,11 @@
 import { ArrowLeft, ArrowRight, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
+import { planetArtTypeFromArchetypeOrCoords, planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
-import type { Coordinates } from "../types";
+import type { Coordinates, PlanetType } from "../types";
 import { type BattleReport, type DefenderPlanetState, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
 import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import { PageHeader, RefreshButton } from "./PageHeader";
@@ -291,6 +292,10 @@ function MissionRoute({
 }
 
 type RouteEndpointData = {
+  // Real planet-art type (VEY-403): the same asset selection the Mission Control cards and Galaxy
+  // thumbnails use, so the detail Route shows the actual planet image. Null only when no planet can
+  // be resolved (e.g. an external/uncharted reference without coordinates).
+  archetype: PlanetType | null;
   coordinates: Coordinates | null;
   coordinatesLabel: string | null;
   displayName: string;
@@ -314,8 +319,14 @@ function RouteEndpoint({
   const coords = endpoint.coordinates;
   return (
     <div className="grid content-start gap-1.5 rounded-md border border-white/10 bg-black/20 p-3">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{kind}</p>
-      <p className="break-words text-sm font-semibold text-white">{endpoint.displayName}</p>
+      {/* Real planet art (VEY-403) beside the name, matching the Mission Control card + Galaxy assets. */}
+      <div className="flex items-center gap-2.5">
+        <EndpointPlanetArt archetype={endpoint.archetype} name={endpoint.displayName} />
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{kind}</p>
+          <p className="break-words text-sm font-semibold text-white">{endpoint.displayName}</p>
+        </div>
+      </div>
       {coords && endpoint.coordinatesLabel ? (
         <button
           className="w-fit rounded font-mono text-xs text-cyan-200 underline decoration-cyan-300/40 underline-offset-2 transition hover:text-cyan-100 hover:decoration-cyan-200"
@@ -338,6 +349,31 @@ function RouteEndpoint({
         <span className="break-words text-slate-300">{timing.value}</span>
       </p>
     </div>
+  );
+}
+
+// Real planet art for a detail-Route endpoint — the same Galaxy thumbnail asset set the cards use
+// (VEY-403 / VEY-67), selected by archetype. Falls back to a subtle ringed placeholder only when no
+// planet can be resolved (e.g. an external reference without coordinates).
+function EndpointPlanetArt({ archetype, name }: { archetype: PlanetType | null; name: string }) {
+  const frameClass = "relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30";
+  if (!archetype) {
+    return (
+      <span aria-hidden="true" className={`${frameClass} flex items-center justify-center`}>
+        <span className="h-3.5 w-3.5 rounded-full border border-white/25" />
+      </span>
+    );
+  }
+  return (
+    <span className={frameClass}>
+      <img
+        alt={`${name} planet`}
+        className="h-full w-full object-cover"
+        data-planet-art={archetype}
+        loading="lazy"
+        src={planetImageForType(archetype)}
+      />
+    </span>
   );
 }
 
@@ -594,8 +630,10 @@ function formatMissionTime(value: string, now: number): string {
 
 function routeEndpoint(planet: FleetMissionPlanetReference | null | undefined, fallbackId: string): RouteEndpointData {
   if (planet) {
+    const coordinates = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
     return {
-      coordinates: { galaxy: planet.galaxy, system: planet.system, position: planet.position },
+      archetype: planetArtTypeFromArchetypeOrCoords(planet.archetype, coordinates),
+      coordinates,
       coordinatesLabel: planet.coordinates,
       displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
     };
@@ -604,13 +642,15 @@ function routeEndpoint(planet: FleetMissionPlanetReference | null | undefined, f
   // indexed planet but the destination coordinates are still recoverable and clickable.
   const colonyTarget = decodeColonizationTargetId(fallbackId);
   if (colonyTarget) {
+    const coordinates = { galaxy: colonyTarget.galaxy, system: colonyTarget.system, position: colonyTarget.position };
     return {
-      coordinates: { galaxy: colonyTarget.galaxy, system: colonyTarget.system, position: colonyTarget.position },
+      archetype: planetArtTypeFromArchetypeOrCoords(null, coordinates),
+      coordinates,
       coordinatesLabel: colonyTarget.coordinates,
       displayName: "Uncharted",
     };
   }
-  return { coordinates: null, coordinatesLabel: null, displayName: `Planet #${fallbackId}` };
+  return { archetype: null, coordinates: null, coordinatesLabel: null, displayName: `Planet #${fallbackId}` };
 }
 
 function missionTypeLabel(value: string): string {

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
-import { planetImageForType } from "./data/mockUniverse";
+import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
@@ -820,6 +820,48 @@ describe("Mission Control battle reports", () => {
     expect(selectedPlayers).toEqual([defender]);
   });
 
+  test("renders real planet art for both detail Route endpoints, sharing the card asset selection (VEY-403)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const detailMission: FleetMissionSummary = {
+      ...mission("43", "Attack", "Outbound", owner, "7", "9", now + 60_000),
+      // Origin carries an indexed archetype; target has none, so the Route falls back to the
+      // deterministic coordinate-derived planet type — never a generic icon.
+      originPlanet: planetReference("7", owner, "Helios", "1:2:3", "temperate-ocean"),
+      targetPlanet: { planetId: "9", owner: defender, ownerDisplayName: "Zane", name: "Borealis", galaxy: 4, system: 5, position: 6, coordinates: "4:5:6" },
+    };
+    const tree = MissionDetailPage({
+      account: owner,
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: { mission: detailMission, battleReport: null },
+      loading: false,
+      missionId: "43",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    });
+
+    const planetImages = findElements(tree, "img").filter((node) => node.props?.["data-planet-art"] !== undefined);
+    const arts = planetImages.map((node) => node.props?.["data-planet-art"]);
+    // Origin uses its indexed archetype; target falls back to the coordinate-derived type.
+    const targetType = planetTypeFromCoordinates(4, 5, 6);
+    expect(arts).toContain("temperate-ocean");
+    expect(arts).toContain(targetType);
+    const sources = planetImages.map((node) => node.props?.src);
+    expect(sources).toContain(planetImageForType("temperate-ocean"));
+    expect(sources).toContain(planetImageForType(targetType));
+  });
+
   // VEY-403: the mission card route is a directional, progress-filled arrow plus real planet art for
   // both endpoints. These cover the three behaviours the ticket calls out: direction, fill, assets.
   function routeArrows(tree: unknown): FoundElement[] {
@@ -898,6 +940,27 @@ describe("Mission Control battle reports", () => {
     const arrow = routeArrows(tree)[0]!;
     expect(arrow.props?.["data-route-direction"]).toBe("outbound");
     expect(arrow.props?.["data-route-progress"]).toBe("100");
+  });
+
+  test("card route pins origin left and target right with the arrow spanning the full gap (VEY-403 rework)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const outbound: FleetMissionSummary = {
+      ...mission("83", "Attack", "Outbound", owner, "7", "9", now + 30_000),
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", defender, "Borealis", "5:407:4", "frozen-ice"),
+    };
+    const tree = MissionControlPage(missionControlProps(now, { outgoing: [outbound] }));
+
+    // The route row uses an edge-pinned grid: auto-sized endpoint columns on the outer edges and a
+    // central 1fr column the arrow fills, so origin hugs the left and target hugs the right.
+    const routeRow = findElements(tree, "div").find((node) => {
+      const className = String(node.props?.className ?? "");
+      return className.includes("grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)]")
+        && findElements(node, "div").some((child) => child.props?.["data-route-direction"] !== undefined);
+    });
+    expect(routeRow).toBeDefined();
   });
 });
 

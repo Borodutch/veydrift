@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
-import { planetImageForType, planetTypeFromCoordinates, planetTypeFromTemperature } from "../data/mockUniverse";
+import { planetArtTypeFromArchetypeOrCoords, planetImageForType, planetTypeFromCoordinates, planetTypeFromTemperature } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { shipAssetByKey } from "../gameAssets";
 import { buildInspectHash } from "../inspectRoutes";
@@ -649,7 +649,7 @@ function endpointArchetype(
   identityArchetype: PlanetType | null | undefined,
   coords: { galaxy: number; position: number; system: number } | null,
 ): PlanetType | null {
-  return refArchetype ?? identityArchetype ?? (coords ? planetTypeFromCoordinates(coords.galaxy, coords.system, coords.position) : null);
+  return planetArtTypeFromArchetypeOrCoords(refArchetype ?? identityArchetype, coords);
 }
 
 // Resolves a mission endpoint to a clickable planet (name with coords fallback, coords on
@@ -744,7 +744,10 @@ function MissionRouteCell({
 }) {
   return (
     <div className="min-w-0">
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(2.75rem,4.5rem)_minmax(0,1fr)] items-center gap-x-2 sm:gap-x-3">
+      {/* Origin hugs the left edge, target hugs the right edge, and the directional arrow spans the
+          full gap between them (VEY-403 rework). The endpoint columns size to their content but are
+          capped (via the RouteEndpoint max-width) so the arrow always owns the central span. */}
+      <div className="grid grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)] items-center gap-x-2 sm:gap-x-3">
         <RouteEndpoint align="left" endpoint={origin} />
         <RouteArrow direction={direction} progressPercent={progressPercent ?? 100} />
         <RouteEndpoint align="right" endpoint={target} />
@@ -754,12 +757,12 @@ function MissionRouteCell({
   );
 }
 
-// One side of the route: the planet art asset flanking the route (origin on the outer-left, target
-// on the outer-right via the mirrored layout) with the clickable planet name + commander stacked
-// alongside it.
+// One side of the route: the planet art asset pinned to the outer edge (origin on the left, target
+// on the right via the mirrored layout) with the clickable planet name + commander stacked
+// alongside it. Width is capped so long planet names truncate instead of squeezing the arrow.
 function RouteEndpoint({ align, endpoint }: { align: "left" | "right"; endpoint: MissionEndpoint }) {
   return (
-    <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
+    <div className={`flex min-w-0 max-w-[7rem] items-center gap-2 sm:max-w-[11rem] ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
       <EndpointPlanetImage endpoint={endpoint} />
       <div className="min-w-0">
         <EndpointName endpoint={endpoint} />
