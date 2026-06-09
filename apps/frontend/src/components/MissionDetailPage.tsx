@@ -1,8 +1,9 @@
 import { ArrowLeft, ArrowRight, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
+import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import { defenseCatalog, shipCatalog } from "../playableMvp";
+import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
 import { type BattleReport, type DefenderPlanetState, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
 import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
@@ -223,7 +224,7 @@ function MissionFacts({
           missions keep it as the only place this fleet/cargo detail is shown. */}
       {hideFleetAndCargo ? null : (
         <Panel title="Fleet And Cargo">
-          <Row label="Ships" value={formatShips(mission.ships)} />
+          <Row label="Ships" value={<UnitIcons units={shipUnits(mission.ships)} />} />
           <Row label="Cargo" value={formatResources(mission.cargo)} />
           <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
           {showsRecallCost(mission) ? (
@@ -375,11 +376,7 @@ function MissionBattleReport({
   report?: BattleReport | undefined;
 }) {
   if (!isCombatMission(mission)) {
-    return (
-      <Notice>
-        This is a {missionTypeLabel(mission.missionType).toLowerCase()} mission, so there is no combat battle report section.
-      </Notice>
-    );
+    return null;
   }
 
   if (!report) {
@@ -401,8 +398,8 @@ function MissionBattleReport({
   // defense events) rather than the single AttackBattleResolved event. For a freshly-resolved
   // battle this is the surviving force; we show "None" when the planet had no fleet/defenses, and
   // fall back to a precise caveat only when the target planet is not charted in the indexed state.
-  const defenderFleetSummary = compositionSummary(defenderState?.fleet, shipCatalog);
-  const defenderDefenseSummary = compositionSummary(defenderState?.defenses, defenseCatalog);
+  const defenderFleetUnits = compositionUnits(defenderState?.fleet, shipCatalog, shipAssetByKey);
+  const defenderDefenseUnits = compositionUnits(defenderState?.defenses, defenseCatalog, defenseAssetByKey);
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -429,8 +426,8 @@ function MissionBattleReport({
             label="Commander"
             value={<Commander displayName={mission.originPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} planet={mission.originPlanet} wallet={report.attacker} />}
           />
-          <Row label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
-          <Row label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
+          <Row label="Combat ships" value={<UnitIcons units={shipUnitsByKind(mission.ships, "combat")} />} />
+          <Row label="Civil ships" value={<UnitIcons units={shipUnitsByKind(mission.ships, "civil")} />} />
           <Row label="Cargo carried" value={formatResources(mission.cargo)} />
           <Row label="Fleet losses" value={formatResources(report.attackerLosses)} />
           <Row label="Loot grabbed" value={formatResources(report.loot)} />
@@ -446,10 +443,10 @@ function MissionBattleReport({
           {/* Fleet/defenses are the defender planet's indexed composition (surviving force). "None"
               when the planet had no fleet/defenses; a precise caveat only when it isn't charted. */}
           {defenderState ? (
-            defenderFleetSummary || defenderDefenseSummary ? (
+            defenderFleetUnits.length > 0 || defenderDefenseUnits.length > 0 ? (
               <>
-                <Row label="Fleet" value={defenderFleetSummary || "None"} />
-                <Row label="Defenses" value={defenderDefenseSummary || "None"} />
+                <Row label="Fleet" value={<UnitIcons units={defenderFleetUnits} />} />
+                <Row label="Defenses" value={<UnitIcons units={defenderDefenseUnits} />} />
               </>
             ) : (
               <Row label="Fleet / defenses" value="None" />
@@ -671,21 +668,55 @@ function recyclersForDebris(debris: { crystal: string; metal: string }): number 
   return Math.ceil(total / RECYCLER_CARGO_CAPACITY);
 }
 
-// Renders an indexed `{ id, count }` composition (ships or defenses) into a compact, human label
-// list like "Light Fighter ×12, Cruiser ×3" using the playable catalog. Mirrors how PlanetDetail's
-// publicStateRows resolves catalog entries (id, falling back to catalog index). Zero counts are
-// dropped; an empty composition returns "" so callers can decide between "None" and a caveat.
-function compositionSummary(
+// A single resolved unit (ship or defense) for the icon list: the catalog label, its count, and the
+// generated game art when one is mapped. `asset` is optional so unmapped/legacy keys degrade to a
+// text label instead of a broken image.
+type UnitItem = { key: string; label: string; count: number; asset?: string | undefined };
+
+// Compact icon row used across the Battle Report for combat ships, civil ships, fleet, and defenses:
+// small unit art with an "×N" count, mirroring Mission Control's FleetIcons. Hovering a chip shows
+// the unit name and count; units without mapped art fall back to a text label. Empty lists render a
+// muted "None" so the report still reads cleanly when a side fielded nothing.
+function UnitIcons({ units }: { units: UnitItem[] }) {
+  if (units.length === 0) return <span className="text-slate-500">None</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {units.map((unit) => {
+        const label = `${unit.label} ×${unit.count.toLocaleString()}`;
+        return (
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1 py-0.5" key={unit.key} title={label}>
+            {unit.asset ? (
+              <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={unit.asset} />
+            ) : (
+              <span className="text-[10px] text-slate-300">{unit.label}</span>
+            )}
+            <span className="text-[11px] font-medium tabular-nums text-slate-200">{`×${unit.count.toLocaleString()}`}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// Resolves an indexed `{ id, count }` composition (ships or defenses) into icon-ready units using the
+// playable catalog. Mirrors how PlanetDetail's publicStateRows resolves catalog entries (id, falling
+// back to catalog index). Zero counts are dropped; the matched catalog key supplies the generated art.
+function compositionUnits(
   rows: Array<{ id: number; count: number }> | undefined,
-  catalog: readonly { id?: number; label: string }[]
-): string {
+  catalog: readonly { id: number; key: string; label: string }[],
+  assetByKey: Record<string, string>
+): UnitItem[] {
   return (rows ?? [])
     .filter((row) => row.count > 0)
-    .map((row) => {
-      const item = catalog.find((entry, index) => (entry.id ?? index) === row.id);
-      return `${item?.label ?? `ID ${row.id}`} ×${row.count.toLocaleString()}`;
-    })
-    .join(", ");
+    .map((row, index) => {
+      const item = catalog.find((entry, catalogIndex) => (entry.id ?? catalogIndex) === row.id);
+      return {
+        key: item?.key ?? `id-${row.id}-${index}`,
+        label: item?.label ?? `ID ${row.id}`,
+        count: row.count,
+        asset: item ? assetByKey[item.key] : undefined,
+      };
+    });
 }
 
 const shipLabels: Record<string, string> = {
@@ -707,18 +738,22 @@ const shipLabels: Record<string, string> = {
 
 const civilShipKeys = new Set(["smallCargo", "largeCargo", "colonyShip", "recycler", "espionageProbe", "solarSatellite"]);
 
-function formatShips(ships: Record<string, string>): string {
-  const entries = Object.entries(ships)
+// Resolves a ShipKey-keyed fleet (mission.ships) into icon-ready units, dropping zero counts and
+// attaching the generated ship art when one is mapped.
+function shipUnits(ships: Record<string, string>): UnitItem[] {
+  return Object.entries(ships)
     .filter(([, count]) => Number(count) > 0)
-    .map(([key, count]) => `${shipLabels[key] ?? missionTypeLabel(key)} x${formatResource(count)}`);
-  return entries.length > 0 ? entries.join(", ") : "None";
+    .map(([key, count]) => ({
+      key,
+      label: shipLabels[key] ?? missionTypeLabel(key),
+      count: Number(count),
+      asset: shipAssetByKey[key as ShipKey],
+    }));
 }
 
-function formatShipsByKind(ships: Record<string, string>, kind: "civil" | "combat"): string {
-  const filtered = Object.fromEntries(
-    Object.entries(ships).filter(([key]) => kind === "civil" ? civilShipKeys.has(key) : !civilShipKeys.has(key))
-  );
-  return formatShips(filtered);
+// Narrows the resolved ship units to the combat or civil class for the attacker's two-row breakdown.
+function shipUnitsByKind(ships: Record<string, string>, kind: "civil" | "combat"): UnitItem[] {
+  return shipUnits(ships).filter((unit) => kind === "civil" ? civilShipKeys.has(unit.key) : !civilShipKeys.has(unit.key));
 }
 
 function shortHash(value: string): string {
