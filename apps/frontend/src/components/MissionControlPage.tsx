@@ -127,6 +127,13 @@ export function MissionControlPage({
   const pastArchiveMissions = missionsFromArchiveRows(rawPastMissionRows);
   const globalArchiveMissions = missionsFromArchiveRows(rawGlobalPastRows);
   const lookupMissions = uniqueMissions([...allMissions, ...allActiveMissions, ...pastArchiveMissions, ...globalArchiveMissions]);
+  // Loot grabbed per mission (return leg), drawn from every visible battle report so a mission card
+  // can show "Cargo" (outbound) and "Loot" (return) on separate lines — VEY-404.
+  const lootByMissionId = lootByMissionIdFromReports([
+    ...battleReports,
+    ...battleReportsFromArchiveRows(rawPastMissionRows),
+    ...battleReportsFromArchiveRows(rawGlobalPastRows),
+  ]);
   const selectedReport = reportMissionId ? lookupMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets);
   const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
@@ -171,6 +178,7 @@ export function MissionControlPage({
             allianceRows={allianceMissionRows}
             canTransact={canTransact}
             dueCount={due.length}
+            lootByMissionId={lootByMissionId}
             myRows={myMissionRows}
             now={now}
             onCompleteReturn={onCompleteReturn}
@@ -193,6 +201,7 @@ export function MissionControlPage({
             collapsedCount={pastCollapsedCount}
             error={missionArchiveError}
             loading={missionArchiveLoading}
+            lootByMissionId={lootByMissionId}
             now={now}
             onAllPageChange={onGlobalMissionArchivePageChange}
             onOpenReport={onOpenReport}
@@ -299,6 +308,7 @@ function ActiveMissionSection({
   allianceRows,
   canTransact,
   dueCount,
+  lootByMissionId,
   myRows,
   now,
   onCompleteReturn,
@@ -315,6 +325,7 @@ function ActiveMissionSection({
   allianceRows: ActiveMissionRow[];
   canTransact: boolean;
   dueCount: number;
+  lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   myRows: ActiveMissionRow[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
@@ -330,6 +341,7 @@ function ActiveMissionSection({
   const rowsByTab: Record<ActiveMissionTabKey, ActiveMissionRow[]> = { all: allRows, alliance: allianceRows, mine: myRows };
   const sharedRowProps = {
     canTransact,
+    lootByMissionId,
     now,
     onCompleteReturn,
     onCounterplay,
@@ -377,6 +389,7 @@ function ActiveMissionSection({
 function ActiveMissionList({
   canTransact,
   emptyLabel,
+  lootByMissionId,
   now,
   onCompleteReturn,
   onCounterplay,
@@ -391,6 +404,7 @@ function ActiveMissionList({
 }: {
   canTransact: boolean;
   emptyLabel: string;
+  lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
@@ -431,6 +445,7 @@ function ActiveMissionList({
               context={context}
               direction={direction}
               key={`${context}:${mission.missionId}`}
+              loot={returnPhaseLoot(mission, lootByMissionId)}
               mission={mission}
               now={now}
               onCompleteReturn={onCompleteReturn}
@@ -455,6 +470,7 @@ function MissionRow({
   canTransact,
   context,
   direction,
+  loot,
   mission,
   now,
   onCompleteReturn,
@@ -470,6 +486,7 @@ function MissionRow({
   canTransact: boolean;
   context: ActiveMissionContext;
   direction: string;
+  loot?: BattleReport["loot"] | undefined;
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
@@ -541,7 +558,7 @@ function MissionRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} loot={loot} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
       missionId={mission.missionId}
@@ -568,13 +585,36 @@ function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, no
 
 // Shared fleet/cargo summary for every card: ship icons with ×N counts above the cargo line
 // (VEY-400 card spec). Cargo is omitted only when a caller has no cargo data (battle-report rows).
-function MissionFleet({ cargo, ships }: { cargo?: FleetMissionSummary["cargo"] | undefined; ships: Record<string, string> }) {
+// Loot is the return-leg haul from the mission's battle report; it renders on its own line beneath
+// the outbound cargo so the two read separately (VEY-404) and is omitted until a fleet is heading
+// home with a resolved report.
+function MissionFleet({
+  cargo,
+  loot,
+  ships,
+}: {
+  cargo?: FleetMissionSummary["cargo"] | undefined;
+  loot?: BattleReport["loot"] | undefined;
+  ships: Record<string, string>;
+}) {
   return (
     <div className="space-y-1">
       <FleetIcons ships={ships} />
       {cargo ? <p className="text-[11px] text-slate-500">Cargo {formatCargo(cargo)}</p> : null}
+      {loot ? <p className="text-[11px] text-slate-500">Loot {formatCargo(loot)}</p> : null}
     </div>
   );
+}
+
+// A fleet only carries loot home after its attack resolves, so the loot line is surfaced once the
+// mission has left its outbound leg and a matching battle report exists. Outbound/incoming en-route
+// cards stay cargo-only — the haul is not known (or not the player's) until the fleet turns back.
+export function returnPhaseLoot(
+  mission: FleetMissionSummary,
+  lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>,
+): BattleReport["loot"] | undefined {
+  if (mission.status === "Outbound") return undefined;
+  return lootByMissionId.get(mission.missionId);
 }
 
 // Status pill shown in every card header (VEY-400): "En route" for outbound fleets, "Returning"/
@@ -1109,6 +1149,7 @@ function PastMissionSection({
   collapsedCount = 0,
   error,
   loading,
+  lootByMissionId,
   now,
   onAllPageChange,
   onOpenReport,
@@ -1127,6 +1168,7 @@ function PastMissionSection({
   collapsedCount?: number | undefined;
   error?: string | undefined;
   loading: boolean;
+  lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onAllPageChange?: ((page: number) => void) | undefined;
   onOpenReport: (missionId: string) => void;
@@ -1157,7 +1199,7 @@ function PastMissionSection({
       rows,
     },
   };
-  const sharedRowProps = { now, onOpenReport, planetLookup, wallet, walletPlanetIds };
+  const sharedRowProps = { lootByMissionId, now, onOpenReport, planetLookup, wallet, walletPlanetIds };
 
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-past-tab={PAST_MISSION_DEFAULT_TAB}>
@@ -1197,6 +1239,7 @@ function PastMissionTable({
   emptyLabel,
   error,
   loading,
+  lootByMissionId,
   now,
   onOpenReport,
   onPageChange,
@@ -1206,6 +1249,7 @@ function PastMissionTable({
   wallet,
   walletPlanetIds,
 }: PastMissionTabData & {
+  lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onOpenReport: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
@@ -1241,6 +1285,7 @@ function PastMissionTable({
                 {pageRows.map((row) => row.kind === "mission" ? (
                   <PastMissionSummaryRow
                     key={`past-mission:${row.mission.missionId}`}
+                    loot={returnPhaseLoot(row.mission, lootByMissionId)}
                     mission={row.mission}
                     now={now}
                     onOpenReport={onOpenReport}
@@ -1258,16 +1303,17 @@ function PastMissionTable({
                 ))}
               </div>
             ))}
+            {hasPages ? (
+              <ClientPaginationControl
+                className="pt-3"
+                loading={loading}
+                nextLabel="Next mission archive page"
+                onPageChange={onPageChange}
+                pagination={currentPagination}
+                prevLabel="Previous mission archive page"
+              />
+            ) : null}
           </div>
-          {hasPages ? (
-            <ClientPaginationControl
-              loading={loading}
-              nextLabel="Next mission archive page"
-              onPageChange={onPageChange}
-              pagination={currentPagination}
-              prevLabel="Previous mission archive page"
-            />
-          ) : null}
         </>
       )}
     </div>
@@ -1275,6 +1321,7 @@ function PastMissionTable({
 }
 
 function PastMissionSummaryRow({
+  loot,
   mission,
   now,
   onOpenReport,
@@ -1282,6 +1329,7 @@ function PastMissionSummaryRow({
   wallet,
   walletPlanetIds,
 }: {
+  loot?: BattleReport["loot"] | undefined;
   mission: FleetMissionSummary;
   now: number;
   onOpenReport: (missionId: string) => void;
@@ -1308,7 +1356,7 @@ function PastMissionSummaryRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} loot={loot} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
       origin={origin}
@@ -1749,6 +1797,22 @@ function uniqueMissions(missions: FleetMissionSummary[]): FleetMissionSummary[] 
 
 function missionsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): FleetMissionSummary[] {
   return rows.flatMap((row) => (row.kind === "mission" ? [row.mission] : []));
+}
+
+function battleReportsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): BattleReport[] {
+  return rows.flatMap((row) => (row.kind === "battleReport" ? [row.report] : []));
+}
+
+// Return-leg loot keyed by mission id, gathered from every battle report visible across the live
+// fleet feed and the paginated archives. A mission card pairs this with the mission's outbound cargo
+// so "Cargo" and "Loot" read as separate lines instead of the loot being dropped when a completed
+// mission collapses with its battle report into one archive row (VEY-404).
+function lootByMissionIdFromReports(reports: BattleReport[]): Map<string, BattleReport["loot"]> {
+  const lookup = new Map<string, BattleReport["loot"]>();
+  for (const report of reports) {
+    lookup.set(report.missionId, report.loot);
+  }
+  return lookup;
 }
 
 function planetLookupFromMissionData(

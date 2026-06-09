@@ -426,7 +426,6 @@ describe("Mission Control battle reports", () => {
 
   test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    const openedPlayers: string[] = [];
     const text = collectText(MissionDetailPage({
       account: "0x1111111111111111111111111111111111111111",
       actionState: { status: "idle" },
@@ -448,7 +447,6 @@ describe("Mission Control battle reports", () => {
       onCompleteReturn: () => undefined,
       onCopyShareUrl: () => undefined,
       onCounterplay: () => undefined,
-      onOpenPlayer: (wallet) => openedPlayers.push(wallet),
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
@@ -487,14 +485,16 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Loot grabbed");
     expect(text).not.toContain("Loot left");
     expect(text).toContain("Fleet / defenses");
-    // VEY-KANEO-396: commander names are present for both sides, link to their profiles, and carry
-    // their home planet/coordinates (classic combat report header).
+    // VEY-KANEO-406: the redundant per-side "Commander" rows were removed from the battle report —
+    // origin/target commanders already render in the Route hero, which still links to each profile.
     expect(text).toContain("Aggressor");
     expect(text).toContain("Bastion");
-    expect(text).toContain("Open Aggressor (0x22222222...222222) profile");
-    expect(text).toContain("Open Bastion (0x33333333...333333) profile");
-    expect(text).toContain("from Aggressor [1:2:3]");
-    expect(text).toContain("from Bastion [4:5:6]");
+    expect(text).toContain("Inspect Aggressor");
+    expect(text).toContain("Inspect Bastion");
+    expect(text).not.toContain("Open Aggressor (0x22222222...222222) profile");
+    expect(text).not.toContain("Open Bastion (0x33333333...333333) profile");
+    expect(text).not.toContain("from Aggressor [1:2:3]");
+    expect(text).not.toContain("from Bastion [4:5:6]");
     // VEY-KANEO-396: the verbose recyclers-to-clear-debris section stays removed.
     expect(text).not.toContain("Recyclers to clear debris");
     expect(text).not.toContain("Loot plundered");
@@ -565,6 +565,137 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("No round-by-round snapshots were indexed");
   });
 
+  test("VEY-KANEO-407: renders unit art for attacker combat/civil ships and the defender's surviving fleet/defenses", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const tree = MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          // A mixed offensive fleet: combat (light fighter) + civil (small cargo).
+          ships: { lightFighter: "12", smallCargo: "3" },
+          originPlanet: planetReference("7", "0x1111111111111111111111111111111111111111", "Aggressor", "1:2:3"),
+          targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
+        },
+        battleReport: battleReport("42"),
+        // Indexed surviving composition for the defender planet (catalog-id keyed): cruiser (id 6) and
+        // a rocket launcher (id 0).
+        defenderPlanetState: {
+          fleet: [{ id: 6, count: 2 }],
+          defenses: [{ id: 0, count: 5 }],
+        },
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    });
+
+    const text = collectText(tree).join(" ");
+    // Each unit chip exposes its name + count via title, alongside the generated art.
+    expect(text).toContain("Light Fighter ×12");
+    expect(text).toContain("Small Cargo ×3");
+    expect(text).toContain("Cruiser ×2");
+    expect(text).toContain("Rocket Launcher ×5");
+    // With the defender planet charted, the combined "Fleet / defenses" caveat is replaced by the
+    // per-row icon lists.
+    expect(text).not.toContain("Fleet / defenses");
+
+    // The chips render the mapped game art for ships (combat + civil) and defenses, not just text.
+    const imageSrcs = findElements(tree, "img").map((node) => String(node.props?.src ?? ""));
+    expect(imageSrcs.some((src) => src.includes("/ships/light-fighter"))).toBe(true);
+    expect(imageSrcs.some((src) => src.includes("/ships/small-cargo"))).toBe(true);
+    expect(imageSrcs.some((src) => src.includes("/ships/cruiser"))).toBe(true);
+    expect(imageSrcs.some((src) => src.includes("/defenses/rocket-launcher"))).toBe(true);
+  });
+
+  test("VEY-KANEO-407: renders unit art in the standalone Fleet And Cargo panel for non-combat missions", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // A transport mission has no battle report, so the standalone "Fleet And Cargo" panel renders and
+    // its ship listing must show unit art too (per the ticket title's "Fleet And Cargo ships" scope).
+    const tree = MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("51", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+          ships: { largeCargo: "4" },
+        },
+        battleReport: null,
+      },
+      loading: false,
+      missionId: "51",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    });
+
+    const text = collectText(tree).join(" ");
+    expect(text).toContain("Fleet And Cargo");
+    expect(text).toContain("Large Cargo ×4");
+    const imageSrcs = findElements(tree, "img").map((node) => String(node.props?.src ?? ""));
+    expect(imageSrcs.some((src) => src.includes("/ships/large-cargo"))).toBe(true);
+  });
+
+  test("VEY-KANEO-407: keeps 'None' for empty unit listings in the Battle Report", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // Attacker fielded only civil ships and the charted defender had no surviving fleet/defenses, so
+    // the empty listings must still read "None" rather than render an empty icon row.
+    const tree = MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("52", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          ships: { smallCargo: "2" },
+        },
+        battleReport: battleReport("52"),
+        defenderPlanetState: { fleet: [], defenses: [] },
+      },
+      loading: false,
+      missionId: "52",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    });
+
+    const text = collectText(tree).join(" ");
+    // Civil ships present as art; combat ships empty -> "None"; defender empty -> combined "None".
+    expect(text).toContain("Small Cargo ×2");
+    expect(text).toContain("None");
+    const imageSrcs = findElements(tree, "img").map((node) => String(node.props?.src ?? ""));
+    expect(imageSrcs.some((src) => src.includes("/ships/small-cargo"))).toBe(true);
+  });
+
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const baseProps = {
@@ -622,7 +753,10 @@ describe("Mission Control battle reports", () => {
     const selectedCoords: Coordinates[] = [];
     const selectedPlayers: string[] = [];
     const detailMission: FleetMissionSummary = {
-      ...mission("42", "Attack", "Outbound", owner, "7", "9", now - 60_000),
+      // Outbound mission still in flight: arrival/return are in the future, so the
+      // route shows the "Arrival"/"Return" captions with their ETAs (VEY-KANEO-405:
+      // only completed legs collapse to a captionless "Arrived"/"Returned").
+      ...mission("42", "Attack", "Outbound", owner, "7", "9", now + 60_000),
       originPlanet: {
         planetId: "7", owner, ownerDisplayName: "Aria", name: "Helios",
         galaxy: 1, system: 2, position: 3, coordinates: "1:2:3",
