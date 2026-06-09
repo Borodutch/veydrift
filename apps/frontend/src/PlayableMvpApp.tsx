@@ -71,6 +71,15 @@ import {
   type ChainLoadStatus,
 } from "./overviewData";
 import {
+  buildGameStateSnapshot,
+  clearGameStateSnapshot,
+  hydrateGameStateForAccount,
+  readGameStateSnapshot,
+  writeGameStateSnapshot,
+  type GameStateSnapshot,
+  type PersistedGameState,
+} from "./gameStateCache";
+import {
   isTransientGameStateReadFailure,
   waitForFinishedResearchState,
   waitForStartedResearchState,
@@ -1679,6 +1688,13 @@ function writeInspectHash(route: InspectRoute): void {
 
 export function PlayableMvpApp({ provider, account, miniAppMode = false, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
+  // VEY-242: seed initial state from the previous session's snapshot so a full
+  // page reload shows the last loaded data immediately (stale-while-revalidate)
+  // instead of blanking into "Resources loading" / "Syncing planetfall".
+  const [persistedGameSnapshot] = useState<GameStateSnapshot | undefined>(() => readGameStateSnapshot());
+  const [hydratedGameState] = useState<PersistedGameState | undefined>(
+    () => (isWalletConnected ? hydrateGameStateForAccount(persistedGameSnapshot, account) : undefined)
+  );
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
   const [page, setPage] = useState<Page>(() => initialInspectPageState().page);
@@ -1691,7 +1707,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
   const [selectedShipKey, setSelectedShipKey] = useState<ShipKey>("smallCargo");
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>(() => initialSelectedCoords());
-  const [onChainSettlement, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>();
+  const [onChainSettlement, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>(
+    () => hydratedGameState?.onChainSettlement
+  );
   const [topBarResourceSnapshotReceivedAtMs, setTopBarResourceSnapshotReceivedAtMs] = useState(() => Date.now());
   // Direct on-chain `previewResources(planetId)` read used to anchor the
   // displayed/spendable balance to the contract's authoritative value so the top
@@ -1705,12 +1723,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setTopBarResourceSnapshotReceivedAtMs(Date.now());
     setOnChainSettlementState(settlement);
   }, []);
-  const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
-  const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
-  const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
-  const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
-  const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
-  const [missionArchive, setMissionArchive] = useState<FleetMissionArchiveResponse | undefined>();
+  const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>(
+    () => hydratedGameState?.playerProfile
+  );
+  const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>(
+    () => hydratedGameState?.walletPlanets ?? []
+  );
+  const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>(
+    () => hydratedGameState?.selectedPlanetId
+  );
+  const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>(
+    () => hydratedGameState?.onChainQueues
+  );
+  const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>(
+    () => hydratedGameState?.fleetVisibility
+  );
+  const [missionArchive, setMissionArchive] = useState<FleetMissionArchiveResponse | undefined>(
+    () => hydratedGameState?.missionArchive
+  );
   const [missionArchivePage, setMissionArchivePage] = useState(1);
   const [missionArchiveLoading, setMissionArchiveLoading] = useState(false);
   const [missionArchiveError, setMissionArchiveError] = useState<string | undefined>();
@@ -1720,11 +1750,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [missionDetail, setMissionDetail] = useState<MissionDetailResponse | undefined>();
   const [missionDetailLoading, setMissionDetailLoading] = useState(false);
   const [missionDetailError, setMissionDetailError] = useState<string | undefined>();
-  const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
+  const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>(
+    () => (hydratedGameState?.onChainSettlement ? "ready" : "local")
+  );
   const [onChainError, setOnChainError] = useState<string | undefined>();
   const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
-  const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
+  const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(
+    () => hydratedGameState?.infrastructureChainState ?? null
+  );
   // Client-side ledger of submitted-but-not-yet-settled resource spends. Keeps
   // the displayed/gated balance from over-reporting during the window between a
   // spend mining and the backend infrastructure read reflecting it (VEY-392).
@@ -1732,25 +1766,35 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const pendingSpendIdRef = useRef(0);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
   const [infrastructureError, setInfrastructureError] = useState<string | undefined>();
-  const [moonState, setMoonState] = useState<ChainMoonState | null>(null);
+  const [moonState, setMoonState] = useState<ChainMoonState | null>(
+    () => hydratedGameState?.moonState ?? null
+  );
   const [moonLoading, setMoonLoading] = useState(false);
   const [moonError, setMoonError] = useState<string | undefined>();
-  const [defenseState, setDefenseState] = useState<ChainDefenseState | null>(null);
+  const [defenseState, setDefenseState] = useState<ChainDefenseState | null>(
+    () => hydratedGameState?.defenseState ?? null
+  );
   const [defenseLoading, setDefenseLoading] = useState(false);
   const [defenseError, setDefenseError] = useState<string | undefined>();
   const [defenseAction, setDefenseAction] = useState<DefenseActionState>({ status: "idle" });
-  const [allianceState, setAllianceState] = useState<ChainAllianceState | null>(null);
+  const [allianceState, setAllianceState] = useState<ChainAllianceState | null>(
+    () => hydratedGameState?.allianceState ?? null
+  );
   const [allianceLoading, setAllianceLoading] = useState(false);
   const [allianceError, setAllianceError] = useState<string | undefined>();
   const [allianceAction, setAllianceAction] = useState<AllianceActionState>({ status: "idle" });
   const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(null);
-  const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
+  const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(
+    () => hydratedGameState?.shipyardState ?? null
+  );
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
   const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
-  const [researchState, setResearchState] = useState<ChainResearchState | null>(null);
+  const [researchState, setResearchState] = useState<ChainResearchState | null>(
+    () => hydratedGameState?.researchState ?? null
+  );
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchError, setResearchError] = useState<string | undefined>();
   const [researchAction, setResearchAction] = useState<ResearchActionState>({ status: "idle" });
@@ -1774,7 +1818,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const infrastructureRefreshGate = useRef(0);
   const latestOnChainResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
   const latestInfrastructureResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
-  const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
+  const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>(
+    () => hydratedGameState?.homePlanetIdentity
+  );
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     const routeCoords = initialSelectedCoords();
     if (routeCoords) {
@@ -2101,6 +2147,81 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     settlement: onChainSettlement,
     status: onChainStatus,
   });
+
+  // VEY-242: if the connected wallet turns out to differ from the snapshot we
+  // optimistically hydrated (e.g. account resolved after mount, or a different
+  // wallet auto-connected), drop the stale slices so we never show another
+  // account's data. The live fetch then repopulates from scratch.
+  const accountMismatchReconciled = useRef(false);
+  useEffect(() => {
+    if (accountMismatchReconciled.current) return;
+    if (!account) return;
+    accountMismatchReconciled.current = true;
+    if (!persistedGameSnapshot) return;
+    if (persistedGameSnapshot.account === account.toLowerCase()) return;
+    clearGameStateSnapshot();
+    if (!hydratedGameState) return;
+    setOnChainSettlementState(undefined);
+    setOnChainQueues(undefined);
+    setWalletPlanets([]);
+    setSelectedPlanetId(undefined);
+    setPlayerProfile(undefined);
+    setHomePlanetIdentity(undefined);
+    setInfrastructureChainState(null);
+    setResearchState(null);
+    setShipyardState(null);
+    setDefenseState(null);
+    setMoonState(null);
+    setAllianceState(null);
+    setFleetVisibility(undefined);
+    setMissionArchive(undefined);
+    setOnChainStatus("local");
+  }, [account, hydratedGameState, persistedGameSnapshot]);
+
+  // VEY-242: persist the loaded snapshot for the connected wallet so the next
+  // reload can render it immediately. Only writes once a settlement exists, so
+  // the transient empty state during first load never clobbers a good snapshot.
+  useEffect(() => {
+    if (!isWalletConnected || !account) return;
+    const snapshot = buildGameStateSnapshot({
+      account,
+      savedAtMs: Date.now(),
+      state: {
+        onChainSettlement,
+        onChainQueues,
+        walletPlanets,
+        selectedPlanetId,
+        playerProfile,
+        homePlanetIdentity,
+        infrastructureChainState,
+        researchState,
+        shipyardState,
+        defenseState,
+        moonState,
+        allianceState,
+        fleetVisibility,
+        missionArchive,
+      },
+    });
+    if (snapshot) writeGameStateSnapshot(snapshot);
+  }, [
+    account,
+    isWalletConnected,
+    onChainSettlement,
+    onChainQueues,
+    walletPlanets,
+    selectedPlanetId,
+    playerProfile,
+    homePlanetIdentity,
+    infrastructureChainState,
+    researchState,
+    shipyardState,
+    defenseState,
+    moonState,
+    allianceState,
+    fleetVisibility,
+    missionArchive,
+  ]);
 
   const gameContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? gameContractAddress(runtimeConfig.config) : undefined;
