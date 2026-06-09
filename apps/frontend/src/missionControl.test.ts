@@ -246,14 +246,18 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Borealis");
   });
 
-  test("active table renames the route header and removes the Origin -> Target header (VEY-399#3)", () => {
+  test("active missions render as cards with no table column headers (VEY-400)", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionControlPage(missionControlProps(now, {
       outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
     }))).join(" ");
 
-    expect(text).toContain("Route");
+    // Cards drop the MISSION / ROUTE / FLEET / Orders headers; the mission still renders with its
+    // type badge and the "En route" status pill in the card header line.
+    expect(text).toContain("Transport");
+    expect(text).toContain("En route");
     expect(text).not.toContain("Origin -> Target");
+    expect(text).not.toContain("Mission Route Fleet");
   });
 
   test("hides Join when disabled and labels the resolve action 'Resolve' (VEY-399#6/#7)", () => {

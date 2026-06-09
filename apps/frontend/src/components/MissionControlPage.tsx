@@ -365,14 +365,14 @@ function ActiveMissionSection({
       </div>
       {ACTIVE_MISSION_TABS.map((tab) => (
         <div data-active-tab-panel={tab.key} hidden={tab.key !== ACTIVE_MISSION_DEFAULT_TAB} key={tab.key} role="tabpanel">
-          <ActiveMissionTable emptyLabel={tab.emptyLabel} rows={rowsByTab[tab.key]} {...sharedRowProps} />
+          <ActiveMissionList emptyLabel={tab.emptyLabel} rows={rowsByTab[tab.key]} {...sharedRowProps} />
         </div>
       ))}
     </section>
   );
 }
 
-function ActiveMissionTable({
+function ActiveMissionList({
   canTransact,
   emptyLabel,
   now,
@@ -411,46 +411,40 @@ function ActiveMissionTable({
 
   return (
     <div
+      className="p-3"
       data-past-page-current="0"
       data-past-page-size={String(pageSize)}
       data-past-page-total={String(pagination.totalEntries)}
     >
-      <div className="overflow-x-auto">
-        <table className="min-w-[52rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
-          <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-            <tr>
-              <th className="w-[8rem] px-3 py-2">Mission</th>
-              <th className="px-3 py-2">Route</th>
-              <th className="w-[11rem] px-3 py-2">Fleet</th>
-              <th className="w-[13rem] px-3 py-2">Orders</th>
-            </tr>
-          </thead>
-          {pages.map((pageRows, pageIndex) => (
-            <tbody data-past-page={pageIndex} hidden={pageIndex !== 0} key={`active-mission-page:${pageIndex}`}>
-              {pageRows.map(({ context, direction, mission }) => (
-                <MissionRow
-                  canTransact={canTransact}
-                  context={context}
-                  direction={direction}
-                  key={`${context}:${mission.missionId}`}
-                  mission={mission}
-                  now={now}
-                  onCompleteReturn={onCompleteReturn}
-                  onCounterplay={onCounterplay}
-                  onJoinAttack={onJoinAttack}
-                  onOpenReport={onOpenReport}
-                  onRecall={onRecall}
-                  onResolve={onResolve}
-                  planetLookup={planetLookup}
-                  wallet={wallet}
-                  walletPlanetIds={walletPlanetIds}
-                />
-              ))}
-            </tbody>
+      {pages.map((pageRows, pageIndex) => (
+        <div
+          className="grid gap-3"
+          data-past-page={pageIndex}
+          hidden={pageIndex !== 0}
+          key={`active-mission-page:${pageIndex}`}
+        >
+          {pageRows.map(({ context, direction, mission }) => (
+            <MissionRow
+              canTransact={canTransact}
+              context={context}
+              direction={direction}
+              key={`${context}:${mission.missionId}`}
+              mission={mission}
+              now={now}
+              onCompleteReturn={onCompleteReturn}
+              onCounterplay={onCounterplay}
+              onJoinAttack={onJoinAttack}
+              onOpenReport={onOpenReport}
+              onRecall={onRecall}
+              onResolve={onResolve}
+              planetLookup={planetLookup}
+              wallet={wallet}
+              walletPlanetIds={walletPlanetIds}
+            />
           ))}
-        </table>
-      </div>
-      {pagination.totalPages > 1 ? <ClientPaginationControl className="px-3 pb-3" pagination={pagination} /> : null}
+        </div>
+      ))}
+      {pagination.totalPages > 1 ? <ClientPaginationControl className="pt-3" pagination={pagination} /> : null}
     </div>
   );
 }
@@ -495,7 +489,7 @@ function MissionRow({
   const noFleetReturned = isNoFleetReturned(mission);
   const directionSubtext = direction && direction !== "Joinable attack" ? direction : undefined;
   return (
-    <MissionTableRow
+    <MissionCard
       actions={
         <>
           {actions.map((action) => action.kind === "counterplay" ? (
@@ -544,17 +538,50 @@ function MissionRow({
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
-      fleet={<FleetIcons ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} ships={mission.ships} />}
       groupId={mission.attackGroupId}
+      headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
       missionId={mission.missionId}
       origin={origin}
-      originTiming={{ label: "Return", value: noFleetReturned ? "No fleet returned" : missionEndpointTiming(mission.returnAt, now) }}
       progressPercent={missionProgressPercent(mission, now)}
-      subtext={directionSubtext}
+      routeSubtext={directionSubtext}
+      statusPill={missionStatusPill(mission.status)}
       target={target}
-      targetTiming={{ label: "Arrival", value: missionEndpointTiming(mission.arrivalAt, now) }}
     />
   );
+}
+
+// Active cards surface the live ETA (outbound) or return countdown (returning/recalled) next to the
+// status pill — the single most relevant time for the mission's current phase (VEY-400). Outbound
+// fleets whose ships were all consumed on arrival have nothing to land, so the return reads
+// "No fleet returned" instead of a countdown.
+function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, noFleetReturned: boolean): EndpointTiming {
+  const returning = mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned";
+  if (returning) {
+    return { label: "Returns", value: noFleetReturned ? "No fleet returned" : missionEndpointTiming(mission.returnAt, now) };
+  }
+  return { label: "ETA", value: missionEndpointTiming(mission.arrivalAt, now) };
+}
+
+// Shared fleet/cargo summary for every card: ship icons with ×N counts above the cargo line
+// (VEY-400 card spec). Cargo is omitted only when a caller has no cargo data (battle-report rows).
+function MissionFleet({ cargo, ships }: { cargo?: FleetMissionSummary["cargo"] | undefined; ships: Record<string, string> }) {
+  return (
+    <div className="space-y-1">
+      <FleetIcons ships={ships} />
+      {cargo ? <p className="text-[11px] text-slate-500">Cargo {formatCargo(cargo)}</p> : null}
+    </div>
+  );
+}
+
+// Status pill shown in every card header (VEY-400): "En route" for outbound fleets, "Returning"/
+// "Recalled" while a fleet heads home, and the terminal status ("Returned"/"Resolved"/…) for past
+// missions. This folds in the VEY-399 rework intent — status reads as a pill, never a raw timestamp.
+function missionStatusPill(status: string): MissionStatusPill {
+  if (status === "Outbound") return { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
+  if (status === "Returning") return { label: "Returning", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+  if (status === "Recalled") return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+  return { label: status, tone: "border-slate-300/20 bg-slate-300/10 text-slate-300" };
 }
 
 // Shared style for the "Open" and "Join" row actions (VEY-397#14).
@@ -713,63 +740,65 @@ function EndpointSub({ endpoint, timing }: { endpoint: MissionEndpoint; timing?:
   );
 }
 
-// The shared mission-row presentation used by every Mission Control table (VEY-399). Each table
-// supplies the badge/mission data, the route endpoints, the fleet cell, and the trailing actions;
-// the Mission, Route, and Fleet columns render identically so active and past tables stay in sync.
-function MissionTableRow({
+type MissionStatusPill = { label: string; tone: string };
+
+// The shared mission-card presentation used by every Mission Control panel (VEY-400). Active and
+// past missions both render through this one component so the two panels stay in sync: a header
+// line (mission-type badge + #number + status pill + optional live countdown), the shared route
+// block with the inline progress bar, and a footer holding the fleet/cargo summary and the
+// contextual action(s). Cards drop the old table headers and read top-to-bottom on mobile.
+function MissionCard({
   actions,
   badgeLabel,
   badgeTone,
   fleet,
   groupId,
+  headerTiming,
   missionId,
   origin,
-  originTiming,
   progressPercent,
   routeSubtext,
-  subtext,
+  statusPill,
   target,
-  targetTiming,
 }: {
   actions: preact.ComponentChildren;
   badgeLabel: string;
   badgeTone: string;
   fleet: preact.ComponentChildren;
   groupId?: string | null | undefined;
+  headerTiming?: EndpointTiming | undefined;
   missionId?: string | undefined;
   origin: MissionEndpoint;
-  originTiming?: EndpointTiming | undefined;
   progressPercent?: number | undefined;
   routeSubtext?: string | undefined;
-  subtext?: string | undefined;
+  statusPill?: MissionStatusPill | undefined;
   target: MissionEndpoint;
-  targetTiming?: EndpointTiming | undefined;
 }) {
   return (
-    <tr className="align-top text-slate-300 odd:bg-black/10 even:bg-white/[0.015]">
-      <td className="border-t border-white/10 px-3 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
-          {missionId ? <span className="font-semibold text-white">#{missionId}</span> : null}
-        </div>
-        {subtext ? <p className="mt-2 text-slate-500">{subtext}</p> : null}
-        {groupId ? <p className="mt-1 text-cyan-100/70">Group {groupId}</p> : null}
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <MissionRouteCell
-          origin={origin}
-          originTiming={originTiming}
-          progressPercent={progressPercent}
-          subtext={routeSubtext}
-          target={target}
-          targetTiming={targetTiming}
-        />
-      </td>
-      <td className="border-t border-white/10 px-3 py-3">{fleet}</td>
-      <td className="border-t border-white/10 px-3 py-3">
-        <div className="flex flex-wrap gap-1.5">{actions}</div>
-      </td>
-    </tr>
+    <article className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-slate-300 transition hover:border-white/20">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
+        {missionId ? <span className="font-semibold text-white">#{missionId}</span> : null}
+        {statusPill ? (
+          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusPill.tone}`}>
+            {statusPill.label}
+          </span>
+        ) : null}
+        {headerTiming ? (
+          <span className="text-[11px] tabular-nums text-slate-400">
+            <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{headerTiming.label}</span> {headerTiming.value}
+          </span>
+        ) : null}
+        {groupId ? <span className="text-[11px] text-cyan-100/70">Group {groupId}</span> : null}
+      </div>
+      <div className="mt-3">
+        <MissionRouteCell origin={origin} progressPercent={progressPercent} subtext={routeSubtext} target={target} />
+      </div>
+      <div className="mt-3 flex flex-col gap-2 border-t border-white/5 pt-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">{fleet}</div>
+        <div className="flex flex-wrap gap-1.5 sm:justify-end">{actions}</div>
+      </div>
+    </article>
   );
 }
 
@@ -1095,43 +1124,34 @@ function PastMissionTable({
         <p className="px-3 py-4 text-xs text-slate-500">{loading ? "Loading completed missions…" : emptyLabel}</p>
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table className="min-w-[52rem] w-full table-fixed border-separate border-spacing-0 text-left text-xs">
-              <thead className="bg-white/[0.03] text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                <tr>
-                  <th className="w-[8rem] px-3 py-2">Mission</th>
-                  <th className="px-3 py-2">Route</th>
-                  <th className="w-[11rem] px-3 py-2">Fleet</th>
-                  <th className="w-[13rem] px-3 py-2">Details</th>
-                </tr>
-              </thead>
-              {visiblePages.map((pageRows, pageIndex) => (
-                <tbody
-                  data-past-page={pageIndex}
-                  hidden={!pagination && pageIndex !== 0}
-                  key={`past-mission-page:${pageIndex}`}
-                >
-                  {pageRows.map((row) => row.kind === "mission" ? (
-                    <PastMissionSummaryRow
-                      key={`past-mission:${row.mission.missionId}`}
-                      mission={row.mission}
-                      now={now}
-                      onOpenReport={onOpenReport}
-                      planetLookup={planetLookup}
-                      wallet={wallet}
-                      walletPlanetIds={walletPlanetIds}
-                    />
-                  ) : (
-                    <PastBattleReportRow
-                      key={`past-report:${row.report.missionId}`}
-                      onOpenReport={onOpenReport}
-                      planetLookup={planetLookup}
-                      report={row.report}
-                    />
-                  ))}
-                </tbody>
-              ))}
-            </table>
+          <div className="p-3">
+            {visiblePages.map((pageRows, pageIndex) => (
+              <div
+                className="grid gap-3"
+                data-past-page={pageIndex}
+                hidden={!pagination && pageIndex !== 0}
+                key={`past-mission-page:${pageIndex}`}
+              >
+                {pageRows.map((row) => row.kind === "mission" ? (
+                  <PastMissionSummaryRow
+                    key={`past-mission:${row.mission.missionId}`}
+                    mission={row.mission}
+                    now={now}
+                    onOpenReport={onOpenReport}
+                    planetLookup={planetLookup}
+                    wallet={wallet}
+                    walletPlanetIds={walletPlanetIds}
+                  />
+                ) : (
+                  <PastBattleReportRow
+                    key={`past-report:${row.report.missionId}`}
+                    onOpenReport={onOpenReport}
+                    planetLookup={planetLookup}
+                    report={row.report}
+                  />
+                ))}
+              </div>
+            ))}
           </div>
           {hasPages ? (
             <ClientPaginationControl
@@ -1166,11 +1186,8 @@ function PastMissionSummaryRow({
   const missionDirection = resolveMissionDirection({ mission, wallet, walletPlanetIds });
   const origin = missionEndpoint(mission, "origin", planetLookup);
   const target = missionEndpoint(mission, "target", planetLookup);
-  // VEY-399 rework (#9634 -> #9636): the mission status word (e.g. "Returned") sits as subtext
-  // under the MISSION column, beneath the badge/number. No date/time is shown for past rows.
-  const missionSubtext = missionStatusLabel(mission.status);
   return (
-    <MissionTableRow
+    <MissionCard
       actions={
         <button
           className={rowActionButtonClass}
@@ -1184,16 +1201,13 @@ function PastMissionSummaryRow({
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
-      fleet={
-        <div className="space-y-1">
-          <FleetIcons ships={mission.ships} />
-          <p className="text-[11px] text-slate-500">Cargo {formatCargo(mission.cargo)}</p>
-        </div>
-      }
+      fleet={<MissionFleet cargo={mission.cargo} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
       origin={origin}
-      subtext={missionSubtext}
+      // VEY-400: the terminal status (e.g. "Returned") reads as the header pill, folding in the
+      // VEY-399 rework intent (status as a pill, no raw timestamp) now that cards have no columns.
+      statusPill={missionStatusPill(mission.status)}
       target={target}
     />
   );
@@ -1217,7 +1231,7 @@ function PastBattleReportRow({
     name: "Attacker",
   };
   return (
-    <MissionTableRow
+    <MissionCard
       actions={
         <button
           className={rowActionButtonClass}

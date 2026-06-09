@@ -406,10 +406,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
           );
         }
+        const battleReport = indexer.battleReport(missionId);
         return Response.json(
           {
             mission,
-            battleReport: indexer.battleReport(missionId),
+            battleReport,
+            // The defender's surviving fleet/defenses are not in the on-chain combat log, but the
+            // indexer tracks the target planet's ship/defense composition (ShipCountChanged + defense
+            // events), so the battle report can show real composition instead of a blanket caveat.
+            // Null when the target planet is not charted in the indexed read model.
+            defenderPlanetState: defenderPlanetStateForReport(indexer, battleReport),
             source: indexedSource
           },
           { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
@@ -1512,6 +1518,24 @@ function occupiedPlanetRef(
         alliance: allianceIntel.get(planet.owner.toLowerCase()) ?? null
       }
     : null;
+}
+
+// The defender side of a battle report: the target planet's current indexed ship/defense
+// composition (the surviving force right after a freshly-resolved battle). Only zero-count rows
+// are dropped so the frontend can show "None" when the planet had no fleet/defenses. Returns null
+// when the target planet is not charted in the indexed read model, in which case the composition
+// genuinely cannot be derived and the frontend keeps a precise caveat instead of fabricating data.
+function defenderPlanetStateForReport(
+  indexer: SettlementIndexer,
+  report: ReturnType<SettlementIndexer["battleReport"]>
+): { fleet: Array<{ id: number; count: number }>; defenses: Array<{ id: number; count: number }> } | null {
+  if (!report) return null;
+  const planet = indexer.planet(report.targetPlanetId);
+  if (!planet) return null;
+  return {
+    fleet: indexer.shipRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
+    defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0)
+  };
 }
 
 function publicPlanetStateRef(

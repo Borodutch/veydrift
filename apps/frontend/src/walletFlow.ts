@@ -287,9 +287,18 @@ export type FleetMissionArchiveResponse = {
   };
 };
 
+export type DefenderPlanetState = {
+  fleet: Array<{ id: number; count: number }>;
+  defenses: Array<{ id: number; count: number }>;
+};
+
 export type MissionDetailResponse = {
   mission: FleetMissionSummary;
   battleReport: BattleReport | null;
+  // The defender planet's current indexed fleet/defenses composition, used to populate the
+  // Battle Report's defender block. Null/undefined when the target planet is not charted, so the
+  // composition cannot be derived from the indexed state.
+  defenderPlanetState?: DefenderPlanetState | null;
   source?: string;
 };
 

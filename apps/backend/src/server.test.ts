@@ -1128,6 +1128,74 @@ describe("Veydrift backend", () => {
     expect(body.rows[0]).toMatchObject({ kind: "mission", mission: { status: "Returned" } });
   });
 
+  test("mission detail exposes the defender planet's indexed fleet/defenses composition (VEY-401)", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    // Defender's target planet (id 9) with a surviving fleet (Light Fighter id 1 x12) and defenses
+    // (Gauss Cannon id 4 x3) tracked in the indexed read model.
+    indexer.applyEvent({
+      ...planet,
+      planetId: "9",
+      owner: attacker,
+      eventName: "PlanetStarted",
+      transactionHash: "0xtargetplanet",
+      blockNumber: "100"
+    });
+    indexer.applyLog({
+      blockNumber: "0x65",
+      transactionHash: "0xshipcount",
+      logIndex: "0x0",
+      removed: false,
+      topics: [planetShipCountChangedTopic, topic(9n), topic(1n)],
+      data: abiWords(12n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x66",
+      transactionHash: "0xdefensedone",
+      logIndex: "0x0",
+      removed: false,
+      topics: [defenseCompletedTopic, topic(9n), topic(4n)],
+      data: abiWords(3n, 3n)
+    });
+    // A resolved attack mission (id 1) against planet 9, plus its indexed battle report logs.
+    for (const log of completedFleetMissionLogs({ missionId: 1n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xbattleresolved",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(1n), addressTopic(attacker), topic(9n)],
+      data: abiWords(1n, 2n, 12345n, 100n, 50n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x71",
+      transactionHash: "0xcombatlosses",
+      logIndex: "0x0",
+      removed: false,
+      topics: [combatLossesTopic, topic(1n)],
+      data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
+    });
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/1"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.battleReport).toMatchObject({ missionId: "1", targetPlanetId: "9" });
+    expect(body.defenderPlanetState).toEqual({
+      fleet: [{ id: 1, count: 12 }],
+      defenses: [{ id: 4, count: 3 }]
+    });
+  });
+
   test("keeps galaxy planet rows indexed-only instead of resolving owner alliance through chain reader calls", async () => {
     const chainReader = new class extends MockChainReader {
       async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
