@@ -1693,7 +1693,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   // instead of blanking into "Resources loading" / "Syncing planetfall".
   const [persistedGameSnapshot] = useState<GameStateSnapshot | undefined>(() => readGameStateSnapshot());
   const [hydratedGameState] = useState<PersistedGameState | undefined>(
-    () => hydrateGameStateForAccount(persistedGameSnapshot, account)
+    () => (isWalletConnected ? hydrateGameStateForAccount(persistedGameSnapshot, account) : undefined)
   );
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
