@@ -3359,7 +3359,13 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
       mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
       mission.returnAt = decodeUintWord(wordAt(words, 2)).toString();
-      mission.cargo = decodeResources(words.slice(3, 6));
+      // Do NOT overwrite mission.cargo here. FleetMissionReturnExposed carries the return-leg cargo,
+      // which the contract has already folded looted resources into (VeydriftCombatModule
+      // ._assignLootShare credits loot into mission.cargo before this event fires). Using it made
+      // "Cargo carried" report outbound cargo + loot — e.g. a pure attack that loaded 0 and looted
+      // 50 metal showed Cargo 50 / Loot 50 (VEY-404). The outbound launch cargo from
+      // FleetMissionCargo is authoritative for `cargo`; loot is surfaced separately from the
+      // AttackBattleResolved battle report.
     } else if (topic === fleetMissionReturnedTopic) {
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
       mission.status = "Returned";
