@@ -214,18 +214,18 @@ describe("canonicalSpendableResources (stale backend read / freeze projection)",
   });
 });
 
-describe("canonicalSpendableResources (settlement accrual from the on-chain settle time)", () => {
-  // Reproduces the VEY-318 regression: the backend returns resources stored at
-  // the planet's on-chain `lastSettledAt` (it does not pre-accrue uncollected
-  // production), so the top bar must project the settlement snapshot forward from
-  // that settle time. Projecting from the page-load time instead dropped the
-  // pre-load accrual and pinned Metal/Crystal at the raw last-settled value
-  // (stuck at 0 when the planet was last settled near 0).
+describe("canonicalSpendableResources (live tick from the snapshot read time)", () => {
+  // The backend resource snapshots are live `previewResources` reads (already
+  // accrued + capped), so the caller anchors them to the snapshot *read time*.
+  // These cases exercise the inter-poll live tick: given a snapshot read at the
+  // anchor, the canonical value accrues forward to `now` exactly once (both
+  // sources share the read-time anchor, so the element-wise minimum is a single
+  // projection — never the VEY-318 double-count from anchoring to `lastSettledAt`).
   const HOUR_MS = 3_600_000;
   const TOPBAR_CAPS = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
 
-  test("accrues uncollected production from a past settle time (Metal/Crystal off 0)", () => {
-    // Planet last settled 1h ago with Metal/Crystal drained to 0 by a spend.
+  test("accrues uncollected production forward from the read time, counted once", () => {
+    // previewResources read 1h before `now`, with Metal/Crystal at 0.
     const canonical = canonicalSpendableResources({
       settlementResources: { metal: 0, crystal: 0, deuterium: 2_531 },
       settlementSettledAtMs: 0,
@@ -236,12 +236,12 @@ describe("canonicalSpendableResources (settlement accrual from the on-chain sett
       now: HOUR_MS,
     });
     // 1h of accrual at the shown rates, counted exactly once: both sources share
-    // the same settle time and values, so the element-wise minimum is the single
-    // projection — no double counting.
+    // the same read-time anchor and values, so the element-wise minimum is the
+    // single projection — no double counting.
     expect(canonical).toEqual({ metal: 1_346, crystal: 627, deuterium: 2_641 });
   });
 
-  test("ticks up as `now` advances from a past settle time", () => {
+  test("ticks up as `now` advances past the read time", () => {
     const base = {
       settlementResources: { metal: 100, crystal: 100, deuterium: 100 },
       settlementSettledAtMs: 0,
@@ -257,7 +257,7 @@ describe("canonicalSpendableResources (settlement accrual from the on-chain sett
     expect(at40s!.metal).toBeGreaterThan(at10s!.metal);
   });
 
-  test("caps accrued settlement production at storage", () => {
+  test("caps accrued production at storage", () => {
     const canonical = canonicalSpendableResources({
       settlementResources: { metal: 9_990, crystal: 0, deuterium: 0 },
       settlementSettledAtMs: 0,
@@ -270,7 +270,7 @@ describe("canonicalSpendableResources (settlement accrual from the on-chain sett
     expect(canonical?.metal).toBe(10_000);
   });
 
-  test("freeze holds the settlement snapshot at its settle time even with settlementSettledAtMs supplied", () => {
+  test("freeze holds the snapshot at its read time even with settlementSettledAtMs supplied", () => {
     const canonical = canonicalSpendableResources({
       settlementResources: { metal: 2_200, crystal: 2_150, deuterium: 2_100 },
       settlementSettledAtMs: 0,
@@ -299,16 +299,74 @@ describe("canonicalSpendableResources (settlement accrual from the on-chain sett
   });
 });
 
+describe("VEY-318 double-count regression (anchor to read time, not lastSettledAt)", () => {
+  // Live evidence (2026-06-09, planet 1, wallet 0xbf74…08ee, contract 0xf12f):
+  // the backend `/settlement` + `/infrastructure` resources are live
+  // `previewResources` reads (already accrued + capped), e.g. crystal 10_033,
+  // while the planet's on-chain `lastSettledAt` was ~3.7h stale. PR #692 anchored
+  // the projection to `lastSettledAt`, so the top bar re-added 3.7h × rate of
+  // production a second time and read crystal ~12_819 vs on-chain
+  // previewResources ~10_483. Anchoring to the snapshot *read time* removes the
+  // double-count: at rest the canonical value equals the previewResources read.
+  const PREVIEW_READ = { metal: 11_359, crystal: 10_033, deuterium: 4_008 };
+  const RATES_LIVE = { metal: 1_594, crystal: 753, deuterium: 96 };
+  const CAPS_LIVE = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
+  const READ_AT_MS = 1_781_028_699_000; // when the snapshot was received
+
+  test("at the read time the canonical value equals the previewResources snapshot (no accrual added)", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: PREVIEW_READ,
+      settlementSettledAtMs: READ_AT_MS,
+      infrastructureResources: PREVIEW_READ,
+      infrastructureSettledAtMs: READ_AT_MS,
+      rates: RATES_LIVE,
+      caps: CAPS_LIVE,
+      now: READ_AT_MS,
+    });
+    expect(canonical).toEqual(PREVIEW_READ);
+  });
+
+  test("anchoring to a 3.7h-stale lastSettledAt would double-count (the bug we are guarding against)", () => {
+    const STALE_SETTLED_AT_MS = READ_AT_MS - 13_314_000; // ~3.7h before the read
+    const doubleCounted = canonicalSpendableResources({
+      settlementResources: PREVIEW_READ,
+      settlementSettledAtMs: STALE_SETTLED_AT_MS,
+      infrastructureResources: PREVIEW_READ,
+      infrastructureSettledAtMs: STALE_SETTLED_AT_MS,
+      rates: RATES_LIVE,
+      caps: CAPS_LIVE,
+      now: READ_AT_MS,
+    });
+    // Re-adds ~3.7h of crystal production on top of the already-accrued read.
+    expect(doubleCounted!.crystal).toBeGreaterThan(PREVIEW_READ.crystal + 2_000);
+  });
+
+  test("between polls it ticks up only by the seconds since the read, staying near previewResources", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: PREVIEW_READ,
+      settlementSettledAtMs: READ_AT_MS,
+      infrastructureResources: PREVIEW_READ,
+      infrastructureSettledAtMs: READ_AT_MS,
+      rates: RATES_LIVE,
+      caps: CAPS_LIVE,
+      now: READ_AT_MS + 30_000, // 30s later
+    });
+    // 30s × 753/h ≈ 6 crystal — a gentle live tick, not hours of double-count.
+    expect(canonical!.crystal).toBe(PREVIEW_READ.crystal + 6);
+  });
+});
+
 describe("VEY-318 displayed resources while a build is queued", () => {
   // Nikita's repro (2026-06-08): top-bar Metal/Crystal dropped to 0 and stopped
   // accruing while a crystal-mine build was queued, "coming back to normal" only
   // when the build completed. Starting a build re-settles the planet with
   // Metal/Crystal drained near 0 and leaves an active queue item whose cost is
   // subtracted from the spendable balance (clamped at zero). Before the fix the
-  // canonical value was pinned at the raw last-settled (~0) amount, so
-  // `balance − queueCost` clamped to 0 and stayed frozen until the build's
-  // completion settlement arrived. Accruing from the on-chain settle time lets
-  // the displayed balance climb back off 0 *during* the active queue.
+  // canonical value was pinned at the raw read amount with no live tick, so
+  // `balance − queueCost` clamped to 0 and stayed frozen until the next settle.
+  // Projecting the previewResources read forward from its read time (and the
+  // backend re-reading a growing previewResources each poll) lets the displayed
+  // balance climb back off 0 *during* the active queue.
   const HOUR_MS = 3_600_000;
   const rates = { metal: 1_346, crystal: 627, deuterium: 110 };
   const caps = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };

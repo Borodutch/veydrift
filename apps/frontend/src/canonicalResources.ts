@@ -67,27 +67,30 @@ export function minResources(
  * affordability gating.
  *
  * Both the settlement (`/wallet/<addr>/settlement`) and infrastructure
- * (`/wallet/<addr>/infrastructure`) endpoints return resources stored *at the
- * planet's on-chain `lastSettledAt`* — they do NOT pre-accrue uncollected
- * production. So each source is projected forward from its own settle time to
- * `now` here (`current = settled + rate × elapsed`, capped at storage) — this is
- * what makes the top bar tick up live and match on-chain `previewResources`.
- * Projecting from the on-chain settle time (not the page-load receipt time) is
- * essential: otherwise the production accrued before the page loaded is dropped
- * and the display stays pinned at the raw last-settled value (VEY-318: Metal /
- * Crystal stuck at 0 when the planet was last settled near 0).
+ * (`/wallet/<addr>/infrastructure`) endpoints read the contract's
+ * `previewResources(planetId)` live, so each `*Resources` snapshot is ALREADY
+ * the canonical accrued balance — stored value plus uncollected production,
+ * capped at storage — as of the moment it was read. They are NOT raw
+ * stored-at-settle values. The `*SettledAtMs` anchors must therefore be the
+ * snapshot *read time*, not the planet's on-chain `lastSettledAt`: each source
+ * is only projected forward from when it was read (`current = read + rate ×
+ * elapsed`, capped) to smoothly tick the display between backend polls. Anchor
+ * to `lastSettledAt` instead and the already-accrued snapshot is projected
+ * forward by every hour since the last settle a *second* time, over-reporting by
+ * `rate × (now − lastSettledAt)` (VEY-318 double-count: top bar read far above
+ * on-chain `previewResources`).
  *
  * The settlement endpoint adds production accrual without subtracting recent
  * spends, so it can over-report after a ship / research / defense / building
  * start until the planet is re-settled on-chain. The infrastructure endpoint
  * returns the accurate on-chain spendable balance. Taking the element-wise
- * minimum of the two — each projected forward to `now` — keeps the UI from ever
- * exceeding the accurate balance while still ticking up with production between
- * settlements. When one source is missing (e.g. infrastructure resources are
- * still warming), the other is used as-is.
+ * minimum of the two — each projected forward from its read time to `now` —
+ * keeps the UI from ever exceeding the accurate balance while still ticking up
+ * with production between polls. When one source is missing (e.g. infrastructure
+ * resources are still warming), the other is used as-is.
  *
  * `settlementSettledAtMs` defaults to `now` (project to self ⇒ no accrual) so a
- * caller that already projected the settlement snapshot, or that has no settle
+ * caller that already projected the settlement snapshot, or that has no read
  * time, keeps the previous behaviour.
  *
  * `freezeProjection` stops the forward production accrual. The displayed balance

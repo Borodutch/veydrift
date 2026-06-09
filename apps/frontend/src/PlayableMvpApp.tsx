@@ -2897,23 +2897,29 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     rates.deuterium,
     rates.metal,
   ]);
-  // The settlement snapshot (`onChainResources`) holds resources stored at the
-  // planet's on-chain `lastSettledAt`; the backend does not pre-accrue
-  // uncollected production. Project it forward from that on-chain settle time
-  // (falling back to the snapshot-received time when it is unavailable) so the
-  // displayed value includes production accrued before the page loaded and ticks
-  // up live — instead of staying pinned at the raw last-settled value (VEY-318).
-  const settlementSettledAtMs =
-    timestampToMs(onChainSettlement?.planet?.lastSettledAt ?? null) ?? topBarResourceSnapshotReceivedAtMs;
+  // The backend resource snapshots are NOT stored-at-settle values: both
+  // `/wallet/<addr>/settlement` and `/wallet/<addr>/infrastructure` read the
+  // contract's `previewResources(planetId)` live, so `onChainResources` already
+  // includes uncollected production accrued up to the moment the snapshot was
+  // read, capped at storage — it IS the canonical accrued balance. The on-chain
+  // `lastSettledAt` is the planet's last *settlement* timestamp (often hours
+  // old) and is unrelated to when the snapshot was read. Projecting the
+  // already-accrued snapshot forward from `lastSettledAt` re-adds every hour of
+  // production since the last settle a second time, over-reporting the top bar
+  // by exactly `rate × (now − lastSettledAt)` (VEY-318 double-count). Anchor the
+  // live projection to the snapshot *read time* instead, so the displayed value
+  // equals the canonical `previewResources` at rest and only ticks forward by
+  // the few seconds elapsed between backend polls.
+  const settlementReadAtMs = topBarResourceSnapshotReceivedAtMs;
   const liveOnChainResources = useMemo(() => {
     return projectResources({
       resources: onChainResources,
       rates,
       caps,
-      settledAtMs: settlementSettledAtMs,
+      settledAtMs: settlementReadAtMs,
       now,
     });
-  }, [caps, now, onChainResources, rates, settlementSettledAtMs]);
+  }, [caps, now, onChainResources, rates, settlementReadAtMs]);
   // Anchor the displayed/spendable balance to the canonical (accurate) value.
   // The settlement endpoint can over-report after a spend because it adds
   // production accrual without subtracting the recent cost; the infrastructure
@@ -2937,17 +2943,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     || Boolean(infrastructureError)
     || isInfrastructureBackendSyncPaused(infrastructureChainState);
   const canonicalOnChainResources = useMemo(() => {
-    // Pass the raw settlement snapshot plus its on-chain settle time; the helper
-    // projects both the settlement and infrastructure sources forward from their
-    // own settle times (and freezes both when the backend read is stale), so the
-    // top bar accrues uncollected production exactly once and never drifts to the
-    // storage cap during an outage.
+    // Both sources are live `previewResources` reads (already accrued + capped),
+    // so anchor each to the snapshot read time — NOT the on-chain `lastSettledAt`
+    // — and the helper only ticks them forward by the seconds elapsed since the
+    // last poll (and freezes both when the backend read is stale). The
+    // element-wise minimum keeps the spendable balance from ever exceeding the
+    // accurate read, and projecting from the read time keeps the top bar equal to
+    // canonical `previewResources` instead of double-counting hours of accrual.
     return canonicalSpendableResources({
       settlementResources: onChainResources,
-      settlementSettledAtMs: settlementSettledAtMs,
+      settlementSettledAtMs: settlementReadAtMs,
       infrastructureResources: resourcesFromChain(infrastructureChainState?.resources ?? null),
-      infrastructureSettledAtMs:
-        timestampToMs(infrastructureChainState?.planetLastSettledAt ?? null) ?? topBarResourceSnapshotReceivedAtMs,
+      infrastructureSettledAtMs: settlementReadAtMs,
       rates,
       caps,
       now,
@@ -2956,13 +2963,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [
     backendResourceReadStale,
     caps,
-    infrastructureChainState?.planetLastSettledAt,
     infrastructureChainState?.resources,
     now,
     onChainResources,
     rates,
-    settlementSettledAtMs,
-    topBarResourceSnapshotReceivedAtMs,
+    settlementReadAtMs,
   ]);
   // Raw, backend-known infrastructure balance used to detect when a pending
   // spend has settled (the read has dropped to reflect the cost).
