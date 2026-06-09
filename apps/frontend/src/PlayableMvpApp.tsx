@@ -112,6 +112,8 @@ import {
   fetchWalletPlanets,
   fetchFleetMissionArchive,
   fetchFleetMissionVisibility,
+  fetchGlobalActiveMissions,
+  fetchGlobalMissionArchive,
   fetchMission,
   fetchBattleReports,
   fetchAllianceState,
@@ -173,6 +175,8 @@ import {
   type Eip1193Provider,
   type FleetMissionVisibilityResponse,
   type FleetMissionArchiveResponse,
+  type FleetMissionSummary,
+  type GlobalMissionArchiveResponse,
   type MissionDetailResponse,
   type OnChainResources,
   type PendingWithdrawal,
@@ -1714,6 +1718,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [missionArchivePage, setMissionArchivePage] = useState(1);
   const [missionArchiveLoading, setMissionArchiveLoading] = useState(false);
   const [missionArchiveError, setMissionArchiveError] = useState<string | undefined>();
+  const [allActiveMissions, setAllActiveMissions] = useState<FleetMissionSummary[] | undefined>();
+  const [globalMissionArchive, setGlobalMissionArchive] = useState<GlobalMissionArchiveResponse | undefined>();
+  const [globalMissionArchivePage, setGlobalMissionArchivePage] = useState(1);
+  const [globalMissionArchiveLoading, setGlobalMissionArchiveLoading] = useState(false);
+  const [globalMissionArchiveError, setGlobalMissionArchiveError] = useState<string | undefined>();
   const [publicBattleReports, setPublicBattleReports] = useState<BattleReport[]>([]);
   const [publicBattleReportsLoading, setPublicBattleReportsLoading] = useState(false);
   const [publicBattleReportsError, setPublicBattleReportsError] = useState<string | undefined>();
@@ -2399,16 +2408,57 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, apiBaseUrl]);
 
+  const loadAllActiveMissions = useCallback(async () => {
+    if (!apiBaseUrl) {
+      setAllActiveMissions(undefined);
+      return;
+    }
+    try {
+      const response = await fetchGlobalActiveMissions(apiBaseUrl);
+      setAllActiveMissions(response.missions);
+    } catch (error) {
+      console.error(error);
+      // The "All" active tab is supplementary; failing to load it must not break My missions/Alliance.
+      setAllActiveMissions([]);
+    }
+  }, [apiBaseUrl]);
+
+  const loadGlobalMissionArchive = useCallback(async (page: number) => {
+    if (!apiBaseUrl) {
+      setGlobalMissionArchive(undefined);
+      setGlobalMissionArchiveError(undefined);
+      setGlobalMissionArchiveLoading(false);
+      return;
+    }
+
+    setGlobalMissionArchiveLoading(true);
+    setGlobalMissionArchiveError(undefined);
+    try {
+      const nextArchive = await fetchGlobalMissionArchive(apiBaseUrl, { page, pageSize: 25 });
+      setGlobalMissionArchive(nextArchive);
+      setGlobalMissionArchivePage(nextArchive.pagination.page);
+    } catch (error) {
+      console.error(error);
+      setGlobalMissionArchiveError(error instanceof Error ? error.message : "Universe mission archive could not be loaded.");
+    } finally {
+      setGlobalMissionArchiveLoading(false);
+    }
+  }, [apiBaseUrl]);
+
   useEffect(() => {
     if (page === "mission-control") {
       void loadMissionArchive(1);
+      void loadAllActiveMissions();
+      void loadGlobalMissionArchive(1);
     }
-  }, [account, apiBaseUrl, loadMissionArchive, page]);
+  }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, page]);
 
   const refreshMissionControl = useCallback(() => {
     void refreshOnChainState();
     void loadMissionArchive(missionArchivePage);
-  }, [loadMissionArchive, missionArchivePage, refreshOnChainState]);
+    void loadAllActiveMissions();
+    void loadGlobalMissionArchive(globalMissionArchivePage);
+  }, [globalMissionArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, missionArchivePage, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
     if (!apiBaseUrl || !account) {
@@ -5075,8 +5125,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return (
         <MissionControlPage
           actionState={missionAction}
+          allActiveMissions={allActiveMissions}
           canTransact={Boolean(provider && account && gameContract)}
           fleetVisibility={fleetVisibility}
+          globalMissionArchive={globalMissionArchive}
+          globalMissionArchiveError={globalMissionArchiveError}
+          globalMissionArchiveLoading={globalMissionArchiveLoading}
           loading={isWalletConnected && onChainStatus === "loading"}
           missionArchive={missionArchive}
           missionArchiveError={missionArchiveError}
@@ -5088,6 +5142,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}
+          onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
           onRefresh={refreshMissionControl}
           onResolve={handleResolveMission}

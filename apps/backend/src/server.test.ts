@@ -1074,6 +1074,60 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("serves universe-wide active missions from the indexed read model (all players, no wallet scope)", async () => {
+    const otherPlayer = "0x5555555555555555555555555555555555555555" as Address;
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "100" });
+    // One active mission from the connected wallet, one from a different wallet, and one already
+    // completed (must be excluded from the active feed).
+    for (const log of activeFleetMissionLogs({ missionId: 1n, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) indexer.applyLog(log);
+    for (const log of activeFleetMissionLogs({ missionId: 2n, owner: otherPlayer, originPlanetId: 9n, targetPlanetId: 7n })) indexer.applyLog(log);
+    for (const log of completedFleetMissionLogs({ missionId: 3n, owner: otherPlayer, originPlanetId: 9n, targetPlanetId: 8n })) indexer.applyLog(log);
+
+    const response = await createRequestHandler({ config: configuredTestConfig, chainReader, indexer })(
+      new Request("http://localhost/missions?status=active")
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    const ids = body.missions.map((mission: { missionId: string }) => mission.missionId).sort();
+    expect(ids).toEqual(["1", "2"]);
+    // Universe-wide: missions from a wallet other than the connected one are present.
+    expect(body.missions.some((mission: { owner: string }) => mission.owner.toLowerCase() === otherPlayer.toLowerCase())).toBe(true);
+    expect(body.missions.every((mission: { status: string }) => mission.status === "Outbound")).toBe(true);
+  });
+
+  test("serves paginated universe-wide completed mission archive (all players, no wallet scope)", async () => {
+    const otherPlayer = "0x5555555555555555555555555555555555555555" as Address;
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "100" });
+    // 26 completed missions split across two wallets so a global archive must page across both.
+    for (let missionId = 1n; missionId <= 26n; missionId += 1n) {
+      const owner = missionId % 2n === 0n ? otherPlayer : player;
+      for (const log of completedFleetMissionLogs({ missionId, owner, originPlanetId: 7n, targetPlanetId: 8n })) indexer.applyLog(log);
+    }
+
+    const response = await createRequestHandler({ config: configuredTestConfig, chainReader, indexer })(
+      new Request("http://localhost/missions?status=completed&page=2&pageSize=25")
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.wallet).toBeUndefined();
+    expect(body.pagination).toEqual({
+      page: 2,
+      pageSize: 25,
+      totalEntries: 26,
+      totalPages: 2,
+      hasPreviousPage: true,
+      hasNextPage: false
+    });
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({ kind: "mission", mission: { status: "Returned" } });
+  });
+
   test("keeps galaxy planet rows indexed-only instead of resolving owner alliance through chain reader calls", async () => {
     const chainReader = new class extends MockChainReader {
       async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
@@ -4471,6 +4525,17 @@ function completedFleetMissionLogs({
       logIndex: Number(missionId * 10n + 3n),
     }),
   ];
+}
+
+// A launched-but-not-resolved mission (status "Outbound"): the first three logs of a completed
+// mission without the trailing "returned" event.
+function activeFleetMissionLogs(args: {
+  missionId: bigint;
+  owner: Address;
+  originPlanetId: bigint;
+  targetPlanetId: bigint;
+}): IndexedRpcLog[] {
+  return completedFleetMissionLogs(args).slice(0, 3);
 }
 
 function fleetMissionLog({

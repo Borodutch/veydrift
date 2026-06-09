@@ -301,6 +301,18 @@ export type FleetMissionArchiveResponse = {
   };
 };
 
+// Universe-wide (no wallet scope) active missions feed for the Mission Control "All" tab.
+export type GlobalActiveMissionsResponse = {
+  missions: FleetMissionSummary[];
+};
+
+// Universe-wide completed mission archive for the Mission Control past "All" tab. Mirrors the
+// per-wallet archive pagination contract but carries no wallet scope.
+export type GlobalMissionArchiveResponse = {
+  rows: FleetMissionArchiveEntry[];
+  pagination: FleetMissionArchiveResponse["pagination"];
+};
+
 export type FleetMissionSummary = {
   missionId: string;
   status: string;
