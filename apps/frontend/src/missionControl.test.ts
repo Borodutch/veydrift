@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
+import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -961,6 +961,61 @@ describe("Mission Control battle reports", () => {
         && findElements(node, "div").some((child) => child.props?.["data-route-direction"] !== undefined);
     });
     expect(routeRow).toBeDefined();
+  });
+
+  // VEY-412: Mission Control remembers the selected tabs + past page across the mission-detail
+  // round-trip. The view is rendered from a persisted value (sessionStorage in the browser); here we
+  // pass it explicitly to assert the selection is reflected directly in the markup.
+  function sectionByData(tree: unknown, attribute: string): FoundElement | undefined {
+    return findElements(tree, "section").find((node) => node.props?.[attribute] !== undefined);
+  }
+
+  test("defaults to the My missions tabs on a fresh render (VEY-412)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const tree = MissionControlPage(missionControlProps(now, { outgoing: [mission("11")] }));
+
+    expect(sectionByData(tree, "data-active-tab")?.props?.["data-active-tab"]).toBe("mine");
+    expect(sectionByData(tree, "data-past-tab")?.props?.["data-past-tab"]).toBe("mine");
+  });
+
+  test("restores the persisted active + past tab selection (VEY-412)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const view: MissionControlView = { activePage: 0, activeTab: "all", pastPage: 0, pastTab: "all" };
+    const tree = MissionControlPage({ ...missionControlProps(now, { outgoing: [mission("11")] }), initialView: view });
+
+    // The sections advertise the restored tab, the restored tab buttons read selected, and the
+    // restored panels are the visible (non-hidden) ones.
+    expect(sectionByData(tree, "data-active-tab")?.props?.["data-active-tab"]).toBe("all");
+    expect(sectionByData(tree, "data-past-tab")?.props?.["data-past-tab"]).toBe("all");
+
+    const activeAllButton = findElements(tree, "button").find((node) => node.props?.["data-active-tab-button"] === "all");
+    expect(activeAllButton?.props?.["aria-selected"]).toBe(true);
+    const pastAllButton = findElements(tree, "button").find((node) => node.props?.["data-past-tab-button"] === "all");
+    expect(pastAllButton?.props?.["aria-selected"]).toBe(true);
+
+    const activeAllPanel = findElements(tree, "div").find((node) => node.props?.["data-active-tab-panel"] === "all");
+    expect(activeAllPanel?.props?.hidden).toBe(false);
+    const activeMinePanel = findElements(tree, "div").find((node) => node.props?.["data-active-tab-panel"] === "mine");
+    expect(activeMinePanel?.props?.hidden).toBe(true);
+  });
+
+  test("restores the persisted active-missions pagination page (VEY-412)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // 30 own outbound missions => two client pages in the "My missions" panel (25 per page).
+    const outgoing = Array.from({ length: 30 }, (_unused, index) => mission(`page-${index}`));
+    const view: MissionControlView = { activePage: 1, activeTab: "mine", pastPage: 0, pastTab: "mine" };
+    const tree = MissionControlPage({ ...missionControlProps(now, { outgoing }), initialView: view });
+
+    // The visible "mine" panel is the only one with rendered rows, so it owns the single page marker.
+    const pageHolder = findElements(tree, "div").find((node) => node.props?.["data-past-page-current"] !== undefined);
+    expect(pageHolder?.props?.["data-past-page-current"]).toBe("1");
+
+    const pagePanels = findElements(tree, "div").filter((node) => node.props?.["data-past-page"] !== undefined);
+    const firstPage = pagePanels.find((node) => node.props?.["data-past-page"] === 0);
+    const secondPage = pagePanels.find((node) => node.props?.["data-past-page"] === 1);
+    // Page 2 (index 1) is shown; page 1 (index 0) is hidden — the remembered page, not page 1.
+    expect(firstPage?.props?.hidden).toBe(true);
+    expect(secondPage?.props?.hidden).toBe(false);
   });
 });
 
