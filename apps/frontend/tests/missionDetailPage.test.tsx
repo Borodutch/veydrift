@@ -116,6 +116,85 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
   });
 });
 
+describe("MissionDetailPage route arrow + planet art (VEY-403)", () => {
+  const originPlanet = {
+    planetId: "7", owner: "0x1111111111111111111111111111111111111111", ownerDisplayName: null,
+    name: "Helios", galaxy: 1, system: 2, position: 3, coordinates: "1:2:3",
+  };
+  const targetPlanet = {
+    planetId: "9", owner: "0x2222222222222222222222222222222222222222", ownerDisplayName: null,
+    name: "Borealis", galaxy: 4, system: 5, position: 6, coordinates: "4:5:6",
+  };
+
+  function renderDetailTree(detail: MissionDetailResponse) {
+    const noop = () => {};
+    return MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" } as MissionDetailActionState,
+      canTransact: false,
+      copyState: "idle",
+      detail,
+      error: undefined,
+      loading: false,
+      missionId: detail.mission.missionId,
+      now: 1_770_001_000_000,
+      onBack: noop,
+      onCompleteReturn: noop,
+      onCopyShareUrl: noop,
+      onCounterplay: noop,
+      onOpenPlayer: undefined,
+      onRecall: noop,
+      onResolve: noop,
+      onRetry: noop,
+      onSelectCoordinates: noop,
+      onSelectPlayer: noop,
+    });
+  }
+
+  test("outbound mission renders a forward route arrow and planet art for both endpoints", () => {
+    const mission = combatMission({
+      status: "Outbound",
+      arrivalAt: "1770001150", // mid-flight relative to now (1,770,001,000,000 ms)
+      returnAt: "1770001450",
+      originPlanet,
+      targetPlanet,
+    });
+    const tree = renderDetailTree({ mission, battleReport: null });
+
+    const arrow = hostElements(tree).find((node) => Boolean(node.props?.["data-route-direction"]));
+    expect(arrow?.props?.["data-route-direction"]).toBe("outbound");
+    expect(Number(arrow?.props?.["data-route-progress"])).toBeGreaterThan(0);
+
+    const planetImages = hostElements(tree).filter((node) => node.type === "img" && String(node.props?.src ?? "").includes("/planets/"));
+    expect(planetImages.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("returning mission points the route arrow back toward home", () => {
+    const mission = combatMission({ status: "Returning", originPlanet, targetPlanet });
+    const tree = renderDetailTree({ mission, battleReport: null });
+
+    const arrow = hostElements(tree).find((node) => Boolean(node.props?.["data-route-direction"]));
+    expect(arrow?.props?.["data-route-direction"]).toBe("returning");
+  });
+});
+
+type HostElement = { props?: Record<string, unknown>; type?: unknown };
+
+// Walks the rendered tree (expanding function components, skipping lucide icons) and returns every
+// intrinsic host element, so a test can read data attributes / img src on the route arrow + planets.
+function hostElements(node: ComponentChildren): HostElement[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) return node.flatMap(hostElements);
+  if (typeof node !== "object") return [];
+  const vnode = node as VNode;
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) return [];
+    return hostElements((vnode.type as (props: unknown) => ComponentChildren)(vnode.props));
+  }
+  const self = typeof vnode.type === "string" ? [vnode as HostElement] : [];
+  return self.concat(hostElements(vnode.props?.children as ComponentChildren));
+}
+
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();
 }

@@ -1711,11 +1711,11 @@ function pastRowTimestamp(row: PastMissionRow): number {
 
 // A mission's home leg — the fleet is heading back to its origin (VEY-403), which is when the
 // directional route arrow points home and fills along the return rather than the outbound leg.
-function isReturnLeg(status: string): boolean {
+export function isReturnLeg(status: string): boolean {
   return status === "Recalled" || status === "Returned" || status === "Returning";
 }
 
-function missionProgressPercent(mission: FleetMissionSummary, now: number): number {
+export function missionProgressPercent(mission: FleetMissionSummary, now: number): number {
   const arrivalAt = timestampToMs(mission.arrivalAt);
   const returnAt = timestampToMs(mission.returnAt);
   if (arrivalAt === undefined || returnAt === undefined) return 0;

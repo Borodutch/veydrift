@@ -1,11 +1,12 @@
-import { ArrowLeft, ArrowRight, Check, RefreshCw, Share2, Swords } from "lucide-preact";
+import { ArrowLeft, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
+import { planetImageFromCoordinates } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import type { Coordinates } from "../types";
 import { type BattleReport, type DefenderPlanetState, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
-import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
+import { isReturnLeg, missionLifecycleActions, missionProgressPercent, type MissionLifecycleAction } from "./MissionControlPage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
 type MissionActionContext = "due" | "incoming" | "outgoing" | "returning";
@@ -271,9 +272,7 @@ function MissionRoute({
           onSelectPlayer={onSelectPlayer}
           timing={{ label: "Return", value: noFleetReturned ? "Completed, no fleet returned" : formatMissionTime(mission.returnAt, now) }}
         />
-        <div aria-hidden="true" className="flex items-center justify-center text-slate-500">
-          <ArrowRight className="rotate-90 md:rotate-0" size={20} />
-        </div>
+        <RouteProgressArrow progressPercent={missionProgressPercent(mission, now)} returning={isReturnLeg(mission.status)} />
         <RouteEndpoint
           commander={targetCommander}
           endpoint={target}
@@ -287,10 +286,48 @@ function MissionRoute({
   );
 }
 
+// The directional filled route arrow for the detail hero (VEY-403). Mirrors the Mission Control
+// card arrow: it fills with mission progress along the active leg and points the way the fleet is
+// travelling — outbound origin -> target, returning back toward home — and reorients vertically when
+// the endpoints stack on mobile so the fill still flows origin (top) -> target (bottom) and back.
+function RouteProgressArrow({ progressPercent, returning }: { progressPercent: number; returning: boolean }) {
+  const pct = Math.round(Math.max(0, Math.min(100, progressPercent)));
+  return (
+    <div
+      aria-hidden="true"
+      className="flex items-center justify-center rotate-90 md:rotate-0"
+      data-route-arrow=""
+      data-route-direction={returning ? "returning" : "outbound"}
+      data-route-progress={String(pct)}
+    >
+      <div className="flex w-16 items-center gap-1">
+        {returning ? <RouteArrowHead active={pct > 0} direction="left" /> : null}
+        <div className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-white/10">
+          <div
+            className={`absolute inset-y-0 rounded-full bg-cyan-300 ${returning ? "right-0" : "left-0"}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        {returning ? null : <RouteArrowHead active={pct > 0} direction="right" />}
+      </div>
+    </div>
+  );
+}
+
+function RouteArrowHead({ active, direction }: { active: boolean; direction: "left" | "right" }) {
+  const color = active ? "#67e8f9" : "rgba(148,163,184,0.5)";
+  const style = direction === "right"
+    ? { borderBottom: "4px solid transparent", borderLeft: `6px solid ${color}`, borderTop: "4px solid transparent" }
+    : { borderBottom: "4px solid transparent", borderRight: `6px solid ${color}`, borderTop: "4px solid transparent" };
+  return <span aria-hidden="true" className="h-0 w-0 shrink-0" style={style} />;
+}
+
 type RouteEndpointData = {
   coordinates: Coordinates | null;
   coordinatesLabel: string | null;
   displayName: string;
+  // Real per-type planet art for the endpoint (VEY-403); null when coordinates are unavailable.
+  planetImage: string | null;
 };
 
 function RouteEndpoint({
@@ -311,8 +348,22 @@ function RouteEndpoint({
   const coords = endpoint.coordinates;
   return (
     <div className="grid content-start gap-1.5 rounded-md border border-white/10 bg-black/20 p-3">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{kind}</p>
-      <p className="break-words text-sm font-semibold text-white">{endpoint.displayName}</p>
+      <div className="flex items-center gap-2">
+        {endpoint.planetImage ? (
+          <img
+            alt=""
+            className="h-9 w-9 shrink-0 rounded-full border border-white/10 object-cover"
+            loading="lazy"
+            src={endpoint.planetImage}
+          />
+        ) : (
+          <span aria-hidden="true" className="h-9 w-9 shrink-0 rounded-full border border-white/10 bg-white/5" />
+        )}
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{kind}</p>
+          <p className="break-words text-sm font-semibold text-white">{endpoint.displayName}</p>
+        </div>
+      </div>
       {coords && endpoint.coordinatesLabel ? (
         <button
           className="w-fit rounded font-mono text-xs text-cyan-200 underline decoration-cyan-300/40 underline-offset-2 transition hover:text-cyan-100 hover:decoration-cyan-200"
@@ -605,23 +656,34 @@ function formatMissionTime(value: string, now: number): string {
 
 function routeEndpoint(planet: FleetMissionPlanetReference | null | undefined, fallbackId: string): RouteEndpointData {
   if (planet) {
+    const coordinates = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
     return {
-      coordinates: { galaxy: planet.galaxy, system: planet.system, position: planet.position },
+      coordinates,
       coordinatesLabel: planet.coordinates,
       displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
+      planetImage: planetImageForCoordinates(coordinates),
     };
   }
   // Colonize targets are unsettled coordinates packed behind a flag bit, so there is no
   // indexed planet but the destination coordinates are still recoverable and clickable.
   const colonyTarget = decodeColonizationTargetId(fallbackId);
   if (colonyTarget) {
+    const coordinates = { galaxy: colonyTarget.galaxy, system: colonyTarget.system, position: colonyTarget.position };
     return {
-      coordinates: { galaxy: colonyTarget.galaxy, system: colonyTarget.system, position: colonyTarget.position },
+      coordinates,
       coordinatesLabel: colonyTarget.coordinates,
       displayName: "Uncharted",
+      planetImage: planetImageForCoordinates(coordinates),
     };
   }
-  return { coordinates: null, coordinatesLabel: null, displayName: `Planet #${fallbackId}` };
+  return { coordinates: null, coordinatesLabel: null, displayName: `Planet #${fallbackId}`, planetImage: null };
+}
+
+// The real per-type planet art (Galaxy thumbnail asset, VEY-67) for a route endpoint's coordinates;
+// null when the destination has no resolvable coordinates.
+function planetImageForCoordinates(coords: Coordinates | null): string | null {
+  if (!coords) return null;
+  return planetImageFromCoordinates(coords.galaxy, coords.system, coords.position);
 }
 
 function missionTypeLabel(value: string): string {
