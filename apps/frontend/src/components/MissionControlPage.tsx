@@ -1024,15 +1024,12 @@ function PastMissionSummaryRow({
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
-  const completedAt = missionCompletionTimestamp(mission);
   const missionDirection = resolveMissionDirection({ mission, wallet, walletPlanetIds });
   const origin = missionEndpoint(mission, "origin", planetLookup);
   const target = missionEndpoint(mission, "target", planetLookup);
-  // VEY-399#9: the completion stamp moves out of the Mission column to sit under the Route,
-  // matching how active rows show per-side timing.
-  const routeSubtext = completedAt === undefined
-    ? missionStatusLabel(mission.status)
-    : `${missionStatusLabel(mission.status)} · ${formatUserTimestamp(completedAt)}`;
+  // VEY-399 rework (#9634 -> #9636): the mission status word (e.g. "Returned") sits as subtext
+  // under the MISSION column, beneath the badge/number. No date/time is shown for past rows.
+  const missionSubtext = missionStatusLabel(mission.status);
   return (
     <MissionTableRow
       actions={
@@ -1057,7 +1054,7 @@ function PastMissionSummaryRow({
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
       origin={origin}
-      routeSubtext={routeSubtext}
+      subtext={missionSubtext}
       target={target}
     />
   );
