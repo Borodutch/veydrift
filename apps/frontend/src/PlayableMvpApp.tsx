@@ -2996,8 +2996,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       onChainQueues?.research,
       onChainQueues?.defense,
     ]);
-    // Skip spends the accurate infrastructure snapshot already reflects (settled
-    // at/after the spend) so they are not subtracted twice.
+    // A fresh infrastructure snapshot already reflects every active on-chain
+    // queue cost (the contract deducts at queue start in the same settlement that
+    // advances `lastSettledAt`), so when its settle time is known these spends are
+    // skipped to avoid double-subtracting — the VEY-318 repro where Metal/Crystal
+    // stayed pinned at 0 for the whole build. They are only subtracted when the
+    // accurate read is unavailable/stale (settle time unknown), as over-report
+    // protection; fresh in-session spends are covered by the pending-spend ledger.
     return unsettledQueueSpendCosts(
       queueSpends,
       timestampToMs(infrastructureChainState?.planetLastSettledAt ?? null),
