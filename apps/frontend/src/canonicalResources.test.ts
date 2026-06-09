@@ -299,6 +299,94 @@ describe("canonicalSpendableResources (settlement accrual from the on-chain sett
   });
 });
 
+describe("canonicalSpendableResources (on-chain previewResources anchor)", () => {
+  // Reproduces the VEY-318 over-report: the backend snapshot is already accrued
+  // toward `now`, so projecting it forward AGAIN double-counts the elapsed
+  // production (frontend crystal 12,143 vs on-chain previewResources 10,155). The
+  // min(settlement, infrastructure) guard does not catch it because BOTH backend
+  // sources get the same double projection. A direct on-chain previewResources
+  // read is the authoritative spendable and clamps the result back to the chain.
+  const HOUR_MS = 3_600_000;
+  const TOPBAR_CAPS = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
+  const rates = { metal: 0, crystal: 753, deuterium: 0 };
+
+  test("clamps a double-counted backend projection down to the on-chain preview", () => {
+    // Both backend sources were already accrued to `now` (crystal 10,155) but
+    // carry an hour-old settle time, so projecting forward adds ~753 crystal a
+    // second time -> 10,908. The preview read (10,155, taken now) clamps it back.
+    const overReported = { metal: 6_000, crystal: 10_908, deuterium: 4_000 };
+    const canonical = canonicalSpendableResources({
+      settlementResources: overReported,
+      settlementSettledAtMs: 0,
+      infrastructureResources: overReported,
+      infrastructureSettledAtMs: 0,
+      previewResources: { metal: 6_000, crystal: 10_155, deuterium: 4_000 },
+      previewSettledAtMs: HOUR_MS,
+      rates,
+      caps: TOPBAR_CAPS,
+      now: HOUR_MS,
+    });
+    expect(canonical).toEqual({ metal: 6_000, crystal: 10_155, deuterium: 4_000 });
+  });
+
+  test("preview anchor never lets the displayed balance exceed the chain", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 9_999, crystal: 9_999, deuterium: 9_999 },
+      infrastructureResources: { metal: 9_999, crystal: 9_999, deuterium: 9_999 },
+      infrastructureSettledAtMs: 0,
+      previewResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      previewSettledAtMs: 0,
+      rates: { metal: 0, crystal: 0, deuterium: 0 },
+      caps: CAPS,
+      now: 0,
+    });
+    expect(canonical).toEqual({ metal: 2_117, crystal: 2_091, deuterium: 2_100 });
+  });
+
+  test("ticks the preview anchor forward from its own read time between reads", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 100_000, crystal: 100_000, deuterium: 100_000 },
+      infrastructureResources: { metal: 100_000, crystal: 100_000, deuterium: 100_000 },
+      infrastructureSettledAtMs: 0,
+      previewResources: { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
+      // Preview read 10s ago; 3600/h == 1/s so it should accrue ~10 by now.
+      previewSettledAtMs: 0,
+      rates: { metal: 3_600, crystal: 0, deuterium: 0 },
+      caps: CAPS,
+      now: 10_000,
+    });
+    expect(canonical).toEqual({ metal: 1_010, crystal: 1_000, deuterium: 1_000 });
+  });
+
+  test("falls back to the settlement/infrastructure minimum when no preview read is available", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: { metal: 5_000, crystal: 5_000, deuterium: 5_000 },
+      infrastructureResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      infrastructureSettledAtMs: 0,
+      previewResources: undefined,
+      rates: { metal: 0, crystal: 0, deuterium: 0 },
+      caps: CAPS,
+      now: 0,
+    });
+    expect(canonical).toEqual({ metal: 2_117, crystal: 2_091, deuterium: 2_100 });
+  });
+
+  test("freeze holds the preview anchor at its read time (no drift toward the cap)", () => {
+    const canonical = canonicalSpendableResources({
+      settlementResources: undefined,
+      infrastructureResources: undefined,
+      infrastructureSettledAtMs: 0,
+      previewResources: { metal: 2_117, crystal: 2_091, deuterium: 2_100 },
+      previewSettledAtMs: 0,
+      rates: RATES,
+      caps: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      now: 100 * HOUR_MS,
+      freezeProjection: true,
+    });
+    expect(canonical).toEqual({ metal: 2_117, crystal: 2_091, deuterium: 2_100 });
+  });
+});
+
 describe("VEY-318 displayed resources while a build is queued", () => {
   // Nikita's repro (2026-06-08): top-bar Metal/Crystal dropped to 0 and stopped
   // accruing while a crystal-mine build was queued, "coming back to normal" only

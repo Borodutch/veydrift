@@ -159,6 +159,7 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
+  fetchPreviewResources,
   isUserRejected,
   updatePlayerDisplayName,
   type ChainDefenseState,
@@ -263,6 +264,10 @@ const buildingWalletConfirmationLabel = (label: string) =>
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
+// A direct on-chain `previewResources` read older than this is treated as stale
+// and dropped, so a read taken before a deposit / settlement can never pin the
+// displayed balance below the player's real spendable while the chain catches up.
+const PREVIEW_RESOURCES_STALE_AFTER_MS = TOP_BAR_RESOURCE_POLL_INTERVAL_MS * 3;
 
 type RefreshFreshnessGate = { current: number };
 export type ResourceSnapshotFreshness = {
@@ -1688,6 +1693,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>(() => initialSelectedCoords());
   const [onChainSettlement, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>();
   const [topBarResourceSnapshotReceivedAtMs, setTopBarResourceSnapshotReceivedAtMs] = useState(() => Date.now());
+  // Direct on-chain `previewResources(planetId)` read used to anchor the
+  // displayed/spendable balance to the contract's authoritative value so the top
+  // bar never over-reports (VEY-318). `readAtMs` is the wall-clock read time the
+  // value is projected forward from; `planetId` guards against applying a read
+  // taken for a different planet after a fast planet switch.
+  const [onChainPreviewResources, setOnChainPreviewResources] = useState<
+    { resources: Resources; readAtMs: number; planetId: string } | undefined
+  >();
   const applyOnChainSettlementSnapshot = useCallback((settlement: WalletSettlementResponse | undefined) => {
     setTopBarResourceSnapshotReceivedAtMs(Date.now());
     setOnChainSettlementState(settlement);
@@ -2837,6 +2850,58 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     refreshOnChainState,
   ]);
 
+  // Anchor the top bar to the chain: poll the contract's `previewResources` for
+  // the active planet on the same cadence as the backend reads. The direct
+  // on-chain read is the authoritative current spendable (stored + accrual,
+  // capped), so the displayed/affordability balance can be clamped to it and can
+  // never over-report production a transaction would not actually have — the
+  // VEY-318 double-count where the top bar showed crystal 12,143 vs on-chain
+  // previewResources 10,155.
+  useEffect(() => {
+    const planetId = activePlanetId ?? onChainSettlement?.homePlanetId ?? undefined;
+    if (!provider || !gameContract || !planetId) {
+      setOnChainPreviewResources(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    let readInFlight = false;
+    const readPreview = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      if (readInFlight) {
+        return;
+      }
+      readInFlight = true;
+      fetchPreviewResources(provider, gameContract, planetId)
+        .then((preview) => {
+          if (cancelled) return;
+          const resources = {
+            metal: safeResourceNumber(Number(preview.metal)) ?? 0,
+            crystal: safeResourceNumber(Number(preview.crystal)) ?? 0,
+            deuterium: safeResourceNumber(Number(preview.deuterium)) ?? 0,
+          };
+          setOnChainPreviewResources({ resources, readAtMs: Date.now(), planetId });
+        })
+        .catch(() => {
+          // Best-effort anchor: a transient RPC failure keeps the previous read
+          // (which the consumer drops once stale) and falls back to the
+          // settlement/infrastructure minimum. Don't clear a good read on error.
+        })
+        .finally(() => {
+          readInFlight = false;
+        });
+    };
+
+    readPreview();
+    const interval = window.setInterval(readPreview, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activePlanetId, gameContract, onChainSettlement?.homePlanetId, provider]);
+
   const state = useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState, now), [infrastructureChainState, now]);
   const settledState = state;
   const planetProductionProfile = useMemo<PlanetProductionProfile | undefined>(() => {
@@ -2936,18 +3001,33 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainStatus === "error"
     || Boolean(infrastructureError)
     || isInfrastructureBackendSyncPaused(infrastructureChainState);
+  // The direct on-chain `previewResources` read, but only when it is for the
+  // active planet and recent. A stale read (taken before a deposit / settlement)
+  // is dropped so it can never clamp the displayed balance below the player's
+  // real spendable; a planet mismatch is dropped after a fast planet switch.
+  const freshPreviewResources = useMemo(() => {
+    if (!onChainPreviewResources) return undefined;
+    const displayPlanetId = activePlanetId ?? onChainSettlement?.homePlanetId ?? undefined;
+    if (displayPlanetId && onChainPreviewResources.planetId !== displayPlanetId) return undefined;
+    if (now - onChainPreviewResources.readAtMs > PREVIEW_RESOURCES_STALE_AFTER_MS) return undefined;
+    return onChainPreviewResources;
+  }, [activePlanetId, now, onChainPreviewResources, onChainSettlement?.homePlanetId]);
   const canonicalOnChainResources = useMemo(() => {
     // Pass the raw settlement snapshot plus its on-chain settle time; the helper
-    // projects both the settlement and infrastructure sources forward from their
-    // own settle times (and freezes both when the backend read is stale), so the
-    // top bar accrues uncollected production exactly once and never drifts to the
-    // storage cap during an outage.
+    // projects the settlement, infrastructure, and direct-chain preview sources
+    // forward from their own settle/read times (and freezes them when the backend
+    // read is stale), so the top bar accrues uncollected production exactly once
+    // and never drifts to the storage cap during an outage. The preview read
+    // caps the result at the chain's authoritative spendable so a double-counted
+    // backend projection can never over-report (VEY-318).
     return canonicalSpendableResources({
       settlementResources: onChainResources,
       settlementSettledAtMs: settlementSettledAtMs,
       infrastructureResources: resourcesFromChain(infrastructureChainState?.resources ?? null),
       infrastructureSettledAtMs:
         timestampToMs(infrastructureChainState?.planetLastSettledAt ?? null) ?? topBarResourceSnapshotReceivedAtMs,
+      previewResources: freshPreviewResources?.resources,
+      previewSettledAtMs: freshPreviewResources?.readAtMs,
       rates,
       caps,
       now,
@@ -2956,6 +3036,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [
     backendResourceReadStale,
     caps,
+    freshPreviewResources,
     infrastructureChainState?.planetLastSettledAt,
     infrastructureChainState?.resources,
     now,
