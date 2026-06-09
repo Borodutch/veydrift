@@ -116,6 +116,38 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
   });
 });
 
+describe("MissionDetailPage Route timing copy", () => {
+  // VEY-405: a completed leg should collapse to a single past-tense word — "Returned"
+  // for the origin, "Arrived" for the target — dropping the RETURN/ARRIVAL caption, the
+  // timestamp, and the generic building-queue "(Ready)" suffix entirely.
+  test("collapses a completed leg to just Returned/Arrived", () => {
+    // combatMission's arrivalAt/returnAt are both before the fixed `now` in renderDetailText.
+    const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null });
+
+    expect(text).toContain("Arrived");
+    expect(text).toContain("Returned");
+    expect(text).not.toContain("(Ready)");
+    // The RETURN/ARRIVAL captions are dropped for completed legs, so "Return Returned"
+    // / "Arrival Arrived" must NOT appear.
+    expect(text).not.toContain("Return Returned");
+    expect(text).not.toContain("Arrival Arrived");
+  });
+
+  test("keeps the caption, absolute time, and countdown for an in-flight leg", () => {
+    const text = renderDetailText({
+      mission: combatMission({ status: "Outbound", arrivalAt: "1770002000", returnAt: "1770003000" }),
+      battleReport: battleReport(),
+      defenderPlanetState: null,
+    });
+
+    expect(text).not.toContain("Arrived");
+    expect(text).not.toContain("Returned");
+    // In-flight legs still render their caption plus the relative countdown in parentheses.
+    expect(text).toMatch(/Arrival .+\(/);
+    expect(text).toMatch(/Return .+\(/);
+  });
+});
+
 // VEY-KANEO-409: the "Recall cost" row in the Fleet And Cargo panel is only meaningful while a fleet
 // is still in flight. For a finished (non-recalled) mission it would only read "Not recallable", so
 // the row is hidden. (These cases render the standalone facts panel by omitting the battle report.)

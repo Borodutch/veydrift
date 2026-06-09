@@ -272,7 +272,9 @@ function MissionRoute({
           kind="Origin"
           onSelectCoordinates={onSelectCoordinates}
           onSelectPlayer={onSelectPlayer}
-          timing={{ label: "Return", value: noFleetReturned ? "Completed, no fleet returned" : formatMissionTime(mission.returnAt, now) }}
+          timing={noFleetReturned
+            ? { label: "Return", value: "Completed, no fleet returned" }
+            : missionLegTiming(mission.returnAt, now, "Return", "Returned")}
         />
         <div aria-hidden="true" className="flex items-center justify-center text-slate-500">
           <ArrowRight className="rotate-90 md:rotate-0" size={20} />
@@ -283,7 +285,7 @@ function MissionRoute({
           kind="Target"
           onSelectCoordinates={onSelectCoordinates}
           onSelectPlayer={onSelectPlayer}
-          timing={{ label: "Arrival", value: formatMissionTime(mission.arrivalAt, now) }}
+          timing={missionLegTiming(mission.arrivalAt, now, "Arrival", "Arrived")}
         />
       </div>
     </section>
@@ -309,7 +311,7 @@ function RouteEndpoint({
   kind: string;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectPlayer: (wallet: string) => void;
-  timing: { label: string; value: string };
+  timing: { label: string | null; value: string };
 }) {
   const coords = endpoint.coordinates;
   return (
@@ -332,7 +334,9 @@ function RouteEndpoint({
       )}
       <CommanderLink commander={commander} onSelectPlayer={onSelectPlayer} />
       <p className="mt-1 border-t border-white/5 pt-2 text-xs text-slate-400">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label}</span>{" "}
+        {timing.label ? (
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label} </span>
+        ) : null}
         <span className="break-words text-slate-300">{timing.value}</span>
       </p>
     </div>
@@ -603,6 +607,23 @@ function showsRecallCost(mission: FleetMissionSummary): boolean {
 
 function isCombatMission(mission: FleetMissionSummary): boolean {
   return ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType);
+}
+
+// Timing shown beside a route endpoint. A completed leg collapses to a single
+// past-tense word with no caption, timestamp, or "(Ready)" suffix — the origin
+// reads "Returned" and the target "Arrived". A leg still in flight keeps its
+// caption plus absolute time and ETA.
+function missionLegTiming(
+  value: string,
+  now: number,
+  label: string,
+  pastLabel: string,
+): { label: string | null; value: string } {
+  const ms = timestampToMs(value);
+  if (ms != null && ms > 0 && ms <= now) {
+    return { label: null, value: pastLabel };
+  }
+  return { label, value: formatMissionTime(value, now) };
 }
 
 function formatMissionTime(value: string, now: number): string {

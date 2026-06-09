@@ -752,7 +752,10 @@ describe("Mission Control battle reports", () => {
     const selectedCoords: Coordinates[] = [];
     const selectedPlayers: string[] = [];
     const detailMission: FleetMissionSummary = {
-      ...mission("42", "Attack", "Outbound", owner, "7", "9", now - 60_000),
+      // Outbound mission still in flight: arrival/return are in the future, so the
+      // route shows the "Arrival"/"Return" captions with their ETAs (VEY-KANEO-405:
+      // only completed legs collapse to a captionless "Arrived"/"Returned").
+      ...mission("42", "Attack", "Outbound", owner, "7", "9", now + 60_000),
       originPlanet: {
         planetId: "7", owner, ownerDisplayName: "Aria", name: "Helios",
         galaxy: 1, system: 2, position: 3, coordinates: "1:2:3",
