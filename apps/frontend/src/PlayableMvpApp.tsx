@@ -191,7 +191,7 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
-import { canonicalSpendableResources } from "./canonicalResources";
+import { canonicalSpendableResources, projectResources } from "./canonicalResources";
 import {
   createPendingSpend,
   maxResourceCost,
@@ -1008,44 +1008,6 @@ export function topBarEnergyFor({
   if (!chainEnergy) return localEnergy;
   if (chainEnergy.sources) return chainEnergy;
   return localEnergy.sources ? { ...chainEnergy, sources: localEnergy.sources } : chainEnergy;
-}
-
-export function topBarResourcesFor({
-  caps,
-  now,
-  rates,
-  snapshotReceivedAtMs,
-  snapshotResources,
-}: {
-  caps: PlayableState["resources"];
-  now: number;
-  rates: PlayableState["resources"];
-  snapshotReceivedAtMs: number;
-  snapshotResources: PlayableState["resources"] | undefined;
-}): PlayableState["resources"] | undefined {
-  if (!snapshotResources) return undefined;
-
-  const elapsedSeconds = Math.max(0, Math.floor((now - snapshotReceivedAtMs) / 1_000));
-  if (elapsedSeconds <= 0) return snapshotResources;
-
-  return {
-    metal: liveResourceAmount(snapshotResources.metal, rates.metal, caps.metal, elapsedSeconds),
-    crystal: liveResourceAmount(snapshotResources.crystal, rates.crystal, caps.crystal, elapsedSeconds),
-    deuterium: liveResourceAmount(snapshotResources.deuterium, rates.deuterium, caps.deuterium, elapsedSeconds),
-  };
-}
-
-function liveResourceAmount(
-  snapshotValue: number,
-  ratePerHour: number,
-  cap: number,
-  elapsedSeconds: number,
-): number {
-  const produced = Math.floor((Math.max(0, ratePerHour) * elapsedSeconds) / 3_600);
-  const cappedValue = Number.isFinite(cap) && cap > 0
-    ? Math.min(cap, snapshotValue + produced)
-    : snapshotValue + produced;
-  return Math.max(0, Math.floor(cappedValue));
 }
 
 /**
@@ -2935,15 +2897,23 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     rates.deuterium,
     rates.metal,
   ]);
+  // The settlement snapshot (`onChainResources`) holds resources stored at the
+  // planet's on-chain `lastSettledAt`; the backend does not pre-accrue
+  // uncollected production. Project it forward from that on-chain settle time
+  // (falling back to the snapshot-received time when it is unavailable) so the
+  // displayed value includes production accrued before the page loaded and ticks
+  // up live — instead of staying pinned at the raw last-settled value (VEY-318).
+  const settlementSettledAtMs =
+    timestampToMs(onChainSettlement?.planet?.lastSettledAt ?? null) ?? topBarResourceSnapshotReceivedAtMs;
   const liveOnChainResources = useMemo(() => {
-    return topBarResourcesFor({
-      caps,
-      now,
+    return projectResources({
+      resources: onChainResources,
       rates,
-      snapshotReceivedAtMs: topBarResourceSnapshotReceivedAtMs,
-      snapshotResources: onChainResources,
+      caps,
+      settledAtMs: settlementSettledAtMs,
+      now,
     });
-  }, [caps, now, onChainResources, rates, topBarResourceSnapshotReceivedAtMs]);
+  }, [caps, now, onChainResources, rates, settlementSettledAtMs]);
   // Anchor the displayed/spendable balance to the canonical (accurate) value.
   // The settlement endpoint can over-report after a spend because it adds
   // production accrual without subtracting the recent cost; the infrastructure
@@ -2967,8 +2937,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     || Boolean(infrastructureError)
     || isInfrastructureBackendSyncPaused(infrastructureChainState);
   const canonicalOnChainResources = useMemo(() => {
+    // Pass the raw settlement snapshot plus its on-chain settle time; the helper
+    // projects both the settlement and infrastructure sources forward from their
+    // own settle times (and freezes both when the backend read is stale), so the
+    // top bar accrues uncollected production exactly once and never drifts to the
+    // storage cap during an outage.
     return canonicalSpendableResources({
-      settlementResources: backendResourceReadStale ? onChainResources : liveOnChainResources,
+      settlementResources: onChainResources,
+      settlementSettledAtMs: settlementSettledAtMs,
       infrastructureResources: resourcesFromChain(infrastructureChainState?.resources ?? null),
       infrastructureSettledAtMs:
         timestampToMs(infrastructureChainState?.planetLastSettledAt ?? null) ?? topBarResourceSnapshotReceivedAtMs,
@@ -2982,10 +2958,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     caps,
     infrastructureChainState?.planetLastSettledAt,
     infrastructureChainState?.resources,
-    liveOnChainResources,
     now,
     onChainResources,
     rates,
+    settlementSettledAtMs,
     topBarResourceSnapshotReceivedAtMs,
   ]);
   // Raw, backend-known infrastructure balance used to detect when a pending

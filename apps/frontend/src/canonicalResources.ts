@@ -66,14 +66,29 @@ export function minResources(
  * Canonical spendable balance used for both the resource display and action
  * affordability gating.
  *
+ * Both the settlement (`/wallet/<addr>/settlement`) and infrastructure
+ * (`/wallet/<addr>/infrastructure`) endpoints return resources stored *at the
+ * planet's on-chain `lastSettledAt`* — they do NOT pre-accrue uncollected
+ * production. So each source is projected forward from its own settle time to
+ * `now` here (`current = settled + rate × elapsed`, capped at storage) — this is
+ * what makes the top bar tick up live and match on-chain `previewResources`.
+ * Projecting from the on-chain settle time (not the page-load receipt time) is
+ * essential: otherwise the production accrued before the page loaded is dropped
+ * and the display stays pinned at the raw last-settled value (VEY-318: Metal /
+ * Crystal stuck at 0 when the planet was last settled near 0).
+ *
  * The settlement endpoint adds production accrual without subtracting recent
  * spends, so it can over-report after a ship / research / defense / building
  * start until the planet is re-settled on-chain. The infrastructure endpoint
- * (`/wallet/<addr>/infrastructure`) returns the accurate on-chain spendable
- * balance. Taking the element-wise minimum of the two — each projected forward
- * to `now` — keeps the UI from ever exceeding the accurate balance while still
- * ticking up with production between settlements. When one source is missing
- * (e.g. infrastructure resources are still warming), the other is used as-is.
+ * returns the accurate on-chain spendable balance. Taking the element-wise
+ * minimum of the two — each projected forward to `now` — keeps the UI from ever
+ * exceeding the accurate balance while still ticking up with production between
+ * settlements. When one source is missing (e.g. infrastructure resources are
+ * still warming), the other is used as-is.
+ *
+ * `settlementSettledAtMs` defaults to `now` (project to self ⇒ no accrual) so a
+ * caller that already projected the settlement snapshot, or that has no settle
+ * time, keeps the previous behaviour.
  *
  * `freezeProjection` stops the forward production accrual. The displayed balance
  * is projected forward by a free-running `now` clock so it ticks up between
@@ -81,12 +96,13 @@ export function minResources(
  * (API/RPC outage, backend sync paused) the underlying snapshots stop
  * refreshing while `now` keeps advancing, which would run the balance up toward
  * the storage caps and over-report a spendable balance the player does not have.
- * In that case the caller passes `freezeProjection: true` (and the unprojected
- * settlement snapshot as `settlementResources`) so neither source accrues past
- * its last known value. Production only ticks up while reads are fresh.
+ * In that case the caller passes `freezeProjection: true` so neither source
+ * accrues past its last known value. Production only ticks up while reads are
+ * fresh.
  */
 export function canonicalSpendableResources({
   settlementResources,
+  settlementSettledAtMs,
   infrastructureResources,
   infrastructureSettledAtMs,
   rates,
@@ -95,6 +111,7 @@ export function canonicalSpendableResources({
   freezeProjection = false,
 }: {
   settlementResources: Resources | undefined;
+  settlementSettledAtMs?: number;
   infrastructureResources: Resources | undefined;
   infrastructureSettledAtMs: number;
   rates: Resources;
@@ -102,14 +119,22 @@ export function canonicalSpendableResources({
   now: number;
   freezeProjection?: boolean;
 }): Resources | undefined {
+  const settlementSettledAt = settlementSettledAtMs ?? now;
+  const projectedSettlement = projectResources({
+    resources: settlementResources,
+    rates,
+    caps,
+    settledAtMs: settlementSettledAt,
+    // Freeze => project to the snapshot's own settle time (elapsed 0) so the
+    // last-known read is used as-is instead of drifting toward storage caps.
+    now: freezeProjection ? settlementSettledAt : now,
+  });
   const projectedInfrastructure = projectResources({
     resources: infrastructureResources,
     rates,
     caps,
     settledAtMs: infrastructureSettledAtMs,
-    // Freeze => project to the snapshot's own settle time (elapsed 0) so the
-    // accurate read is used as-is instead of drifting toward storage caps.
     now: freezeProjection ? infrastructureSettledAtMs : now,
   });
-  return minResources(settlementResources, projectedInfrastructure);
+  return minResources(projectedSettlement, projectedInfrastructure);
 }
