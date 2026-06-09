@@ -724,6 +724,22 @@ export class SettlementIndexer {
     return this.indexedBattleReports();
   }
 
+  // Every active mission across the universe (all players), for the Mission Control "All" active tab.
+  allActiveFleetMissions(): FleetMissionSummary[] {
+    return this.indexedFleetMissionSummaries()
+      .filter((mission) => mission.status === "Outbound" || mission.status === "Returning" || mission.status === "Recalled")
+      .map((mission) => this.withFleetMissionPlanetReferences(mission))
+      .sort(compareFleetMissionsActiveSoonestFirst);
+  }
+
+  // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
+  allCompletedFleetMissions(): FleetMissionSummary[] {
+    return this.indexedFleetMissionSummaries()
+      .filter((mission) => mission.status === "Resolved" || mission.status === "Returned")
+      .map((mission) => this.withFleetMissionPlanetReferences(mission))
+      .sort(compareFleetMissionsNewestFirst);
+  }
+
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
     return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
   }
@@ -3155,6 +3171,21 @@ function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: Fleet
   const rightMission = BigInt(right.missionId);
   if (leftMission === rightMission) return 0;
   return rightMission > leftMission ? 1 : -1;
+}
+
+// Soonest-event-first ordering for active missions: returning/recalled fleets sort by their
+// return time, in-flight fleets by arrival. Keeps the universe-wide "All" feed deterministic
+// (the frontend re-sorts its rows, but a stable backend order keeps pagination/tests predictable).
+function compareFleetMissionsActiveSoonestFirst(left: FleetMissionSummary, right: FleetMissionSummary): number {
+  const nextEvent = (mission: FleetMissionSummary): number =>
+    Number(mission.status === "Returning" || mission.status === "Recalled" ? mission.returnAt : mission.arrivalAt);
+  const leftTime = nextEvent(left);
+  const rightTime = nextEvent(right);
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  const leftMission = BigInt(left.missionId);
+  const rightMission = BigInt(right.missionId);
+  if (leftMission === rightMission) return 0;
+  return leftMission > rightMission ? 1 : -1;
 }
 
 const moonBuildingRows = [

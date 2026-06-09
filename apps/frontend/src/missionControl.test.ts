@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
+import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
@@ -201,9 +201,10 @@ describe("Mission Control battle reports", () => {
     // merged in VEY-374; label shortened to "Open" in the shared row, VEY-399#8).
     expect(countOccurrences(text.join(""), "Open the full mission detail screen")).toBe(1);
     expect(text.join("")).not.toContain("Open mission");
-    // VEY-399#1: the header count reflects the de-duplicated rows (two raw rows collapse to one).
-    expect(text.join(" ")).toContain("Past missions 1");
-    expect(text.join(" ")).not.toContain("Past missions 2");
+    // VEY-399#1 / VEY-KANEO-402: the past "My missions" tab count reflects the de-duplicated rows
+    // (two raw rows collapse to one) now that the past panel carries My missions / All scope tabs.
+    expect(text.join(" ")).toContain("My missions (1)");
+    expect(text.join(" ")).not.toContain("My missions (2)");
   });
 
   test("past missions reuse the shared row: clickable origin+target, returned subtext, Open label, deduped count (VEY-399#1/#2/#8/#9)", () => {
@@ -227,9 +228,10 @@ describe("Mission Control battle reports", () => {
     });
     const text = collectText(tree).join(" ");
 
-    // VEY-399#1: the count matches the single de-duplicated row, not the two raw archive rows.
-    expect(text).toContain("Past missions 1");
-    expect(text).not.toContain("Past missions 2");
+    // VEY-399#1: the count matches the single de-duplicated row, not the two raw archive rows. The
+    // past panel now surfaces this in the "My missions" scope tab (VEY-KANEO-402).
+    expect(text).toContain("My missions (1)");
+    expect(text).not.toContain("My missions (2)");
     // VEY-399#8: the row action reads "Open", never "Open mission".
     expect(text).not.toContain("Open mission");
     expect(text).toContain("Open");
@@ -303,6 +305,59 @@ describe("Mission Control battle reports", () => {
     // VEY-397#13: join actions stay available on the Alliance tab, now labelled "Join".
     expect(text).toContain("Join");
     expect(text).not.toContain("Join attack");
+  });
+
+  test("allActiveMissionRows keeps the player's classification and renders other players as observers (VEY-KANEO-402)", () => {
+    const classified: ActiveMissionRow[] = [
+      { context: "outgoing", direction: "Outbound", mission: mission("1") },
+    ];
+    const other = mission("2", "Attack", "Outbound", "0x9999999999999999999999999999999999999999", "5", "6");
+    const rows = allActiveMissionRows([mission("1"), other], classified);
+
+    const contextById = Object.fromEntries(rows.map((row) => [row.mission.missionId, row.context]));
+    expect(rows).toHaveLength(2);
+    expect(contextById["1"]).toBe("outgoing");
+    expect(contextById["2"]).toBe("observer");
+  });
+
+  test("adds an All active tab listing universe-wide active missions; other players' rows are read-only (VEY-KANEO-402)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const mine = mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000);
+    // Another player's attack that has already arrived (would be "due" -> Resolve if it were mine).
+    const other = mission("90", "Attack", "Outbound", "0x9999999999999999999999999999999999999999", "5", "6", now - 60_000);
+    const text = collectText(MissionControlPage({
+      ...missionControlProps(now, { outgoing: [mine] }),
+      allActiveMissions: [mine, other],
+    })).join(" ");
+
+    expect(text).toContain("My missions (1)");
+    expect(text).toContain("All (2)");
+    // The other player's mission appears on the universe-wide All tab...
+    expect(text).toContain("# 90");
+    // ...but observer rows never expose the Resolve lifecycle action even when the mission is due,
+    // and neither of these missions is a due mission the player can resolve.
+    expect(text).not.toContain("Resolve");
+  });
+
+  test("adds My missions / All past tabs; All lists the paginated universe-wide completed archive (VEY-KANEO-402)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const rows = Array.from({ length: 26 }, (_unused, index) => ({
+      kind: "battleReport" as const,
+      report: battleReport(String(500 + index)),
+    }));
+    const text = collectText(MissionControlPage({
+      ...missionControlProps(now, {}),
+      globalMissionArchive: {
+        rows: rows.slice(0, 25),
+        pagination: { page: 1, pageSize: 25, totalEntries: 26, totalPages: 2, hasPreviousPage: false, hasNextPage: true },
+      },
+    })).join(" ");
+
+    // The past panel gains a scope tab control; My missions is empty here, All carries the universe count.
+    expect(text).toContain("Past missions");
+    expect(text).toContain("All (26)");
+    // Server-side pagination range proves the 25-per-page split (26 rows -> first page shows 1-25).
+    expect(text).toContain("1-25 of 26");
   });
 
   test("shows the Alliance empty state when there are no joinable attacks", () => {

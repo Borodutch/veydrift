@@ -261,6 +261,18 @@ export type FleetMissionArchiveEntry =
   | { kind: "mission"; mission: FleetMissionSummary }
   | { kind: "battleReport"; report: BattleReport };
 
+// Universe-wide (no wallet scope) active missions for the Mission Control "All" active tab.
+export type GlobalActiveMissionsResponse = {
+  missions: FleetMissionSummary[];
+};
+
+// Universe-wide completed mission archive for the Mission Control past "All" tab. Mirrors the
+// per-wallet archive pagination contract but carries no wallet scope.
+export type GlobalMissionArchiveResponse = {
+  rows: FleetMissionArchiveEntry[];
+  pagination: FleetMissionArchiveResponse["pagination"];
+};
+
 export type FleetMissionArchiveResponse = {
   wallet: string;
   homePlanetId: string | null;
@@ -2454,6 +2466,25 @@ export async function fetchFleetMissionArchive(
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
   return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive");
+}
+
+export async function fetchGlobalActiveMissions(apiUrl: string): Promise<GlobalActiveMissionsResponse> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/missions?status=active`);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Active missions"));
+  return response.json() as Promise<GlobalActiveMissionsResponse>;
+}
+
+export async function fetchGlobalMissionArchive(
+  apiUrl: string,
+  options: { page?: number; pageSize?: number } = {}
+): Promise<GlobalMissionArchiveResponse> {
+  const params = new URLSearchParams();
+  params.set("status", "completed");
+  params.set("page", String(options.page ?? 1));
+  params.set("pageSize", String(options.pageSize ?? 25));
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Mission archive"));
+  return response.json() as Promise<GlobalMissionArchiveResponse>;
 }
 
 export async function fetchMission(apiUrl: string, missionId: string): Promise<MissionDetailResponse> {

@@ -16,6 +16,8 @@ import {
   type FleetMissionArchiveResponse,
   type FleetMissionSummary,
   type FleetMissionVisibility,
+  type GlobalActiveMissionsResponse,
+  type GlobalMissionArchiveResponse,
   type InfrastructureState,
   type MoonChanceReportEvent,
   type MoonState,
@@ -359,6 +361,29 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           indexedMissionArchive(wallet, url, indexer), {
           includeSelectedPlanet: false
         });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/missions") {
+      try {
+        if (!indexer) return indexedReadNotReadyResponse("missions", indexer);
+        const snapshot = indexer.snapshot();
+        const status = url.searchParams.get("status") ?? "active";
+        if (status === "active") {
+          return Response.json(
+            { missions: indexer.allActiveFleetMissions() } satisfies GlobalActiveMissionsResponse,
+            { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
+          );
+        }
+        if (status === "completed") {
+          return Response.json(
+            globalMissionArchive(url, indexer),
+            { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
+          );
+        }
+        return errorResponse(new Error(`Unsupported missions status: ${status}`), 400);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1190,6 +1215,27 @@ function indexedMissionArchive(
   return {
     wallet,
     homePlanetId: visibility.homePlanetId,
+    rows: rows.slice(offset, offset + requested.pageSize),
+    pagination: {
+      page,
+      pageSize: requested.pageSize,
+      totalEntries,
+      totalPages,
+      hasPreviousPage: page > 1,
+      hasNextPage: page < totalPages
+    }
+  };
+}
+
+function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissionArchiveResponse {
+  const rows = chronologicalMissionArchiveRows(indexer.allCompletedFleetMissions(), indexer.battleReports());
+  const requested = missionArchivePagination(url);
+  const totalEntries = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
+  const page = Math.min(requested.page, totalPages);
+  const offset = (page - 1) * requested.pageSize;
+
+  return {
     rows: rows.slice(offset, offset + requested.pageSize),
     pagination: {
       page,
