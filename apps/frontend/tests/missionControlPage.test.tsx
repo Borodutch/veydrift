@@ -107,24 +107,31 @@ describe("MissionControlPage", () => {
     // The active "Fleet movement" label is dropped; the past missions table keeps its header.
     expect(text).not.toContain("Fleet movement");
     expect(text).toContain("Past missions");
-    expect(text).toContain("Countdown Mission Origin -> Target Return Fleet / cargo Orders");
+    // VEY-400: cards drop the MISSION / ROUTE / FLEET / Orders table headers entirely.
+    expect(text).not.toContain("Mission Route Fleet");
+    expect(text).not.toContain("Origin -> Target");
+    // Status reads as a header pill with the live ETA (outbound) / return (returning) countdown.
+    expect(text).toContain("En route");
+    expect(text).toContain("ETA");
+    expect(text).toContain("Returning");
+    expect(text).toContain("Returns");
     // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
     expect(text).toContain("Incoming attack # 8");
     expect(text).not.toContain("Attack # 8");
     expect(text).toContain("Hostile inbound");
-    expect(text).toContain("Origin Planet #7");
-    expect(text).toContain("Target Planet #9");
+    // Route endpoints render as clickable planet names (coords live in the link title).
+    expect(text).toContain("New Eos");
+    expect(text).toContain("Planet #9");
     expect(text).toContain("Transport # 9");
     expect(text).toContain("Land fleet");
-    expect(text).toContain("Open mission");
-    expect(text).toContain("Copy report");
-    expect(text).toContain("New Eos [2:44:9]");
-    expect(text).toContain("External coordinates unavailable");
-    // Commander identity is kept for the foreign incoming attacker...
-    expect(text).toContain("0x3333...3333");
-    // ...but dropped for the player's own outgoing/returning fleets (always themselves).
+    // Every card exposes the single shared "Open" action into the mission detail screen.
+    expect(text).toContain("Open");
+    // The fleet block shows the cargo line alongside the ship icons (VEY-400 card spec).
+    expect(text).toContain("Cargo");
+    // Route commanders render as bare clickable addresses — never prefixed with "Commander".
+    expect(text).toContain("0x1111...1111");
     expect(text).not.toContain("Commander 0x1111...1111");
-    expect(text).toContain("Report 0xabc...");
+    expect(text).not.toContain("Commander 0x3333...3333");
     expect(text).not.toContain("Fleets 3/?");
     expect(text).not.toContain("Reload");
     expect(text).not.toContain("Fleet Operations");
@@ -183,7 +190,9 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Uncharted [2:44:10]");
+    // The colonize target resolves to its real coordinates, rendered as a clickable Galaxy link
+    // (the card route shows the coordinate string rather than the old "Uncharted [coords]" text).
+    expect(text).toContain("2:44:10");
     expect(text).not.toContain("External coordinates unavailable");
   });
 
@@ -298,11 +307,12 @@ describe("MissionControlPage", () => {
     });
     const defenderText = visibleText(defenderPage);
 
-    // "Hostile inbound" persists as the active-row direction label (the stat card is gone).
+    // "Hostile inbound" persists as the active-card direction label (the stat card is gone).
     expect(defenderText).toContain("Hostile inbound");
-    expect(defenderText).toContain("Astra (0x1111...1111)");
-    expect(defenderText).toContain("New Eos [2:44:9]");
-    expect(defenderText).toContain("Red Haven [4:55:11]");
+    // The commander renders as a bare clickable name now (VEY-395 dropped the "(0x…)" caption).
+    expect(defenderText).toContain("Astra");
+    expect(defenderText).toContain("New Eos");
+    expect(defenderText).toContain("Red Haven");
     expect(defenderText).toContain("Group defend");
     expect(defenderText).toContain("Intercept");
     expect(defenderText).toContain("Battle report");
@@ -352,8 +362,7 @@ describe("MissionControlPage", () => {
     // The summary stat-card row was removed; the active mission still renders below.
     expect(attackerText).not.toContain("Active missions 1");
     expect(attackerText).toContain("Recall fleet");
-    expect(attackerText).toContain("Open mission");
-    expect(attackerText).toContain("Copy report");
+    expect(attackerText).toContain("Open");
     expect(attackerText).toContain("Battle report");
     expect(attackerText).toContain("Past missions");
     expect(attackerText).not.toContain("Group defend");
@@ -457,8 +466,8 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Open mission");
     expect(text).toContain("Page 1 of 2");
     expect(text).toContain("1-25 of 26");
-    // VEY-399: the past table now shares the active row columns — Mission / Route / Fleet / Details.
-    expect(text).toContain("Mission Route Fleet Details");
+    // VEY-400: past missions render as cards, so the table headers are gone entirely.
+    expect(text).not.toContain("Mission Route Fleet");
     expect(text).not.toContain("Route / target");
     expect(text).not.toContain("Mission Route Result Details");
     expect(text).not.toContain("Completed");
@@ -565,9 +574,10 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Incoming attack");
     expect(text).toContain("0x3333...3333");
     expect(text).not.toContain("Commander 0x3333...3333");
-    // VEY-399#9: the completion stamp now sits under the Route as subtext (e.g.
-    // "Returned · Jun 7, 2026, ..."), not in the Mission column.
-    expect(text).toContain("Returned · ");
+    // VEY-400: the terminal status reads as a header pill ("Returned"), with no raw timestamp —
+    // folding in the VEY-399 rework intent now that cards have no MISSION column.
+    expect(text).toContain("Returned");
+    expect(text).not.toContain("Returned · ");
   });
 
   test("surfaces joinable attacks under the Alliance tab (no stat-card row)", () => {
