@@ -32,7 +32,6 @@ interface MissionDetailPageProps {
   onCompleteReturn: (missionId: string) => void;
   onCopyShareUrl: () => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onOpenPlayer?: ((wallet: string) => void) | undefined;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
@@ -54,7 +53,6 @@ export function MissionDetailPage({
   onCompleteReturn,
   onCopyShareUrl,
   onCounterplay,
-  onOpenPlayer,
   onRecall,
   onResolve,
   onRetry,
@@ -135,7 +133,7 @@ export function MissionDetailPage({
             onSelectCoordinates={onSelectCoordinates}
             onSelectPlayer={onSelectPlayer}
           />
-          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} onOpenPlayer={onOpenPlayer} report={report} />
+          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} report={report} />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
@@ -364,12 +362,10 @@ function CommanderLink({
 function MissionBattleReport({
   defenderState,
   mission,
-  onOpenPlayer,
   report,
 }: {
   defenderState?: DefenderPlanetState | undefined;
   mission: FleetMissionSummary;
-  onOpenPlayer?: ((wallet: string) => void) | undefined;
   report?: BattleReport | undefined;
 }) {
   if (!isCombatMission(mission)) {
@@ -391,9 +387,6 @@ function MissionBattleReport({
   }
 
   const outcome = battleOutcomeSummary(report.outcome);
-  // The defender is the owner of the attacked planet; the indexed mission carries that planet
-  // reference (and display name) when the target is charted.
-  const defenderWallet = mission.targetPlanet?.owner ?? null;
   const recyclersNeeded = recyclersForDebris(report.debris);
   // Defender fleet/defenses come from the indexed target-planet composition (ShipCountChanged +
   // defense events) rather than the single AttackBattleResolved event. For a freshly-resolved
@@ -418,15 +411,12 @@ function MissionBattleReport({
 
       {/* Two-sided report modelled on the classic combat report: the attacker column folds in the
           offensive fleet and cargo it carried, its losses, and the loot it grabbed; the defender
-          column carries the target commander and its losses. Fields the on-chain log does not expose
-          (defender composition, loot retained) are flagged compactly rather than fabricated. Debris
-          is shown on its own below. */}
+          column carries its losses and surviving composition. The origin/target commanders are not
+          repeated here — they already render in the Route hero above. Fields the on-chain log does not
+          expose (defender composition, loot retained) are flagged compactly rather than fabricated.
+          Debris is shown on its own below. */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel title="Attacker">
-          <Row
-            label="Commander"
-            value={<Commander displayName={mission.originPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} planet={mission.originPlanet} wallet={report.attacker} />}
-          />
           <Row label="Combat ships" value={formatShipsByKind(mission.ships, "combat")} />
           <Row label="Civil ships" value={formatShipsByKind(mission.ships, "civil")} />
           <Row label="Cargo carried" value={formatResources(mission.cargo)} />
@@ -434,12 +424,6 @@ function MissionBattleReport({
           <Row label="Loot grabbed" value={formatResources(report.loot)} />
         </Panel>
         <Panel title="Defender">
-          <Row
-            label="Commander"
-            value={defenderWallet
-              ? <Commander displayName={mission.targetPlanet?.ownerDisplayName} onOpenPlayer={onOpenPlayer} planet={mission.targetPlanet} wallet={defenderWallet} />
-              : `Planet #${report.targetPlanetId} (external commander unavailable)`}
-          />
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
           {/* Fleet/defenses are the defender planet's indexed composition (surviving force). "None"
               when the planet had no fleet/defenses; a precise caveat only when it isn't charted. */}
@@ -524,32 +508,6 @@ function Row({ label, value }: { label: string; value: preact.ComponentChildren 
       <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-middle text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</th>
       <td className="py-1.5 text-left align-middle break-words text-sm text-slate-300">{value}</td>
     </tr>
-  );
-}
-
-// Commander identity that links to the player's public profile when a navigation handler is wired;
-// falls back to plain text for the shareable/standalone render. The home planet/coordinates are shown
-// alongside as muted text (e.g. "from Moon [4:194:8]") to match the classic combat report header.
-function Commander({ displayName, onOpenPlayer, planet, wallet }: { displayName?: string | null | undefined; onOpenPlayer?: ((wallet: string) => void) | undefined; planet?: FleetMissionPlanetReference | null | undefined; wallet: string }) {
-  const label = displayName ? `${displayName} (${shortHash(wallet)})` : shortHash(wallet);
-  const location = planet ? ` from ${planet.name?.trim() ? `${planet.name.trim()} ` : ""}[${planet.coordinates}]` : "";
-  const identity = onOpenPlayer ? (
-    <button
-      className="text-left font-medium text-cyan-200 underline-offset-2 transition hover:text-cyan-100 hover:underline"
-      onClick={() => onOpenPlayer(wallet)}
-      title={`Open ${label} profile`}
-      type="button"
-    >
-      {label}
-    </button>
-  ) : (
-    <>{label}</>
-  );
-  return (
-    <span className="break-words">
-      {identity}
-      {location ? <span className="text-slate-500">{location}</span> : null}
-    </span>
   );
 }
 
