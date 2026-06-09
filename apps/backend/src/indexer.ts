@@ -2147,7 +2147,16 @@ export class SettlementIndexer {
     event: IndexedQueueStartedEvent,
     options: { settleResources?: boolean; settledAt?: string } = {}
   ): void {
-    this.upsertQueue(event);
+    // Pin the queue's start time to the same instant the spend is settled against
+    // the planet. The decoded log carries it when the RPC node returns block
+    // timestamps; when it does not (the live-ingestion fallback synthesises a
+    // settle time) reuse that settle time so `startedAt` and the planet's
+    // `lastSettledAt` agree. A snapshot at/after that time is then recognised as
+    // already reflecting the cost, preventing the displayed balance from being
+    // double-reduced while the build is queued (VEY-318).
+    const startedAt = event.startedAt ?? options.settledAt;
+    const startedEvent = startedAt ? { ...event, startedAt } : event;
+    this.upsertQueue(startedEvent);
     if (options.settleResources !== false) {
       if (event.planetId) {
         this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber, options.settledAt);

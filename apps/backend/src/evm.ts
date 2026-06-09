@@ -3824,10 +3824,18 @@ export function decodePlanetRenamedLog(log: RpcLog): PlanetRenamedEvent {
 export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEvent {
   const topic = topicAt(log.topics, 0);
   const words = splitWords(log.data);
+  // The queue START time is the block the spend mined in — the same instant the
+  // contract drained the cost from stored resources and re-settled the planet.
+  // Recording it lets a resource snapshot taken at/after that settle time be
+  // recognised as already reflecting the spend, so the displayed balance is not
+  // reduced by the cost a second time (VEY-318: top bar pinned at 0 while a build
+  // was queued because the cost was double-subtracted).
+  const startedAt = logBlockTimestampSeconds(log);
   const base = {
     transactionHash: log.transactionHash,
     blockNumber: BigInt(log.blockNumber).toString(),
     readyAt: decodeUintWord(wordAt(words, 1)).toString(),
+    ...(startedAt ? { startedAt } : {}),
     cost: decodeResources(words.slice(2, 5))
   };
 

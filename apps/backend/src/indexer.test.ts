@@ -396,6 +396,40 @@ describe("SettlementIndexer", () => {
     expect(Number(updated?.resources.crystal)).toBe(4780);
   });
 
+  test("records an active queue startedAt aligned with the spend settle time (VEY-318)", () => {
+    // Regression: a build start drains its cost from stored resources and
+    // re-settles the planet, but the indexed queue previously exposed
+    // startedAt: null. The frontend skips re-subtracting an active queue cost
+    // only when startedAt <= the snapshot's settle time; a missing startedAt
+    // forced the conservative branch, double-subtracting the cost and pinning
+    // the displayed balance (Metal/Crystal) at 0 until the build completed.
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      blockTimestamp: "0x69801c90",
+      transactionHash: "0xbuild",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(5n)],
+      data: abiWords(1n, 1770004000n, 400n, 120n, 60n)
+    });
+
+    const queue = indexer.planetQueue(planet.planetId, "building");
+    const settledAt = indexer.walletSettlement(player).planet?.lastSettledAt;
+    expect(queue?.active).toBe(true);
+    // startedAt is populated from the build's block timestamp...
+    expect(queue?.startedAt).toBe("1770003600");
+    // ...and matches the planet's post-spend settle time, so a snapshot taken at
+    // that settle time is recognised as already reflecting the cost (startedAt <=
+    // lastSettledAt) and is not subtracted a second time on the client.
+    expect(queue?.startedAt).toBe(settledAt);
+    expect(Number(queue?.startedAt)).toBeLessThanOrEqual(Number(settledAt));
+  });
+
   test("applies combat ship count changes to indexed ship rows", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
