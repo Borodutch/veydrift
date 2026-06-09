@@ -619,6 +619,82 @@ describe("Mission Control battle reports", () => {
     expect(imageSrcs.some((src) => src.includes("/defenses/rocket-launcher"))).toBe(true);
   });
 
+  test("VEY-KANEO-407: renders unit art in the standalone Fleet And Cargo panel for non-combat missions", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // A transport mission has no battle report, so the standalone "Fleet And Cargo" panel renders and
+    // its ship listing must show unit art too (per the ticket title's "Fleet And Cargo ships" scope).
+    const tree = MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("51", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+          ships: { largeCargo: "4" },
+        },
+        battleReport: null,
+      },
+      loading: false,
+      missionId: "51",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    });
+
+    const text = collectText(tree).join(" ");
+    expect(text).toContain("Fleet And Cargo");
+    expect(text).toContain("Large Cargo ×4");
+    const imageSrcs = findElements(tree, "img").map((node) => String(node.props?.src ?? ""));
+    expect(imageSrcs.some((src) => src.includes("/ships/large-cargo"))).toBe(true);
+  });
+
+  test("VEY-KANEO-407: keeps 'None' for empty unit listings in the Battle Report", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // Attacker fielded only civil ships and the charted defender had no surviving fleet/defenses, so
+    // the empty listings must still read "None" rather than render an empty icon row.
+    const tree = MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: {
+          ...mission("52", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          ships: { smallCargo: "2" },
+        },
+        battleReport: battleReport("52"),
+        defenderPlanetState: { fleet: [], defenses: [] },
+      },
+      loading: false,
+      missionId: "52",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    });
+
+    const text = collectText(tree).join(" ");
+    // Civil ships present as art; combat ships empty -> "None"; defender empty -> combined "None".
+    expect(text).toContain("Small Cargo ×2");
+    expect(text).toContain("None");
+    const imageSrcs = findElements(tree, "img").map((node) => String(node.props?.src ?? ""));
+    expect(imageSrcs.some((src) => src.includes("/ships/small-cargo"))).toBe(true);
+  });
+
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const baseProps = {

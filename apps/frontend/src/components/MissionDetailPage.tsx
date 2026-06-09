@@ -224,7 +224,7 @@ function MissionFacts({
           missions keep it as the only place this fleet/cargo detail is shown. */}
       {hideFleetAndCargo ? null : (
         <Panel title="Fleet And Cargo">
-          <Row label="Ships" value={formatShips(mission.ships)} />
+          <Row label="Ships" value={<UnitIcons units={shipUnits(mission.ships)} />} />
           <Row label="Cargo" value={formatResources(mission.cargo)} />
           <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
           <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
@@ -729,24 +729,22 @@ const shipLabels: Record<string, string> = {
 
 const civilShipKeys = new Set(["smallCargo", "largeCargo", "colonyShip", "recycler", "espionageProbe", "solarSatellite"]);
 
-function formatShips(ships: Record<string, string>): string {
-  const entries = Object.entries(ships)
-    .filter(([, count]) => Number(count) > 0)
-    .map(([key, count]) => `${shipLabels[key] ?? missionTypeLabel(key)} x${formatResource(count)}`);
-  return entries.length > 0 ? entries.join(", ") : "None";
-}
-
-// Splits the attacker's carried fleet (keyed by ShipKey) into icon-ready combat or civil units,
-// dropping zero counts and attaching the generated ship art when one is mapped.
-function shipUnitsByKind(ships: Record<string, string>, kind: "civil" | "combat"): UnitItem[] {
+// Resolves a ShipKey-keyed fleet (mission.ships) into icon-ready units, dropping zero counts and
+// attaching the generated ship art when one is mapped.
+function shipUnits(ships: Record<string, string>): UnitItem[] {
   return Object.entries(ships)
-    .filter(([key, count]) => Number(count) > 0 && (kind === "civil" ? civilShipKeys.has(key) : !civilShipKeys.has(key)))
+    .filter(([, count]) => Number(count) > 0)
     .map(([key, count]) => ({
       key,
       label: shipLabels[key] ?? missionTypeLabel(key),
       count: Number(count),
       asset: shipAssetByKey[key as ShipKey],
     }));
+}
+
+// Narrows the resolved ship units to the combat or civil class for the attacker's two-row breakdown.
+function shipUnitsByKind(ships: Record<string, string>, kind: "civil" | "combat"): UnitItem[] {
+  return shipUnits(ships).filter((unit) => kind === "civil" ? civilShipKeys.has(unit.key) : !civilShipKeys.has(unit.key));
 }
 
 function shortHash(value: string): string {
