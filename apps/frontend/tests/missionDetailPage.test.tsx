@@ -68,7 +68,6 @@ function renderDetailText(detail: MissionDetailResponse): string {
     onCompleteReturn: noop,
     onCopyShareUrl: noop,
     onCounterplay: noop,
-    onOpenPlayer: undefined,
     onRecall: noop,
     onResolve: noop,
     onRetry: noop,

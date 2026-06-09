@@ -425,7 +425,6 @@ describe("Mission Control battle reports", () => {
 
   test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    const openedPlayers: string[] = [];
     const text = collectText(MissionDetailPage({
       account: "0x1111111111111111111111111111111111111111",
       actionState: { status: "idle" },
@@ -447,7 +446,6 @@ describe("Mission Control battle reports", () => {
       onCompleteReturn: () => undefined,
       onCopyShareUrl: () => undefined,
       onCounterplay: () => undefined,
-      onOpenPlayer: (wallet) => openedPlayers.push(wallet),
       onRecall: () => undefined,
       onResolve: () => undefined,
       onRetry: () => undefined,
@@ -486,14 +484,16 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Loot grabbed");
     expect(text).not.toContain("Loot left");
     expect(text).toContain("Fleet / defenses");
-    // VEY-KANEO-396: commander names are present for both sides, link to their profiles, and carry
-    // their home planet/coordinates (classic combat report header).
+    // VEY-KANEO-406: the redundant per-side "Commander" rows were removed from the battle report —
+    // origin/target commanders already render in the Route hero, which still links to each profile.
     expect(text).toContain("Aggressor");
     expect(text).toContain("Bastion");
-    expect(text).toContain("Open Aggressor (0x22222222...222222) profile");
-    expect(text).toContain("Open Bastion (0x33333333...333333) profile");
-    expect(text).toContain("from Aggressor [1:2:3]");
-    expect(text).toContain("from Bastion [4:5:6]");
+    expect(text).toContain("Inspect Aggressor");
+    expect(text).toContain("Inspect Bastion");
+    expect(text).not.toContain("Open Aggressor (0x22222222...222222) profile");
+    expect(text).not.toContain("Open Bastion (0x33333333...333333) profile");
+    expect(text).not.toContain("from Aggressor [1:2:3]");
+    expect(text).not.toContain("from Bastion [4:5:6]");
     // VEY-KANEO-396: the verbose recyclers-to-clear-debris section stays removed.
     expect(text).not.toContain("Recyclers to clear debris");
     expect(text).not.toContain("Loot plundered");
