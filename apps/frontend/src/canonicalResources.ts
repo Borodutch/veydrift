@@ -66,32 +66,37 @@ export function minResources(
  * Canonical spendable balance used for both the resource display and action
  * affordability gating.
  *
- * Both the settlement (`/wallet/<addr>/settlement`) and infrastructure
- * (`/wallet/<addr>/infrastructure`) endpoints read the contract's
- * `previewResources(planetId)` live, so each `*Resources` snapshot is ALREADY
- * the canonical accrued balance — stored value plus uncollected production,
- * capped at storage — as of the moment it was read. They are NOT raw
- * stored-at-settle values. The `*SettledAtMs` anchors must therefore be the
- * snapshot *read time*, not the planet's on-chain `lastSettledAt`: each source
- * is only projected forward from when it was read (`current = read + rate ×
- * elapsed`, capped) to smoothly tick the display between backend polls. Anchor
- * to `lastSettledAt` instead and the already-accrued snapshot is projected
- * forward by every hour since the last settle a *second* time, over-reporting by
- * `rate × (now − lastSettledAt)` (VEY-318 double-count: top bar read far above
- * on-chain `previewResources`).
+ * The authoritative source is a DIRECT on-chain `previewResources(planetId)`
+ * read (`previewResources`). It is exactly what the contract returns as the
+ * planet's current spendable balance — stored value plus all production accrued
+ * since the on-chain `lastSettledAt`, capped at storage — so when a fresh read is
+ * available it is used as the balance OUTRIGHT (projected forward only from its
+ * own read time to tick smoothly between the ~10s polls).
  *
- * The settlement endpoint adds production accrual without subtracting recent
- * spends, so it can over-report after a ship / research / defense / building
- * start until the planet is re-settled on-chain. The infrastructure endpoint
- * returns the accurate on-chain spendable balance. Taking the element-wise
- * minimum of the two — each projected forward from its read time to `now` —
- * keeps the UI from ever exceeding the accurate balance while still ticking up
- * with production between polls. When one source is missing (e.g. infrastructure
- * resources are still warming), the other is used as-is.
+ * It is deliberately NOT folded into an element-wise minimum with the backend
+ * `/wallet/<addr>/settlement` and `/wallet/<addr>/infrastructure` snapshots,
+ * because those snapshots are unreliable in BOTH directions and a `min` clamps
+ * the result to whichever one is wrong:
+ *   - A snapshot already accrued toward `now`, projected forward again from
+ *     `lastSettledAt`, OVER-reports — it double-counts the elapsed production
+ *     (frontend crystal 12,143 vs on-chain previewResources 10,155).
+ *   - A snapshot that LAGS the chain UNDER-reports. Observed live on a settled
+ *     planet: backend infrastructure metal 20 vs on-chain previewResources 211,
+ *     so `min` would hide ~190 metal of real, spendable production — the VEY-318
+ *     under-report where the top bar is pinned to the stored value and uncollected
+ *     production never appears.
+ * The chain read can do neither: it is the same value a transaction spends
+ * against, so the display and affordability gating track it exactly.
  *
- * `settlementSettledAtMs` defaults to `now` (project to self ⇒ no accrual) so a
- * caller that already projected the settlement snapshot, or that has no read
- * time, keeps the previous behaviour.
+ * The backend snapshots are only a FALLBACK for when no wallet is connected / the
+ * chain read is unavailable (the caller passes a fresh `previewResources` or
+ * nothing). In that case each backend source is anchored to its read time and the
+ * element-wise minimum is taken so the display never exceeds the more
+ * conservative source; when a source is missing the other is used as-is.
+ *
+ * `settlementSettledAtMs` and `previewSettledAtMs` default to `now` (project to
+ * self ⇒ no accrual) so a caller that already projected a snapshot, or that has
+ * no settle/read time, keeps the previous behaviour.
  *
  * `freezeProjection` stops the forward production accrual. The displayed balance
  * is projected forward by a free-running `now` clock so it ticks up between
@@ -108,6 +113,8 @@ export function canonicalSpendableResources({
   settlementSettledAtMs,
   infrastructureResources,
   infrastructureSettledAtMs,
+  previewResources,
+  previewSettledAtMs,
   rates,
   caps,
   now,
@@ -117,11 +124,34 @@ export function canonicalSpendableResources({
   settlementSettledAtMs?: number;
   infrastructureResources: Resources | undefined;
   infrastructureSettledAtMs: number;
+  previewResources?: Resources | undefined;
+  previewSettledAtMs?: number | undefined;
   rates: Resources;
   caps: Resources;
   now: number;
   freezeProjection?: boolean;
 }): Resources | undefined {
+  // Authoritative path: the direct on-chain `previewResources` read is the real
+  // current spendable balance, so use it outright when a fresh read is available.
+  // Project it forward from its own read time so it keeps ticking between the
+  // ~10s reads. The caller only passes a FRESH read, so a chain-read outage drops
+  // it and falls through to the backend fallback below; that staleness gate
+  // bounds any forward drift to a few seconds of production, so the projection is
+  // not frozen here even when the backend read is stale.
+  const projectedPreview = projectResources({
+    resources: previewResources,
+    rates,
+    caps,
+    settledAtMs: previewSettledAtMs ?? now,
+    now,
+  });
+  if (projectedPreview) return projectedPreview;
+
+  // Fallback (no wallet connected / chain read unavailable): project both backend
+  // snapshots forward from their read times and take the element-wise minimum so
+  // the display never exceeds the more conservative source. Frozen to the
+  // last-known value during a backend/RPC outage so it cannot drift toward the
+  // storage cap (VEY-392).
   const settlementSettledAt = settlementSettledAtMs ?? now;
   const projectedSettlement = projectResources({
     resources: settlementResources,
