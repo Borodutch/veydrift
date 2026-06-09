@@ -227,7 +227,9 @@ function MissionFacts({
           <Row label="Ships" value={<UnitIcons units={shipUnits(mission.ships)} />} />
           <Row label="Cargo" value={formatResources(mission.cargo)} />
           <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
-          <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+          {showsRecallCost(mission) ? (
+            <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+          ) : null}
         </Panel>
       )}
     </div>
@@ -586,6 +588,17 @@ function isMissionDue(mission: FleetMissionSummary, now: number): boolean {
 
 function isNoFleetReturned(mission: FleetMissionSummary): boolean {
   return !["Outbound", "Returning", "Recalled"].includes(mission.status) && Object.values(mission.ships).every((value) => Number(value) <= 0);
+}
+
+// VEY-KANEO-409: the recall cost only matters while a fleet is still in flight — it can be recalled
+// (Outbound), is on the way out (Outbound), or has already been recalled and is heading home
+// (Recalled). Once a mission has finished without being recalled, the row only ever reads
+// "Not recallable", which is pure noise, so it is hidden. Returning fleets are still in transit and
+// keep the row. A recalled fleet keeps it explicitly even in the unexpected case its status reads as
+// finished.
+function showsRecallCost(mission: FleetMissionSummary): boolean {
+  if (mission.status === "Recalled") return true;
+  return ["Outbound", "Returning"].includes(mission.status);
 }
 
 function isCombatMission(mission: FleetMissionSummary): boolean {
