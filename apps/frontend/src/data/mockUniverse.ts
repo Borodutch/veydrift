@@ -141,6 +141,18 @@ export function planetTypeFromTemperature(temperature: number): PlanetType {
   return "scorching-molten";
 }
 
+// Deterministic planet type for a set of coordinates — the exact derivation `planetFromCoordinates`
+// uses, so the art matches the Galaxy thumbnail an uncharted planet shows at those coords (VEY-67).
+// Used where only coordinates are known (e.g. Mission Control route cards, VEY-403).
+export function planetTypeFromCoordinates(galaxy: number, system: number, position: number): PlanetType {
+  const seed = galaxy * 10000 + system * 100 + position;
+  return pickPlanetType(position, seed + 1);
+}
+
+export function planetImageFromCoordinates(galaxy: number, system: number, position: number): string {
+  return planetImageForType(planetTypeFromCoordinates(galaxy, system, position));
+}
+
 export function generateSystem(galaxy: number, system: number): Planet[] {
   const planets: Planet[] = [];
 

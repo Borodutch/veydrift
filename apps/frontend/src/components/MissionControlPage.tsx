@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
+import { planetImageForType, planetImageFromCoordinates, planetTypeFromTemperature } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { shipAssetByKey } from "../gameAssets";
 import { buildInspectHash } from "../inspectRoutes";
@@ -561,6 +562,7 @@ function MissionRow({
       missionId={mission.missionId}
       origin={origin}
       progressPercent={missionProgressPercent(mission, now)}
+      returning={isReturnLeg(mission.status)}
       routeSubtext={directionSubtext}
       statusPill={missionStatusPill(mission.status)}
       target={target}
@@ -633,7 +635,23 @@ type MissionEndpoint = {
   coordinates: string | null;
   coords: { galaxy: number; position: number; system: number } | null;
   name: string;
+  // The real per-type planet art for this endpoint (VEY-403), null when no coordinates resolve.
+  planetImage: string | null;
 };
+
+// Resolves the planet art for a route endpoint (VEY-403). Charted planets the player owns carry a
+// temperature, so they use the same temperature -> type art as the Galaxy/overview views; everything
+// else falls back to the deterministic coordinate-derived art Galaxy renders for that slot.
+function planetImageForEndpoint(
+  coords: { galaxy: number; position: number; system: number } | null,
+  temperature: number | undefined,
+): string | null {
+  if (temperature !== undefined && Number.isFinite(temperature)) {
+    return planetImageForType(planetTypeFromTemperature(temperature));
+  }
+  if (coords) return planetImageFromCoordinates(coords.galaxy, coords.system, coords.position);
+  return null;
+}
 
 // Resolves a mission endpoint to a clickable planet (name with coords fallback, coords on
 // hover) and its commander, preferring the mission's own planet reference and falling back
@@ -662,6 +680,7 @@ function missionEndpoint(
     coordinates,
     coords,
     name: rawName || (coordinates ? coordinates : colony ? "Uncharted" : `Planet #${planetId}`),
+    planetImage: planetImageForEndpoint(coords, identity?.temperature),
   };
 }
 
@@ -705,6 +724,7 @@ function MissionRouteCell({
   origin,
   originTiming,
   progressPercent,
+  returning,
   subtext,
   target,
   targetTiming,
@@ -712,50 +732,121 @@ function MissionRouteCell({
   origin: MissionEndpoint;
   originTiming?: EndpointTiming | undefined;
   progressPercent?: number | undefined;
+  returning?: boolean | undefined;
   subtext?: string | undefined;
   target: MissionEndpoint;
   targetTiming?: EndpointTiming | undefined;
 }) {
   return (
     <div className="min-w-0">
-      <div className="grid grid-cols-[minmax(0,1fr)_3rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+      <div className="grid grid-cols-[minmax(0,1fr)_3.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
         <EndpointName endpoint={origin} />
-        <div className="h-1.5 self-center overflow-hidden rounded-full bg-white/10">
-          <div className="h-full rounded-full bg-cyan-300" style={{ width: `${Math.round(progressPercent ?? 100)}%` }} />
-        </div>
-        <EndpointName endpoint={target} />
+        <RouteArrow progressPercent={progressPercent} returning={returning ?? false} />
+        <EndpointName align="end" endpoint={target} />
         <EndpointSub endpoint={origin} timing={originTiming} />
         <span aria-hidden="true" />
-        <EndpointSub endpoint={target} timing={targetTiming} />
+        <EndpointSub align="end" endpoint={target} timing={targetTiming} />
       </div>
       {subtext ? <p className="mt-1.5 text-[11px] text-slate-500">{subtext}</p> : null}
     </div>
   );
 }
 
-function EndpointName({ endpoint }: { endpoint: MissionEndpoint }) {
-  if (endpoint.coords) {
-    return (
-      <a
-        className="block min-w-0 truncate rounded font-medium text-cyan-100 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50"
-        href={buildInspectHash({ coords: endpoint.coords, kind: "planet" })}
-        title={endpoint.coordinates ? `Open ${endpoint.coordinates} in Galaxy` : undefined}
-      >
-        {endpoint.name}
-      </a>
-    );
-  }
-  return (
+function EndpointName({ align = "start", endpoint }: { align?: "end" | "start" | undefined; endpoint: MissionEndpoint }) {
+  const label = endpoint.coords ? (
+    <a
+      className="block min-w-0 truncate rounded font-medium text-cyan-100 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50"
+      href={buildInspectHash({ coords: endpoint.coords, kind: "planet" })}
+      title={endpoint.coordinates ? `Open ${endpoint.coordinates} in Galaxy` : undefined}
+    >
+      {endpoint.name}
+    </a>
+  ) : (
     <span className="block min-w-0 truncate font-medium text-slate-100" title={endpoint.coordinates ?? undefined}>
       {endpoint.name}
     </span>
   );
+  const thumb = <PlanetThumb endpoint={endpoint} />;
+  return (
+    <div className={`flex min-w-0 items-center gap-2 ${align === "end" ? "justify-end" : ""}`}>
+      {align === "end" ? (
+        <>
+          {label}
+          {thumb}
+        </>
+      ) : (
+        <>
+          {thumb}
+          {label}
+        </>
+      )}
+    </div>
+  );
 }
 
-function EndpointSub({ endpoint, timing }: { endpoint: MissionEndpoint; timing?: EndpointTiming | undefined }) {
+// The planet art for a route endpoint (VEY-403): the real per-type planet asset used by Galaxy
+// thumbnails. Falls back to a neutral disc only when no coordinates are known (e.g. a battle-report
+// "Attacker" endpoint) so the card never shows a generic planet icon for a charted world.
+function PlanetThumb({ endpoint }: { endpoint: MissionEndpoint }) {
+  if (!endpoint.planetImage) {
+    return <span aria-hidden="true" className="h-7 w-7 shrink-0 rounded-full border border-white/10 bg-white/5" />;
+  }
+  return (
+    <img
+      alt=""
+      className="h-7 w-7 shrink-0 rounded-full border border-white/10 object-cover"
+      loading="lazy"
+      src={endpoint.planetImage}
+    />
+  );
+}
+
+// The directional route connector (VEY-403): a track that fills with mission progress along the
+// active leg, with an arrowhead pointing the way the fleet is travelling. Outbound legs fill from
+// origin -> target (arrowhead on the right); returning legs fill from target -> origin and point the
+// arrowhead back toward home (left). Fill is proportional to progress and reaches 100% on arrival.
+function RouteArrow({ progressPercent, returning }: { progressPercent?: number | undefined; returning: boolean }) {
+  const pct = Math.round(clamp(progressPercent ?? 100, 0, 100));
+  return (
+    <div
+      aria-hidden="true"
+      className="flex items-center gap-0.5"
+      data-route-arrow=""
+      data-route-direction={returning ? "returning" : "outbound"}
+      data-route-progress={String(pct)}
+    >
+      {returning ? <RouteArrowHead active={pct > 0} direction="left" /> : null}
+      <div className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`absolute inset-y-0 rounded-full bg-cyan-300 ${returning ? "right-0" : "left-0"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {returning ? null : <RouteArrowHead active={pct > 0} direction="right" />}
+    </div>
+  );
+}
+
+function RouteArrowHead({ active, direction }: { active: boolean; direction: "left" | "right" }) {
+  const color = active ? "#67e8f9" : "rgba(148,163,184,0.5)";
+  const style = direction === "right"
+    ? { borderBottom: "3px solid transparent", borderLeft: `5px solid ${color}`, borderTop: "3px solid transparent" }
+    : { borderBottom: "3px solid transparent", borderRight: `5px solid ${color}`, borderTop: "3px solid transparent" };
+  return <span aria-hidden="true" className="h-0 w-0 shrink-0" style={style} />;
+}
+
+function EndpointSub({
+  align = "start",
+  endpoint,
+  timing,
+}: {
+  align?: "end" | "start" | undefined;
+  endpoint: MissionEndpoint;
+  timing?: EndpointTiming | undefined;
+}) {
   if (!endpoint.commanderName && !timing) return <span aria-hidden="true" />;
   return (
-    <div className="min-w-0">
+    <div className={`min-w-0 ${align === "end" ? "text-right" : ""}`}>
       {endpoint.commanderName ? (
         <p className="break-words text-slate-400">
           {endpoint.commanderWallet ? (
@@ -797,6 +888,7 @@ function MissionCard({
   missionId,
   origin,
   progressPercent,
+  returning,
   routeSubtext,
   statusPill,
   target,
@@ -810,6 +902,7 @@ function MissionCard({
   missionId?: string | undefined;
   origin: MissionEndpoint;
   progressPercent?: number | undefined;
+  returning?: boolean | undefined;
   routeSubtext?: string | undefined;
   statusPill?: MissionStatusPill | undefined;
   target: MissionEndpoint;
@@ -832,7 +925,7 @@ function MissionCard({
         {groupId ? <span className="text-[11px] text-cyan-100/70">Group {groupId}</span> : null}
       </div>
       <div className="mt-3">
-        <MissionRouteCell origin={origin} progressPercent={progressPercent} subtext={routeSubtext} target={target} />
+        <MissionRouteCell origin={origin} progressPercent={progressPercent} returning={returning} subtext={routeSubtext} target={target} />
       </div>
       <div className="mt-3 flex flex-col gap-2 border-t border-white/5 pt-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">{fleet}</div>
@@ -859,6 +952,7 @@ function endpointFromPlanetId(planetId: string, lookup: ReadonlyMap<string, Miss
     coordinates,
     coords,
     name: identityName(identity) || coordinates || `Planet #${planetId}`,
+    planetImage: planetImageForEndpoint(coords, identity?.temperature),
   };
 }
 
@@ -1252,6 +1346,7 @@ function PastMissionSummaryRow({
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
       origin={origin}
+      returning={isReturnLeg(mission.status)}
       // VEY-400: the terminal status (e.g. "Returned") reads as the header pill, folding in the
       // VEY-399 rework intent (status as a pill, no raw timestamp) now that cards have no columns.
       statusPill={missionStatusPill(mission.status)}
@@ -1276,6 +1371,7 @@ function PastBattleReportRow({
     coordinates: null,
     coords: null,
     name: "Attacker",
+    planetImage: null,
   };
   return (
     <MissionCard
@@ -1613,12 +1709,18 @@ function pastRowTimestamp(row: PastMissionRow): number {
   return Number(row.mission.blockNumber || "0");
 }
 
+// A mission's home leg — the fleet is heading back to its origin (VEY-403), which is when the
+// directional route arrow points home and fills along the return rather than the outbound leg.
+function isReturnLeg(status: string): boolean {
+  return status === "Recalled" || status === "Returned" || status === "Returning";
+}
+
 function missionProgressPercent(mission: FleetMissionSummary, now: number): number {
   const arrivalAt = timestampToMs(mission.arrivalAt);
   const returnAt = timestampToMs(mission.returnAt);
   if (arrivalAt === undefined || returnAt === undefined) return 0;
 
-  const returning = mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned";
+  const returning = isReturnLeg(mission.status);
   const duration = Math.abs(returnAt - arrivalAt);
   const start = returning ? arrivalAt : arrivalAt - duration;
   const end = returning ? returnAt : arrivalAt;
@@ -1673,6 +1775,9 @@ type MissionPlanetIdentity = {
   displayName: string;
   owner: string;
   ownerDisplayName: string | null;
+  // Surface temperature of the planet when known (the player's own managed planets), used to pick
+  // the same per-type planet art the Galaxy/overview views render for a charted world (VEY-403).
+  temperature?: number | undefined;
 };
 
 function uniqueMissions(missions: FleetMissionSummary[]): FleetMissionSummary[] {
@@ -1720,11 +1825,13 @@ function planetLookupFromMissionData(
 }
 
 function identityFromManagedPlanet(planet: ManagedPlanetResponse): MissionPlanetIdentity {
+  const temperature = planet.temperature === undefined ? undefined : Number(planet.temperature);
   return {
     coordinates: planet.coordinates,
     displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
     owner: planet.owner,
     ownerDisplayName: null,
+    temperature: temperature !== undefined && Number.isFinite(temperature) ? temperature : undefined,
   };
 }
 

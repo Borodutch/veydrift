@@ -684,7 +684,54 @@ describe("Mission Control battle reports", () => {
     (targetCommanderButton?.props?.onClick as () => void)();
     expect(selectedPlayers).toEqual([defender]);
   });
+
+  test("VEY-403: outbound card fills the route arrow forward and renders planet art for both endpoints", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    // Launched 30s ago, arriving in 30s -> halfway down the outbound leg.
+    const outbound: FleetMissionSummary = {
+      ...mission("50", "Attack", "Outbound", owner, "7", "9", now + 30_000),
+      originPlanet: planetReference("7", owner, "Helios", "1:2:3"),
+      targetPlanet: planetReference("9", "0x2222222222222222222222222222222222222222", "Borealis", "4:5:6"),
+    };
+    const tree = MissionControlPage(missionControlProps(now, { outgoing: [outbound] }));
+
+    const arrows = routeArrows(tree);
+    expect(arrows.length).toBeGreaterThan(0);
+    expect(arrows[0]?.props?.["data-route-direction"]).toBe("outbound");
+    const progress = Number(arrows[0]?.props?.["data-route-progress"]);
+    expect(progress).toBeGreaterThan(0);
+    expect(progress).toBeLessThan(100);
+
+    // Both endpoints render the real per-type planet asset, never a generic icon.
+    const planetImages = findElements(tree, "img").filter((node) => String(node.props?.src ?? "").includes("/planets/"));
+    expect(planetImages.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("VEY-403: returning card points the route arrow back toward home", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    // Arrived 30s ago, returns home in 30s -> halfway down the return leg.
+    const returningMission: FleetMissionSummary = {
+      ...mission("51", "Attack", "Returning", owner, "7", "9", now - 30_000),
+      originPlanet: planetReference("7", owner, "Helios", "1:2:3"),
+      targetPlanet: planetReference("9", "0x2222222222222222222222222222222222222222", "Borealis", "4:5:6"),
+    };
+    const tree = MissionControlPage(missionControlProps(now, { returning: [returningMission] }));
+
+    const arrow = routeArrows(tree)[0];
+    expect(arrow?.props?.["data-route-direction"]).toBe("returning");
+    const progress = Number(arrow?.props?.["data-route-progress"]);
+    expect(progress).toBeGreaterThan(0);
+    expect(progress).toBeLessThan(100);
+  });
 });
+
+// The directional route connectors (VEY-403) carry their leg + fill on data attributes so tests can
+// assert direction/progress without depending on exact Tailwind widths.
+function routeArrows(tree: unknown): FoundElement[] {
+  return findElements(tree, "div").filter((node) => Boolean(node.props?.["data-route-direction"]));
+}
 
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
