@@ -7,7 +7,7 @@ import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates, PlanetType } from "../types";
 import { type BattleReport, type DefenderPlanetState, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
-import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
+import { isFleetRecallable, missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
 type MissionActionContext = "due" | "incoming" | "outgoing" | "returning";
@@ -164,8 +164,12 @@ function MissionActions({
   onResolve: (missionId: string) => void;
 }) {
   const context = missionActionContext(mission, now, account);
-  const actions = missionLifecycleActions({ canTransact, context, mission, now })
-    .filter((action) => action.kind !== "recall" || Boolean(mission.recallCost));
+  // Whether the Recall button shows is decided purely by mission lifecycle (an outgoing Outbound
+  // fleet that is not yet due), exactly like the Mission Control list. It must NOT be gated on
+  // mission.recallCost: that field is only emitted by FleetMissionRecalled, so a still-recallable
+  // Outbound fleet would carry a null cost and lose its button. The backend now projects the cost for
+  // Outbound fleets (VEY-KANEO-424), and the cost row below tolerates a null cost regardless.
+  const actions = missionLifecycleActions({ canTransact, context, mission, now });
 
   // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
@@ -227,7 +231,7 @@ function MissionFacts({
           <Row label="Cargo" value={formatResources(mission.cargo)} />
           <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
           {showsRecallCost(mission) ? (
-            <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+            <Row label="Recall cost" value={recallCostLabel(mission, now)} />
           ) : null}
         </Panel>
       )}
@@ -602,6 +606,16 @@ function isNoFleetReturned(mission: FleetMissionSummary): boolean {
 function showsRecallCost(mission: FleetMissionSummary): boolean {
   if (mission.status === "Recalled") return true;
   return ["Outbound", "Returning"].includes(mission.status);
+}
+
+// VEY-KANEO-424: the deuterium recall cost is shown only when recall is actually possible — a fleet
+// still Outbound and within the recall window (backend projects its cost), or one that has already
+// been recalled (the cost it paid). Past the 60s cutoff, or for a Returning fleet, recall can no
+// longer happen, so the row reads "Not recallable". This keeps the cost row consistent with whether
+// the Recall button is offered, and matches Mission Control.
+function recallCostLabel(mission: FleetMissionSummary, now: number): string {
+  const recallable = mission.status === "Recalled" || isFleetRecallable(mission, now);
+  return recallable && mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable";
 }
 
 function isCombatMission(mission: FleetMissionSummary): boolean {
