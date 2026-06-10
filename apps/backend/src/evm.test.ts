@@ -846,6 +846,56 @@ describe("fleet mission visibility", () => {
     expect(attackerVisibility.incoming).toEqual([]);
     expect(attackerVisibility.battleReports.map((report) => report.missionId)).toEqual(["10"]);
   });
+
+  // VEY-KANEO-415: reproduce/confirm "active Colonize missions not visible in Mission Control".
+  // Colonize is launched with the same FleetMissionLaunched/Cargo/Ships events as every other
+  // mission (VeydriftColonizationModule._launchColonyMission), with missionType=Colonize (2),
+  // status Outbound, owner=launcher, and a target id encoded from the unsettled coordinates with
+  // the colonization flag bit (1 << 255) set. The visibility `outgoing` feed — which powers the
+  // Mission Control "My missions" tab — keys only on owner + Outbound status and is mission-type
+  // agnostic, so the active colonize mission MUST surface. This guards against a regression where
+  // a type filter (as exists for incoming/joinable Attack rows) silently drops colonize fleets.
+  test("surfaces an active colonize mission in the owner's outgoing visibility feed", async () => {
+    const colonizer = "0x0000000000000000000000000000000000000abc" as Address;
+    // _encodeColonyTarget(galaxy=2, system=44, position=10): flag | (g << 24) | (s << 8) | p.
+    const colonizeTargetId = (1n << 255n) | (2n << 24n) | (44n << 8n) | 10n;
+    const missionLogs = fleetMissionLogs({
+      missionId: 42n,
+      owner: colonizer,
+      missionType: 2n, // Colonize
+      originPlanetId: 7n,
+      targetPlanetId: colonizeTargetId
+    });
+    const reader = new class extends VeydriftGameReader {
+      override async getWalletPlanets(account: Address) {
+        return {
+          wallet: account,
+          homePlanetId: "7",
+          planets: [{ planetId: "7" }]
+        } as Awaited<ReturnType<VeydriftGameReader["getWalletPlanets"]>>;
+      }
+    }(
+      readerConfig,
+      {
+        async request<T>(method: string): Promise<T> {
+          expect(method).toBe("eth_getLogs");
+          return missionLogs as T;
+        }
+      }
+    );
+
+    const visibility = await reader.getFleetMissionVisibility(colonizer);
+
+    const outgoing = visibility.outgoing.find((mission) => mission.missionId === "42");
+    expect(outgoing).toBeDefined();
+    expect(outgoing?.missionType).toBe("Colonize");
+    expect(outgoing?.status).toBe("Outbound");
+    expect(outgoing?.targetPlanetId).toBe(colonizeTargetId.toString());
+    // The colonize fleet is one colony ship; it is not an attack, so it never appears as incoming
+    // or as a joinable alliance attack — only as the owner's own outgoing mission.
+    expect(visibility.incoming).toEqual([]);
+    expect(visibility.joinableAttacks).toEqual([]);
+  });
 });
 
 describe("fleet mission resolution scheduling", () => {
