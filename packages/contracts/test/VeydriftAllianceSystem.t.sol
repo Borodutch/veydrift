@@ -447,6 +447,89 @@ contract VeydriftAllianceSystemTest is Test {
         );
     }
 
+    function testTransferAllianceOwnershipPromotesOfficerAndDemotesOwner() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "discord.gg/vdft");
+        _inviteAndAccept(allianceId, member);
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        vm.expectEmit(true, true, false, true, address(alliances));
+        emit VeydriftAllianceSystem.AllianceRoleUpdated(
+            allianceId, member, VeydriftAllianceSystem.AllianceRole.Owner
+        );
+        vm.expectEmit(true, true, false, true, address(alliances));
+        emit VeydriftAllianceSystem.AllianceRoleUpdated(
+            allianceId, leader, VeydriftAllianceSystem.AllianceRole.Officer
+        );
+        vm.expectEmit(true, true, true, false, address(alliances));
+        emit VeydriftAllianceSystem.AllianceOwnershipTransferred(allianceId, leader, member);
+
+        vm.prank(leader);
+        alliances.transferAllianceOwnership(allianceId, member);
+
+        assertEq(alliances.allianceProfile(allianceId).owner, member);
+        assertEq(
+            uint8(alliances.allianceOf(member).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Owner)
+        );
+        assertEq(
+            uint8(alliances.allianceOf(leader).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Officer)
+        );
+        assertEq(alliances.allianceProfile(allianceId).memberCount, 2);
+
+        // New owner can now exercise owner-only authority; old owner cannot.
+        vm.prank(member);
+        alliances.setMemberRole(allianceId, leader, VeydriftAllianceSystem.AllianceRole.Member);
+        vm.prank(leader);
+        vm.expectRevert();
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+    }
+
+    function testTransferAllianceOwnershipRevertsForInvalidTargets() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "discord.gg/vdft");
+        _inviteAndAccept(allianceId, member);
+
+        // Caller is not the alliance owner.
+        vm.prank(member);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAuthorized.selector, member, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, leader);
+
+        // Target is a plain Member, not an Officer.
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NewOwnerMustBeOfficer.selector, member, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, member);
+
+        // Target is not a member of the alliance.
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAllianceMember.selector, enemy, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, enemy);
+
+        // Target is the caller itself.
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.SelfOwnershipTransfer.selector, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, leader);
+    }
+
     function testDiplomacyFeedsAttackLimitContext() public {
         vm.prank(leader);
         uint256 allianceId = alliances.createAlliance("ALLY", "Alliance", "");
