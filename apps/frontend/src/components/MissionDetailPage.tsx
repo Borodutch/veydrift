@@ -42,7 +42,7 @@ interface MissionDetailPageProps {
   onBack: () => void;
   onCompleteReturn: (missionId: string) => void;
   onCopyShareUrl: () => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
@@ -168,7 +168,7 @@ function MissionActions({
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
 }) {
@@ -194,10 +194,7 @@ function MissionActions({
       <h3 className="mb-3 text-sm font-semibold text-white">Available Orders</h3>
       <div className="flex flex-wrap gap-2">
         {actions.map((action) => action.kind === "counterplay" ? (
-          <span className="contents" key={action.kind}>
-            <ActionButton action={{ ...action, label: "Group defend" }} onClick={() => onCounterplay(mission.missionId, "acsDefend")} />
-            <ActionButton action={{ ...action, label: "Intercept" }} onClick={() => onCounterplay(mission.missionId, "intercept")} />
-          </span>
+          <ActionButton action={{ ...action, label: "Group defend" }} key={action.kind} onClick={() => onCounterplay(mission.missionId, "acsDefend")} />
         ) : (
           <ActionButton
             action={action}
@@ -614,7 +611,7 @@ function Notice({ children, tone = "neutral" }: { children: preact.ComponentChil
   return <div className={`rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
 }
 
-// The detail page must authorize orders (Recall / Resolve / Group defend / Intercept / Land fleet)
+// The detail page must authorize orders (Recall / Resolve / Group defend / Land fleet)
 // the same way the Mission Control list does, or the two screens disagree for the same fleet
 // (VEY-KANEO-424). Mission Control gets that classification from the backend's wallet-scoped
 // fleet-visibility lists; the detail page reuses those same lists by mission id rather than
