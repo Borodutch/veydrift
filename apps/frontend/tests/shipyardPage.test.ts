@@ -389,8 +389,8 @@ describe("Shipyard page display helpers", () => {
     const crawler = items.find((item) => item.key === "crawler");
     expect(crawler).toMatchObject({
       notes: [
-        "A planetary support machine rather than a fleet ship. Crawlers help an economy develop but are too slow and static for normal fleet missions.",
-        "Special: a stationary mining-support unit meant to boost the home planet's metal, crystal, and deuterium output. The production bonus is not active on-chain yet, so building crawlers does not increase production today.",
+        "A stationary mining-support unit rather than a fleet ship: crawlers do not fly, haul cargo, or fight. They boost this planet's metal, crystal, and deuterium mine output.",
+        "Special: each crawler adds +0.02% to this planet's metal, crystal, and deuterium mine production, counting up to 8 crawlers per combined mine level (Metal Mine + Crystal Mine + Deuterium Synthesizer) and capped at a +50% total bonus. The on-chain bonus activates once the crawler production upgrade is live.",
       ],
     });
   });

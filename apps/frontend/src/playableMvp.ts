@@ -608,7 +608,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "armor", label: "Armor", level: 4 },
       { kind: "technology", key: "laser", label: "Laser", level: 4 },
     ],
-    description: "A planetary support machine rather than a fleet ship. Crawlers help an economy develop but are too slow and static for normal fleet missions.",
+    description: "A stationary mining-support unit rather than a fleet ship: crawlers do not fly, haul cargo, or fight. They boost this planet's metal, crystal, and deuterium mine output.",
     asset: shipAssetByKey.crawler,
   },
 ];

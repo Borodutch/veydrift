@@ -1129,6 +1129,69 @@ describe("projected fleet recall cost", () => {
   });
 });
 
+// VEY-KANEO-442: index + serve OGame-style ACS Defend stationed-defense state. An AcsDefend fleet
+// stations at a planet (its emitted targetPlanetId) to defend a specific hostile attack mission; the
+// contract puts that hostile mission id in the FleetMissionLaunched `randomnessRequestId` slot
+// (word 4). The read model must link the defender to the attack so stationed-defense state is
+// queryable (who defends attack X, and which fleets are stationed at planet Y).
+describe("ACS Defend stationed-defense indexing", () => {
+  const attacker = "0x00000000000000000000000000000000000000a1" as Address;
+  const defender = "0x00000000000000000000000000000000000000b2" as Address;
+  const allyDefender = "0x00000000000000000000000000000000000000c3" as Address;
+  const defendedPlanetId = 9n;
+  const hostileMissionId = 50n;
+  const attackMissionType = topic(3n); // Attack
+  const acsDefendMissionType = topic(5n); // AcsDefend
+
+  function launch(missionId: bigint, owner: Address, missionType: string, originPlanetId: bigint, targetPlanetId: bigint, randomnessRequestId: bigint): RpcLog {
+    return makeLog({
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), missionType],
+      data: dataWords([
+        word(originPlanetId),
+        word(targetPlanetId),
+        word(1_900_000_000n),
+        word(1_900_000_600n),
+        word(randomnessRequestId)
+      ])
+    });
+  }
+
+  test("links an AcsDefend fleet to the hostile attack it stations against", () => {
+    const missions = decodeFleetMissionLogs([
+      // Hostile attack heading for the defended planet.
+      launch(hostileMissionId, attacker, attackMissionType, 1n, defendedPlanetId, 0n),
+      // Two allied fleets station at the defended planet to defend that attack.
+      launch(51n, defender, acsDefendMissionType, 2n, defendedPlanetId, hostileMissionId),
+      launch(52n, allyDefender, acsDefendMissionType, 3n, defendedPlanetId, hostileMissionId)
+    ]);
+
+    const firstDefender = missions.get("51");
+    expect(firstDefender?.missionType).toBe("AcsDefend");
+    // The AcsDefend fleet stations at the real defended planet, not at the hostile mission id.
+    expect(firstDefender?.targetPlanetId).toBe(defendedPlanetId.toString());
+    expect(firstDefender?.defendsMissionId).toBe(hostileMissionId.toString());
+    expect(firstDefender?.counterplayDefenderMissionIds).toEqual([]);
+
+    // The attack mission now lists every fleet stationed to defend its target.
+    const attack = missions.get(hostileMissionId.toString());
+    expect(attack?.missionType).toBe("Attack");
+    expect(attack?.counterplayDefenderMissionIds).toEqual(["51", "52"]);
+    expect(attack?.defendsMissionId).toBeNull();
+  });
+
+  test("records the defender link even when the hostile attack launch is outside the decoded range", () => {
+    // Self-heal / windowed range may only contain the defender's launch, not the attack's. The link
+    // must still be captured so a follow-up query can resolve the stationed defense.
+    const missions = decodeFleetMissionLogs([
+      launch(51n, defender, acsDefendMissionType, 2n, defendedPlanetId, hostileMissionId)
+    ]);
+
+    expect(missions.get("51")?.defendsMissionId).toBe(hostileMissionId.toString());
+    // A placeholder attack entry carries the back-reference for serving stationed defenders.
+    expect(missions.get(hostileMissionId.toString())?.counterplayDefenderMissionIds).toEqual(["51"]);
+  });
+});
+
 describe("battle reports", () => {
   test("decodes shareable combat report logs", () => {
     const attacker = "0x0000000000000000000000000000000000000abc" as Address;
@@ -1220,6 +1283,8 @@ describe("ACS attack group participants", () => {
       recallCost: null,
       attackGroupId: null,
       joinedAttackMissionIds: [],
+      defendsMissionId: null,
+      counterplayDefenderMissionIds: [],
       cargo: { metal: "0", crystal: "0", deuterium: "0" },
       returnCargo: null,
       ships: {},
