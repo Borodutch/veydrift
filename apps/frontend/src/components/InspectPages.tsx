@@ -24,6 +24,7 @@ import {
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
   buildAllianceRoster,
+  canTransferAllianceOwnership,
   findAllianceEntry,
   rosterPageCount,
   rosterPageRows,
@@ -222,6 +223,7 @@ export function AllianceInspectPage({
   onOpenPlayer,
   onRefresh,
   onSetRole,
+  onTransferOwnership,
 }: {
   actionBusy: boolean;
   allianceId: string;
@@ -237,6 +239,7 @@ export function AllianceInspectPage({
   onOpenPlayer: (wallet: string) => void;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onTransferOwnership: (playerAddress: string) => void;
 }) {
   const [inviteAddress, setInviteAddress] = useState("");
   const [inviteFormOpen, setInviteFormOpen] = useState(false);
@@ -301,6 +304,7 @@ export function AllianceInspectPage({
                 onKick={onKick}
                 onOpenPlayer={onOpenPlayer}
                 onSetRole={onSetRole}
+                onTransferOwnership={onTransferOwnership}
                 viewer={allianceState?.wallet}
               />
               <AllianceMemberActions
@@ -325,6 +329,7 @@ export function AllianceInspectPage({
                 onKick={onKick}
                 onOpenPlayer={onOpenPlayer}
                 onSetRole={onSetRole}
+                onTransferOwnership={onTransferOwnership}
               />
             </Panel>
           ) : (
@@ -436,7 +441,47 @@ function Panel({ children, title }: { children: ComponentChildren; title: string
   );
 }
 
-function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onOpenPlayer, onSetRole, viewer }: {
+function TransferOwnershipButton({ address, disabled, onTransferOwnership }: {
+  address: string;
+  disabled: boolean;
+  onTransferOwnership: (playerAddress: string) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  if (confirming) {
+    return (
+      <>
+        <button
+          className="rounded border border-amber-300/40 px-2 py-1 text-xs font-semibold text-amber-100 disabled:opacity-50"
+          disabled={disabled}
+          onClick={() => { setConfirming(false); onTransferOwnership(address); }}
+          type="button"
+        >
+          Confirm Transfer
+        </button>
+        <button
+          className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 hover:bg-white/10"
+          onClick={() => setConfirming(false)}
+          type="button"
+        >
+          Cancel
+        </button>
+      </>
+    );
+  }
+  return (
+    <button
+      className="rounded border border-amber-300/30 px-2 py-1 text-xs font-semibold text-amber-100 disabled:opacity-50"
+      disabled={disabled}
+      onClick={() => setConfirming(true)}
+      title="Hand the owner role to this officer"
+      type="button"
+    >
+      Transfer Ownership
+    </button>
+  );
+}
+
+function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onOpenPlayer, onSetRole, onTransferOwnership, viewer }: {
   canManageMembers: boolean;
   disabled: boolean;
   isOwner: boolean;
@@ -444,6 +489,7 @@ function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onO
   onKick: (playerAddress: string) => void;
   onOpenPlayer: (wallet: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onTransferOwnership: (playerAddress: string) => void;
   viewer?: string | undefined;
 }) {
   const [page, setPage] = useState(1);
@@ -484,6 +530,7 @@ function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onO
                   <div className="flex flex-wrap gap-2 md:justify-end">
                     {ownerCanChangeRole && member.role === "member" ? <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "officer")} type="button">Make Officer</button> : null}
                     {ownerCanChangeRole && member.role === "officer" ? <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "member")} type="button">Make Member</button> : null}
+                    {canTransferAllianceOwnership(member, isOwner, isViewer) ? <TransferOwnershipButton address={member.address} disabled={disabled} onTransferOwnership={onTransferOwnership} /> : null}
                     {(canKick || (isOwner && member.role === "officer")) && !isViewer ? <button className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50" disabled={disabled} onClick={() => onKick(member.address)} type="button">Remove</button> : null}
                   </div>
                 ) : null}

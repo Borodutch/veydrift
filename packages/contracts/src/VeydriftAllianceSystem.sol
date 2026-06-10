@@ -149,6 +149,9 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     event AllianceRoleUpdated(
         uint256 indexed allianceId, address indexed player, AllianceRole role
     );
+    event AllianceOwnershipTransferred(
+        uint256 indexed allianceId, address indexed previousOwner, address indexed newOwner
+    );
     event AllianceDiplomacyUpdated(
         uint256 indexed allianceId, uint256 indexed otherAllianceId, DiplomacyStatus status
     );
@@ -408,6 +411,24 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
 
         membership.role = role;
         emit AllianceRoleUpdated(allianceId, player, role);
+    }
+
+    /// @notice Hand the alliance owner role to one of its officers. The caller steps down to officer.
+    function transferAllianceOwnership(uint256 allianceId, address newOwner) external {
+        _requireOwner(allianceId, msg.sender);
+        if (newOwner == msg.sender) revert NotAuthorized(msg.sender, allianceId);
+
+        Membership storage nextOwner = _memberships[newOwner];
+        if (nextOwner.allianceId != allianceId) revert NotAllianceMember(newOwner, allianceId);
+        if (nextOwner.role != AllianceRole.Officer) revert InvalidRole(nextOwner.role);
+
+        _memberships[msg.sender].role = AllianceRole.Officer;
+        nextOwner.role = AllianceRole.Owner;
+        _alliances[allianceId].owner = newOwner;
+
+        emit AllianceRoleUpdated(allianceId, msg.sender, AllianceRole.Officer);
+        emit AllianceRoleUpdated(allianceId, newOwner, AllianceRole.Owner);
+        emit AllianceOwnershipTransferred(allianceId, msg.sender, newOwner);
     }
 
     function setDiplomacy(uint256 allianceId, uint256 otherAllianceId, DiplomacyStatus status)

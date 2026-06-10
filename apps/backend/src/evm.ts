@@ -264,6 +264,14 @@ export type IndexedAllianceEvent =
       roleId: number;
     }
   | {
+      eventName: "AllianceOwnershipTransferred";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      previousOwner: Address;
+      newOwner: Address;
+    }
+  | {
       eventName: "AllianceDiplomacyUpdated";
       transactionHash: string;
       blockNumber: string;
@@ -2270,6 +2278,7 @@ export class VeydriftGameReader implements ChainReader {
           allianceJoinedTopic,
           allianceLeftTopic,
           allianceRoleUpdatedTopic,
+          allianceOwnershipTransferredTopic,
           allianceDiplomacyUpdatedTopic
         ]]
       }
@@ -3634,6 +3643,7 @@ const allianceJoinRequestApprovedTopic = "0xca0494582fd691cc814cd70d0af7915183b6
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
 const allianceLeftTopic = "0x65b0be45688803f341e315da7be3de9dd83ebf51eb3cccb3788080695e19ec54";
 const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
+const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
@@ -3792,6 +3802,7 @@ export function isAllianceLog(log: RpcLog): boolean {
     || topic === allianceJoinedTopic
     || topic === allianceLeftTopic
     || topic === allianceRoleUpdatedTopic
+    || topic === allianceOwnershipTransferredTopic
     || topic === allianceDiplomacyUpdatedTopic;
 }
 
@@ -4157,6 +4168,15 @@ export function decodeAllianceLog(log: RpcLog): IndexedAllianceEvent {
       player: decodeAddressWord(topicAt(log.topics, 2)),
       role: allianceRoleName(roleId),
       roleId
+    };
+  }
+  if (topic === allianceOwnershipTransferredTopic) {
+    return {
+      ...base,
+      eventName: "AllianceOwnershipTransferred",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      previousOwner: decodeAddressWord(topicAt(log.topics, 2)),
+      newOwner: decodeAddressWord(topicAt(log.topics, 3))
     };
   }
   if (topic === allianceDiplomacyUpdatedTopic) {

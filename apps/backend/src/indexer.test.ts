@@ -32,6 +32,7 @@ const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b0
 const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
 const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
+const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -1536,6 +1537,72 @@ describe("SettlementIndexer", () => {
     expect(indexer.allianceIntelForPlayers([player, applicant])).toEqual(new Map([
       [player, { allianceId: "1", tag: "VEY", name: "Veydrift Command" }]
     ]));
+  });
+
+  test("transfers alliance ownership to an officer from event logs", () => {
+    const officer = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xalliance-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("VEY", "Veydrift Command")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xalliance-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      blockTimestamp: "0x69801c82",
+      transactionHash: "0xalliance-officer",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(officer)],
+      data: abiWords(2n)
+    });
+
+    // transferAllianceOwnership emits two role updates plus the ownership transfer.
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xalliance-transfer",
+      logIndex: "0x0",
+      topics: [allianceRoleUpdatedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xalliance-transfer",
+      logIndex: "0x1",
+      topics: [allianceRoleUpdatedTopic, topic(1n), addressTopic(officer)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xalliance-transfer",
+      logIndex: "0x2",
+      topics: [allianceOwnershipTransferredTopic, topic(1n), addressTopic(player), addressTopic(officer)],
+      data: "0x"
+    });
+
+    expect(indexer.allianceState(officer)).toMatchObject({
+      membership: { allianceId: "1", role: "owner" },
+      profile: { owner: officer }
+    });
+    expect(indexer.allianceState(player).membership).toMatchObject({
+      allianceId: "1",
+      role: "officer"
+    });
   });
 
   test("rebuild backfills alliance event logs into the indexed read model", async () => {

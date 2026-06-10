@@ -727,7 +727,8 @@ const ALLIANCE_SELECTORS = {
   approveJoinRequest: "0x8ff388c7",
   kickMember: "0xbd0e667c",
   leaveAlliance: "0xdabd761d",
-  setMemberRole: "0xbfbb73f1"
+  setMemberRole: "0xbfbb73f1",
+  transferAllianceOwnership: "0xb1d3b1e4"
 } as const;
 const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
@@ -1942,6 +1943,20 @@ export async function sendAllianceRoleTransaction(
     from: account,
     to: contractAddress,
     data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
+  });
+}
+
+export async function sendAllianceTransferOwnershipTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddress: string
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressCall(ALLIANCE_SELECTORS.transferAllianceOwnership, allianceId, playerAddress)
   });
 }
 
