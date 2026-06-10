@@ -68,6 +68,30 @@ describe("MissionControlPage", () => {
     ]);
   });
 
+  // VEY-KANEO-424: recall is only valid more than the 60s contract cutoff before arrival. Inside that
+  // window the fleet is still Outbound and not yet due, so the Recall button is offered but disabled.
+  test("disables Recall once an outbound fleet is within the 60s recall cutoff", () => {
+    const now = 1_770_000_100_000;
+
+    // 200s before arrival: comfortably outside the cutoff, so recall is enabled.
+    expect(missionLifecycleActions({
+      canTransact: true,
+      context: "outgoing",
+      mission: mission({ arrivalAt: "1770000300", missionId: "1", status: "Outbound" }),
+      now,
+    }).find((action) => action.kind === "recall")?.enabled).toBe(true);
+
+    // 30s before arrival: inside the 60s cutoff. The button is still present (not yet due) but disabled.
+    const recall = missionLifecycleActions({
+      canTransact: true,
+      context: "outgoing",
+      mission: mission({ arrivalAt: "1770000130", missionId: "2", status: "Outbound" }),
+      now,
+    }).find((action) => action.kind === "recall");
+    expect(recall?.enabled).toBe(false);
+    expect(recall?.reason).toContain("recall cutoff");
+  });
+
   test("renders player-facing mission control rows without implementation copy", () => {
     const page = MissionControlPage({
       actionState: { status: "idle" },

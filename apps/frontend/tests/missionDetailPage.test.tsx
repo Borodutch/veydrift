@@ -182,11 +182,25 @@ describe("MissionDetailPage recall cost row", () => {
     expect(text).not.toContain("Not recallable");
   });
 
-  test("keeps the recall cost row for an in-flight outbound mission", () => {
-    const text = renderDetailText({ mission: transportMission({ status: "Outbound", recallCost: "50" }) });
+  test("keeps the recall cost row for an in-flight outbound mission still within the recall window", () => {
+    // arrival far in the future (well before the 60s cutoff) so the fleet is still recallable.
+    const text = renderDetailText({ mission: transportMission({ status: "Outbound", recallCost: "50", arrivalAt: "1770005000", returnAt: "1770006000" }) });
 
     expect(text).toContain("Recall cost");
     expect(text).toContain("50 deuterium");
+  });
+
+  // VEY-KANEO-424 acceptance #2: past the 60s recall cutoff (but before arrival) the fleet can no
+  // longer be recalled, so the row must read "Not recallable" even though the backend still carries a
+  // projected cost — keeping Mission Detail consistent with the (now-disabled) Mission Control button.
+  test("shows Not recallable for an outbound fleet past the 60s recall cutoff", () => {
+    // renderDetailText fixes now at 1_770_001_000_000 ms (1_770_001_000 s); arrival 30s later is
+    // inside the 60s cutoff window, so recall is no longer possible.
+    const text = renderDetailText({ mission: transportMission({ status: "Outbound", recallCost: "50", arrivalAt: "1770001030", returnAt: "1770001330" }) });
+
+    expect(text).toContain("Recall cost");
+    expect(text).toContain("Not recallable");
+    expect(text).not.toContain("50 deuterium");
   });
 
   test("keeps the recall cost row for a recalled fleet still heading home", () => {
@@ -194,6 +208,38 @@ describe("MissionDetailPage recall cost row", () => {
 
     expect(text).toContain("Recall cost");
     expect(text).toContain("Not recallable");
+  });
+});
+
+// VEY-KANEO-424: the Recall button must appear for an owner's still-in-flight Outbound fleet, the
+// same as the Mission Control list. It must not be gated on mission.recallCost — that field is only
+// emitted on recall, so an outbound fleet carries a null cost and the button used to disappear here.
+describe("MissionDetailPage Recall action", () => {
+  function transportMission(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
+    // arrival/return in the far future so the fleet is still in flight (not yet due) under the
+    // fixed `now` used by renderDetailText.
+    return combatMission({
+      missionType: "Transport",
+      ships: { smallCargo: "3" },
+      status: "Outbound",
+      arrivalAt: "1770002000",
+      returnAt: "1770003000",
+      ...overrides,
+    });
+  }
+
+  test("shows the Recall button for an owner's outbound fleet even when recallCost is null", () => {
+    const text = renderDetailText({ mission: transportMission({ recallCost: null }) });
+
+    expect(text).toContain("Available Orders");
+    expect(text).toContain("Recall fleet");
+  });
+
+  test("still shows the Recall button when the backend projected a recall cost", () => {
+    const text = renderDetailText({ mission: transportMission({ recallCost: "50" }) });
+
+    expect(text).toContain("Recall fleet");
+    expect(text).toContain("50 deuterium");
   });
 });
 
