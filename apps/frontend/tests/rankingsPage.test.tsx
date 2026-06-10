@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import type { Coordinates } from "../src/types";
 import {
+  activeMissionsByPlanetId,
+  maxPlanetMissionLines,
+  planetMissionSubtext,
   primaryRankingEntries,
   rankingsColumnLabels,
   rankingsPageSize,
@@ -13,7 +16,7 @@ import {
   RankingsTable,
   shouldShowRankingsInitialLoader,
 } from "../src/components/RankingsPage";
-import type { HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
+import type { FleetMissionSummary, HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
 describe("RankingsPage", () => {
   test("uses one ranking table with the active category score and total context", () => {
@@ -546,6 +549,162 @@ describe("RankingsPage", () => {
     expect(visibleText(controls)).toContain("0 - 0 of 0");
   });
 });
+
+describe("RankingsPage active mission subtext", () => {
+  const NOW_MS = 1_700_000_000_000;
+  const NOW_SECONDS = Math.floor(NOW_MS / 1_000);
+
+  test("files each active mission under both its origin and target planet", () => {
+    const mission = activeMission({ originPlanetId: "10", targetPlanetId: "7" });
+    const byPlanet = activeMissionsByPlanetId([mission]);
+
+    expect(byPlanet.get("10")).toEqual([mission]);
+    expect(byPlanet.get("7")).toEqual([mission]);
+  });
+
+  test("files a self-targeting mission once", () => {
+    const mission = activeMission({ originPlanetId: "5", targetPlanetId: "5" });
+    const byPlanet = activeMissionsByPlanetId([mission]);
+
+    expect(byPlanet.get("5")).toEqual([mission]);
+  });
+
+  test("labels an inbound outbound fleet as arriving here with the mission type and ETA", () => {
+    const incoming = activeMission({
+      arrivalAt: String(NOW_SECONDS + 720),
+      missionType: "Attack",
+      originPlanetId: "10",
+      targetPlanetId: "7",
+    });
+    const { lines, overflow } = planetMissionSubtext("7", [incoming], NOW_MS);
+
+    expect(overflow).toBe(0);
+    expect(lines).toEqual([{ key: "1-in", label: "Attack → here · 12m", tone: "incoming" }]);
+  });
+
+  test("labels an outbound fleet with the destination coordinates and ETA", () => {
+    const outbound = activeMission({
+      arrivalAt: String(NOW_SECONDS + 3600),
+      missionType: "Transport",
+      originPlanetId: "7",
+      originPlanet: planetRef("7", "2:44:9"),
+      targetPlanetId: "12",
+      targetPlanet: planetRef("12", "4:226:5"),
+    });
+    const { lines } = planetMissionSubtext("7", [outbound], NOW_MS);
+
+    expect(lines).toEqual([{ key: "1-out", label: "Transport → [4:226:5] · 1h", tone: "outgoing" }]);
+  });
+
+  test("labels a returning fleet inbound to its home planet as returning with the landing ETA", () => {
+    const returning = activeMission({
+      originPlanetId: "7",
+      returnAt: String(NOW_SECONDS + 1200),
+      status: "Returning",
+      targetPlanetId: "12",
+    });
+    const { lines } = planetMissionSubtext("7", [returning], NOW_MS);
+
+    expect(lines).toEqual([{ key: "1-in", label: "Returning · 20m", tone: "incoming" }]);
+  });
+
+  test("decodes colonization targets that carry no resolved planet reference", () => {
+    const colonizeTargetId = "57896044618658097711785492504343953926634992332820282019728792003956631986693";
+    const colonize = activeMission({
+      arrivalAt: String(NOW_SECONDS + 60),
+      missionType: "Colonize",
+      originPlanetId: "7",
+      originPlanet: planetRef("7", "2:44:9"),
+      targetPlanetId: colonizeTargetId,
+      targetPlanet: null,
+    });
+    const { lines } = planetMissionSubtext("7", [colonize], NOW_MS);
+
+    expect(lines[0]?.tone).toBe("outgoing");
+    expect(lines[0]?.label).toBe("Colonize → [4:226:5] · 1m");
+  });
+
+  test("sorts a planet's mission lines soonest-event-first and caps overflow", () => {
+    const missions = [
+      activeMission({ missionId: "a", arrivalAt: String(NOW_SECONDS + 3600), targetPlanetId: "7", originPlanetId: "1" }),
+      activeMission({ missionId: "b", arrivalAt: String(NOW_SECONDS + 60), targetPlanetId: "7", originPlanetId: "2" }),
+      activeMission({ missionId: "c", arrivalAt: String(NOW_SECONDS + 600), targetPlanetId: "7", originPlanetId: "3" }),
+      activeMission({ missionId: "d", arrivalAt: String(NOW_SECONDS + 1200), targetPlanetId: "7", originPlanetId: "4" }),
+    ];
+    const { lines, overflow } = planetMissionSubtext("7", missions, NOW_MS);
+
+    expect(lines.map((line) => line.key)).toEqual(["b-in", "c-in", "d-in"]);
+    expect(lines).toHaveLength(maxPlanetMissionLines);
+    expect(overflow).toBe(1);
+  });
+
+  test("renders the planet mission subtext under the planet row for every commander (full transparency)", () => {
+    const entry = rankingEntry();
+    const missionsByPlanetId = activeMissionsByPlanetId([
+      activeMission({ arrivalAt: String(NOW_SECONDS + 720), missionType: "Attack", originPlanetId: "10", targetPlanetId: "7" }),
+    ]);
+    const table = RankingsTable({
+      entries: [entry],
+      loading: false,
+      missionsByPlanetId,
+      now: NOW_MS,
+    });
+    const list = elementNodes(table).find((item) => item.props?.["data-planet-missions"] === "7");
+
+    expect(list).toBeTruthy();
+    expect(visibleText(list)).toContain("Attack → here · 12m");
+  });
+
+  test("shows no mission subtext for a planet with no active missions", () => {
+    const table = RankingsTable({
+      entries: [rankingEntry()],
+      loading: false,
+      missionsByPlanetId: activeMissionsByPlanetId([]),
+      now: NOW_MS,
+    });
+
+    expect(elementNodes(table).some((item) => item.props?.["data-planet-missions"])).toBe(false);
+  });
+});
+
+function activeMission(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
+  return {
+    arrivalAt: "1700000720",
+    attackGroupId: null,
+    blockNumber: "1",
+    cargo: { crystal: "0", deuterium: "0", metal: "0" },
+    fuelCost: "0",
+    joinedAttackMissionIds: [],
+    missionId: "1",
+    missionType: "Attack",
+    originPlanet: planetRef("10", "1:2:3"),
+    originPlanetId: "10",
+    owner: "0x9999999999999999999999999999999999999999",
+    recallCost: null,
+    returnAt: "1700003600",
+    ships: {},
+    status: "Outbound",
+    targetPlanet: planetRef("7", "2:44:9"),
+    targetPlanetId: "7",
+    transactionHash: "0xabc",
+    ...overrides,
+  };
+}
+
+function planetRef(planetId: string, coordinates: string): FleetMissionSummary["originPlanet"] {
+  const [galaxy, system, position] = coordinates.split(":").map((part) => Number(part));
+  return {
+    archetype: "temperate-ocean",
+    coordinates,
+    galaxy: galaxy ?? 1,
+    name: null,
+    owner: "0x9999999999999999999999999999999999999999",
+    ownerDisplayName: null,
+    planetId,
+    position: position ?? 1,
+    system: system ?? 1,
+  };
+}
 
 function rankingEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
   return {
