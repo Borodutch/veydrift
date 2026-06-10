@@ -732,6 +732,69 @@ describe("Mission Control battle reports", () => {
     expect(imageSrcs.some((src) => src.includes("/ships/small-cargo"))).toBe(true);
   });
 
+  test("VEY-KANEO-425: hides the 'no battle report' notice for an outbound combat fleet still en route", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // An attack fleet still flying out: arrival is in the future, no report, combat not yet due.
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("60", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+      battleReport: null,
+    }))).join(" ");
+
+    // The fleet has not reached its target, so there is nothing to fight: the notice must be hidden.
+    expect(text).not.toContain("No indexed battle report");
+    expect(text).not.toContain("Combat is due or resolving");
+    expect(text).not.toContain("Battle Report");
+  });
+
+  test("VEY-KANEO-425: hides the 'no battle report' notice for a recalled combat fleet that never fought", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // A recalled attack fleet turned back before arrival, so it never fought and has no report.
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("61", "Attack", "Recalled", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).not.toContain("No indexed battle report");
+    expect(text).not.toContain("Combat is due or resolving");
+  });
+
+  test("VEY-KANEO-425: still shows the due/resolving notice for an outbound combat fleet whose arrival has passed", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("62", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+        needsResolution: true,
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("Combat is due or resolving");
+    expect(text).not.toContain("No indexed battle report");
+  });
+
+  test("VEY-KANEO-425: still shows the 'no battle report' notice for a returning combat fleet that fought without an indexed report", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // A fleet that fought and is heading home should have a report; its absence is genuinely
+    // notable, so the notice stays.
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("63", "Attack", "Returning", "0x1111111111111111111111111111111111111111", "7", "9", now - 120_000),
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("No indexed battle report is available for this combat mission yet.");
+  });
+
+  test("VEY-KANEO-425: keeps a non-combat outbound mission free of any battle-report notice", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("64", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).not.toContain("No indexed battle report");
+    expect(text).not.toContain("Battle Report");
+  });
+
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const baseProps = {
@@ -1142,6 +1205,31 @@ function missionControlProps(
     onRecall: () => undefined,
     onRefresh: () => undefined,
     onResolve: () => undefined,
+  };
+}
+
+function missionDetailProps(
+  now: number,
+  detail: Parameters<typeof MissionDetailPage>[0]["detail"],
+): Parameters<typeof MissionDetailPage>[0] {
+  return {
+    account: "0x1111111111111111111111111111111111111111",
+    actionState: { status: "idle" },
+    canTransact: true,
+    copyState: "idle",
+    detail,
+    loading: false,
+    missionId: detail?.mission?.missionId ?? null,
+    now,
+    onBack: () => undefined,
+    onCompleteReturn: () => undefined,
+    onCopyShareUrl: () => undefined,
+    onCounterplay: () => undefined,
+    onRecall: () => undefined,
+    onResolve: () => undefined,
+    onRetry: () => undefined,
+    onSelectCoordinates: () => undefined,
+    onSelectPlayer: () => undefined,
   };
 }
 

@@ -107,6 +107,14 @@ describe("overview queue progress display", () => {
     expect(overviewSource).toContain('aria-label="Close planet effects"');
   });
 
+  test("renders the Solar Satellite effect energy in the compact non-wrapping form", () => {
+    // The verbose "NN energy each" value wrapped on the Overview planet effects panel.
+    // Use the established "NN E" energy unit and keep the value on one line.
+    expect(overviewSource).toContain("} E each`}");
+    expect(overviewSource).not.toContain("energy each`}");
+    expect(overviewSource).toContain('label="Solar Satellite"\n          nowrap');
+  });
+
   test("derives selected planet effect values from canonical production helpers", () => {
     const state = createInitialPlayableState(1_700_000_000_000);
     state.buildings.deuteriumSynthesizer = 3;

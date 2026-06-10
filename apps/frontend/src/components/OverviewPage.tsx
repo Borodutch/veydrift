@@ -1337,18 +1337,19 @@ function PlanetEffectsPanel({
         <EffectMetric label="Mine power" value={effects.minePower} />
         <EffectMetric
           label="Solar Satellite"
-          value={effects.solarSatelliteEnergy === undefined ? "Unavailable" : `${effects.solarSatelliteEnergy.toLocaleString()} energy each`}
+          nowrap
+          value={effects.solarSatelliteEnergy === undefined ? "Unavailable" : `${effects.solarSatelliteEnergy.toLocaleString()} E each`}
         />
       </dl>
     </section>
   );
 }
 
-function EffectMetric({ label, value }: { label: string; value: string }) {
+function EffectMetric({ label, value, nowrap = false }: { label: string; value: string; nowrap?: boolean }) {
   return (
     <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-2.5 py-2">
       <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</dt>
-      <dd className="mt-0.5 break-words text-xs font-semibold text-slate-100">{value}</dd>
+      <dd className={`mt-0.5 text-xs font-semibold text-slate-100 ${nowrap ? "truncate whitespace-nowrap" : "break-words"}`} title={nowrap ? value : undefined}>{value}</dd>
     </div>
   );
 }
