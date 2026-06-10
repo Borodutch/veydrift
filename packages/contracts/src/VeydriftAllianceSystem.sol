@@ -114,6 +114,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     error InvalidInvite(address player, uint256 allianceId);
     error InvalidJoinRequest(address player, uint256 allianceId);
     error InvalidRole(AllianceRole role);
+    error NewOwnerMustBeOfficer(address account, uint256 allianceId);
     error NoAlliance(address player);
     error NoPlanet(address player);
     error NotAllianceMember(address player, uint256 allianceId);
@@ -148,6 +149,9 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     event AllianceLeft(uint256 indexed allianceId, address indexed player);
     event AllianceRoleUpdated(
         uint256 indexed allianceId, address indexed player, AllianceRole role
+    );
+    event AllianceOwnershipTransferred(
+        uint256 indexed allianceId, address indexed previousOwner, address indexed newOwner
     );
     event AllianceDiplomacyUpdated(
         uint256 indexed allianceId, uint256 indexed otherAllianceId, DiplomacyStatus status
@@ -408,6 +412,27 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
 
         membership.role = role;
         emit AllianceRoleUpdated(allianceId, player, role);
+    }
+
+    /// @notice Hand the alliance owner role to one of the alliance's officers,
+    /// demoting the previous owner to officer so the alliance always keeps
+    /// exactly one owner.
+    function transferAllianceOwnership(uint256 allianceId, address newOwner) external {
+        _requireOwner(allianceId, msg.sender);
+        if (newOwner == msg.sender) revert NotAuthorized(msg.sender, allianceId);
+        Membership storage incoming = _memberships[newOwner];
+        if (incoming.allianceId != allianceId) revert NotAllianceMember(newOwner, allianceId);
+        if (incoming.role != AllianceRole.Officer) {
+            revert NewOwnerMustBeOfficer(newOwner, allianceId);
+        }
+
+        _memberships[msg.sender].role = AllianceRole.Officer;
+        incoming.role = AllianceRole.Owner;
+        _alliances[allianceId].owner = newOwner;
+
+        emit AllianceRoleUpdated(allianceId, msg.sender, AllianceRole.Officer);
+        emit AllianceRoleUpdated(allianceId, newOwner, AllianceRole.Owner);
+        emit AllianceOwnershipTransferred(allianceId, msg.sender, newOwner);
     }
 
     function setDiplomacy(uint256 allianceId, uint256 otherAllianceId, DiplomacyStatus status)
