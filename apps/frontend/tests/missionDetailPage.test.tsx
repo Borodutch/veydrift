@@ -377,13 +377,14 @@ describe("MissionDetailPage order authorization (matches Mission Control)", () =
     expect(text).not.toContain("Intercept");
   });
 
-  test("offers Group defend / Intercept only to the actual defender (incoming attack)", () => {
+  test("offers Group defend only to the actual defender (incoming attack)", () => {
     const mission = outboundAttack();
     const text = renderDetailText({ mission }, { ...emptyVisibility, incoming: [mission] });
 
     expect(text).toContain("Available Orders");
     expect(text).toContain("Group defend");
-    expect(text).toContain("Intercept");
+    // VEY-KANEO-439: Intercept removed from the frontend; only Group defend (AcsDefend) remains.
+    expect(text).not.toContain("Intercept");
     expect(text).not.toContain("Recall fleet");
   });
 
