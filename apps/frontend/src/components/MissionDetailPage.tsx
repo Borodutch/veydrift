@@ -42,7 +42,7 @@ interface MissionDetailPageProps {
   onBack: () => void;
   onCompleteReturn: (missionId: string) => void;
   onCopyShareUrl: () => void;
-  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
@@ -168,7 +168,7 @@ function MissionActions({
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
 }) {
@@ -194,7 +194,7 @@ function MissionActions({
       <h3 className="mb-3 text-sm font-semibold text-white">Available Orders</h3>
       <div className="flex flex-wrap gap-2">
         {actions.map((action) => action.kind === "counterplay" ? (
-          <ActionButton action={{ ...action, label: "Group defend" }} key={action.kind} onClick={() => onCounterplay(mission.missionId, "acsDefend")} />
+          <ActionButton action={{ ...action, label: "Group defend" }} key={action.kind} onClick={() => onCounterplay(mission, "acsDefend")} />
         ) : (
           <ActionButton
             action={action}
