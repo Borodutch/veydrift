@@ -269,7 +269,7 @@ export function shipProductionItems({
       asset: ship.asset,
       blockedReason,
       cost: totalCost,
-      countLabel: "Owned",
+      countLabel: "At planet",
       countValue: owned,
       detailSections: shipDetailSections({
         cost: totalCost,
@@ -341,7 +341,11 @@ function shipDetailSections({
     {
       title: "Build",
       stats: [
-        { label: "Owned", value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US") },
+        {
+          label: "At planet",
+          value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US"),
+          hint: "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
+        },
         { label: "Build time", value: durationSeconds === undefined ? "-" : formatShipyardDuration(durationSeconds) },
         { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
       ],

@@ -175,7 +175,7 @@ describe("Shipyard page display helpers", () => {
     expect(items).toHaveLength(shipyardCatalog.length);
     expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
       actionLabel: "Build",
-      countLabel: "Owned",
+      countLabel: "At planet",
       countValue: 4,
       detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
       detailSections: [
@@ -189,7 +189,11 @@ describe("Shipyard page display helpers", () => {
         {
           title: "Build",
           stats: [
-            { label: "Owned", value: "4" },
+            {
+              label: "At planet",
+              value: "4",
+              hint: "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
+            },
             { label: "Build time", value: "48m" },
             { label: "Price", value: "Metal 6,000, Crystal 6,000", wide: true },
           ],
