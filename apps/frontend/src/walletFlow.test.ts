@@ -80,6 +80,8 @@ import {
   sendStartShipProductionTransaction,
   settlementTransactionData,
   walletRequestErrorMessage,
+  isContractExecutionRevert,
+  CONTRACT_REVERT_NO_REASON_MESSAGE,
   type Eip1193Provider
 } from "./walletFlow";
 
@@ -1114,7 +1116,7 @@ describe("walletFlow", () => {
       targetPlanetId: 9,
       missionType: 3,
       ships,
-    })).rejects.toThrow("rejected this transaction");
+    })).rejects.toThrow("rejected this action");
   });
 
   test("encodes mission ships, cargo, and randomness in contract ABI order", () => {
@@ -1504,6 +1506,35 @@ describe("walletFlow", () => {
     );
     expect(walletRequestErrorMessage(new Error("MetaMask is locked"))).toBe(
       "Wallet is locked. Please unlock your wallet and try again."
+    );
+  });
+
+  test("treats a silent/empty contract revert as a contract rejection, not RPC downtime (VEY-421)", () => {
+    // Raw node revert with no reason data.
+    expect(isContractExecutionRevert({ code: 3, message: "execution reverted", data: "0x" })).toBe(true);
+    // MetaMask wrapper: top-level -32603 with the empty revert nested underneath.
+    expect(
+      isContractExecutionRevert({
+        code: -32603,
+        message: "Internal JSON-RPC error.",
+        data: { code: 3, message: "execution reverted", data: "0x" },
+      }),
+    ).toBe(true);
+    // Genuine transport-level -32603 with no nested revert is NOT a contract revert.
+    expect(isContractExecutionRevert({ code: -32603, message: "Internal JSON-RPC error." })).toBe(false);
+
+    // The wrapped empty revert must not be mapped to the "could not read game
+    // contract state" RPC-availability copy.
+    const wrappedMessage = walletRequestErrorMessage({
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { code: 3, message: "execution reverted", data: "0x" },
+    });
+    expect(wrappedMessage).toBe(CONTRACT_REVERT_NO_REASON_MESSAGE);
+    expect(wrappedMessage).not.toContain("wallet could not read the current game contract state");
+    // A bare -32603 with no nested revert keeps the availability copy.
+    expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
+      "wallet could not read the current game contract state"
     );
   });
 

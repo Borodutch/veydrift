@@ -211,7 +211,30 @@ describe("Playable MVP app display helpers", () => {
     expect(galaxyMissionActionErrorLabel(
       "Attack mission",
       new Error("execution reverted"),
-    )).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
+    )).toBe("Attack mission was rejected by the game contract. Refresh fleet, cargo, fuel, and target state before retrying, or choose a different target if the state changed.");
+  });
+
+  test("labels a silent contract revert as a contract rejection, not RPC downtime (VEY-421)", () => {
+    // Raw node revert with no reason data (code 3, empty `0x`).
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: 3,
+      message: "execution reverted",
+      data: "0x",
+    })).toBe("Attack mission was rejected by the game contract. Refresh fleet, cargo, fuel, and target state before retrying, or choose a different target if the state changed.");
+
+    // MetaMask re-wraps the empty revert as a top-level -32603 with the real
+    // revert nested underneath — must still read as a contract rejection.
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { code: 3, message: "execution reverted", data: "0x" },
+    })).toBe("Attack mission was rejected by the game contract. Refresh fleet, cargo, fuel, and target state before retrying, or choose a different target if the state changed.");
+
+    // A genuine RPC/transport -32603 with no nested revert stays an availability message.
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+    })).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
   });
 
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {

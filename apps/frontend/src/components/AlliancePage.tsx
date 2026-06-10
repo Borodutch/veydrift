@@ -63,6 +63,7 @@ interface AlliancePageProps {
   onOpenPlayer?: ((playerAddress: string) => void) | undefined;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onTransferOwnership: (playerAddress: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
 }
 
@@ -87,6 +88,7 @@ export function AlliancePage({
   onOpenPlayer,
   onRefresh,
   onSetRole,
+  onTransferOwnership,
   onUpdateProfile,
 }: AlliancePageProps) {
   const [tag, setTag] = useState("");
@@ -216,6 +218,7 @@ export function AlliancePage({
               onSetProfileName={setProfileName}
               onSetProfileTag={setProfileTag}
               onSetRole={onSetRole}
+              onTransferOwnership={onTransferOwnership}
               onSetTag={setTag}
               onUpdateProfile={onUpdateProfile}
             />
@@ -426,6 +429,7 @@ function MyAllianceSection({
   onSetProfileName,
   onSetProfileTag,
   onSetRole,
+  onTransferOwnership,
   onSetTag,
   onUpdateProfile,
 }: {
@@ -460,6 +464,7 @@ function MyAllianceSection({
   onSetProfileName: (value: string) => void;
   onSetProfileTag: (value: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onTransferOwnership: (playerAddress: string) => void;
   onSetTag: (value: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
 }) {
@@ -556,6 +561,7 @@ function MyAllianceSection({
           onSetInviteAddress={onSetInviteAddress}
           onSetInviteFormOpen={onSetInviteFormOpen}
           onSetRole={onSetRole}
+          onTransferOwnership={onTransferOwnership}
         />
       </div>
     </Panel>
@@ -899,6 +905,7 @@ function RosterSection({
   onSetInviteAddress,
   onSetInviteFormOpen,
   onSetRole,
+  onTransferOwnership,
 }: {
   canManageMembers: boolean;
   disabled: boolean;
@@ -915,6 +922,7 @@ function RosterSection({
   onSetInviteAddress: (value: string) => void;
   onSetInviteFormOpen: (value: boolean) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onTransferOwnership: (playerAddress: string) => void;
 }) {
   return (
     <div className="grid gap-3">
@@ -935,6 +943,7 @@ function RosterSection({
         onSetInviteAddress={onSetInviteAddress}
         onSetInviteFormOpen={onSetInviteFormOpen}
         onSetRole={onSetRole}
+        onTransferOwnership={onTransferOwnership}
       />
     </div>
   );
@@ -957,6 +966,7 @@ function RosterList({
   onSetInviteAddress,
   onSetInviteFormOpen,
   onSetRole,
+  onTransferOwnership,
 }: {
   canManageMembers: boolean;
   disabled: boolean;
@@ -974,6 +984,7 @@ function RosterList({
   onSetInviteAddress: (value: string) => void;
   onSetInviteFormOpen: (value: boolean) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onTransferOwnership: (playerAddress: string) => void;
 }) {
   const [page, setPage] = useState(1);
   const sortedRows = useMemo(() => sortedRosterMembers(rows), [rows]);
@@ -1004,6 +1015,7 @@ function RosterList({
               onKick={onKick}
               onOpenPlayer={onOpenPlayer}
               onSetRole={onSetRole}
+              onTransferOwnership={onTransferOwnership}
             />
           ))}
           {pageCount > 1 ? (
@@ -1229,6 +1241,7 @@ function MemberRow({
   onKick,
   onOpenPlayer,
   onSetRole,
+  onTransferOwnership,
 }: {
   canManageMembers: boolean;
   disabled: boolean;
@@ -1238,10 +1251,13 @@ function MemberRow({
   onKick: (playerAddress: string) => void;
   onOpenPlayer: (playerAddress: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onTransferOwnership: (playerAddress: string) => void;
 }) {
   const isViewer = viewer?.toLowerCase() === member.address.toLowerCase();
   const canKick = canManageMembers && member.role === "member";
   const ownerCanChangeRole = isOwner && member.role !== "owner";
+  const canTransferOwnership = isOwner && member.role === "officer" && !isViewer;
+  const [confirmingTransfer, setConfirmingTransfer] = useState(false);
   const rowTone = memberRowTone(member, isViewer);
 
   return (
@@ -1273,11 +1289,44 @@ function MemberRow({
               Make Member
             </button>
           ) : null}
+          {canTransferOwnership && !confirmingTransfer ? (
+            <button className="rounded border border-amber-300/40 px-2 py-1 text-xs font-semibold text-amber-100 disabled:opacity-50" disabled={disabled} onClick={() => setConfirmingTransfer(true)} type="button">
+              Make Owner
+            </button>
+          ) : null}
           {(canKick || (isOwner && member.role === "officer")) && !isViewer ? (
             <button className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50" disabled={disabled} onClick={() => onKick(member.address)} type="button">
               Remove
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {canTransferOwnership && confirmingTransfer ? (
+        <div className="rounded border border-amber-300/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100 md:col-span-2">
+          <p>
+            You will become an officer and {playerLabel(member.displayName, member.address)} will become the alliance owner.
+            Only this officer can hand ownership back afterwards.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              className="rounded border border-amber-300/50 px-2 py-1 font-semibold text-amber-50 disabled:opacity-50"
+              disabled={disabled}
+              onClick={() => {
+                onTransferOwnership(member.address);
+                setConfirmingTransfer(false);
+              }}
+              type="button"
+            >
+              Confirm transfer
+            </button>
+            <button
+              className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200"
+              onClick={() => setConfirmingTransfer(false)}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

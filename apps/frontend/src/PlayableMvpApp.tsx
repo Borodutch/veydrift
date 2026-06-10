@@ -129,6 +129,7 @@ import {
   fetchPlayerProfile,
   mergePlayerProfile,
   walletRequestErrorMessage,
+  isContractExecutionRevert,
   spendTransactionErrorMessage,
   confirmTransactionReceipt,
   sendFinishDefenseProductionTransaction,
@@ -164,6 +165,7 @@ import {
   sendAllianceInviteTransaction,
   sendAllianceProfileTransaction,
   sendAllianceRoleTransaction,
+  sendAllianceTransferOwnershipTransaction,
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
   sendDismissAllianceJoinRequestTransaction,
@@ -435,6 +437,14 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
     return `${label} could not load current game API state before launch. The game API may be temporarily unavailable; refresh mission state and retry.`;
   }
 
+  // A contract revert (including a silent revert with no reason data, or one
+  // MetaMask re-wraps as -32603 with the revert nested underneath) is a real
+  // on-chain rejection — surface it as such before the API/RPC-unavailable
+  // branch so an invalid attack is not mislabeled as transport downtime.
+  if (isContractExecutionRevert(error) || /execution reverted/i.test(message)) {
+    return `${label} was rejected by the game contract. Refresh fleet, cargo, fuel, and target state before retrying, or choose a different target if the state changed.`;
+  }
+
   if (
     code === -32603
     || code === "-32603"
@@ -442,10 +452,6 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
     || normalizedMessage.includes("wallet could not read the current game contract state")
   ) {
     return `${label} could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.`;
-  }
-
-  if (/execution reverted/i.test(message)) {
-    return `${label} was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.`;
   }
 
   return message || `${label} failed.`;
@@ -4339,6 +4345,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleTransferAllianceOwnership = useCallback((playerAddress: string) => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance ownership transfer", () => sendAllianceTransferOwnershipTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddress,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
   const handleResearch = useCallback((technologyId: number, key: ResearchKey) => {
     if (!provider || !account || !gameContract || !effectiveResearchState?.homePlanetId) {
       setResearchAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
@@ -5342,6 +5363,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenPlayer={handleSelectPlayer}
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}
+          onTransferOwnership={handleTransferAllianceOwnership}
           onUpdateProfile={handleUpdateAllianceProfile}
         />
       );

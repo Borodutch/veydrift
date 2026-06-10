@@ -727,8 +727,33 @@ const ALLIANCE_SELECTORS = {
   approveJoinRequest: "0x8ff388c7",
   kickMember: "0xbd0e667c",
   leaveAlliance: "0xdabd761d",
-  setMemberRole: "0xbfbb73f1"
+  setMemberRole: "0xbfbb73f1",
+  transferAllianceOwnership: "0xb1d3b1e4"
 } as const;
+
+// Custom-error selectors returned by VeydriftAllianceSystem.transferAllianceOwnership.
+const allianceTransferRevertReasons: Record<string, string> = {
+  "0x673c047f": "The selected member must be an officer before they can become the alliance owner. Promote them to officer first.",
+  "0xdb299b9f": "You already own this alliance; choose a different officer to transfer ownership to.",
+  "0x615e9ba0": "Only the current alliance owner can transfer ownership. Refresh alliance state and retry.",
+  "0xdc579b43": "The selected player is no longer a member of this alliance. Refresh the roster and retry."
+} as const;
+
+export function allianceTransferOwnershipRevertReason(error: unknown): string | undefined {
+  const selector = revertSelector(error);
+  if (selector && allianceTransferRevertReasons[selector]) {
+    return allianceTransferRevertReasons[selector];
+  }
+  const data = errorData(error);
+  const decoded = typeof data === "string" ? decodeStandardRevertReason(data) : undefined;
+  if (decoded) {
+    return `Alliance contract rejected the ownership transfer: ${decoded}.`;
+  }
+  if (isContractExecutionRevert(error)) {
+    return CONTRACT_REVERT_NO_REASON_MESSAGE;
+  }
+  return undefined;
+}
 const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
 } as const;
@@ -855,12 +880,15 @@ export function walletRequestErrorMessage(error: unknown): string {
     return `${message} The game API may be temporarily unavailable; the app will retry with backend state.`;
   }
 
-  if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
-    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
+  // A contract revert (even one with no reason data, or one MetaMask re-wraps as
+  // a -32603 internal error) is a real on-chain rejection, not RPC downtime. Map
+  // it before the -32603/internal-error branch so it is not mislabeled.
+  if (isContractExecutionRevert(error)) {
+    return CONTRACT_REVERT_NO_REASON_MESSAGE;
   }
 
-  if (/execution reverted/i.test(message)) {
-    return "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
+  if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
+    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
   }
 
   return message;
@@ -948,6 +976,56 @@ function revertSelector(error: unknown): string | undefined {
     : undefined;
 }
 
+function collectErrorSignals(
+  value: unknown,
+  seen: Set<object>,
+  out: { codes: unknown[]; messages: string[] },
+): void {
+  if (typeof value === "string") {
+    out.messages.push(value);
+    return;
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+
+  const record = value as Record<string, unknown>;
+  if ("code" in record) out.codes.push(record.code);
+  if ("message" in record && typeof record.message === "string") {
+    out.messages.push(record.message);
+  }
+  for (const key of ["data", "error", "originalError", "cause"]) {
+    if (key in record) collectErrorSignals(record[key], seen, out);
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectErrorSignals(item, seen, out);
+  }
+}
+
+/**
+ * True when the error represents an EVM execution revert from the game contract
+ * — including reverts that carry no reason data at all and reverts MetaMask
+ * re-wraps as a top-level `-32603 Internal JSON-RPC error` (the nested provider
+ * error still carries code 3 / "execution reverted"). This distinguishes a
+ * genuine contract rejection from real RPC/transport unavailability so a silent
+ * on-chain revert is not mislabeled as "the game API or RPC is unavailable".
+ */
+export function isContractExecutionRevert(error: unknown): boolean {
+  if (revertSelector(error) !== undefined) {
+    return true;
+  }
+  const signals = { codes: [] as unknown[], messages: [] as string[] };
+  collectErrorSignals(error, new Set(), signals);
+  if (signals.codes.some((code) => code === 3 || code === "3")) {
+    return true;
+  }
+  return signals.messages.some((message) => /execution reverted/i.test(message));
+}
+
+export const CONTRACT_REVERT_NO_REASON_MESSAGE =
+  "The game contract rejected this action, but did not return a reason. Refresh fleet, cargo, fuel, and target state, then retry — or choose a different target if the state changed.";
+
 function revertUintArg(error: unknown, index: number): bigint | undefined {
   const data = errorData(error);
   if (typeof data !== "string") return undefined;
@@ -992,16 +1070,13 @@ function fleetMissionRevertReason(error: unknown, context?: FleetMissionRevertCo
 
 function isFleetMissionPreflightRevert(error: unknown): boolean {
   // A real contract revert carries revert data (a 4-byte selector), the EVM
-  // revert code 3, or an "execution reverted" message. Anything else (internal
-  // JSON-RPC errors, RPC/node unavailability, read timeouts) means the
-  // simulation could not run, not that the mission is invalid.
-  if (revertSelector(error) !== undefined) {
-    return true;
-  }
-  if (errorCode(error) === 3 || errorCode(error) === "3") {
-    return true;
-  }
-  return /execution reverted/i.test(errorMessage(error));
+  // revert code 3, or an "execution reverted" message — even when MetaMask
+  // re-wraps it as a top-level -32603 with the revert nested underneath, and
+  // even when the revert returns no reason data. Anything else (internal
+  // JSON-RPC errors with no nested revert, RPC/node unavailability, read
+  // timeouts) means the simulation could not run, not that the mission is
+  // invalid.
+  return isContractExecutionRevert(error);
 }
 
 async function assertFleetMissionCallSucceeds(
@@ -1943,6 +2018,28 @@ export async function sendAllianceRoleTransaction(
     to: contractAddress,
     data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
   });
+}
+
+export async function sendAllianceTransferOwnershipTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  newOwnerAddress: string
+): Promise<string> {
+  try {
+    return await sendWalletTransaction(provider, account, {
+      from: account,
+      to: contractAddress,
+      data: encodeUintAddressCall(ALLIANCE_SELECTORS.transferAllianceOwnership, allianceId, newOwnerAddress)
+    });
+  } catch (error) {
+    const reason = allianceTransferOwnershipRevertReason(error);
+    if (reason) {
+      throw new Error(reason);
+    }
+    throw error;
+  }
 }
 
 export async function sendStartBuildingUpgradeTransaction(
