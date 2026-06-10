@@ -12,6 +12,16 @@ library VeydriftFormulas {
     error InvalidUniverseSpeed();
     uint16 private constant BPS = 10_000;
 
+    /// @notice Production bonus contributed by a single effective crawler, in basis
+    /// points (0.02% per crawler, mirroring OGame).
+    uint16 private constant CRAWLER_BOOST_BPS_PER_UNIT = 2;
+    /// @notice Maximum number of crawlers that contribute to the bonus per combined
+    /// mine level (metal + crystal + deuterium). Crawlers above this are inert.
+    uint16 private constant CRAWLER_MAX_PER_MINE_LEVEL = 8;
+    /// @notice Hard cap on the crawler production bonus (50%), matching OGame's
+    /// default crawler limit without officers/items.
+    uint16 private constant CRAWLER_MAX_BOOST_BPS = 5_000;
+
     function planetMultipliers(int16 temperature, uint16 fields)
         public
         pure
@@ -31,6 +41,7 @@ library VeydriftFormulas {
         uint256 solarLevel,
         uint256 fusionLevel,
         uint256 solarSatelliteCount,
+        uint256 crawlerCount,
         int16 maxTemperature,
         uint256 energyTechnologyLevel,
         uint16 metalMultiplierBps,
@@ -52,6 +63,17 @@ library VeydriftFormulas {
         crystalPerHour = _scaleByBps(_scaledLevelValue(20, crystalLevel), crystalMultiplierBps, BPS);
         deuteriumPerHour =
             _scaleByBps(_scaledLevelValue(10, deuteriumLevel), deuteriumMultiplierBps, BPS);
+
+        // Crawlers boost mine output before fusion deuterium upkeep and the energy
+        // shortage factor are applied, so the bonus tracks raw mine production.
+        uint256 crawlerBoostBps =
+            crawlerProductionBoostBps(crawlerCount, metalLevel, crystalLevel, deuteriumLevel);
+        if (crawlerBoostBps != 0) {
+            metalPerHour = _scaleByBps(metalPerHour, BPS + crawlerBoostBps, BPS);
+            crystalPerHour = _scaleByBps(crystalPerHour, BPS + crawlerBoostBps, BPS);
+            deuteriumPerHour = _scaleByBps(deuteriumPerHour, BPS + crawlerBoostBps, BPS);
+        }
+
         uint256 fusionDeuteriumPerHour = fusionReactorDeuteriumConsumption(fusionLevel);
         deuteriumPerHour = deuteriumPerHour > fusionDeuteriumPerHour
             ? deuteriumPerHour - fusionDeuteriumPerHour
@@ -62,6 +84,24 @@ library VeydriftFormulas {
             crystalPerHour = _scaleByBps(crystalPerHour, energyScale, BPS);
             deuteriumPerHour = _scaleByBps(deuteriumPerHour, energyScale, BPS);
         }
+    }
+
+    /// @notice Crawler production bonus in basis points for a planet.
+    /// @dev Each crawler adds 0.02% (CRAWLER_BOOST_BPS_PER_UNIT). Only up to
+    /// CRAWLER_MAX_PER_MINE_LEVEL crawlers per combined mine level count, and the
+    /// total bonus is capped at CRAWLER_MAX_BOOST_BPS (50%).
+    function crawlerProductionBoostBps(
+        uint256 crawlerCount,
+        uint256 metalLevel,
+        uint256 crystalLevel,
+        uint256 deuteriumLevel
+    ) public pure returns (uint256) {
+        if (crawlerCount == 0) return 0;
+        uint256 effectiveCap =
+            (metalLevel + crystalLevel + deuteriumLevel) * CRAWLER_MAX_PER_MINE_LEVEL;
+        uint256 effectiveCrawlers = crawlerCount < effectiveCap ? crawlerCount : effectiveCap;
+        uint256 boostBps = effectiveCrawlers * CRAWLER_BOOST_BPS_PER_UNIT;
+        return boostBps > CRAWLER_MAX_BOOST_BPS ? CRAWLER_MAX_BOOST_BPS : boostBps;
     }
 
     function energyBalance(
