@@ -37,7 +37,6 @@ import {
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
   shipyardStateForMissionActions,
-  pendingSpendsFromQueues,
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
   walletSpendableResourcesFor,
@@ -212,6 +211,30 @@ describe("Playable MVP app display helpers", () => {
       "Attack mission",
       new Error("execution reverted"),
     )).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
+  });
+
+  test("labels a -32603-wrapped on-chain revert as a mission rejection, not RPC unavailable", () => {
+    // VEY-KANEO-421: a genuine on-chain revert with no decodable reason arrives
+    // wrapped in an internal JSON-RPC error (code -32603). It must be classified
+    // as a mission rejection, not transient RPC/node unavailability.
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { originalError: { code: 3, message: "execution reverted" } },
+    })).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
+
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { originalError: { code: 3, message: "execution reverted", data: "0x65dba1c3" } },
+    })).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
+
+    // A bare -32603 with no revert markers is genuine RPC/node unavailability and
+    // must keep the transient-unavailability label.
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+    })).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
   });
 
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {
@@ -522,49 +545,6 @@ describe("Playable MVP app display helpers", () => {
       isWalletConnected: false,
       onChainResources: resources,
     })).toBeUndefined();
-  });
-
-  test("pendingSpendsFromQueues collects active queue spends with cost and start time", () => {
-    const buildingQueue: QueueStateResponse = {
-      active: true,
-      kind: "building",
-      itemId: 1,
-      targetLevel: 7,
-      readyAt: "1700003600",
-      startedAt: "1700000000",
-      cost: { metal: "683", crystal: "170", deuterium: "0" },
-    };
-    const shipQueue: QueueStateResponse = {
-      active: true,
-      kind: "ship",
-      itemId: 202,
-      quantity: 1,
-      readyAt: "1700001000",
-      startedAt: "1700000500",
-      cost: { metal: "2000", crystal: "0", deuterium: "0" },
-    };
-    const spends = pendingSpendsFromQueues([buildingQueue, shipQueue]);
-    expect(spends).toEqual([
-      { cost: { metal: 683, crystal: 170, deuterium: 0 }, startedAtMs: 1_700_000_000_000 },
-      { cost: { metal: 2_000, crystal: 0, deuterium: 0 }, startedAtMs: 1_700_000_500_000 },
-    ]);
-  });
-
-  test("pendingSpendsFromQueues ignores inactive, missing, and zero-cost queues", () => {
-    const inactive: QueueStateResponse = {
-      active: false,
-      kind: "building",
-      readyAt: null,
-      cost: { metal: "100", crystal: "0", deuterium: "0" },
-    };
-    const zeroCost: QueueStateResponse = {
-      active: true,
-      kind: "research",
-      readyAt: "1700000600",
-      startedAt: "1700000000",
-      cost: { metal: "0", crystal: "0", deuterium: "0" },
-    };
-    expect(pendingSpendsFromQueues([inactive, null, undefined, zeroCost])).toEqual([]);
   });
 
   test("blocks research completion transactions until the active queue is ready", () => {
