@@ -7,6 +7,29 @@ export const DEFAULT_FLEET_UNIVERSE_SPEED = 1;
 export const DEFAULT_MISSION_SPEED_PERCENT = 100;
 export const MISSION_SPEED_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10] as const;
 
+// VEY-KANEO-440: an ACS Defend fleet "holds" at the defended planet from its natural arrival until
+// the hostile attack lands, burning holding fuel proportional to the hold time. These mirror the
+// on-chain math in VeydriftAllianceSystem._acsHoldingFuelCost / counterplayDefenseFuelContext so the
+// compose UX can preview the deuterium cost and Alliance Depot support before the player commits.
+export const ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL = 20_000;
+const ACS_HOLDING_FUEL_WINDOW_SECONDS = 36_000; // 10 hours, the contract's per-tenth amortization window
+const ACS_HOLDING_FUEL_TENTHS_PER_HOUR: Record<(typeof missionShipKeys)[number], number> = {
+  smallCargo: 50,
+  lightFighter: 20,
+  recycler: 300,
+  colonyShip: 1_000,
+  largeCargo: 50,
+  heavyFighter: 75,
+  cruiser: 300,
+  battleship: 500,
+  bomber: 1_000,
+  destroyer: 1_000,
+  deathstar: 1,
+  battlecruiser: 250,
+  reaper: 1_000,
+  pathfinder: 300,
+};
+
 const missionShipKeys = [
   "smallCargo",
   "lightFighter",
@@ -221,4 +244,48 @@ function shipFuelConsumption(
 
 function driveSpeed(baseSpeed: number, driveLevel: number, bpsPerLevel: number): number {
   return Math.floor((baseSpeed * (100 + driveLevel * bpsPerLevel)) / 100);
+}
+
+// Gross holding-fuel deuterium an ACS Defend fleet burns while holding for `holdSeconds`, before any
+// Alliance Depot support. Mirrors VeydriftAllianceSystem._acsHoldingFuelCost (ceil division by the
+// 10-hour window).
+export function acsHoldingFuelCost(
+  ships: Partial<MissionShips> | undefined,
+  holdSeconds: number,
+): number {
+  const seconds = Math.max(0, Math.trunc(holdSeconds));
+  if (seconds === 0) return 0;
+  const tenthsPerHour = missionShipKeys.reduce((total, key) => {
+    const quantity = Math.max(0, Math.trunc(ships?.[key] ?? 0));
+    return total + quantity * ACS_HOLDING_FUEL_TENTHS_PER_HOUR[key];
+  }, 0);
+  if (tenthsPerHour === 0) return 0;
+  return Math.ceil((tenthsPerHour * seconds) / ACS_HOLDING_FUEL_WINDOW_SECONDS);
+}
+
+export type AcsDefendFuelBreakdown = {
+  holdSeconds: number;
+  holdingFuel: number;
+  depotSupport: number;
+  netHoldingFuel: number;
+};
+
+// Full ACS Defend holding-fuel breakdown including Alliance Depot support drawn from the defended
+// planet. Mirrors VeydriftAllianceSystem.counterplayDefenseFuelContext: depot covers up to
+// level * 20_000 deuterium of the holding fuel; the remainder is paid by the defending fleet.
+export function acsDefendHoldingFuel(
+  ships: Partial<MissionShips> | undefined,
+  holdSeconds: number,
+  depotLevel = 0,
+): AcsDefendFuelBreakdown {
+  const seconds = Math.max(0, Math.trunc(holdSeconds));
+  const holdingFuel = acsHoldingFuelCost(ships, seconds);
+  const supportCapacity = Math.max(0, Math.trunc(depotLevel)) * ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL;
+  const depotSupport = Math.min(holdingFuel, supportCapacity);
+  return {
+    holdSeconds: seconds,
+    holdingFuel,
+    depotSupport,
+    netHoldingFuel: holdingFuel - depotSupport,
+  };
 }
