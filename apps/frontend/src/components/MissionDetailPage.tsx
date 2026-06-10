@@ -135,7 +135,7 @@ export function MissionDetailPage({
             onSelectCoordinates={onSelectCoordinates}
             onSelectPlayer={onSelectPlayer}
           />
-          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} report={report} />
+          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} now={now} report={report} />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
@@ -412,10 +412,12 @@ function CommanderLink({
 function MissionBattleReport({
   defenderState,
   mission,
+  now,
   report,
 }: {
   defenderState?: DefenderPlanetState | undefined;
   mission: FleetMissionSummary;
+  now: number;
   report?: BattleReport | undefined;
 }) {
   if (!isCombatMission(mission)) {
@@ -423,11 +425,22 @@ function MissionBattleReport({
   }
 
   if (!report) {
+    if (mission.needsResolution) {
+      return (
+        <Notice tone="warning">
+          Combat is due or resolving; the indexed battle report is not available yet.
+        </Notice>
+      );
+    }
+    // A combat fleet only fights once it reaches its target. While it is still flying out (Outbound
+    // and not yet due) — or was recalled before it ever arrived — no battle has happened, so the
+    // "no report" notice is pure noise; the whole block is suppressed until combat is actually due.
+    if (hasNotReachedCombat(mission, now)) {
+      return null;
+    }
     return (
-      <Notice tone={mission.needsResolution ? "warning" : "neutral"}>
-        {mission.needsResolution
-          ? "Combat is due or resolving; the indexed battle report is not available yet."
-          : "No indexed battle report is available for this combat mission yet."}
+      <Notice tone="neutral">
+        No indexed battle report is available for this combat mission yet.
       </Notice>
     );
   }
@@ -620,6 +633,16 @@ function recallCostLabel(mission: FleetMissionSummary, now: number): string {
 
 function isCombatMission(mission: FleetMissionSummary): boolean {
   return ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType);
+}
+
+// VEY-KANEO-425: a combat fleet has not fought yet while it is still outbound and en route (arrival
+// in the future), or when it was recalled before ever reaching its target. In those states there is
+// no battle to report, so the "No indexed battle report" notice is misleading noise and is hidden.
+// A due/arrived/returning/resolved mission falls through and keeps the notice, since a report is
+// genuinely expected (and merely missing/unindexed) at that point.
+function hasNotReachedCombat(mission: FleetMissionSummary, now: number): boolean {
+  if (mission.status === "Recalled") return true;
+  return mission.status === "Outbound" && !isMissionDue(mission, now);
 }
 
 // Timing shown beside a route endpoint. A completed leg collapses to a single
