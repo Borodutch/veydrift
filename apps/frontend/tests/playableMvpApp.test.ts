@@ -214,6 +214,30 @@ describe("Playable MVP app display helpers", () => {
     )).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
   });
 
+  test("labels a -32603-wrapped on-chain revert as a mission rejection, not RPC unavailable", () => {
+    // VEY-KANEO-421: a genuine on-chain revert with no decodable reason arrives
+    // wrapped in an internal JSON-RPC error (code -32603). It must be classified
+    // as a mission rejection, not transient RPC/node unavailability.
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { originalError: { code: 3, message: "execution reverted" } },
+    })).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
+
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { originalError: { code: 3, message: "execution reverted", data: "0x65dba1c3" } },
+    })).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
+
+    // A bare -32603 with no revert markers is genuine RPC/node unavailability and
+    // must keep the transient-unavailability label.
+    expect(galaxyMissionActionErrorLabel("Attack mission", {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+    })).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
+  });
+
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {
     expect(infrastructureUnavailableReasonFor({
       buildingAction: {
