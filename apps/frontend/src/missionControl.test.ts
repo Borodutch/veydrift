@@ -5,7 +5,7 @@ import { MissionControlPage, allActiveMissionRows, buildMissionControlViewQuery,
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
-import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
+import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
@@ -453,7 +453,7 @@ describe("Mission Control battle reports", () => {
   test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -552,7 +552,7 @@ describe("Mission Control battle reports", () => {
     // while Recall is still available. The Available Orders section must surface Recall but
     // suppress the disabled Resolve button rather than rendering it greyed out.
     const text = collectText(MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -582,7 +582,7 @@ describe("Mission Control battle reports", () => {
   test("renders the round-by-round block only when indexed round snapshots exist", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -630,7 +630,7 @@ describe("Mission Control battle reports", () => {
   test("VEY-KANEO-407: renders unit art for attacker combat/civil ships and the defender's surviving fleet/defenses", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -687,7 +687,7 @@ describe("Mission Control battle reports", () => {
     // A transport mission has no battle report, so the standalone "Fleet And Cargo" panel renders and
     // its ship listing must show unit art too (per the ticket title's "Fleet And Cargo ships" scope).
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -724,7 +724,7 @@ describe("Mission Control battle reports", () => {
     // Attacker fielded only civil ships and the charted defender had no surviving fleet/defenses, so
     // the empty listings must still read "None" rather than render an empty icon row.
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -824,7 +824,7 @@ describe("Mission Control battle reports", () => {
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const baseProps = {
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       canTransact: true,
       detail: {
         mission: {
@@ -892,7 +892,7 @@ describe("Mission Control battle reports", () => {
       },
     };
     const props = {
-      account: owner,
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" } as const,
       canTransact: true,
       copyState: "idle" as const,
@@ -957,7 +957,7 @@ describe("Mission Control battle reports", () => {
       targetPlanet: { planetId: "9", owner: defender, ownerDisplayName: "Zane", name: "Borealis", galaxy: 4, system: 5, position: 6, coordinates: "4:5:6" },
     };
     const tree = MissionDetailPage({
-      account: owner,
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -1234,12 +1234,28 @@ function missionControlProps(
   };
 }
 
+// VEY-KANEO-424: the detail page authorizes orders from the same wallet-scoped fleet-visibility the
+// Mission Control list uses, matching by mission id. These tests all render the owner's own fleets, so
+// one shared visibility classifies each id the way the backend would: Outbound -> outgoing,
+// Returning/Recalled -> returning. (The page looks up by id, so the summaries only need the right id
+// and list placement.) A mission absent from every list models a stranger and gets no orders.
+const ownerVisibility: FleetMissionVisibilityResponse = {
+  wallet: "0x1111111111111111111111111111111111111111",
+  homePlanetId: "7",
+  incoming: [],
+  outgoing: ["42", "43", "51", "52", "60", "62", "64"].map((id) => mission(id, "Attack", "Outbound")),
+  returning: ["61", "63"].map((id) => mission(id, "Attack", "Returning")),
+  joinableAttacks: [],
+  completedMissions: [],
+  battleReports: [],
+};
+
 function missionDetailProps(
   now: number,
   detail: Parameters<typeof MissionDetailPage>[0]["detail"],
 ): Parameters<typeof MissionDetailPage>[0] {
   return {
-    account: "0x1111111111111111111111111111111111111111",
+    fleetVisibility: ownerVisibility,
     actionState: { status: "idle" },
     canTransact: true,
     copyState: "idle",
