@@ -708,6 +708,59 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
+  test("self-heal restores stale planet state into the real indexer after a dropped log", async () => {
+    MockWebSocket.instances = [];
+    const indexer = new SettlementIndexer(
+      {
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
+      },
+      100n
+    );
+    // The SettledPlanet log for planet 7 in system (2,44) is never delivered live, so the
+    // indexer is stale: the planet is missing from query results.
+    const droppedLog = {
+      blockNumber: "0x7c",
+      transactionHash: "0xhealed",
+      topics: [
+        planetStartedTopic,
+        `0x${player.slice(2).padStart(64, "0")}`,
+        `0x${(7n).toString(16).padStart(64, "0")}`
+      ],
+      data: abiWords(2n, 44n, 9n, 211n, 1n)
+    };
+    const backfiller = {
+      async listContractLogs() { return [droppedLog]; }
+    };
+    const service = new ChainSyncService(config, indexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller,
+      selfHealIntervalMs: 2,
+      selfHealDepthBlocks: 50
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    // Anchor at block 124 (0x7c) with the dropped log's block inside the self-heal window.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7c" } } });
+    // Stale before self-heal runs.
+    expect(indexer.settledPlanetsInSystem(2, 44)).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The self-heal pass replayed the dropped log and restored the planet into query results.
+    expect(indexer.settledPlanetsInSystem(2, 44)).toEqual([
+      expect.objectContaining({ owner: player, planetId: "7", position: 9 })
+    ]);
+    expect(service.snapshot().selfHealRecoveredEvents).toBe(1);
+    service.stop();
+  });
+
   test("falls back to a full reconcile when a gap recovery collides with an in-flight backfill", async () => {
     MockWebSocket.instances = [];
     const reconcileReasons: string[] = [];
