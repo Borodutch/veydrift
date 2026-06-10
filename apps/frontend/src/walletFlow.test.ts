@@ -1489,6 +1489,8 @@ describe("walletFlow", () => {
       .toContain("position is already occupied");
     expect(walletRequestErrorMessage({ message: "execution reverted", data: "0x791438b6" }))
       .toContain("colony limit");
+    expect(walletRequestErrorMessage({ message: "execution reverted", data: "0x57aab7e3" }))
+      .toContain("Computer");
     expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("indexed spendable balance");
     expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("reconnect your wallet");
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
