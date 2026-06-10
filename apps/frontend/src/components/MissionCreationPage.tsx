@@ -85,6 +85,8 @@ export function MissionCreationPage({
   resources,
   shipyardState,
   target,
+  targetLabel,
+  targetOwnerLabel,
 }: {
   action: EnabledGalaxyAction;
   actionPending: boolean;
@@ -97,6 +99,10 @@ export function MissionCreationPage({
   resources?: MissionResourceSnapshot | undefined;
   shipyardState: ChainShipyardState | null;
   target: Planet | undefined;
+  // Display fallbacks for callers that have no full Planet record (e.g. joining an alliance attack
+  // from Mission Control, where only the mission's target reference is available).
+  targetLabel?: string | undefined;
+  targetOwnerLabel?: string | undefined;
 }) {
   const [speedPercent, setSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const [ships, setShips] = useState<MissionShips>(() => initialMissionShips(action));
@@ -115,6 +121,9 @@ export function MissionCreationPage({
   const availableShips = useMemo(() => missionShipOptionsForAction(action, shipyardState), [action, shipyardState]);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
+  // joinAttack catches an in-flight group, so its on-chain call takes no speed of its own — hide the
+  // selector and keep the default 100% used for the summary's fuel/arrival estimate (VEY-KANEO-431).
+  const speedSupported = action.kind !== "joinAttack";
   const lootRatioSupported = action.mode === "mission" && action.kind === "attack";
   const lootRatioActive = lootRatioSupported && lootRatioEnabled;
   const lootRatioTotal = lootRatio.metal + lootRatio.crystal + lootRatio.deuterium;
@@ -164,10 +173,10 @@ export function MissionCreationPage({
           <div className="grid gap-1">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Target</h3>
             <div className="text-sm font-medium text-white">
-              {target?.name ?? `Coordinate ${coords.galaxy}:${coords.system}:${coords.position}`}
+              {target?.name ?? targetLabel ?? `Coordinate ${coords.galaxy}:${coords.system}:${coords.position}`}
             </div>
             <div className="text-xs text-slate-500">
-              {target?.occupiedBy?.ownerDisplayName ?? target?.owner ?? "Open coordinate"}
+              {target?.occupiedBy?.ownerDisplayName ?? target?.owner ?? targetOwnerLabel ?? "Open coordinate"}
             </div>
           </div>
 
@@ -237,6 +246,7 @@ export function MissionCreationPage({
             </div>
           ) : null}
 
+          {speedSupported ? (
           <div className="grid gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Speed</h3>
             <div className="flex flex-wrap gap-1.5">
@@ -257,6 +267,7 @@ export function MissionCreationPage({
               ))}
             </div>
           </div>
+          ) : null}
 
           {lootRatioSupported ? (
             <div className="grid gap-2">

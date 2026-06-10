@@ -35,6 +35,34 @@ const missileAction: Extract<GalaxyAction, { enabled: true }> = {
   quantity: 1,
 };
 
+// VEY-KANEO-431: joining an alliance attack now flows through the same fleet picker as Attack,
+// so the picker must gate it like any other fleet mission instead of auto-sending a default fleet.
+const joinAttackAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "joinAttack",
+  label: "Join Attack",
+  mode: "mission",
+  mission: "attack",
+  attackMissionId: "31",
+  targetPlanetId: "9",
+  ships: {
+    smallCargo: 0,
+    lightFighter: 0,
+    recycler: 0,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
 describe("mission creation", () => {
   test("requires an origin and selected ships for fleet missions", () => {
     expect(missionDraftBlocker({
@@ -62,6 +90,28 @@ describe("mission creation", () => {
       selectedShipCount: 0,
       totalCargoCapacity: 0,
     })).toBe("Choose at least one ship.");
+  });
+
+  test("requires an explicitly chosen fleet when joining an alliance attack (VEY-KANEO-431)", () => {
+    const base = {
+      action: joinAttackAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      totalCargoCapacity: 50,
+    } as const;
+
+    // Empty fleet is blocked: the player must pick ships in the picker rather than send a default.
+    expect(missionDraftBlocker({ ...base, selectedShipCount: 0 })).toBe("Choose at least one ship.");
+    // A chosen fleet clears the gate, just like a normal attack mission.
+    expect(missionDraftBlocker({ ...base, selectedShipCount: 1 })).toBeUndefined();
+    // Join attack consumes a fleet slot, so the Computer-tech cap still applies.
+    expect(missionDraftBlocker({ ...base, selectedShipCount: 1, fleetSlots: { active: 1, limit: 1 } }))
+      .toContain("Fleet slots full (1/1)");
   });
 
   test("blocks fleet launches at the Computer-tech fleet-slot cap and names the lever", () => {

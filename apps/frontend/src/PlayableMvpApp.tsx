@@ -1296,6 +1296,10 @@ type PendingGalaxyMission = {
   action: EnabledGalaxyAction;
   target: Planet | undefined;
   coords: Coordinates;
+  // Display fallbacks when there is no full Planet record (joining an alliance attack from Mission
+  // Control, where only the in-flight mission's target reference is available) — VEY-KANEO-431.
+  targetLabel?: string | undefined;
+  targetOwnerLabel?: string | undefined;
 };
 
 const counterplayShipIds: Record<CounterplayShipKey, number> = {
@@ -4696,6 +4700,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
+    if (action.kind === "joinAttack") {
+      // Join an in-flight alliance attack with the fleet the player picked, instead of an
+      // auto-selected default (VEY-KANEO-431). The attack mission + target ride on the action.
+      setPendingGalaxyMission(null);
+      void runGalaxyTransaction("Group attack join", () => sendJoinAttackMissionTransaction(
+        provider,
+        account,
+        gameContract,
+        {
+          originPlanetId,
+          attackMissionId: action.attackMissionId,
+          targetPlanetId: action.targetPlanetId,
+          ships: draft.ships,
+        },
+      ));
+      return;
+    }
+
     if (action.mode === "colonize") {
       setPendingGalaxyMission(null);
       void runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
@@ -4924,29 +4946,37 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string) => {
-    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
-      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
-      return;
-    }
-
-    const ships = selectCounterplayShips(shipyardState);
-    if (!ships) {
-      setGalaxyAction({ status: "error", label: "No ships available to join the attack." });
-      return;
-    }
-
-    void runGalaxyTransaction("Group attack join", () => sendJoinAttackMissionTransaction(
-      provider,
-      account,
-      gameContract,
-      {
-        originPlanetId: onChainSettlement.homePlanetId ?? "0",
+    // VEY-KANEO-431: open the fleet picker (like Attack) instead of sending an auto-selected default
+    // fleet. Resolve the target's coordinates from the in-flight mission so the picker can show the
+    // route, fuel, and arrival estimate; fall back to the active planet's coordinates if absent.
+    const mission = [
+      ...(fleetVisibility?.joinableAttacks ?? []),
+      ...(fleetVisibility?.incoming ?? []),
+      ...(allActiveMissions ?? []),
+    ].find((entry) => entry.missionId === attackMissionId);
+    const targetRef = mission?.targetPlanet;
+    const coords: Coordinates = targetRef
+      ? { galaxy: targetRef.galaxy, system: targetRef.system, position: targetRef.position }
+      : activePlanetCoords ?? { galaxy: 0, system: 0, position: 0 };
+    setGalaxyAction({ status: "idle" });
+    setPendingGalaxyMission({
+      action: {
+        enabled: true,
+        kind: "joinAttack",
+        label: "Join Attack",
+        mode: "mission",
+        mission: "attack",
+        // Prefill with the previous default fleet as a starting point; the player edits it in the picker.
+        ships: selectCounterplayShips(shipyardState) ?? emptyMissionShips(),
         attackMissionId,
         targetPlanetId,
-        ships,
       },
-    ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
+      target: undefined,
+      coords,
+      targetLabel: targetRef?.name ?? `Coordinate ${coords.galaxy}:${coords.system}:${coords.position}`,
+      targetOwnerLabel: targetRef?.ownerDisplayName ?? targetRef?.owner ?? undefined,
+    });
+  }, [activePlanetCoords, allActiveMissions, fleetVisibility, shipyardState]);
 
   const handleNavigate = useCallback((target: Page) => {
     setPendingGalaxyMission(null);
@@ -5142,6 +5172,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           resources={originMissionResources}
           shipyardState={shipyardState}
           target={pendingGalaxyMission.target}
+          targetLabel={pendingGalaxyMission.targetLabel}
+          targetOwnerLabel={pendingGalaxyMission.targetOwnerLabel}
         />
       );
     }

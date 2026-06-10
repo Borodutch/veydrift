@@ -65,6 +65,20 @@ export type GalaxyAction =
       reason?: undefined;
     }
   | {
+      // Joining an in-flight alliance attack. Reuses the fleet picker like a normal attack, but the
+      // on-chain call (joinAttackMission) carries the attack mission + target instead of a fresh
+      // mission type, and takes no loot ratio or speed of its own (VEY-KANEO-431).
+      enabled: true;
+      kind: "joinAttack";
+      label: string;
+      mode: "mission";
+      mission: "attack";
+      ships: MissionShips;
+      attackMissionId: string;
+      targetPlanetId: string;
+      reason?: undefined;
+    }
+  | {
       enabled: false;
       kind: GalaxyActionKind;
       label: string;
