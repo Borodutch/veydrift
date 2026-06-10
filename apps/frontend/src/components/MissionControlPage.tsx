@@ -48,6 +48,9 @@ interface MissionControlPageProps {
   globalMissionArchive?: GlobalMissionArchiveResponse | undefined;
   globalMissionArchiveError?: string | undefined;
   globalMissionArchiveLoading?: boolean | undefined;
+  // VEY-412: the tab/page selection to render initially. Defaults to the sessionStorage-persisted
+  // view so the selection survives the mission-detail round-trip; tests pass it explicitly.
+  initialView?: MissionControlView | undefined;
   loading: boolean;
   missionArchive?: FleetMissionArchiveResponse | undefined;
   missionArchiveError?: string | undefined;
@@ -76,6 +79,7 @@ export function MissionControlPage({
   globalMissionArchive,
   globalMissionArchiveError,
   globalMissionArchiveLoading = false,
+  initialView,
   loading,
   missionArchive,
   missionArchiveError,
@@ -140,6 +144,10 @@ export function MissionControlPage({
   const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
   const activeCount = activeMissionRows.length;
   const initialLoading = loading && !fleetVisibility;
+  // VEY-412: restore the previously selected tabs + past page. The panel is DOM-driven (tabs/pages
+  // toggle `hidden`), so without this the selection resets to defaults every time the component
+  // remounts on returning from a mission detail (browser back or the in-app "← Mission Control").
+  const view = initialView ?? readPersistedMissionControlView();
 
   return (
     <section className="grid gap-4">
@@ -174,6 +182,8 @@ export function MissionControlPage({
             </div>
           ) : null}
           <ActiveMissionSection
+            activePage={view.activePage}
+            activeTab={view.activeTab}
             allRows={allActiveRows}
             allianceRows={allianceMissionRows}
             canTransact={canTransact}
@@ -207,6 +217,8 @@ export function MissionControlPage({
             onOpenReport={onOpenReport}
             onPageChange={onMissionArchivePageChange}
             pagination={missionArchive?.pagination}
+            pastPage={view.pastPage}
+            pastTab={view.pastTab}
             planetLookup={planetLookup}
             rows={pastMissionRows}
             wallet={walletAddress}
@@ -304,6 +316,8 @@ type ActiveMissionTabKey = (typeof ACTIVE_MISSION_TABS)[number]["key"];
 const ACTIVE_MISSION_DEFAULT_TAB: ActiveMissionTabKey = "mine";
 
 function ActiveMissionSection({
+  activePage,
+  activeTab,
   allRows,
   allianceRows,
   canTransact,
@@ -321,6 +335,8 @@ function ActiveMissionSection({
   wallet,
   walletPlanetIds,
 }: {
+  activePage: number;
+  activeTab: ActiveMissionTabKey;
   allRows: ActiveMissionRow[];
   allianceRows: ActiveMissionRow[];
   canTransact: boolean;
@@ -354,12 +370,12 @@ function ActiveMissionSection({
     walletPlanetIds,
   };
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={ACTIVE_MISSION_DEFAULT_TAB}>
+    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
       <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <div aria-label="Active missions" className="flex flex-wrap gap-1.5" role="tablist">
           {ACTIVE_MISSION_TABS.map((tab) => (
             <button
-              aria-selected={tab.key === ACTIVE_MISSION_DEFAULT_TAB}
+              aria-selected={tab.key === activeTab}
               className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100"
               data-active-tab-button={tab.key}
               key={tab.key}
@@ -378,8 +394,9 @@ function ActiveMissionSection({
         ) : null}
       </div>
       {ACTIVE_MISSION_TABS.map((tab) => (
-        <div data-active-tab-panel={tab.key} hidden={tab.key !== ACTIVE_MISSION_DEFAULT_TAB} key={tab.key} role="tabpanel">
-          <ActiveMissionList emptyLabel={tab.emptyLabel} rows={rowsByTab[tab.key]} {...sharedRowProps} />
+        <div data-active-tab-panel={tab.key} hidden={tab.key !== activeTab} key={tab.key} role="tabpanel">
+          {/* Only the initially-visible tab restores its remembered page; the hidden tabs start at 0. */}
+          <ActiveMissionList emptyLabel={tab.emptyLabel} initialPage={tab.key === activeTab ? activePage : 0} rows={rowsByTab[tab.key]} {...sharedRowProps} />
         </div>
       ))}
     </section>
@@ -389,6 +406,7 @@ function ActiveMissionSection({
 function ActiveMissionList({
   canTransact,
   emptyLabel,
+  initialPage = 0,
   lootByMissionId,
   now,
   onCompleteReturn,
@@ -404,6 +422,7 @@ function ActiveMissionList({
 }: {
   canTransact: boolean;
   emptyLabel: string;
+  initialPage?: number | undefined;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onCompleteReturn: (missionId: string) => void;
@@ -423,12 +442,14 @@ function ActiveMissionList({
 
   const pageSize = 25;
   const pages = paginatedRows(rows, pageSize);
-  const pagination = paginationForRows(rows, pageSize);
+  // VEY-412: restore the remembered page so back-navigation lands on the same page, not page 1.
+  const pagination = paginationForRowsAtPage(rows, pageSize, initialPage);
+  const currentPage = pagination.page - 1;
 
   return (
     <div
       className="p-3"
-      data-past-page-current="0"
+      data-past-page-current={String(currentPage)}
       data-past-page-size={String(pageSize)}
       data-past-page-total={String(pagination.totalEntries)}
     >
@@ -436,7 +457,7 @@ function ActiveMissionList({
         <div
           className="grid gap-3"
           data-past-page={pageIndex}
-          hidden={pageIndex !== 0}
+          hidden={pageIndex !== currentPage}
           key={`active-mission-page:${pageIndex}`}
         >
           {pageRows.map(({ context, direction, mission }) => (
@@ -1119,6 +1140,90 @@ type PastMissionTabKey = (typeof PAST_MISSION_TABS)[number]["key"];
 
 const PAST_MISSION_DEFAULT_TAB: PastMissionTabKey = "mine";
 
+// VEY-412: Mission Control remembers which tabs + page the player was on across the mission-detail
+// round-trip. The panel is DOM-driven (tabs/pages toggle `hidden` directly), so the whole component
+// remounts to defaults whenever the player returns from a mission detail — via browser back or the
+// in-app "← Mission Control" button. We persist the view in sessionStorage and read it back at
+// render so the restored selection is reflected directly in the markup, then write on every change.
+export type MissionControlView = {
+  activePage: number;
+  activeTab: ActiveMissionTabKey;
+  pastPage: number;
+  pastTab: PastMissionTabKey;
+};
+
+const MISSION_CONTROL_VIEW_STORAGE_KEY = "veydrift:mission-control:view";
+
+const ACTIVE_MISSION_TAB_KEYS = new Set<string>(ACTIVE_MISSION_TABS.map((tab) => tab.key));
+const PAST_MISSION_TAB_KEYS = new Set<string>(PAST_MISSION_TABS.map((tab) => tab.key));
+
+export const DEFAULT_MISSION_CONTROL_VIEW: MissionControlView = {
+  activePage: 0,
+  activeTab: ACTIVE_MISSION_DEFAULT_TAB,
+  pastPage: 0,
+  pastTab: PAST_MISSION_DEFAULT_TAB,
+};
+
+function clampPageIndex(value: unknown): number {
+  const page = Math.trunc(Number(value));
+  return Number.isFinite(page) && page > 0 ? page : 0;
+}
+
+function missionControlViewStorage(): Storage | null {
+  // Accessing window.sessionStorage can throw in privacy mode / sandboxed iframes, and is undefined
+  // under SSR and the test renderer — fall back to defaults in every such case.
+  try {
+    if (typeof window === "undefined") return null;
+    return window.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function readPersistedMissionControlView(): MissionControlView {
+  const storage = missionControlViewStorage();
+  if (!storage) return DEFAULT_MISSION_CONTROL_VIEW;
+  try {
+    const raw = storage.getItem(MISSION_CONTROL_VIEW_STORAGE_KEY);
+    if (!raw) return DEFAULT_MISSION_CONTROL_VIEW;
+    const parsed = JSON.parse(raw) as Partial<MissionControlView> | null;
+    if (!parsed || typeof parsed !== "object") return DEFAULT_MISSION_CONTROL_VIEW;
+    return {
+      activePage: clampPageIndex(parsed.activePage),
+      activeTab: ACTIVE_MISSION_TAB_KEYS.has(String(parsed.activeTab))
+        ? (parsed.activeTab as ActiveMissionTabKey)
+        : ACTIVE_MISSION_DEFAULT_TAB,
+      pastPage: clampPageIndex(parsed.pastPage),
+      pastTab: PAST_MISSION_TAB_KEYS.has(String(parsed.pastTab))
+        ? (parsed.pastTab as PastMissionTabKey)
+        : PAST_MISSION_DEFAULT_TAB,
+    };
+  } catch {
+    return DEFAULT_MISSION_CONTROL_VIEW;
+  }
+}
+
+function persistMissionControlView(partial: Partial<MissionControlView>): void {
+  const storage = missionControlViewStorage();
+  if (!storage) return;
+  try {
+    const next = { ...readPersistedMissionControlView(), ...partial };
+    storage.setItem(MISSION_CONTROL_VIEW_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Best-effort persistence: ignore quota/security errors.
+  }
+}
+
+// The 0-based client page currently shown inside a tab panel, read straight from the DOM marker the
+// pagination handlers maintain. Used when persisting a tab switch so we remember the page too.
+function visibleClientPageIndex(panel: Element | null): number {
+  if (!(panel instanceof HTMLElement)) return 0;
+  const holder = panel.matches("[data-past-page-current]")
+    ? panel
+    : panel.querySelector<HTMLElement>("[data-past-page-current]");
+  return holder ? clampPageIndex(holder.dataset.pastPageCurrent) : 0;
+}
+
 // VEY-399#1: the displayed total must match the actual de-duplicated rows. The fallback pagination
 // already counts deduped rows; a server archive count is corrected by the rows collapsed on the
 // page (a mission and its battle report render as ONE row, not two).
@@ -1158,6 +1263,8 @@ function PastMissionSection({
   onOpenReport,
   onPageChange,
   pagination,
+  pastPage,
+  pastTab,
   planetLookup,
   rows,
   wallet,
@@ -1177,6 +1284,8 @@ function PastMissionSection({
   onOpenReport: (missionId: string) => void;
   onPageChange?: ((page: number) => void) | undefined;
   pagination?: FleetMissionArchiveResponse["pagination"] | undefined;
+  pastPage: number;
+  pastTab: PastMissionTabKey;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   rows: PastMissionRow[];
   wallet?: string | undefined;
@@ -1205,7 +1314,7 @@ function PastMissionSection({
   const sharedRowProps = { lootByMissionId, now, onOpenReport, planetLookup, wallet, walletPlanetIds };
 
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-past-tab={PAST_MISSION_DEFAULT_TAB}>
+    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-past-tab={pastTab}>
       <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Past missions</h3>
         <div aria-label="Past missions scope" className="flex flex-wrap gap-1.5" role="tablist">
@@ -1214,7 +1323,7 @@ function PastMissionSection({
             const count = pastDisplayTotalEntries(data.rows, data.pagination, data.collapsedCount);
             return (
               <button
-                aria-selected={tab.key === PAST_MISSION_DEFAULT_TAB}
+                aria-selected={tab.key === pastTab}
                 className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100"
                 data-past-tab-button={tab.key}
                 key={tab.key}
@@ -1229,8 +1338,10 @@ function PastMissionSection({
         </div>
       </div>
       {PAST_MISSION_TABS.map((tab) => (
-        <div data-past-tab-panel={tab.key} hidden={tab.key !== PAST_MISSION_DEFAULT_TAB} key={tab.key} role="tabpanel">
-          <PastMissionTable {...dataByTab[tab.key]} {...sharedRowProps} />
+        <div data-past-tab-panel={tab.key} hidden={tab.key !== pastTab} key={tab.key} role="tabpanel">
+          {/* Server-paginated tabs keep their page in app state; the client-paginated fallback restores
+              the remembered page for the initially-visible tab only (VEY-412). */}
+          <PastMissionTable initialClientPage={tab.key === pastTab ? pastPage : 0} {...dataByTab[tab.key]} {...sharedRowProps} />
         </div>
       ))}
     </section>
@@ -1241,6 +1352,7 @@ function PastMissionTable({
   collapsedCount,
   emptyLabel,
   error,
+  initialClientPage = 0,
   loading,
   lootByMissionId,
   now,
@@ -1252,6 +1364,7 @@ function PastMissionTable({
   wallet,
   walletPlanetIds,
 }: PastMissionTabData & {
+  initialClientPage?: number | undefined;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onOpenReport: (missionId: string) => void;
@@ -1261,9 +1374,12 @@ function PastMissionTable({
 }) {
   const pageSize = 25;
   const pages = paginatedRows(rows, pageSize);
-  const currentPagination = pagination ?? paginationForRows(rows, pageSize);
+  // Server-paginated tabs carry their page in the `pagination` prop (app state, survives navigation);
+  // the client-paginated fallback restores the remembered page index here (VEY-412).
+  const currentPagination = pagination ?? paginationForRowsAtPage(rows, pageSize, initialClientPage);
   const hasPages = currentPagination.totalPages > 1;
   const visiblePages = pagination ? [rows] : pages;
+  const clientPage = pagination ? 0 : currentPagination.page - 1;
   const displayTotalEntries = pastDisplayTotalEntries(rows, pagination, collapsedCount);
 
   return (
@@ -1282,7 +1398,7 @@ function PastMissionTable({
               <div
                 className="grid gap-3"
                 data-past-page={pageIndex}
-                hidden={!pagination && pageIndex !== 0}
+                hidden={!pagination && pageIndex !== clientPage}
                 key={`past-mission-page:${pageIndex}`}
               >
                 {pageRows.map((row) => row.kind === "mission" ? (
@@ -1432,6 +1548,20 @@ function paginationForRows<T>(rows: T[], pageSize: number): FleetMissionArchiveR
   };
 }
 
+// Client-side pagination metadata for a specific 0-based page index (VEY-412): same shape as
+// paginationForRows but reflecting the remembered page so the label and prev/next disabled states
+// match the page actually shown after a restore.
+function paginationForRowsAtPage<T>(rows: T[], pageSize: number, pageIndex: number): FleetMissionArchiveResponse["pagination"] {
+  const base = paginationForRows(rows, pageSize);
+  const page = Math.min(Math.max(0, Math.trunc(pageIndex)), base.totalPages - 1);
+  return {
+    ...base,
+    page: page + 1,
+    hasPreviousPage: page > 0,
+    hasNextPage: page < base.totalPages - 1,
+  };
+}
+
 function paginatedRows<T>(rows: T[], pageSize: number): T[][] {
   const pages: T[][] = [];
   for (let index = 0; index < rows.length; index += pageSize) {
@@ -1458,6 +1588,15 @@ function showPastMissionPage(event: Event, target: number | "next" | "previous")
       : target;
   const clamped = Math.max(0, Math.min(pages.length - 1, nextPage));
   section.dataset.pastPageCurrent = clamped.toString();
+
+  // VEY-412: remember the client-paginated page so back-navigation lands on it. The same control
+  // drives both the active-missions panels and the client-paginated past fallback, so persist to
+  // whichever section this button lives in.
+  if (section.closest("[data-active-tab]")) {
+    persistMissionControlView({ activePage: clamped });
+  } else if (section.closest("[data-past-tab]")) {
+    persistMissionControlView({ pastPage: clamped });
+  }
 
   pages.forEach((page, pageIndex) => {
     page.hidden = pageIndex !== clamped;
@@ -1507,6 +1646,10 @@ function showActiveMissionTab(event: Event, key: string) {
   section.querySelectorAll<HTMLElement>("[data-active-tab-button]").forEach((tab) => {
     tab.setAttribute("aria-selected", String(tab.dataset.activeTabButton === key));
   });
+
+  // VEY-412: remember the tab and the page of the now-visible panel so both restore on return.
+  const visiblePanel = section.querySelector<HTMLElement>(`[data-active-tab-panel="${key}"]`);
+  persistMissionControlView({ activePage: visibleClientPageIndex(visiblePanel), activeTab: key as ActiveMissionTabKey });
 }
 
 function showPastMissionTab(event: Event, key: string) {
@@ -1523,6 +1666,10 @@ function showPastMissionTab(event: Event, key: string) {
   section.querySelectorAll<HTMLElement>("[data-past-tab-button]").forEach((tab) => {
     tab.setAttribute("aria-selected", String(tab.dataset.pastTabButton === key));
   });
+
+  // VEY-412: remember the past-missions tab and the page of the now-visible panel.
+  const visiblePanel = section.querySelector<HTMLElement>(`[data-past-tab-panel="${key}"]`);
+  persistMissionControlView({ pastPage: visibleClientPageIndex(visiblePanel), pastTab: key as PastMissionTabKey });
 }
 
 // Shared prev/next pagination control. With `onPageChange` it drives server-side pagination

@@ -796,6 +796,191 @@ contract VeydriftGameTest is Test {
         assertLt(energyAfter, energyBefore);
     }
 
+    function _launchOriginAttack() internal returns (uint256 originPlanetId, uint256 missionId) {
+        uint256 targetPlanetId;
+        (originPlanetId, targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+        vm.prank(player);
+        missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            901
+        );
+    }
+
+    function testSettlePlanetSettlesFullyWhileMissionEnRoute() public {
+        (uint256 originPlanetId, uint256 missionId) = _launchOriginAttack();
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        assertGt(arrivalAt, block.timestamp);
+
+        vm.warp(block.timestamp + 1);
+        uint64 enRouteTs = uint64(block.timestamp);
+        vm.prank(player);
+        game.settlePlanet(originPlanetId);
+        assertEq(game.planet(originPlanetId).lastSettledAt, enRouteTs);
+    }
+
+    function testSettlePlanetNotFrozenByUnresolvedArrivedMission() public {
+        (uint256 originPlanetId, uint256 missionId) = _launchOriginAttack();
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // After arrival, with the mission unresolved, collection must NOT revert: it settles only up
+        // to the unresolved arrival rather than freezing the planet.
+        vm.warp(uint256(arrivalAt) + 1 hours);
+        vm.prank(player);
+        game.settlePlanet(originPlanetId);
+        assertEq(game.planet(originPlanetId).lastSettledAt, arrivalAt);
+    }
+
+    function testSettlePlanetUnblocksAfterMissionResolved() public {
+        (uint256 originPlanetId, uint256 missionId) = _launchOriginAttack();
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        vm.warp(uint256(arrivalAt) + 1 hours);
+        _fulfillAttackBattleRandomness(missionId, 901);
+        game.resolveFleetMission(missionId);
+
+        uint64 resolvedTs = uint64(block.timestamp);
+        vm.prank(player);
+        game.settlePlanet(originPlanetId);
+        assertEq(game.planet(originPlanetId).lastSettledAt, resolvedTs);
+    }
+
+    function testDefenderCollectionDoesNotSettleAcrossUnresolvedArrival() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            901
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // Defender keeps collecting after the fleet has arrived but before it is resolved. The fix
+        // must clamp settlement at the arrival instant so the combat snapshot is unaffected.
+        vm.warp(uint256(arrivalAt) + 5 hours);
+        vm.prank(defender);
+        game.collectResources(targetPlanetId);
+        assertEq(game.planet(targetPlanetId).lastSettledAt, arrivalAt);
+    }
+
+    function testCollectionClampsToEarliestOfMultiplePendingArrivals() public {
+        (uint256 originPlanetId, uint256 target1,) = _seedAttackPlanets();
+        // Computer level 1 gives a second fleet slot so both attacks can be in flight at once,
+        // while keeping the attacker score close to the single-attack tests (no score protection).
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        // A second target farther from origin (position 20 vs 9) so its arrival is later.
+        address defender2 = address(0xBEEF);
+        vm.deal(defender2, 1 ether);
+        vm.prank(defender2);
+        uint256 target2 = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(target2, 1, 100, 20);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 50;
+        VeydriftGameStorage.Resources memory noCargo =
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0});
+
+        vm.prank(player);
+        uint256 m1 = game.launchFleetMission(
+            originPlanetId,
+            target1,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            noCargo,
+            901
+        );
+        vm.prank(player);
+        uint256 m2 = game.launchFleetMission(
+            originPlanetId,
+            target2,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            noCargo,
+            902
+        );
+
+        (, uint64 arrival1,,) = _fleetMission(m1);
+        (, uint64 arrival2,,) = _fleetMission(m2);
+        assertLt(arrival1, arrival2);
+
+        // Warp past BOTH arrivals: two missions are now pending resolution for the origin planet.
+        // Collection must clamp to the EARLIEST unresolved arrival, never across it.
+        vm.warp(uint256(arrival2) + 1 hours);
+        vm.prank(player);
+        game.settlePlanet(originPlanetId);
+        assertEq(game.planet(originPlanetId).lastSettledAt, arrival1);
+    }
+
+    /// @notice Direct regression for the reported VEY-417 freeze. A Colonize mission is tracked
+    ///         against its ORIGIN planet/owner (`_trackMissionResolution` registers origin + owner and
+    ///         returns before touching any target). Resolving a Colonize never reads or mutates the
+    ///         origin planet, so an arrived-but-unresolved Colonize must NOT gate the origin: the owner
+    ///         keeps full settlement AND every mutating action while the colony fleet awaits the
+    ///         resolver. Previously the gate reverted FleetMissionNotResolved and froze the account
+    ///         out of settle/build/research/launch until the off-chain resolver caught up.
+    function testUnresolvedArrivedColonizeMissionDoesNotFreezeOrigin() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            100,
+            0
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // Fleet has arrived and the Colonize mission is still unresolved (resolver lag). The colony
+        // fleet does not touch the origin, so collection must settle FULLY to now — never clamped to
+        // the arrival, never reverted.
+        vm.warp(uint256(arrivalAt) + 3 hours);
+        uint64 nowTs = uint64(block.timestamp);
+        vm.prank(player);
+        game.settlePlanet(originPlanetId);
+        assertEq(game.planet(originPlanetId).lastSettledAt, nowTs);
+
+        // And the whole account stays usable: a mutating action that settles first (the user's
+        // reported Infrastructure upgrade) must not revert FleetMissionNotResolved.
+        vm.prank(player);
+        game.startBuildingUpgrade(originPlanetId, Building.MetalMine);
+        assertTrue(game.activeBuildingConstruction(originPlanetId).active);
+
+        // The Colonize mission is still permissionlessly resolvable on arrival.
+        game.resolveFleetMission(missionId);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+    }
+
     function testBuildingUpgradeSpendsInternalResources() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
