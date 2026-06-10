@@ -1752,6 +1752,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
   const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
+  // VEY-KANEO-431: a join-attack awaiting fleet selection. When set, the same
+  // fleet picker the Attack action uses is shown so the player chooses which
+  // ships to commit, instead of immediately sending a default fleet.
+  const [pendingJoinAttack, setPendingJoinAttack] = useState<{
+    attackMissionId: string;
+    targetPlanetId: string;
+    coords: Coordinates;
+  } | null>(null);
   const [researchState, setResearchState] = useState<ChainResearchState | null>(
     () => hydratedGameState?.researchState ?? null
   );
@@ -4536,6 +4544,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     if (action.mode === "colonize") {
       setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
       void runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
@@ -4557,6 +4566,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     if (action.mode === "missile") {
       setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
       void runGalaxyTransaction("Missile attack", () => sendLaunchInterplanetaryMissileAttackTransaction(
         provider,
         account,
@@ -4572,6 +4582,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     if (action.kind === "attack" && draft.lootRatio) {
       const { metal, crystal, deuterium } = draft.lootRatio;
       void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
@@ -4761,33 +4772,47 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       .catch(() => setMissionShareCopyState("error"));
   }, []);
 
-  const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string) => {
+  const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string, targetCoords: Coordinates | null) => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
-    const ships = selectCounterplayShips(shipyardState);
-    if (!ships) {
-      setGalaxyAction({ status: "error", label: "No ships available to join the attack." });
+    // VEY-KANEO-431: open the Attack fleet picker so the player chooses the
+    // fleet to commit, rather than sending a default counterplay fleet on click.
+    setGalaxyAction({ status: "idle" });
+    setPendingJoinAttack({
+      attackMissionId,
+      targetPlanetId,
+      coords: targetCoords ?? { galaxy: 0, system: 0, position: 0 },
+    });
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider]);
+
+  const handleConfirmJoinAttack = useCallback((draft: MissionLaunchDraft) => {
+    const pending = pendingJoinAttack;
+    if (!pending) return;
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
+    setPendingJoinAttack(null);
     void runGalaxyTransaction("Group attack join", () => sendJoinAttackMissionTransaction(
       provider,
       account,
       gameContract,
       {
         originPlanetId: onChainSettlement.homePlanetId ?? "0",
-        attackMissionId,
-        targetPlanetId,
-        ships,
+        attackMissionId: pending.attackMissionId,
+        targetPlanetId: pending.targetPlanetId,
+        ships: draft.ships,
       },
     ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
+  }, [account, gameContract, onChainSettlement?.homePlanetId, pendingJoinAttack, provider, runGalaxyTransaction]);
 
   const handleNavigate = useCallback((target: Page) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setMissionDetailId(null);
@@ -4799,6 +4824,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleOpenMissionReport = useCallback((missionId: string) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setMissionDetailId(missionId);
@@ -4810,6 +4836,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleOpenMissionReportList = useCallback(() => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setMissionDetailId(null);
     setMissionReportId(null);
     setPage("mission-control");
@@ -4825,6 +4852,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
     setInspectedPlayerWallet(null);
@@ -4837,6 +4865,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleSelectAlliance = useCallback((allianceId: string) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setSelectedAllianceId(allianceId);
     setInspectedAllianceId(allianceId);
     setInspectedPlayerWallet(null);
@@ -4849,6 +4878,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleSelectPlayer = useCallback((wallet: string) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setInspectedPlayerWallet(wallet);
     setInspectedAllianceId(null);
     setMissionDetailId(null);
@@ -4980,6 +5010,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           resources={originMissionResources}
           shipyardState={shipyardState}
           target={pendingGalaxyMission.target}
+        />
+      );
+    }
+
+    if (pendingJoinAttack) {
+      return (
+        <MissionCreationPage
+          action={{ enabled: true, kind: "attack", label: "Join attack", mode: "mission", mission: "attack", ships: emptyMissionShips() }}
+          actionPending={galaxyAction.status === "pending"}
+          coords={pendingJoinAttack.coords}
+          driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          joinAttackMode
+          onBack={() => setPendingJoinAttack(null)}
+          onConfirm={handleConfirmJoinAttack}
+          originCoords={activePlanetCoords}
+          originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
+          resources={originMissionResources}
+          shipyardState={shipyardState}
+          target={undefined}
         />
       );
     }
