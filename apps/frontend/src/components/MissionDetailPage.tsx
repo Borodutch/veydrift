@@ -138,6 +138,7 @@ export function MissionDetailPage({
             </Notice>
           ) : null}
           <MissionFacts
+            fleetVisibility={fleetVisibility}
             hideFleetAndCargo={Boolean(report)}
             mission={mission}
             now={now}
@@ -212,18 +213,23 @@ function MissionActions({
 }
 
 function MissionFacts({
+  fleetVisibility,
   hideFleetAndCargo,
   mission,
   now,
   onSelectCoordinates,
   onSelectPlayer,
 }: {
+  fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   hideFleetAndCargo: boolean;
   mission: FleetMissionSummary;
   now: number;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectPlayer: (wallet: string) => void;
 }) {
+  // The recall-cost row is authorized by the same wallet-scoped classification as the Recall button,
+  // so the two never contradict each other (VEY-KANEO-424).
+  const context = missionActionContext(mission, fleetVisibility);
   return (
     <div className="grid gap-3">
       <MissionRoute
@@ -240,7 +246,7 @@ function MissionFacts({
           <Row label="Ships" value={<UnitIcons units={shipUnits(mission.ships)} />} />
           <Row label="Cargo" value={formatResources(mission.cargo)} />
           <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
-          {showsRecallCost(mission) ? (
+          {showsRecallCost(mission, context) ? (
             <Row label="Recall cost" value={recallCostLabel(mission, now)} />
           ) : null}
         </Panel>
@@ -650,7 +656,15 @@ function isNoFleetReturned(mission: FleetMissionSummary): boolean {
 // "Not recallable", which is pure noise, so it is hidden. Returning fleets are still in transit and
 // keep the row. A recalled fleet keeps it explicitly even in the unexpected case its status reads as
 // finished.
-function showsRecallCost(mission: FleetMissionSummary): boolean {
+//
+// VEY-KANEO-424: the row is also wallet-scoped to the only viewer who can act on it — the fleet's
+// OWNER (outgoing while in flight, returning/recalled on the way home). A defender (incoming) or
+// unrelated observer never gets a Recall button, so showing them a "RECALL COST: N deuterium" reads
+// as a bug (cost advertised, no action). QA hit exactly this twice on incoming attacks. Gating the
+// row on the same context as the Recall button keeps the two consistent and matches Mission Control,
+// which never surfaces a recall cost for someone else's attack.
+function showsRecallCost(mission: FleetMissionSummary, context: MissionActionContext): boolean {
+  if (context !== "outgoing" && context !== "returning") return false;
   if (mission.status === "Recalled") return true;
   return ["Outbound", "Returning"].includes(mission.status);
 }
