@@ -53,10 +53,12 @@ export type ChainSyncSnapshot = {
   lastConnectedAt: string | null;
   lastError: string | null;
   lastEventAt: string | null;
+  lastSelfHealAt: string | null;
   latestWebsocketBlock: string | null;
   latestSyncedBlock: string | null;
   reconnectAttempts: number;
   reorgDetectedAt: string | null;
+  selfHealRecoveredEvents: number;
   subscribedAddresses: string[];
   subscribedToHeads: boolean;
   subscribedToLogs: boolean;
@@ -98,6 +100,9 @@ export class ChainSyncService {
   private pendingReconcileReason: string | null = null;
   private throttledReconcileTimer: ReturnType<typeof setTimeout> | undefined;
   private backfillInProgress = false;
+  private selfHealTimer: ReturnType<typeof setInterval> | undefined;
+  private lastSelfHealAt: string | null = null;
+  private selfHealRecoveredEvents = 0;
 
   constructor(
     private readonly config: BackendConfig,
@@ -109,6 +114,8 @@ export class ChainSyncService {
       heartbeatIntervalMs?: number;
       heartbeatTimeoutMs?: number;
       reconcileThrottleMs?: number;
+      selfHealIntervalMs?: number;
+      selfHealDepthBlocks?: number;
     } = {}
   ) {}
 
@@ -124,6 +131,18 @@ export class ChainSyncService {
     return this.options.reconcileThrottleMs ?? 30_000;
   }
 
+  private selfHealIntervalMs(): number {
+    return this.options.selfHealIntervalMs ?? 60_000;
+  }
+
+  private selfHealDepthBlocks(): bigint {
+    const configured = this.options.selfHealDepthBlocks;
+    if (configured === undefined || !Number.isFinite(configured) || configured <= 0) {
+      return 256n;
+    }
+    return BigInt(Math.floor(configured));
+  }
+
   snapshot(): ChainSyncSnapshot {
     return {
       connected: this.connected,
@@ -134,10 +153,12 @@ export class ChainSyncService {
       lastConnectedAt: this.lastConnectedAt,
       lastError: this.lastError,
       lastEventAt: this.lastEventAt,
+      lastSelfHealAt: this.lastSelfHealAt,
       latestWebsocketBlock: this.latestWebsocketBlock,
       latestSyncedBlock: this.latestSyncedBlock,
       reconnectAttempts: this.reconnectAttempts,
       reorgDetectedAt: this.reorgDetectedAt,
+      selfHealRecoveredEvents: this.selfHealRecoveredEvents,
       subscribedAddresses: this.subscribedAddresses(),
       subscribedToHeads: [...this.subscriptionKinds.values()].includes("newHeads"),
       subscribedToLogs: [...this.subscriptionKinds.values()].includes("logs"),
@@ -179,6 +200,7 @@ export class ChainSyncService {
     }
     this.pendingReconcileReason = null;
     this.stopHeartbeat();
+    this.stopSelfHeal();
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -219,6 +241,7 @@ export class ChainSyncService {
     this.subscriptionKinds.clear();
     this.lastActivityAt = Date.now();
     this.startHeartbeat();
+    this.startSelfHeal();
     this.subscribe("logs");
     this.subscribe("newHeads");
     if (reconnectingAfterProgress) {
@@ -234,6 +257,7 @@ export class ChainSyncService {
     this.subscriptionKinds.clear();
     this.requestKinds.clear();
     this.stopHeartbeat();
+    this.stopSelfHeal();
     if (!this.stopped) {
       this.scheduleReconnect();
     }
@@ -463,7 +487,8 @@ export class ChainSyncService {
     backfiller: LogBackfiller,
     fromBlock: bigint,
     toBlock: bigint | "latest",
-    reason: string
+    reason: string,
+    options: { selfHeal?: boolean } = {}
   ): Promise<void> {
     const applyLog = this.indexer?.applyLog;
     if (!applyLog) {
@@ -477,6 +502,8 @@ export class ChainSyncService {
     try {
       const logs = await backfiller.listContractLogs(fromBlock, toBlock);
       let needsReconcile = false;
+      let recovered = 0;
+      let lastRecoveredHash: string | undefined;
       for (const log of logs) {
         if (!isRpcLog(log)) continue;
         const block = BigInt(log.blockNumber);
@@ -488,6 +515,8 @@ export class ChainSyncService {
           if (applied.applied) {
             this.eventsReceived += 1;
             this.lastEventAt = new Date().toISOString();
+            recovered += 1;
+            lastRecoveredHash = log.transactionHash;
           }
           if (applied.removed) {
             this.reorgDetectedAt = new Date().toISOString();
@@ -498,8 +527,22 @@ export class ChainSyncService {
           needsReconcile = true;
         }
       }
+      if (options.selfHeal) {
+        this.lastSelfHealAt = new Date().toISOString();
+        this.selfHealRecoveredEvents += recovered;
+      }
       if (needsReconcile) {
         this.requestReconciliation("reorg/decode failure during backfill");
+      }
+      if (recovered > 0) {
+        // A previously-dropped log was re-applied. Emit a chain-event so the read cache
+        // invalidates and SSE subscribers refresh, otherwise the healed mission/resource
+        // state would stay invisible until the next live event.
+        this.notify({
+          kind: "chain-event",
+          blockNumber: this.latestSyncedBlock,
+          ...(lastRecoveredHash ? { transactionHash: lastRecoveredHash } : {})
+        });
       }
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     } catch (error) {
@@ -544,6 +587,53 @@ export class ChainSyncService {
     void reconcile.call(this.indexer, reason).catch((error: unknown) => {
       this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed state.";
     });
+  }
+
+  /**
+   * Periodically re-scan a recent block range and replay its logs through the indexer
+   * (idempotent). This self-heals live events that an RPC provider silently dropped from
+   * the `logs` subscription while the socket stayed connected and `newHeads` kept flowing —
+   * a case neither head-gap recovery, reconnect backfill, nor the heartbeat can detect,
+   * since there is no block gap and the connection looks healthy.
+   */
+  private startSelfHeal(): void {
+    this.stopSelfHeal();
+    const interval = this.selfHealIntervalMs();
+    if (interval <= 0) return;
+    if (!this.options.logBackfiller || !this.indexer?.applyLog) return;
+    this.selfHealTimer = setInterval(() => this.selfHealTick(), interval);
+  }
+
+  private stopSelfHeal(): void {
+    if (this.selfHealTimer) {
+      clearInterval(this.selfHealTimer);
+      this.selfHealTimer = undefined;
+    }
+  }
+
+  private selfHealTick(): void {
+    if (this.stopped || !this.connected) return;
+    const backfiller = this.options.logBackfiller;
+    if (!backfiller || !this.indexer?.applyLog) return;
+    // A reconnect/gap backfill is already covering recent blocks; skip this pass.
+    if (this.backfillInProgress) return;
+
+    const anchor = this.latestSyncedBlock ?? this.latestWebsocketBlock;
+    if (anchor === null) return;
+    let latest: bigint;
+    try {
+      latest = BigInt(anchor);
+    } catch {
+      return;
+    }
+
+    const depth = this.selfHealDepthBlocks();
+    let fromBlock = latest > depth ? latest - depth + 1n : 0n;
+    const floor = this.config.indexFromBlock;
+    if (fromBlock < floor) fromBlock = floor;
+    if (fromBlock > latest) return;
+
+    void this.backfillRange(backfiller, fromBlock, "latest", "periodic self-heal", { selfHeal: true });
   }
 
   private startHeartbeat(): void {
