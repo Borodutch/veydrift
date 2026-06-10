@@ -352,6 +352,9 @@ export type FleetMissionPlanetReference = {
   // Real planet archetype (derived from the indexed temperature) so Mission Control can render the
   // same planet art the Galaxy view uses for thumbnails (VEY-403 / VEY-67), not a generic icon.
   archetype: PlanetArchetype;
+  // VEY-KANEO-440: Alliance Depot building level (id 13). On a hostile attack's target planet this is
+  // the depot that subsidizes ACS Defend holding fuel, letting the compose UX preview depot support.
+  allianceDepotLevel: number;
 };
 
 export type ResolvableFleetMission = Pick<

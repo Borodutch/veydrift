@@ -186,6 +186,42 @@ describe("mission creation", () => {
     })).toBeUndefined();
   });
 
+  const acsDefendAction: Extract<GalaxyAction, { enabled: true }> = {
+    enabled: true,
+    kind: "acsDefend",
+    label: "Group defend",
+    mode: "mission",
+    mission: "acsDefend",
+    ships: { ...attackAction.ships },
+  };
+
+  test("blocks an ACS Defend fleet that cannot reach the planet before the attack", () => {
+    const base = {
+      action: acsDefendAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 10,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 500,
+    } as const;
+
+    // Too slow to arrive before the hostile attack lands -> surfaced before submit.
+    expect(missionDraftBlocker({ ...base, acsArrivalTooSlow: true })).toBe(
+      "Fleet cannot reach the planet before the attack — pick a faster speed or faster ships."
+    );
+
+    // The "too slow" gate only applies once ships are chosen (no ship -> earlier gate wins).
+    expect(missionDraftBlocker({ ...base, acsArrivalTooSlow: false })).toBeUndefined();
+
+    // Net holding fuel rides in the fleet's deuterium spend, so the caller passes the combined fuel
+    // cost; an underfunded fleet is blocked with the combined figure.
+    expect(missionDraftBlocker({ ...base, fuelCost: 1_200 })).toBe("Need 1,200 deuterium for fuel.");
+  });
+
   test("summarizes mission timing with duration first and exact clocks preserved", () => {
     const summary = missionTimingSummary(3_900, Date.UTC(2026, 0, 1, 12, 0, 0));
 
