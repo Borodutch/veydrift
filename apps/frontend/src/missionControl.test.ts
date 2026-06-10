@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -1019,6 +1019,39 @@ describe("Mission Control battle reports", () => {
     // Page 2 (index 1) is shown; page 1 (index 0) is hidden — the remembered page, not page 1.
     expect(firstPage?.props?.hidden).toBe(true);
     expect(secondPage?.props?.hidden).toBe(false);
+  });
+
+  // VEY-412 rework: the view is encoded in the URL hash query (source of truth — shareable, survives
+  // browser back + hard reload). These cover the pure encoder/decoder round-trip.
+  test("encodes only non-default view fields into the URL query (VEY-412)", () => {
+    // A fresh/default view yields a clean URL with no query noise.
+    expect(buildMissionControlViewQuery({ activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "mine" })).toBe("");
+
+    const query = buildMissionControlViewQuery({ activePage: 2, activeTab: "alliance", pastPage: 1, pastTab: "all" });
+    const params = new URLSearchParams(query);
+    expect(params.get("at")).toBe("alliance");
+    expect(params.get("pt")).toBe("all");
+    expect(params.get("ap")).toBe("2");
+    expect(params.get("pp")).toBe("1");
+  });
+
+  test("parses a URL query back into a partial view, ignoring junk (VEY-412)", () => {
+    expect(parseMissionControlViewParams("at=alliance&pt=all&ap=3&pp=2")).toEqual({
+      activePage: 3,
+      activeTab: "alliance",
+      pastPage: 2,
+      pastTab: "all",
+    });
+
+    // Unknown tab keys and negative/garbage pages are dropped rather than restoring a broken view.
+    expect(parseMissionControlViewParams("at=bogus&ap=-1&pp=NaN")).toEqual({ activePage: 0, pastPage: 0 });
+    expect(parseMissionControlViewParams("")).toEqual({});
+  });
+
+  test("round-trips a selected view through query encode/decode (VEY-412)", () => {
+    const view: MissionControlView = { activePage: 1, activeTab: "all", pastPage: 4, pastTab: "all" };
+    const restored = { ...view, ...parseMissionControlViewParams(buildMissionControlViewQuery(view)) };
+    expect(restored).toEqual(view);
   });
 });
 
