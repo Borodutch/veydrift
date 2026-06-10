@@ -170,6 +170,7 @@ import {
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
   fetchPreviewResources,
+  isOnChainRevertError,
   isUserRejected,
   updatePlayerDisplayName,
   type ChainDefenseState,
@@ -406,6 +407,14 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
     return `${label} could not load current game API state before launch. The game API may be temporarily unavailable; refresh mission state and retry.`;
   }
 
+  // A genuine on-chain revert is often wrapped in an internal JSON-RPC error
+  // (code -32603) whose nested data carries the revert. Classify it as a
+  // mission rejection before the RPC-unavailable branch so a real revert is not
+  // mislabeled as transient RPC/node unavailability.
+  if (isOnChainRevertError(error) || /execution reverted/i.test(message)) {
+    return `${label} was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.`;
+  }
+
   if (
     code === -32603
     || code === "-32603"
@@ -413,10 +422,6 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
     || normalizedMessage.includes("wallet could not read the current game contract state")
   ) {
     return `${label} could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.`;
-  }
-
-  if (/execution reverted/i.test(message)) {
-    return `${label} was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.`;
   }
 
   return message || `${label} failed.`;
