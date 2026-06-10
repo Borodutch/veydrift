@@ -577,7 +577,7 @@ export function estimateGalaxyMissionPreview({
   if (sameCoordinateValues(homeCoords, target)) {
     blockedReason = "Origin planet";
   } else if (fleetSlots.active >= fleetSlots.limit) {
-    blockedReason = "No fleet slots open";
+    blockedReason = "No fleet slots open — research Computer Technology for more";
   } else if (missionShipCount <= 0) {
     blockedReason = "No mission ships selected";
   } else if (smallCargoCount < 1) {
