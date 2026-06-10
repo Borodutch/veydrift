@@ -413,7 +413,7 @@ describe("moon chance report event decoding", () => {
   test("chunks log queries when the RPC enforces a small block range", async () => {
     const calls: Array<{ method: string; params: unknown[] }> = [];
     const reader = new VeydriftGameReader(
-      readerConfig,
+      { ...readerConfig, logChunkSpan: 9n },
       {
         async request<T>(method: string, params: unknown[]): Promise<T> {
           calls.push({ method, params });
@@ -452,6 +452,34 @@ describe("moon chance report event decoding", () => {
         topics: expect.any(Array)
       }
     ]);
+  });
+
+  test("uses a wide default chunk span so backfills are a handful of requests, not thousands", async () => {
+    const logRanges: Array<{ fromBlock: string; toBlock: string }> = [];
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          if (method === "eth_blockNumber") {
+            return "0xafc8" as T; // 45000
+          }
+          const [filter] = params as [{ fromBlock: string; toBlock: string }];
+          if (filter.toBlock === "latest") {
+            // Provider rejects the unbounded range, forcing the chunk fallback.
+            throw new Error("RPC -32602: query exceeds max block range 2000");
+          }
+          logRanges.push({ fromBlock: filter.fromBlock, toBlock: filter.toBlock });
+          return [] as T;
+        }
+      }
+    );
+
+    // ~44900 blocks. With the old 10-block span this is ~4490 eth_getLogs calls;
+    // with the 2000 default it must be at most a couple dozen.
+    await expect(reader.listSettledPlanetEvents(100n, "latest")).resolves.toEqual([]);
+
+    expect(logRanges.length).toBeLessThanOrEqual(24);
+    expect(logRanges[0]).toEqual({ fromBlock: "0x64", toBlock: "0x834" }); // 100 .. 2100
   });
 
   test("splits log chunks again when an RPC rejects a chunk", async () => {
@@ -499,7 +527,7 @@ describe("moon chance report event decoding", () => {
   test("shrinks log chunks when the fallback range is still too wide", async () => {
     const calls: Array<{ method: string; params: unknown[] }> = [];
     const reader = new VeydriftGameReader(
-      readerConfig,
+      { ...readerConfig, logChunkSpan: 9n },
       {
         async request<T>(method: string, params: unknown[]): Promise<T> {
           calls.push({ method, params });

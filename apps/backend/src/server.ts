@@ -131,9 +131,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (isIndexableChainReader(indexerChainReader) ? new SettlementIndexer(indexerChainReader, loaded.config.indexFromBlock, {
       databasePath: loaded.config.indexDbPath
     }) : undefined);
+  const logBackfiller =
+    indexerChainReader && typeof indexerChainReader.listContractLogs === "function"
+      ? { listContractLogs: indexerChainReader.listContractLogs.bind(indexerChainReader) }
+      : undefined;
   const chainSync =
     dependencies.chainSync ??
-    (loaded.problems.length === 0 ? new ChainSyncService(loaded.config, indexer) : undefined);
+    (loaded.problems.length === 0
+      ? new ChainSyncService(loaded.config, indexer, logBackfiller ? { logBackfiller } : {})
+      : undefined);
   const resolutionReader = rawChainReader?.listResolvableFleetMissions
     ? {
         listResolvableFleetMissions: rawChainReader.listResolvableFleetMissions.bind(rawChainReader),

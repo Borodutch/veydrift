@@ -180,6 +180,14 @@ export class CachedChainReader implements ChainReader {
     return this.inner.listAllianceLogs(fromBlock, toBlock);
   }
 
+  listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]> {
+    if (!this.inner.listContractLogs) {
+      return Promise.resolve([]);
+    }
+
+    return this.inner.listContractLogs(fromBlock, toBlock);
+  }
+
   rpcMetrics(): RpcMetrics {
     return this.inner.rpcMetrics?.() ?? {
       batchRequests: 0,

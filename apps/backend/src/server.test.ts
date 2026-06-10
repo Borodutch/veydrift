@@ -703,6 +703,7 @@ describe("Veydrift backend", () => {
         deploymentMode: "local",
         hasRpcUrl: false,
         indexFromBlock: "0",
+        logChunkSpan: "2000",
         missionResolutionEnabled: false,
         missionResolverConfigured: false,
         resourceTokensConfigured: {

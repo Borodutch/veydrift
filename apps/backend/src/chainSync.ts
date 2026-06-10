@@ -21,6 +21,10 @@ type SocketLike = {
 
 type WebSocketConstructor = new (url: string) => SocketLike;
 
+type LogBackfiller = {
+  listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+};
+
 type JsonRpcNotification = {
   method?: string;
   params?: {
@@ -88,6 +92,12 @@ export class ChainSyncService {
   private socket: SocketLike | null = null;
   private stopped = true;
   private subscriptionKinds = new Map<string, "logs" | "newHeads">();
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private lastActivityAt = 0;
+  private lastFullReconcileAt = 0;
+  private pendingReconcileReason: string | null = null;
+  private throttledReconcileTimer: ReturnType<typeof setTimeout> | undefined;
+  private backfillInProgress = false;
 
   constructor(
     private readonly config: BackendConfig,
@@ -95,8 +105,24 @@ export class ChainSyncService {
     private readonly options: {
       reconnectBaseMs?: number;
       WebSocketCtor?: WebSocketConstructor;
+      logBackfiller?: LogBackfiller;
+      heartbeatIntervalMs?: number;
+      heartbeatTimeoutMs?: number;
+      reconcileThrottleMs?: number;
     } = {}
   ) {}
+
+  private heartbeatIntervalMs(): number {
+    return this.options.heartbeatIntervalMs ?? 25_000;
+  }
+
+  private heartbeatTimeoutMs(): number {
+    return this.options.heartbeatTimeoutMs ?? Math.max(this.heartbeatIntervalMs() * 2, 60_000);
+  }
+
+  private reconcileThrottleMs(): number {
+    return this.options.reconcileThrottleMs ?? 30_000;
+  }
 
   snapshot(): ChainSyncSnapshot {
     return {
@@ -147,6 +173,12 @@ export class ChainSyncService {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
+    if (this.throttledReconcileTimer) {
+      clearTimeout(this.throttledReconcileTimer);
+      this.throttledReconcileTimer = undefined;
+    }
+    this.pendingReconcileReason = null;
+    this.stopHeartbeat();
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -185,10 +217,13 @@ export class ChainSyncService {
     this.lastError = null;
     this.reconnectAttempts = 0;
     this.subscriptionKinds.clear();
+    this.lastActivityAt = Date.now();
+    this.startHeartbeat();
     this.subscribe("logs");
     this.subscribe("newHeads");
     if (reconnectingAfterProgress) {
-      this.requestReconciliation("websocket reconnected");
+      // Recover only the blocks missed while disconnected, not the entire index.
+      this.recoverGap(this.nextBlockAfterSynced(), "latest", "websocket reconnected");
     }
     this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
   }
@@ -198,6 +233,7 @@ export class ChainSyncService {
     this.socket = null;
     this.subscriptionKinds.clear();
     this.requestKinds.clear();
+    this.stopHeartbeat();
     if (!this.stopped) {
       this.scheduleReconnect();
     }
@@ -253,6 +289,7 @@ export class ChainSyncService {
   }
 
   private handleMessage(data: unknown): void {
+    this.lastActivityAt = Date.now();
     let message: JsonRpcNotification & JsonRpcResult;
     try {
       message = JSON.parse(String(data)) as JsonRpcNotification & JsonRpcResult;
@@ -305,7 +342,7 @@ export class ChainSyncService {
     this.latestSyncedBlock = block.toString();
     if (previous !== null && block > previous + 1n) {
       this.recordGap((previous + 1n).toString(), block.toString());
-      this.requestReconciliation(`websocket head gap ${previous + 1n}-${block}`);
+      this.recoverGap(previous + 1n, block, `websocket head gap ${previous + 1n}-${block}`);
     }
     this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
   }
@@ -399,13 +436,147 @@ export class ChainSyncService {
     this.lastGapDetectedAt = new Date().toISOString();
   }
 
+  private nextBlockAfterSynced(): bigint | null {
+    const anchor = this.latestSyncedBlock ?? this.latestWebsocketBlock;
+    if (anchor === null) return null;
+    try {
+      return BigInt(anchor) + 1n;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Recover a missed block range incrementally: fetch only the gap's logs and apply
+   * them through the indexer (idempotent). Falls back to a (throttled) full
+   * reconciliation only when no incremental backfiller is wired or the backfill fails.
+   */
+  private recoverGap(fromBlock: bigint | null, toBlock: bigint | "latest", reason: string): void {
+    if (this.options.logBackfiller && this.indexer?.applyLog && fromBlock !== null) {
+      void this.backfillRange(this.options.logBackfiller, fromBlock, toBlock, reason);
+      return;
+    }
+    this.requestReconciliation(reason);
+  }
+
+  private async backfillRange(
+    backfiller: LogBackfiller,
+    fromBlock: bigint,
+    toBlock: bigint | "latest",
+    reason: string
+  ): Promise<void> {
+    const applyLog = this.indexer?.applyLog;
+    if (!applyLog) {
+      this.requestReconciliation(reason);
+      return;
+    }
+    if (this.backfillInProgress) {
+      return;
+    }
+    this.backfillInProgress = true;
+    try {
+      const logs = await backfiller.listContractLogs(fromBlock, toBlock);
+      let needsReconcile = false;
+      for (const log of logs) {
+        if (!isRpcLog(log)) continue;
+        const block = BigInt(log.blockNumber);
+        this.latestWebsocketBlock = maxBlockString(this.latestWebsocketBlock, block);
+        this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, block);
+        try {
+          const blockTimestamp = this.logBlockTimestamp(log, block);
+          const applied = applyLog.call(this.indexer, blockTimestamp ? { ...log, blockTimestamp } : log);
+          if (applied.applied) {
+            this.eventsReceived += 1;
+            this.lastEventAt = new Date().toISOString();
+          }
+          if (applied.removed) {
+            this.reorgDetectedAt = new Date().toISOString();
+            needsReconcile = true;
+          }
+        } catch (error) {
+          this.lastError = error instanceof Error ? error.message : "Failed to index backfilled log.";
+          needsReconcile = true;
+        }
+      }
+      if (needsReconcile) {
+        this.requestReconciliation("reorg/decode failure during backfill");
+      }
+      this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : "Failed to backfill chain logs.";
+      this.requestReconciliation(reason);
+    } finally {
+      this.backfillInProgress = false;
+    }
+  }
+
   private requestReconciliation(reason: string): void {
     const reconcile = this.indexer?.reconcile ?? this.indexer?.rebuild;
     if (!reconcile) return;
+
+    const throttleMs = this.reconcileThrottleMs();
+    const sinceLast = Date.now() - this.lastFullReconcileAt;
+    if (this.lastFullReconcileAt !== 0 && sinceLast < throttleMs) {
+      // A full reconcile ran recently; collapse this request into a single trailing
+      // pass so a flapping websocket cannot trigger a rebuild storm.
+      this.pendingReconcileReason = reason;
+      if (!this.throttledReconcileTimer) {
+        this.throttledReconcileTimer = setTimeout(() => {
+          this.throttledReconcileTimer = undefined;
+          const pending = this.pendingReconcileReason;
+          this.pendingReconcileReason = null;
+          if (pending && !this.stopped) {
+            this.runReconciliation(pending);
+          }
+        }, throttleMs - sinceLast);
+      }
+      return;
+    }
+
+    this.runReconciliation(reason);
+  }
+
+  private runReconciliation(reason: string): void {
+    const reconcile = this.indexer?.reconcile ?? this.indexer?.rebuild;
+    if (!reconcile) return;
+    this.lastFullReconcileAt = Date.now();
     this.indexer?.markStale?.(reason);
     void reconcile.call(this.indexer, reason).catch((error: unknown) => {
       this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed state.";
     });
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    const interval = this.heartbeatIntervalMs();
+    if (interval <= 0) return;
+    this.heartbeatTimer = setInterval(() => this.heartbeatTick(), interval);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+  }
+
+  private heartbeatTick(): void {
+    if (!this.socket || !this.connected) return;
+    const idle = Date.now() - this.lastActivityAt;
+    if (idle > this.heartbeatTimeoutMs()) {
+      // The socket looks alive but has gone silent past the timeout; force a reconnect
+      // so dropped subscriptions are re-established instead of silently missing events.
+      this.lastError = "WebSocket heartbeat timeout; forcing reconnect.";
+      this.stopHeartbeat();
+      this.socket.close();
+      return;
+    }
+    if (idle >= this.heartbeatIntervalMs()) {
+      // Quiet but within timeout: send a cheap liveness probe to keep the connection
+      // warm and elicit traffic. Healthy newHeads traffic keeps this from ever firing.
+      const id = this.nextRequestId++;
+      this.socket.send(JSON.stringify({ id, jsonrpc: "2.0", method: "eth_blockNumber", params: [] }));
+    }
   }
 
   private subscribedAddresses(): string[] {
